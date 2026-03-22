@@ -115,6 +115,17 @@ def init_db():
             last_synced_at TEXT
         )
     ''')
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            full_name TEXT,
+            role TEXT DEFAULT 'Agent',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
         
         try:
             cursor.execute("ALTER TABLE calls ADD COLUMN follow_up_note TEXT")
@@ -412,3 +423,21 @@ def update_crm_last_synced(provider: str, sync_time: str):
         cursor.execute("UPDATE crm_integrations SET last_synced_at = ? WHERE provider = ?", (sync_time, provider))
         conn.commit()
     return True
+
+# --- USERS & AUTH ---
+
+def create_user(email: str, password_hash: str, full_name: str, role: str = 'Agent') -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO users (email, password_hash, full_name, role)
+            VALUES (?, ?, ?, ?)
+        ''', (email, password_hash, full_name, role))
+        conn.commit()
+        return cursor.lastrowid
+
+def get_user_by_email(email: str) -> Optional[Dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        return dict(row) if row else None

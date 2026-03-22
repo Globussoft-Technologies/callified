@@ -7,3 +7,7 @@ google-genai
 httpx
 python-dotenv
 pydantic
+pyjwt
+passlib
+bcrypt==3.2.2
+python-multipart

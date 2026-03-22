@@ -5,8 +5,13 @@ import urllib.parse
 import asyncio
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, BackgroundTasks, Request, Body, Header, HTTPException, WebSocket
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, BackgroundTasks, Request, Body, Header, HTTPException, WebSocket, APIRouter, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from passlib.context import CryptContext
+import jwt
+from typing import Optional
+from datetime import datetime, timedelta
 from twilio.rest import Client
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from google import genai
@@ -19,7 +24,7 @@ import math
 from database import init_db, get_all_leads, get_lead_by_id, create_lead, get_all_sites, create_punch, get_site_by_id
 from database import update_lead_status, get_all_tasks, complete_task, get_reports, get_all_whatsapp_logs
 from database import upload_document, get_documents_by_lead, get_analytics, search_leads, update_lead_note
-from database import get_active_crm_integrations, update_crm_last_synced
+from database import get_active_crm_integrations, update_crm_last_synced, create_user, get_user_by_email
 import importlib
 import inspect
 from crm_providers import BaseCRM
@@ -656,3 +661,116 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
                     else:
                         crm_client.update_lead_status(lead["external_id"], "Unqualified")
                     print(f"✅ Successfully pushed call outcome to external CRM ({p_name})!")
+
+# --- AUTHENTICATION & MOBILE APIS ---
+
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-replace-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except jwt.PyJWTError:
+        raise credentials_exception
+    user = get_user_by_email(email)
+    if user is None:
+        raise credentials_exception
+    return user
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    full_name: str
+    role: str = "Agent"
+
+@app.post("/api/auth/register")
+def register_user(user: UserCreate):
+    existing = get_user_by_email(user.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    hashed_password = get_password_hash(user.password)
+    user_id = create_user(user.email, hashed_password, user.full_name, user.role)
+    return {"status": "success", "id": user_id, "message": "User created effectively."}
+
+@app.post("/api/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = get_user_by_email(form_data.username) # OAuth2 uses 'username', we map to email
+    if not user or not verify_password(form_data.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Incorrect email or password", headers={"WWW-Authenticate": "Bearer"})
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["email"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer", "role": user.get("role")}
+
+mobile_api = APIRouter(prefix="/api/mobile", tags=["Mobile Routes"])
+
+@mobile_api.get("/leads")
+def mobile_get_leads(current_user: dict = Depends(get_current_user)):
+    return get_all_leads()
+
+@mobile_api.post("/leads")
+def mobile_create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_user)):
+    try:
+        lead_id = create_lead(lead.dict())
+        return {"status": "success", "id": lead_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@mobile_api.put("/leads/{lead_id}/status")
+def mobile_update_lead_status(lead_id: int, payload: LeadStatusUpdate, current_user: dict = Depends(get_current_user)):
+    update_lead_status(lead_id, payload.status)
+    return {"status": "success", "message": f"Lead {lead_id} updated to {payload.status}"}
+
+@mobile_api.post("/dial/{lead_id}")
+async def mobile_dial_lead(lead_id: int, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+    return await api_dial_lead(lead_id, background_tasks)
+
+@mobile_api.get("/analytics")
+def mobile_get_analytics(current_user: dict = Depends(get_current_user)):
+    return get_analytics()
+
+@mobile_api.post("/punch")
+def mobile_punch(punch: PunchCreate, current_user: dict = Depends(get_current_user)):
+    return api_punch(punch)
+
+@mobile_api.get("/tasks")
+def mobile_get_tasks(current_user: dict = Depends(get_current_user)):
+    return get_all_tasks()
+
+@mobile_api.put("/tasks/{task_id}/complete")
+def mobile_complete_task(task_id: int, current_user: dict = Depends(get_current_user)):
+    complete_task(task_id)
+    return {"status": "success"}
+
+app.include_router(mobile_api)
