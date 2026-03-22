@@ -98,6 +98,10 @@ sequenceDiagram
     - Autonomously drafts hyper-personalized follow-up emails based on SQLite timeline history.
     - Leverages Gemini 1.5 Flash natively directly inside the React table.
 
+13. **Mobile APIs & Secure Authentication**
+    - JSON Web Token (JWT) based authentication with Bcrypt password hashing.
+    - Dedicated and protected `/api/mobile/*` route prefix exclusively for Android/iOS applications to fetch Leads, log Field Ops punches, and run CRM updates.
+
 ## 🛠 Getting Started
 
 Follow these instructions to set up, run, and test the Generative AI Dialer locally.
@@ -196,6 +200,38 @@ You do *not* need to manually configure the webhook endpoint on the Twilio dashb
 You must configure an Exotel **VoiceBot Applet** in your Exotel call flow visualizer. The applet should point its WebSocket URL to:
 `wss://<YOUR-NGROK-URL-WITHOUT-HTTPS>/media-stream`
 When the call connects, Exotel will stream the audio down this WebSocket connecting the client perfectly to the AI.
+
+## 📱 Mobile API Documentation (iOS & Android)
+
+The system provides fully secured, dedicated endpoints for mobile applications under the `/api/mobile/` prefix.
+
+### 1. Authentication
+All mobile endpoints require a JWT Bearer Token.
+
+- **Register a new Agent:**
+  `POST /api/auth/register`
+  ```json
+  {
+    "email": "agent@bdrpl.com",
+    "password": "securepassword",
+    "full_name": "Agent Name",
+    "role": "Agent"
+  }
+  ```
+- **Login (Retrieve Token):**
+  `POST /api/auth/login` (Uses OAuth2 Form-Data: `username` and `password`).
+  Returns: `{"access_token": "eyJhbG...", "token_type": "bearer", "role": "Agent"}`
+
+### 2. Core Mobile Endpoints
+Pass the token in the headers: `Authorization: Bearer <TOKEN>`
+
+- **Fetch All Leads:** `GET /api/mobile/leads`
+- **Create New Lead:** `POST /api/mobile/leads`
+- **Update Lead Status:** `PUT /api/mobile/leads/{lead_id}/status`
+- **Initiate AI Call:** `POST /api/mobile/dial/{lead_id}`
+- **Log Field Ops Punch (Geofencing):** `POST /api/mobile/punch`
+- **Fetch Assigned Tasks:** `GET /api/mobile/tasks`
+- **Fetch CRM Analytics:** `GET /api/mobile/analytics`
 
 ## 📸 Screenshots
 
