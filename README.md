@@ -196,3 +196,23 @@ You do *not* need to manually configure the webhook endpoint on the Twilio dashb
 You must configure an Exotel **VoiceBot Applet** in your Exotel call flow visualizer. The applet should point its WebSocket URL to:
 `wss://<YOUR-NGROK-URL-WITHOUT-HTTPS>/media-stream`
 When the call connects, Exotel will stream the audio down this WebSocket connecting the client perfectly to the AI.
+
+## 📸 Screenshots
+
+### 1. CRM Pipeline
+![CRM Pipeline](screenshots/1_crm_pipeline.png)
+
+### 2. Ops & Tasks
+![Ops & Tasks](screenshots/2_ops_tasks.png)
+
+### 3. Analytics
+![Analytics](screenshots/3_analytics.png)
+
+### 4. WhatsApp Comms
+![WhatsApp Comms](screenshots/4_whatsapp.png)
+
+### 5. Field Ops
+![Field Ops](screenshots/5_field_ops.png)
+
+### 6. Integrations
+![Integrations](screenshots/6_integrations.png)
