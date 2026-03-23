@@ -452,8 +452,18 @@ async def handle_crm_webhook(request: Request, background_tasks: BackgroundTasks
     return {"status": "success"}
 
 
+# Store lead info for WebSocket greeting lookup (Exotel doesn't forward ExoML params)
+pending_call_info = {}
+
 async def initiate_call(lead: dict):
     provider = lead.get("provider", "twilio")
+    # Store lead info so WebSocket handler can look it up
+    phone_clean = lead.get("phone_number", "").lstrip("+")
+    pending_call_info["latest"] = {
+        "name": lead.get("name", "Customer"),
+        "interest": lead.get("interest", "our platform"),
+        "phone": phone_clean
+    }
     if provider == "twilio":
         await dial_twilio(lead)
     elif provider == "exotel":
@@ -623,9 +633,15 @@ async def synthesize_and_send_audio(
 async def handle_media_stream(websocket: WebSocket):
     await websocket.accept()
 
-    lead_name = websocket.query_params.get("name", "Customer")
-    interest = websocket.query_params.get("interest", "our platform")
-    lead_phone = websocket.query_params.get("phone", "")
+    # Try query params first, then fall back to pending_call_info from dial
+    lead_name = websocket.query_params.get("name", "") or ""
+    interest = websocket.query_params.get("interest", "") or ""
+    lead_phone = websocket.query_params.get("phone", "") or ""
+    if not lead_name or lead_name == "Customer":
+        info = pending_call_info.get("latest", {})
+        lead_name = info.get("name", "Customer")
+        interest = info.get("interest", "our platform") if not interest else interest
+        lead_phone = info.get("phone", "") if not lead_phone else lead_phone
     stream_sid = None
     is_exotel_stream = False
     chat_history = []
