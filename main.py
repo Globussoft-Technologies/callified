@@ -504,6 +504,9 @@ async def dynamic_webhook(provider: str, request: Request):
 async def synthesize_and_send_audio(
     text: str, stream_sid: str, websocket: WebSocket
 ):
+    import logging
+    tts_logger = logging.getLogger("uvicorn.error")
+    tts_logger.info(f"TTS START: text='{text[:60]}...', sid={stream_sid}")
     url = (
         f"https://api.elevenlabs.io/v1/text-to-speech/"
         f"{os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format=ulaw_8000"
@@ -515,17 +518,24 @@ async def synthesize_and_send_audio(
         "voice_settings": {"stability": 0.5, "similarity_boost": 0.5},
     }
     is_exotel = not stream_sid.startswith("SM")  # Exotel stream_sids are hex, Twilio starts with SM
+    tts_logger.info(f"TTS: is_exotel={is_exotel}, voice_id={os.getenv('ELEVENLABS_VOICE_ID')}")
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream(
                 "POST", url, json=payload, headers=headers
             ) as response:
+                tts_logger.info(f"TTS ElevenLabs response status: {response.status_code}")
+                if response.status_code != 200:
+                    body = await response.aread()
+                    tts_logger.error(f"TTS ElevenLabs error: {body[:200]}")
+                    return
+                chunk_count = 0
                 async for chunk in response.aiter_bytes(chunk_size=4000):
                     if chunk:
+                        chunk_count += 1
                         if is_exotel:
                             # Exotel: send as JSON text with base64 payload
-                            import base64 as _b64
-                            b64_chunk = _b64.b64encode(chunk).decode('utf-8')
+                            b64_chunk = base64.b64encode(chunk).decode('utf-8')
                             await websocket.send_text(json.dumps({
                                 "event": "media",
                                 "stream_sid": stream_sid,
@@ -546,8 +556,11 @@ async def synthesize_and_send_audio(
                                     }
                                 )
                             )
+                tts_logger.info(f"TTS DONE: sent {chunk_count} audio chunks to stream {stream_sid}")
     except asyncio.CancelledError:
-        pass
+        tts_logger.info("TTS cancelled (barge-in)")
+    except Exception as e:
+        tts_logger.error(f"TTS ERROR: {e}")
 
 
 @app.websocket("/media-stream")
@@ -748,6 +761,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                     if not greeting_sent:
                         greeting_sent = True
+                        ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
                                 f"Hi {lead_name}, I saw you requested info about {interest}. How can I help?",
