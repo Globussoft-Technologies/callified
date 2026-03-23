@@ -491,18 +491,20 @@ async def dial_exotel(lead: dict):
     lead_interest = urllib.parse.quote(lead.get("interest", "our platform"))
     lead_phone = urllib.parse.quote(lead.get("phone_number", ""))
     exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}?name={lead_name}&interest={lead_interest}&phone={lead_phone}"
+    # Strip + prefix from phone - Exotel requires digits only
+    phone_clean = lead["phone_number"].lstrip("+")
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {
-        "From": lead["phone_number"],
+        "From": phone_clean,
         "CallerId": EXOTEL_CALLER_ID,
         "Url": exoml_url,
         "CallType": "trans"
     }
-    logger.info(f"Exotel dial attempt: URL={url}, From={lead['phone_number']}, CallerId={EXOTEL_CALLER_ID}, ExoML={exoml_url}")
+    logger.info(f"Exotel dial attempt: URL={url}, From={phone_clean}, CallerId={EXOTEL_CALLER_ID}, ExoML={exoml_url}")
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                url, data=data, auth=(EXOTEL_API_KEY, EXOTEL_API_TOKEN)
+                url, data=data, auth=httpx.BasicAuth(EXOTEL_API_KEY, EXOTEL_API_TOKEN)
             )
             logger.info(f"Exotel Call Response: Status={response.status_code}, Body={response.text}")
         except Exception as e:
@@ -820,7 +822,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"Namaste {lead_name}, maine dekha aapne {interest} ke baare mein jaankari maangi thi. Main aapki kaise madad kar sakti hoon?",
+                                f"Namaste {lead_name} ji, maine dekha aapne {interest} ke baare mein jaankari maangi thi. Main aapki kaise madad kar sakta hoon?",
                                 stream_sid,
                                 websocket,
                             )
