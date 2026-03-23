@@ -463,13 +463,10 @@ async def dial_twilio(lead: dict):
 async def dial_exotel(lead: dict):
     import logging
     logger = logging.getLogger("uvicorn.error")
-    exoml_url = (
-        f"{PUBLIC_URL}/webhook/exotel"
-        f"?name={urllib.parse.quote(lead['name'])}"
-        f"&interest={urllib.parse.quote(lead['interest'])}"
-        f"&phone={urllib.parse.quote(lead['phone_number'])}"
-    )
-    # Use Exotel v1 API with correct subdomain for Singapore region
+    # Use the Exotel Landing Flow App which has the Voicebot applet
+    # configured to connect to our wss://test.callified.ai/media-stream
+    exotel_app_id = os.getenv("EXOTEL_APP_ID", "1198056")
+    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}"
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {
         "From": lead["phone_number"],
