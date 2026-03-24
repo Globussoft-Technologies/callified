@@ -771,7 +771,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 try:
                     response = await llm_client.aio.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-2.5-flash",
                         contents=chat_history,
                         config=types.GenerateContentConfig(
                             system_instruction=final_system_instruction,
