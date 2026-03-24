@@ -503,10 +503,9 @@ async def dial_exotel(lead: dict):
     # Use the Exotel Landing Flow App which has the Voicebot applet
     # configured to connect to our wss://test.callified.ai/media-stream
     exotel_app_id = os.getenv("EXOTEL_APP_ID", "1210468")
-    lead_name = urllib.parse.quote(lead.get("name", "Customer"))
-    lead_interest = urllib.parse.quote(lead.get("interest", "our platform"))
-    lead_phone = urllib.parse.quote(lead.get("phone_number", ""))
-    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}?name={lead_name}&interest={lead_interest}&phone={lead_phone}"
+    # Use base ExoML URL only — query params cause double-encoding in form POST
+    # Lead info is available via pending_call_info for WebSocket greeting lookup
+    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}"
     # Normalize phone for Exotel: needs digits with 91 country code prefix
     phone_clean = lead["phone_number"].strip().lstrip("+")
     # Ensure 91 prefix: if 10-digit number, prepend 91
