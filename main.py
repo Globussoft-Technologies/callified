@@ -708,6 +708,8 @@ async def handle_media_stream(websocket: WebSocket):
     is_exotel_stream = False
     chat_history = []
     _llm_lock = asyncio.Lock()  # Turn guard: only one LLM call at a time
+    _last_transcript_time = [0.0]  # Debounce timer for rapid transcripts
+    _debounce_delay = 1.5  # seconds to wait before processing
 
     # Load pronunciation guide for TTS-correct product names
     pronunciation_ctx = get_pronunciation_context()
@@ -730,6 +732,8 @@ async def handle_media_stream(websocket: WebSocket):
         f"4. INTERESTED: Agar user interested hai, toh puchho 'achha great, toh aap kab free honge? Humara representative aapko detail mein baat karega.' "
         f"   Unka preferred time le lo aur bolo ki call scheduled hai. "
         f"5. SHORT RESPONSES: 1-2 sentences max. Phone pe chhota bolo, jaise real person baat karta hai. "
+        f"IMPORTANT LANGUAGE RULE: SIRF ROMAN HINDI/ENGLISH likhna hai. KABHI BHI Devanagari script (à¤¹à¤¿à¤¨à¥à¤¦à¥) mat use karo. "
+        f"Example — WRONG: à¤¨à¤®à¤¸à¥à¤¤à¥. CORRECT: Namaste. Hamesha Roman letters mein likho. "
         f"6. LANGUAGE: Natural Hindi-Hinglish. 'haan', 'bilkul', 'achha', 'zaroor' use karo. "
         f"7. NO FORMATTING: Kabhi markdown, asterisks, bold, bullets mat use karo. "
         f"8. IDENTITY: Tum Arjun ho, ek human. Kabhi mat bolo ki tum AI ho. "
@@ -773,11 +777,21 @@ async def handle_media_stream(websocket: WebSocket):
             async def _process_transcript():
                 import time as _time
                 t_start = _time.time()
+                _last_transcript_time[0] = t_start
+
+                # Debounce: wait before processing to batch rapid transcripts
+                await asyncio.sleep(_debounce_delay)
+
+                # If a newer transcript arrived during the wait, skip this one
+                if _last_transcript_time[0] != t_start:
+                    import logging
+                    logging.getLogger("uvicorn.error").info(f"[DEBOUNCE] Skipping older transcript — newer one pending.")
+                    return
 
                 # Turn guard: skip if another LLM call is already in flight
                 if _llm_lock.locked():
                     import logging
-                    logging.getLogger("uvicorn.error").info(f"[TURN_GUARD] Skipping — LLM already processing. Transcript queued in history.")
+                    logging.getLogger("uvicorn.error").info(f"[TURN_GUARD] Skipping — LLM already processing.")
                     return
 
                 async with _llm_lock:
