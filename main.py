@@ -654,6 +654,15 @@ async def dial_exotel(lead: dict):
         logger.info(f"[DIAL] Exotel response ({resp.status_code}): {resp.text[:300]}")
         call_logger.call_event(phone_clean, "DIAL_RESPONSE", f"status={resp.status_code}", response=resp.text[:200])
         last_dial_result.update({"status": resp.status_code, "response": resp.text[:500]})
+        # Extract and store the Exotel Call SID for recording fetch later
+        try:
+            dial_json = resp.json()
+            exotel_sid = dial_json.get("Call", {}).get("Sid", "")
+            if exotel_sid:
+                pending_call_info["latest"]["exotel_call_sid"] = exotel_sid
+                logger.info(f"[DIAL] Stored Exotel Call SID: {exotel_sid}")
+        except Exception:
+            pass
         if resp.status_code != 200:
             logger.error(f"Exotel API error {resp.status_code}: {resp.text[:500]}")
     except Exception as e:
@@ -822,6 +831,8 @@ async def handle_media_stream(websocket: WebSocket):
         interest = info.get("interest", "our platform") if not interest else interest
         lead_phone = info.get("phone", "") if not lead_phone else lead_phone
         _call_lead_id = info.get("lead_id")
+    _exotel_call_sid = (pending_call_info.get("latest", {}).get("exotel_call_sid") or "")
+    _call_start_time = __import__('time').time()
     stream_sid = None
     is_exotel_stream = False
     chat_history = []
@@ -1146,12 +1157,35 @@ async def handle_media_stream(websocket: WebSocket):
                             text = parts[0]
                         if text:
                             transcript_turns.append({"role": role, "text": text})
+                    
+                    # Fetch recording URL from Exotel
+                    recording_url = None
+                    if _exotel_call_sid:
+                        try:
+                            import logging as _rlog
+                            _rlog.getLogger("uvicorn.error").info(f"[RECORDING] Fetching for SID: {_exotel_call_sid}")
+                            creds = f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}"
+                            auth_b64 = base64.b64encode(creds.encode()).decode()
+                            rec_url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/{_exotel_call_sid}/Recording"
+                            async with httpx.AsyncClient(timeout=10.0) as _hc:
+                                rec_resp = await _hc.get(rec_url, headers={"Authorization": f"Basic {auth_b64}"})
+                            if rec_resp.status_code == 200:
+                                rec_data = rec_resp.json()
+                                recording_url = rec_data.get("Recording", {}).get("RecordingUrl") or rec_data.get("RecordingUrl")
+                                _rlog.getLogger("uvicorn.error").info(f"[RECORDING] Got URL: {recording_url}")
+                            else:
+                                _rlog.getLogger("uvicorn.error").warning(f"[RECORDING] Exotel returned {rec_resp.status_code}: {rec_resp.text[:200]}")
+                        except Exception as _re:
+                            import logging as _rlog2
+                            _rlog2.getLogger("uvicorn.error").error(f"[RECORDING] Error fetching: {_re}")
+                    
+                    call_duration = round(_t.time() - _call_start_time, 1)
                     if transcript_turns:
                         save_call_transcript(
                             lead_id=_call_lead_id,
                             transcript_json=_json.dumps(transcript_turns, ensure_ascii=False),
-                            recording_url=None,
-                            call_duration_s=round(_t.time() - _t.time(), 1)  # placeholder
+                            recording_url=recording_url,
+                            call_duration_s=call_duration
                         )
                 except Exception as _te:
                     import logging as _tlog
