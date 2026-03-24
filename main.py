@@ -493,6 +493,7 @@ async def dial_twilio(lead: dict):
 async def dial_exotel(lead: dict):
     import logging
     import urllib.parse
+    import base64 as _b64
     logger = logging.getLogger("uvicorn.error")
     # Use the Exotel Landing Flow App which has the Voicebot applet
     # configured to connect to our wss://test.callified.ai/media-stream
@@ -508,27 +509,22 @@ async def dial_exotel(lead: dict):
         "From": phone_clean,
         "CallerId": EXOTEL_CALLER_ID,
         "Url": exoml_url,
-        "CallType": "trans"
+        "CallType": "trans",
     }
     logger.info(f"Exotel dial attempt: From={phone_clean}, ExoML={exoml_url}")
-    import subprocess
     try:
-        # Use shell to source .env directly — Python dotenv causes credential corruption
-        env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-        shell_cmd = (
-            f"source {env_file} && "
-            f"curl -s -X POST 'https://api.exotel.com/v1/Accounts/$EXOTEL_ACCOUNT_SID/Calls/connect.json' "
-            f"-u \"$EXOTEL_API_KEY:$EXOTEL_API_TOKEN\" "
-            f"-d 'From={phone_clean}' "
-            f"-d 'CallerId=$EXOTEL_CALLER_ID' "
-            f"-d 'Url={exoml_url}' "
-            f"-d 'CallType=trans'"
-        )
-        result = subprocess.run(
-            ["bash", "-c", shell_cmd],
-            capture_output=True, text=True, timeout=15
-        )
-        logger.info(f"Exotel Call Response: {result.stdout[:300]}")
+        # Build Basic auth header exactly as Exotel confirmed working
+        creds = f"{EXOTEL_API_KEY}:{EXOTEL_API_TOKEN}"
+        auth_b64 = _b64.b64encode(creds.encode()).decode()
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {auth_b64}",
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, data=data, headers=headers)
+        logger.info(f"Exotel Call Response ({resp.status_code}): {resp.text[:300]}")
+        if resp.status_code != 200:
+            logger.error(f"Exotel API error {resp.status_code}: {resp.text[:500]}")
     except Exception as e:
         logger.error(f"Failed to trigger Exotel call: {e}")
 
