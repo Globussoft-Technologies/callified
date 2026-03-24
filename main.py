@@ -860,11 +860,14 @@ async def handle_media_stream(websocket: WebSocket):
                 # Send greeting on first audio frame
                 if not greeting_sent:
                     greeting_sent = True
+                    greeting_text = f"Hello {lead_name} ji! Kaise hain aap? Mai Arjun bol raha hu Adsgpt se. Aapne hamare site pe enquiry ki thi, bas 2 minute baat kar sakte hain?"
+                    # Add greeting to chat history so LLM knows what it already said
+                    chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
                     call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
                     active_tts_tasks[stream_sid] = asyncio.create_task(
                         synthesize_and_send_audio(
-                            f"Hello {lead_name} ji! Kaise hain aap? Mai Arjun bol raha hu Adsgpt se. Aapne hamare site pe enquiry ki thi, bas 2 minute baat kar sakte hain?",
+                            greeting_text,
                             stream_sid,
                             websocket,
                         )
