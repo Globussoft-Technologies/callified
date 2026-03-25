@@ -487,8 +487,17 @@ _llh.setFormatter(_ll_logging.Formatter('%(asctime)s %(levelname)s %(message)s',
 _ll_logging.getLogger('uvicorn.error').addHandler(_llh)
 
 @app.get("/api/live-logs")
-async def api_live_logs(current_user: dict = Depends(get_current_user)):
-    """SSE endpoint streaming server logs to the dashboard."""
+async def api_live_logs(token: str = ""):
+    """SSE endpoint streaming server logs to the dashboard. Accepts token as query param (SSE can't set headers)."""
+    if not token:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Token required"})
+    try:
+        import jwt as _jwt_ll
+        _jwt_ll.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except Exception:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=401, content={"detail": "Invalid token"})
     from starlette.responses import StreamingResponse
     import asyncio as _sse_asyncio
     async def _gen():

@@ -858,6 +858,7 @@ export default function App() {
           {userRole === 'Admin' && <button className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => setActiveTab('knowledge')}>🧠 RAG Knowledge</button>}
           {userRole === 'Admin' && <button className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => setActiveTab('sandbox')}>🎯 AI Sandbox</button>}
           {userRole === 'Admin' && <button className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>⚙️ Settings</button>}
+          {userRole === 'Admin' && <button className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => setActiveTab('logs')}>📋 Live Logs</button>}
           
           <div style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px'}}>
             {currentUser && (
@@ -1594,6 +1595,39 @@ export default function App() {
               </div>
             </div>
           )}
+        </div>
+      ) : activeTab === 'logs' ? (
+        <div style={{padding: '1rem'}}>
+          <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+            <div><h3><span style={{color: '#3b82f6'}}>📋 Live</span> Server Logs</h3>
+            <p style={{margin: 0}}>Real-time server events — LLM responses, TTS, errors, and more.</p></div>
+            <button className="btn-call" style={{borderColor: '#ef4444', color: '#ef4444', padding: '4px 16px', fontSize: '0.8rem'}} onClick={() => { const el = document.getElementById('live-log-area'); if (el) el.innerHTML = ''; }}>🗑️ Clear</button>
+          </div>
+          <div id="live-log-area" ref={el => {
+            if (!el || el.dataset.connected) return;
+            el.dataset.connected = '1';
+            const es = new EventSource(`${API_URL}/live-logs?token=${token}`);
+            es.onmessage = (ev) => {
+              const line = document.createElement('div');
+              line.textContent = ev.data;
+              line.style.padding = '3px 12px';
+              line.style.fontFamily = '"JetBrains Mono", "Fira Code", monospace';
+              line.style.fontSize = '0.78rem';
+              line.style.borderBottom = '1px solid rgba(255,255,255,0.03)';
+              if (ev.data.includes('ERROR')) { line.style.color = '#f87171'; line.style.background = 'rgba(239,68,68,0.06)'; }
+              else if (ev.data.includes('WARNING')) { line.style.color = '#fbbf24'; }
+              else if (ev.data.includes('[LLM]') || ev.data.includes('[TTS') || ev.data.includes('[STT]')) { line.style.color = '#67e8f9'; }
+              else if (ev.data.includes('GREETING') || ev.data.includes('RECORDING')) { line.style.color = '#a78bfa'; }
+              else { line.style.color = '#94a3b8'; }
+              el.appendChild(line);
+              if (el.children.length > 500) el.removeChild(el.firstChild);
+              el.scrollTop = el.scrollHeight;
+            };
+            el._es = es;
+          }} style={{
+            background: 'rgba(2, 6, 23, 0.8)', border: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: '8px', height: '70vh', overflowY: 'auto', overflowX: 'hidden'
+          }} />
         </div>
       ) : (
         <div className="glass-panel" style={{maxWidth: '500px', margin: '0 auto', textAlign: 'center', padding: '3rem 2rem'}}>
