@@ -12,7 +12,7 @@ sequenceDiagram
     participant Human as Target Lead (Human)
     participant STT as Deepgram (Speech-to-Text)
     participant LLM as Gemini 2.5 (AI Brain)
-    participant TTS as ElevenLabs (Voice)
+    participant TTS as ElevenLabs / Smallest AI (Voice)
 
     CRM->>Dialer: 1. Background Poller retrieves untested leads
     loop The AI Call Cycle
@@ -103,6 +103,10 @@ sequenceDiagram
     - JSON Web Token (JWT) based authentication with Bcrypt password hashing.
     - Full Glassmorphism login and signup UI on the web dashboard.
     - Protected `/api/auth/*` routes and secure multi-tenant data fetching.
+
+14. **Modular Text-to-Speech (TTS) Architecture**
+    - Instant hot-swapping between **ElevenLabs** (for maximum human realism) and **Smallest AI Lightning V3** (for <100ms extreme low-latency response times).
+    - Features inline Python `audioop` streaming transcoding to convert 8kHz Linear PCM directly into Twilio `u-law` byte formats dynamically.
 
 ## 🛠 Getting Started
 
