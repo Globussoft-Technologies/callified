@@ -1,10 +1,54 @@
+# Helper scripts with hardcoded credentials (DO NOT COMMIT)
+check_crash.py
+check_env.py
+check_ps.py
+check_remote_logs.py
+fetch_logs.py
+fix_main.py
+get_indian_voices.py
+get_logs.py
+get_smallest_voices.py
+hotfix.py
+inject_knowledge.py
+print_routes.py
+revert_tts.py
+set_aravind.py
+set_hindi_voice.py
+simulate_live_call.py
+syslog_check.py
+test_api.py
+test_smallest_tts.py
+trigger_dial.py
+update_env.py
+deploy.py
+remote_migrate.py
+remote_migrate_fixed.py
+verify_db.py
+
+# Binary test files
+test.pcm
+*.pcm
+
+# Deploy script (contains server password)
+deploy_webhooks.py
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Environment files
 .env
+.env.*
+
+# Python
 __pycache__/
 *.pyc
 venv/
-.venv/
-*.db
-*.sqlite3
-deploy.zip
-deploy*.sh
-chroma_db/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
