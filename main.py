@@ -360,7 +360,7 @@ async def process_recording(recording_url: str, call_sid: str, phone: str):
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE call_transcripts 
-                SET recording_url = %s, updated_at = CURRENT_TIMESTAMP
+                SET recording_url = %s
                 WHERE id = (
                     SELECT t.id FROM (
                         SELECT ct.id FROM call_transcripts ct
