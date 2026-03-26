@@ -276,12 +276,20 @@ async def twilio_status_webhook(request: Request):
 
 @app.post("/webhook/exotel/status")
 async def exotel_status_webhook(request: Request, background_tasks: BackgroundTasks):
-    form = await request.form()
+    try:
+        form = dict(await request.form())
+    except Exception:
+        try:
+            form = await request.json()
+        except Exception:
+            form = {}
+            
+    print(f"[RAW EXOTEL STATUS] {form}")
     status = form.get("Status", form.get("CallStatus", ""))
     detailed_status = form.get("DetailedStatus", "")
     phone = form.get("To", "")
-    call_sid = form.get("CallSid", "")
-    recording_url = form.get("RecordingUrl", "")
+    call_sid = form.get("CallSid", form.get("call_sid", ""))
+    recording_url = form.get("RecordingUrl", form.get("recording_url", ""))
 
     terminal_error = None
     if detailed_status.lower() in ['busy', 'no-answer', 'failed', 'canceled', 'dnd']:
