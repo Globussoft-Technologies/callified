@@ -27,7 +27,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                   <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                     <span style={{color: '#818cf8', fontWeight: 600}}>Call #{transcripts.length - idx}</span>
-                    <span style={{fontSize: '0.8rem', color: '#64748b'}}>{new Date(t.created_at).toLocaleString()}</span>
+                    <span style={{fontSize: '0.8rem', color: '#64748b'}}>{new Date(t.created_at + (t.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}</span>
                   </div>
                   {t.call_duration_s > 0 && (
                     <span className="badge" style={{background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', fontSize: '0.75rem'}}>{Math.round(t.call_duration_s)}s</span>
