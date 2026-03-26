@@ -188,7 +188,8 @@ async def dial_exotel(lead: dict):
             exotel_sid = dial_json.get("Call", {}).get("Sid", "")
             if exotel_sid:
                 pending_call_info["latest"]["exotel_call_sid"] = exotel_sid
-                logger.info(f"[DIAL] Stored Exotel Call SID: {exotel_sid}")
+                pending_call_info[exotel_sid] = pending_call_info["latest"]
+                logger.info(f"[DIAL] Stored Exotel Call SID mapped: {exotel_sid}")
         except Exception:
             pass
     except Exception as e:

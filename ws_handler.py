@@ -450,6 +450,17 @@ async def handle_media_stream(websocket: WebSocket):
                     elif data.get("stream_sid"):
                         is_exotel_stream = True
                     ws_logger.info(f"Stream started: sid={stream_sid}, exotel={is_exotel_stream}")
+                    
+                    # [RACE CONDITION FIX] Map strict CallSid from Exotel payload
+                    call_sid = data.get("start", {}).get("callSid") or data.get("call_sid") or data.get("CallSid")
+                    if call_sid and call_sid in pending_call_info:
+                        info = pending_call_info[call_sid]
+                        true_name = info.get("name", "Customer")
+                        old_name = lead_name
+                        lead_name = true_name
+                        dynamic_context = dynamic_context.replace(f"Tum {old_name} ko call kar rahe ho", f"Tum {true_name} ko call kar rahe ho")
+                        ws_logger.info(f"[CONTEXT FIX] Successfully mapped CallSid {call_sid} to {true_name}! Dropped {old_name}.")
+
                     twilio_websockets[stream_sid] = websocket
                     monitor_connections[stream_sid] = set()
                     whisper_queues[stream_sid] = []
