@@ -40,13 +40,22 @@ async def _groq_generate(chat_history: list, system_instruction: str, max_tokens
             messages.append({"role": "user", "content": text})
 
     model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    response = await client.chat.completions.create(
+    raw = await client.chat.completions.with_raw_response.create(
         model=model,
         messages=messages,
         max_tokens=max_tokens,
         temperature=0.7,
     )
-
+    
+    # Log rate limit headers
+    h = raw.headers
+    remaining_req = h.get("x-ratelimit-remaining-requests", "?")
+    remaining_tok = h.get("x-ratelimit-remaining-tokens", "?")
+    limit_req = h.get("x-ratelimit-limit-requests", "?")
+    limit_tok = h.get("x-ratelimit-limit-tokens", "?")
+    logger.info(f"[GROQ RATE] requests={remaining_req}/{limit_req} RPD, tokens={remaining_tok}/{limit_tok} TPM")
+    
+    response = await raw.parse()
     return response.choices[0].message.content
 
 

@@ -1606,7 +1606,7 @@ export default function App() {
           <div id="live-log-area" ref={el => {
             if (!el || el.dataset.connected) return;
             el.dataset.connected = '1';
-            const es = new EventSource(`${API_URL}/live-logs?token=${token}`);
+            const es = new EventSource(`${API_URL}/live-logs?token=${authToken}`);
             es.onmessage = (ev) => {
               const line = document.createElement('div');
               line.textContent = ev.data;
