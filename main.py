@@ -275,11 +275,14 @@ async def twilio_status_webhook(request: Request):
     return {"status": "ok"}
 
 @app.post("/webhook/exotel/status")
-async def exotel_status_webhook(request: Request):
+async def exotel_status_webhook(request: Request, background_tasks: BackgroundTasks):
     form = await request.form()
     status = form.get("Status", form.get("CallStatus", ""))
     detailed_status = form.get("DetailedStatus", "")
     phone = form.get("To", "")
+    call_sid = form.get("CallSid", "")
+    recording_url = form.get("RecordingUrl", "")
+
     terminal_error = None
     if detailed_status.lower() in ['busy', 'no-answer', 'failed', 'canceled', 'dnd']:
         terminal_error = detailed_status
@@ -288,16 +291,32 @@ async def exotel_status_webhook(request: Request):
     if terminal_error:
         from database import log_call_status
         log_call_status(phone, terminal_error, "Exotel Call Error")
+        
+    if recording_url and call_sid:
+        print(f"[EXOTEL-WEBHOOK] Status payload contained a RecordingUrl for {call_sid}!")
+        background_tasks.add_task(process_recording, recording_url, call_sid, phone)
+        
     return {"status": "ok"}
 
-@app.post("/exotel/recording-ready")
+@app.api_route("/exotel/recording-ready", methods=["GET", "POST"])
 async def handle_exotel_recording(request: Request, background_tasks: BackgroundTasks):
-    body = await request.body()
-    body_str = body.decode("utf-8")
-    form_data = urllib.parse.parse_qs(body_str)
-    recording_url = form_data.get("RecordingUrl", [""])[0] if "RecordingUrl" in form_data else None
-    call_sid = form_data.get("CallSid", [""])[0] if "CallSid" in form_data else None
-    to_phone = form_data.get("To", [""])[0] if "To" in form_data else ""
+    if request.method == "POST":
+        try:
+            form_data = dict(await request.form())
+        except Exception:
+            try:
+                form_data = await request.json()
+            except Exception:
+                form_data = {}
+    else:
+        form_data = dict(request.query_params)
+        
+    recording_url = form_data.get("RecordingUrl", form_data.get("recording_url", ""))
+    call_sid = form_data.get("CallSid", form_data.get("call_sid", ""))
+    to_phone = form_data.get("To", form_data.get("to_phone", ""))
+    
+    print(f"[EXOTEL-WEBHOOK] /recording-ready Hit! RecordingUrl={recording_url}, CallSid={call_sid}")
+    
     if recording_url and call_sid:
         background_tasks.add_task(process_recording, recording_url, call_sid, to_phone)
     return {"status": "success"}
