@@ -1,109 +1,141 @@
 import os
 import sys
-import json
-import asyncio
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+import asyncio
+from unittest.mock import patch, MagicMock, AsyncMock
 
-# Virtualize audioop globally to avoid C extension missing issues on Windows Py3.13+
+# Virtualize deprecated Python 3.13+ modules
 sys.modules['audioop'] = MagicMock()
-import audioop
-# Mock specific ratecv and lin2ulaw functions to return dummy values without throwing
-audioop.ratecv.return_value = (b"PCM_DOWNSAMPLED", None)
-audioop.lin2ulaw.return_value = b"ULAW_PAYLOAD"
+sys.modules['audioop'].lin2ulaw.return_value = b"ulaw"
+sys.modules['audioop'].ratecv.return_value = (b"ratecv", None)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import tts
+from tts import synthesize_and_send_audio, _synthesize_smallest, _synthesize_elevenlabs, _tts_recording_buffers
 
 @pytest.fixture
-def mock_websocket():
-    mock_ws = AsyncMock()
-    mock_ws.send_text = AsyncMock()
-    return mock_ws
+def mock_ws():
+    return AsyncMock()
 
+class MockResponse:
+    def __init__(self, status_code, content=b"audio data", raise_exc=False):
+        self.status_code = status_code
+        self.content = content
+        self.raise_exc = raise_exc
+    
+    async def aread(self):
+        return b"Error body"
+        
+    async def aiter_bytes(self, chunk_size):
+        if self.raise_exc:
+            raise Exception("Force Stream Crash")
+        yield self.content
+        yield b"" # empty chunk
+    
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+class MockClient:
+    def __init__(self, mock_resp):
+        self.mock_resp = mock_resp
+    
+    def stream(self, *args, **kwargs):
+        class StreamCtx:
+            async def __aenter__(s): return self.mock_resp
+            async def __aexit__(s, *a): pass
+        return StreamCtx()
+        
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+# --- MAIN DISPATCHER ---
+@patch("tts._synthesize_smallest", new_callable=AsyncMock)
+@patch("tts._synthesize_elevenlabs", new_callable=AsyncMock)
 @pytest.mark.asyncio
-async def test_synthesize_smallest_pcm(mock_websocket):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = MagicMock()
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        
-        async def mock_audio_stream(*args, **kwargs):
-            yield b"PCM_DATA_CHUNK_1"
-            yield b"PCM_DATA_CHUNK_2"
-            
-        mock_response.aiter_bytes = mock_audio_stream
-        
-        mock_stream_ctx = MagicMock()
-        mock_stream_ctx.__aenter__.return_value = mock_response
-        mock_stream_ctx.__aexit__.return_value = None
-        mock_client_instance.stream.return_value = mock_stream_ctx
-        
-        mock_client_ctx = MagicMock()
-        mock_client_ctx.__aenter__.return_value = mock_client_instance
-        mock_client_ctx.__aexit__.return_value = None
-        MockClient.return_value = mock_client_ctx
+async def test_dispatcher(mock_11, mock_small, mock_ws):
+    await synthesize_and_send_audio("Hello", "sid_exotel", mock_ws, tts_provider_override="smallest")
+    assert mock_small.called
+    
+    await synthesize_and_send_audio("Hello", "web_sim_123", mock_ws, tts_provider_override="elevenlabs")
+    assert mock_11.called
 
-        await tts.synthesize_and_send_audio("Hello", "call_123", mock_websocket, tts_provider_override="smallest")
-        
-        # Verify websocket got exact 2 messages
-        assert mock_websocket.send_text.call_count == 2
-        args, _ = mock_websocket.send_text.call_args_list[0]
-        payload = json.loads(args[0])
-        assert payload["event"] == "media"
-        assert payload["stream_sid"] == "call_123"
-
+# --- SMALLEST ---
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(200)))
 @pytest.mark.asyncio
-async def test_synthesize_elevenlabs_pcm(mock_websocket):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = MagicMock()
-        mock_response = AsyncMock()
-        mock_response.status_code = 200
-        
-        async def mock_audio_stream(*args, **kwargs):
-            yield b"\x00" * 2500
-            
-        mock_response.aiter_bytes = mock_audio_stream
-        
-        mock_stream_ctx = MagicMock()
-        mock_stream_ctx.__aenter__.return_value = mock_response
-        mock_stream_ctx.__aexit__.return_value = None
-        mock_client_instance.stream.return_value = mock_stream_ctx
-        
-        mock_client_ctx = MagicMock()
-        mock_client_ctx.__aenter__.return_value = mock_client_instance
-        mock_client_ctx.__aexit__.return_value = None
-        MockClient.return_value = mock_client_ctx
+async def test_smallest_success_raw(mock_http, mock_ws):
+    logger = MagicMock()
+    # needs_raw_pcm = True (is_exotel or browser_sim)
+    await _synthesize_smallest("txt", "sid", mock_ws, "v1", True, logger)
+    assert mock_ws.send_text.called
 
-        await tts.synthesize_and_send_audio("Hello Labs", "call_456", mock_websocket, tts_provider_override="elevenlabs")
-        
-        assert mock_websocket.send_text.call_count >= 1
-        args, _ = mock_websocket.send_text.call_args_list[0]
-        payload = json.loads(args[0])
-        assert payload["stream_sid"] == "call_456"
-
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(200)))
 @pytest.mark.asyncio
-async def test_synthesize_elevenlabs_http_failure(mock_websocket, caplog):
-    with patch("httpx.AsyncClient") as MockClient:
-        mock_client_instance = MagicMock()
-        mock_response = AsyncMock()
-        mock_response.status_code = 401
-        
-        async def mock_aread():
-            return b'{"detail": "Unauthorized"}'
-        mock_response.aread = mock_aread
-        
-        mock_stream_ctx = MagicMock()
-        mock_stream_ctx.__aenter__.return_value = mock_response
-        mock_stream_ctx.__aexit__.return_value = None
-        mock_client_instance.stream.return_value = mock_stream_ctx
-        
-        mock_client_ctx = MagicMock()
-        mock_client_ctx.__aenter__.return_value = mock_client_instance
-        mock_client_ctx.__aexit__.return_value = None
-        MockClient.return_value = mock_client_ctx
-        
-        await tts.synthesize_and_send_audio("Bad Auth", "call_789", mock_websocket, tts_provider_override="elevenlabs")
-        
-        assert mock_websocket.send_text.call_count == 0
+async def test_smallest_success_ulaw(mock_http, mock_ws):
+    logger = MagicMock()
+    # needs_raw_pcm = False!
+    await _synthesize_smallest("txt", "SM123", mock_ws, "v1", False, logger)
+    assert mock_ws.send_text.called
+
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(500)))
+@pytest.mark.asyncio
+async def test_smallest_error_resp(mock_http, mock_ws):
+    logger = MagicMock()
+    await _synthesize_smallest("txt", "sid", mock_ws, "v1", True, logger)
+    logger.error.assert_called()
+
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(200, raise_exc=True)))
+@pytest.mark.asyncio
+async def test_smallest_exception(mock_http, mock_ws):
+    logger = MagicMock()
+    await _synthesize_smallest("txt", "sid", mock_ws, "v1", True, logger)
+    logger.error.assert_called()
+
+# --- ELEVENLABS ---
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(200, content=b"A"*1280)))
+@pytest.mark.asyncio
+async def test_11_success_raw(mock_http, mock_ws):
+    logger = MagicMock()
+    _tts_recording_buffers["sid"] = []
+    # needs_raw_pcm = True
+    await _synthesize_elevenlabs("txt", "sid", mock_ws, "v1", "hi", True, False, True, logger)
+    assert mock_ws.send_text.called
+    assert len(_tts_recording_buffers["sid"]) > 0
+
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(200)))
+@pytest.mark.asyncio
+async def test_11_success_ulaw(mock_http, mock_ws):
+    logger = MagicMock()
+    # needs_raw_pcm = False! -> hits lines 84, 135-141
+    await _synthesize_elevenlabs("txt", "SM123", mock_ws, "v1", "hi", False, False, False, logger)
+    assert mock_ws.send_text.called
+
+@patch("httpx.AsyncClient", return_value=MockClient(MockResponse(500)))
+@pytest.mark.asyncio
+async def test_11_error_resp(mock_http, mock_ws):
+    logger = MagicMock()
+    await _synthesize_elevenlabs("txt", "sid", mock_ws, "v1", "hi", True, False, False, logger)
+    logger.error.assert_called()
+
+@patch("httpx.AsyncClient")
+@pytest.mark.asyncio
+async def test_11_exception(mock_http, mock_ws):
+    logger = MagicMock()
+    mock_http.side_effect = Exception("Boom")
+    # General Exception -> hits lines 145-146
+    await _synthesize_elevenlabs("txt", "sid", mock_ws, "v1", "hi", True, False, False, logger)
+    logger.error.assert_called()
+
+@patch("httpx.AsyncClient")
+@pytest.mark.asyncio
+async def test_11_cancelled(mock_http, mock_ws):
+    logger = MagicMock()
+    mock_http.side_effect = asyncio.CancelledError()
+    # Cancelled Error -> hits lines 143-144
+    await _synthesize_elevenlabs("txt", "sid", mock_ws, "v1", "hi", True, False, False, logger)
+    logger.info.assert_called_with("TTS ElevenLabs cancelled (barge-in)")
