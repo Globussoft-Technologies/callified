@@ -199,11 +199,11 @@ async def test_startup_event(mock_create, mock_db):
 # --- PHASE 3 SUPPLEMENTAL COVERAGE ---
 
 @patch("twilio.rest.Client")
-@patch("main.TWILIO_ACCOUNT_SID", "sid")
-@patch("main.TWILIO_AUTH_TOKEN", "token")
+@patch("main.TWILIO_ACCOUNT_SID", "sid", create=True)
+@patch("main.TWILIO_AUTH_TOKEN", "token", create=True)
 def test_send_whatsapp_message(mock_client):
     from main import send_whatsapp_message
-    with patch("database.create_whatsapp_log"):
+    with patch("database.create_whatsapp_log", create=True):
 
         # Local mobile
         send_whatsapp_message("1234567890", "Test")
@@ -248,7 +248,7 @@ async def test_dial_twilio_exceptions(mock_client):
         except Exception: pass
     
     # Exception branch
-    with patch("main.TWILIO_ACCOUNT_SID", "sid"), patch("main.TWILIO_AUTH_TOKEN", "token"):
+    with patch("main.TWILIO_ACCOUNT_SID", "sid", create=True), patch("main.TWILIO_AUTH_TOKEN", "token", create=True):
         mock_client.return_value.calls.create.side_effect = Exception("Twilio SDK Fail")
         try:
             await dial_twilio({"name": "Test", "interest": "Test", "phone_number": "123"})

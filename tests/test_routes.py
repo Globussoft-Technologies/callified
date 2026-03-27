@@ -257,7 +257,7 @@ def test_get_products(mock_get):
     ans = client.get("/api/organizations/1/products")
 
 # --- PHASE 3 SUPPLEMENTAL COVERAGE ---
-@patch("routes.get_conn")
+@patch("database.get_conn")
 def test_upload_recording_coverage(mock_conn):
     mock_cursor = MagicMock()
     mock_conn.return_value.cursor.return_value = mock_cursor
