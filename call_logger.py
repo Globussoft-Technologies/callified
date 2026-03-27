@@ -125,4 +125,12 @@ def setup_logging():
     # Also attach to root logger as fallback
     root = logging.getLogger()
     root.addHandler(handler)
-    root.setLevel(logging.INFO)
+    root.setLevel(logging.DEBUG)
+    
+    # Optional: ensure uvicorn error output goes to stdout cleanly
+    import sys
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    sh.setFormatter(formatter)
+    root.addHandler(sh)
