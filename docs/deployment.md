@@ -9,9 +9,15 @@ User: `empcloud-development`
 ### 1. `test.callified.ai`
 This is your **primary development and testing sandbox**. All new features, experimental APIs, and code upgrades apply *directly* here.
 - Directory: `/home/empcloud-development/callified-ai`
-- Daemon: `systemctl status gpt-callified-ai.service`
+- Daemon: `systemctl status callified-ai.service`
 - Proxy: `localhost:8001`
 - Database: `callified_ai`
+
+**Verified Live Telemetry (`callified-ai`):**
+- `DEFAULT_PROVIDER`: `exotel`
+- `LLM_PROVIDER`: `groq`
+- `TTS_PROVIDER`: `elevenlabs`
+- `PUBLIC_SERVER_URL`: `https://test.callified.ai`
 
 ### 2. `demo.callified.ai`
 This is your **frozen Release 1 demo sandbox** solely provisioned for internal sales pitching. It represents the Sub-Second TTS/LLM upgrade. 

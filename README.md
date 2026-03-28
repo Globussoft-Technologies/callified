@@ -136,8 +136,8 @@ Create a `.env` file in the root of the project (the same folder as `main.py`) a
 
 ```ini
 # --- TELECOM PROVIDERS ---
-# Which dialer to use by default: 'twilio' or 'exotel'
-DEFAULT_PROVIDER=twilio
+# Which dialer to use by default: 'twilio' or 'exotel' (Currently Exotel on Live)
+DEFAULT_PROVIDER=exotel
 
 # Twilio Configuration
 TWILIO_ACCOUNT_SID=your_twilio_sid
@@ -150,15 +150,29 @@ EXOTEL_API_TOKEN=your_exotel_api_token
 EXOTEL_ACCOUNT_SID=your_exotel_account_sid
 EXOTEL_CALLER_ID=your_exotel_caller_id
 
-# --- AI SERVICES ---
+# --- AI SERVICES PIPELINE ---
+# Model Routing
+LLM_PROVIDER=groq
+TTS_PROVIDER=elevenlabs
+
+# API Keys
 DEEPGRAM_API_KEY=your_deepgram_api_key
+GROQ_API_KEY=your_groq_api_key
 GEMINI_API_KEY=your_gemini_api_key
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_VOICE_ID=your_elevenlabs_voice_id
+SMALLEST_API_KEY=your_smallest_ai_key
+SMALLEST_VOICE_ID=your_smallest_ai_voice_id
 
-# --- NETWORKING ---
-# This is your Ngrok public URL that Twilio/Exotel will securely ping.
+# --- NETWORKING & AUTH ---
+# Server domain for Webhook Audio Streams (Ngrok or test.callified.ai)
 PUBLIC_SERVER_URL=https://your-ngrok-url.ngrok-free.app
+PUBLIC_URL=https://your-ngrok-url.ngrok-free.app
+JWT_SECRET=your_secure_jwt_secret
+MYSQL_HOST=localhost
+MYSQL_USER=callified
+MYSQL_PASSWORD=your_password
+MYSQL_DATABASE=callified_ai
 ```
 
 ### 3. Start Ngrok (Webhook Tunneling)
@@ -205,3 +219,15 @@ You do *not* need to manually configure the webhook endpoint on the Twilio dashb
 You must configure an Exotel **VoiceBot Applet** in your Exotel call flow visualizer. The applet should point its WebSocket URL to:
 `wss://<YOUR-NGROK-URL-WITHOUT-HTTPS>/media-stream`
 When the call connects, Exotel will stream the audio down this WebSocket connecting the client perfectly to the AI.
+
+### 7. Automated E2E Testing
+The project abandons traditional local mocking in favor of two controllable End-to-End Test suites that execute real database permutations and API testing natively across environments.
+To verify codebase integrity, run one of the two top-level triggers based on the environment you are validating:
+
+```bash
+# Validates your active localhost (http://localhost:8000)
+python run_local_e2e.py
+
+# Validates the active remote sandbox (https://test.callified.ai)
+python run_server_e2e.py
+```

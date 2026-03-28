@@ -1,8 +1,12 @@
 import paramiko
 
-host = "163.227.174.141"
-username = "empcloud-development"
-password = "rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+host = os.environ.get("DEPLOY_HOST")
+username = os.environ.get("DEPLOY_USER")
+password = os.environ.get("DEPLOY_PASS")
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

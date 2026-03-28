@@ -245,8 +245,8 @@ def api_get_sites(current_user: dict = Depends(get_current_user)):
     return get_all_sites(current_user.get("org_id"))
 
 @api_router.post("/api/punch")
-def api_punch(punch: PunchCreate):
-    site = get_site_by_id(punch.site_id)
+def api_punch(punch: PunchCreate, current_user: dict = Depends(get_current_user)):
+    site = get_site_by_id(punch.site_id, current_user.get("org_id"))
     if not site:
         return {"status": "error", "message": "Invalid site."}
     distance_m = haversine_distance(punch.lat, punch.lon, site["lat"], site["lon"])
@@ -577,7 +577,7 @@ def mobile_get_analytics(current_user: dict = Depends(get_current_user)):
 
 @mobile_api.post("/punch")
 def mobile_punch(punch: PunchCreate, current_user: dict = Depends(get_current_user)):
-    return api_punch(punch)
+    return api_punch(punch, current_user)
 
 @mobile_api.get("/tasks")
 def mobile_get_tasks(current_user: dict = Depends(get_current_user)):

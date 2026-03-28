@@ -371,6 +371,7 @@ async def handle_media_stream(websocket: WebSocket):
             channels=1,
             endpointing=200,          # Aggressive 200ms VAD endpointing
             utterance_end_ms="1000",  # Force utterance generation
+            interim_results=True,     # Fix HTTP 400 deepgram crash
         )
     )
 

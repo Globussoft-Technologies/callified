@@ -23,7 +23,7 @@ def exec_sudo(cmd):
     print(stdout.read().decode())
     print(stderr.read().decode())
 
-exec_sudo("systemctl status demo-callified-ai.service --no-pager")
-exec_sudo("journalctl -u demo-callified-ai.service -n 50 --no-pager")
+exec_sudo("systemctl status callified-ai.service --no-pager")
+exec_sudo("journalctl -u callified-ai.service -n 1000 --no-pager | grep -i 'error\|except\|llm\|warn\|fail'")
 
 ssh.close()

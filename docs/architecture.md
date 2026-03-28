@@ -24,3 +24,12 @@ The frontend is a containerized `Vite React` architecture located perfectly in `
 - `/api/products` (Dynamic KB ingestion)
 
 All queries bypass ORMs and use bare `pymysql.cursors.DictCursor` mapping for millisecond velocity in `database.py`.
+
+## Quality Assurance & Testing
+The repository contains a unified End-to-End (E2E) robust testing architecture located in `tests/e2e/`. These tests abandon isolated function mocks in favor of performing native HTTP lifecycles directly against deployed architectures.
+
+The execution environments are mapped dynamically via top-level runner scripts:
+- **`run_local_e2e.py`**: Executes tests aggressively against `http://localhost:8000`.
+- **`run_server_e2e.py`**: Intercepts routing directly mapped to `https://test.callified.ai`.
+
+The `conftest` authentication hooks automatically spawn JWT credentials during bootstrap to bypass login wrappers systematically across test dimensions.
