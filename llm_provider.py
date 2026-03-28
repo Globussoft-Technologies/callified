@@ -13,7 +13,7 @@ import logging
 
 logger = logging.getLogger("uvicorn.error")
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
 
 # ─── Groq Provider ───────────────────────────────────────────────────────────
 
@@ -155,10 +155,8 @@ async def generate_response(chat_history: list, system_instruction: str, max_tok
         try:
             return await _groq_generate(chat_history, system_instruction, max_tokens)
         except Exception as e:
-            if "429" in str(e) or "rate_limit" in str(e).lower():
-                logger.warning(f"[LLM] Groq rate limited, falling back to Gemini: {str(e)[:80]}")
-                return await _gemini_generate(chat_history, system_instruction, max_tokens)
-            raise
+            logger.warning(f"[LLM] Groq failed, falling back to Gemini: {str(e)[:80]}")
+            return await _gemini_generate(chat_history, system_instruction, max_tokens)
     else:
         return await _gemini_generate(chat_history, system_instruction, max_tokens)
 
@@ -175,12 +173,9 @@ async def generate_response_stream(chat_history: list, system_instruction: str, 
             async for chunk in _groq_generate_stream(chat_history, system_instruction, max_tokens):
                 yield chunk
         except Exception as e:
-            if "429" in str(e) or "rate_limit" in str(e).lower():
-                logger.warning(f"[LLM] Groq rate limited on STREAM, falling back to Gemini: {str(e)[:80]}")
-                async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
-                    yield chunk
-            else:
-                raise
+            logger.warning(f"[LLM] Groq failed on STREAM, falling back to Gemini: {str(e)[:80]}")
+            async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
+                yield chunk
     else:
         async for chunk in _gemini_generate_stream(chat_history, system_instruction, max_tokens):
             yield chunk
