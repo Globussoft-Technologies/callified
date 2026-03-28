@@ -20,7 +20,15 @@ def exec_sudo(cmd):
     stdin, stdout, stderr = ssh.exec_command(f"sudo -S {cmd}")
     stdin.write(PASSWORD + '\n')
     stdin.flush()
-    print(stdout.read().decode())
+    print(f"Connecting to {HOSTNAME} to fetch dialed conversation traces...")
+    
+    # Filter journal specifically for STT results and LLM boundaries
+    # Using python's paramiko to pull the logs cleanly
+    command = "journalctl -u callified-ai.service --since '20 minutes ago' --no-pager | grep -iE 'STT\]|LLM STREAM|AI STREAM|\[LLM\]'"
+    
+    stdin, stdout, stderr = ssh.exec_command(command)
+    output = stdout.read().decode('utf-8')
+    print(output)
     print(stderr.read().decode())
 
 exec_sudo("systemctl status callified-ai.service --no-pager")
