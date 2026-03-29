@@ -629,15 +629,20 @@ export default function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      await apiFetch(`${API_URL}/leads/${editingLead.id}`, {
+      const res = await apiFetch(`${API_URL}/leads/${editingLead.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editFormData)
       });
+      const data = await res.json();
+      if (!res.ok || data.status === 'error') {
+        throw new Error(data.message || 'Error updating lead details');
+      }
       setEditModalOpen(false);
       setEditingLead(null);
       fetchLeads();
     } catch (e) {
+      alert(e.message);
       console.error('Error updating lead', e);
     }
     setLoading(false);

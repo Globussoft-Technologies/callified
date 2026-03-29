@@ -297,9 +297,9 @@ def update_lead(lead_id: int, data: dict, org_id: int):
             lead_id
         ))
     
-    affected = cursor.rowcount
+    
     conn.close()
-    return affected > 0
+    return True
 
 def delete_lead(lead_id: int, org_id: int):
     conn = get_conn()
@@ -308,9 +308,8 @@ def delete_lead(lead_id: int, org_id: int):
         cursor.execute("DELETE FROM leads WHERE id = %s AND org_id = %s", (lead_id, org_id))
     else:
         cursor.execute("DELETE FROM leads WHERE id = %s", (lead_id,))
-    affected = cursor.rowcount
     conn.close()
-    return affected > 0
+    return True
 
 def update_call_note(call_sid: str, note: str, phone: str = ""):
     conn = get_conn()
