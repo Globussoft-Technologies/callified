@@ -228,11 +228,10 @@ def api_draft_email(lead_id: int, current_user: dict = Depends(get_current_user)
     Draft a highly professional, persuasive 3-sentence follow-up email based on this note.
     Return ONLY a JSON object with strictly these keys: "subject", "body". Do not wrap in markdown blocks, just return exact JSON.
     """
-    import google.generativeai as genai
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    from google import genai
+    client = genai.Client(api_key=(os.getenv("GEMINI_API_KEY") or "").strip())
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(text)
     except Exception:
