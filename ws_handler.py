@@ -196,8 +196,10 @@ async def handle_media_stream(websocket: WebSocket):
     _agent_name = _voice_names.get(_voice_id, "अर्जुन")
     if _voice_id in _female_voices:
         _agent_gender_hint = "तुम लड़की हो। 'रही हूँ', 'करूँगी', 'बोल रही हूँ' बोलो।"
+        _bol = "बोल रही हूँ"
     else:
         _agent_gender_hint = "तुम लड़का हो। 'रहा हूँ', 'करूँगा', 'बोल रहा हूँ' बोलो।"
+        _bol = "बोल रहा हूँ"
 
     # Extract company name from product context or org name
     _company_name = "हमारी कंपनी"
@@ -262,14 +264,14 @@ async def handle_media_stream(websocket: WebSocket):
         f"## तुम्हारी पहचान\n"
         f"- तुम्हारा नाम: {_agent_name}\n"
         f"- कंपनी: {_company_name}\n"
-        f"- अगर कोई पूछे 'कहाँ से बोल रहे हो?' या 'कौन सी कंपनी?' तो तुरंत बोलो: 'मैं {_company_name} से {_agent_name} बोल रहा हूँ।'\n"
+        f"- अगर कोई पूछे 'कहाँ से बोल रहे हो?' या 'कौन सी कंपनी?' तो तुरंत बोलो: 'मैं {_company_name} से {_agent_name} {_bol}।'\n"
         f"- कंपनी का नाम कभी छुपाओ मत। पहले ही बोल दो।\n\n"
 
         f"## गोल\n"
         f"सिर्फ एक काम — अपॉइंटमेंट बुक करना। प्रोडक्ट समझाना तुम्हारा काम नहीं है।\n\n"
 
         f"## कॉल फ्लो\n"
-        f"1. इंट्रो: 'नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?'\n"
+        f"1. इंट्रो: 'नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?'\n"
         f"2. अगर हाँ: 'अभी भी इंटरेस्ट है क्या इसमें?'\n"
         f"3. अगर इंटरेस्ट है: 'अच्छा बढ़िया, तो आप कल या परसों कब फ्री होंगे? हमारे सीनियर आपको कॉल करेंगे।'\n"
         f"4. टाइम मिलने पर: टाइम रिपीट करो, थैंक यू बोलो।\n"
@@ -557,7 +559,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 if not greeting_sent:
                     greeting_sent = True
-                    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?"
+                    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?"
                     chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
                     call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
@@ -627,7 +629,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
@@ -657,7 +659,7 @@ async def handle_media_stream(websocket: WebSocket):
                         greeting_sent = True
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
