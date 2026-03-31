@@ -142,15 +142,41 @@ async def handle_media_stream(websocket: WebSocket):
         _agent_name = "अर्जुन"
         _agent_gender_hint = "तुम लड़का हो। 'रहा हूँ', 'करूँगा', 'बोल रहा हूँ' बोलो।"
 
+    # Extract company name from product context or org name
+    _company_name = "हमारी कंपनी"
+    if product_ctx:
+        # Try to extract company name from product knowledge
+        import re
+        _co_match = re.search(r'by\s+(\w[\w\s]*?)[\)\—\-]', product_ctx)
+        if _co_match:
+            _company_name = _co_match.group(1).strip()
+    if _company_name == "हमारी कंपनी":
+        try:
+            _org_conn = get_conn()
+            _org_cur = _org_conn.cursor()
+            _org_cur.execute("SELECT name FROM organizations WHERE id = %s", (_call_org_id if '_call_org_id' in dir() else 1,))
+            _org_row = _org_cur.fetchone()
+            if _org_row:
+                _company_name = _org_row['name']
+            _org_conn.close()
+        except Exception:
+            pass
+
     dynamic_context = (
-        f"तुम {_agent_name} हो। {_agent_gender_hint} तुम एक फ्रेंडली सेल्स कॉलर हो।\n"
+        f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
         f"तुम {lead_name} को कॉल कर रहे हो। इन्होंने {interest} के बारे में वेबसाइट पर फॉर्म भरा था।\n\n"
+
+        f"## तुम्हारी पहचान\n"
+        f"- तुम्हारा नाम: {_agent_name}\n"
+        f"- कंपनी: {_company_name}\n"
+        f"- अगर कोई पूछे 'कहाँ से बोल रहे हो?' या 'कौन सी कंपनी?' तो तुरंत बोलो: 'मैं {_company_name} से {_agent_name} बोल रहा हूँ।'\n"
+        f"- कंपनी का नाम कभी छुपाओ मत। पहले ही बोल दो।\n\n"
 
         f"## गोल\n"
         f"सिर्फ एक काम — अपॉइंटमेंट बुक करना। प्रोडक्ट समझाना तुम्हारा काम नहीं है।\n\n"
 
         f"## कॉल फ्लो\n"
-        f"1. पूछो: 'आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?'\n"
+        f"1. इंट्रो: 'नमस्ते, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?'\n"
         f"2. अगर हाँ: 'अभी भी इंटरेस्ट है क्या इसमें?'\n"
         f"3. अगर इंटरेस्ट है: 'अच्छा बढ़िया, तो आप कल या परसों कब फ्री होंगे? हमारे सीनियर आपको कॉल करेंगे।'\n"
         f"4. टाइम मिलने पर: टाइम रिपीट करो, थैंक यू बोलो।\n"
