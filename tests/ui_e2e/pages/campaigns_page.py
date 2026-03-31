@@ -22,9 +22,15 @@ class CampaignsPage(BasePage):
         """
         self.page.fill('input[placeholder*="Campaign"]', name)
 
-        # Select product from dropdown (first <select> in the form)
-        selects = self.page.locator("select")
+        # Wait for product dropdown to have the requested option
+        selects = self.page.locator(".modal-overlay select")
         if selects.count() > 0:
+            # Wait until the select has enough options
+            selects.nth(0).wait_for(state="visible", timeout=10000)
+            self.page.wait_for_function(
+                f"document.querySelectorAll('.modal-overlay select')[0]?.options.length > {product_index}",
+                timeout=10000
+            )
             selects.nth(0).select_option(index=product_index)
         if selects.count() > 1:
             selects.nth(1).select_option(index=lead_source_index)
