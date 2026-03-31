@@ -16,6 +16,8 @@ export default function CampaignsTab({
   const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
+  const [editLead, setEditLead] = useState(null);
+  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '' });
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -171,6 +173,23 @@ export default function CampaignsTab({
       fetchCampaignLeads(selectedCampaign.id);
       fetchCampaigns();
     } catch(e) { console.error(e); }
+  };
+
+  const handleEditLead = (lead) => {
+    setEditLead(lead);
+    setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', source: lead.source || '' });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editLead) return;
+    try {
+      await apiFetch(`${API_URL}/leads/${editLead.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm)
+      });
+      setEditLead(null);
+      fetchCampaignLeads(selectedCampaign.id);
+    } catch(e) { alert('Save failed'); }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -540,6 +559,11 @@ export default function CampaignsTab({
                   <td>
                     <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
                       <button className="btn-call"
+                        onClick={() => handleEditLead(lead)}
+                        style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(250,204,21,0.15)', color: '#facc15', borderColor: 'rgba(250,204,21,0.3)'}}>
+                        ✏️ Edit
+                      </button>
+                      <button className="btn-call"
                         onClick={() => onCampaignDial(lead, selectedCampaign.id)}
                         disabled={dialingId === lead.id}
                         style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer'}}>
@@ -647,6 +671,35 @@ export default function CampaignsTab({
                 <button className="btn-primary" onClick={handleCsvImport} disabled={loading || !csvFile}>
                   {loading ? 'Importing...' : 'Import & Add to Campaign'}
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Lead Modal */}
+        {editLead && (
+          <div className="modal-overlay" onClick={() => setEditLead(null)}>
+            <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px'}}>
+              <h2 style={{marginTop: 0, marginBottom: '1.5rem'}}>✏️ Edit Lead</h2>
+              <div className="form-group">
+                <label>First Name</label>
+                <input className="form-input" value={editForm.first_name} onChange={e => setEditForm({...editForm, first_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Last Name</label>
+                <input className="form-input" value={editForm.last_name} onChange={e => setEditForm({...editForm, last_name: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Phone</label>
+                <input className="form-input" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Source</label>
+                <input className="form-input" value={editForm.source} onChange={e => setEditForm({...editForm, source: e.target.value})} />
+              </div>
+              <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
+                <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
+                <button className="btn-primary" onClick={handleSaveEdit}>Save</button>
               </div>
             </div>
           </div>
