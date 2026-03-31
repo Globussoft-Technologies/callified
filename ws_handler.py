@@ -547,6 +547,8 @@ async def handle_media_stream(websocket: WebSocket):
             # Handle binary frames (Exotel sends raw audio bytes)
             if "bytes" in msg and msg["bytes"]:
                 audio_data = msg["bytes"]
+                if len(_recording_mic_chunks) % 100 == 0:
+                    ws_logger.info(f"[DEBUG-REC] Binary frame: {len(audio_data)} bytes, is_exotel={is_exotel_stream}, mic_chunks={len(_recording_mic_chunks)}")
                 if not stream_sid:
                     stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
                     twilio_websockets[stream_sid] = websocket
@@ -602,9 +604,10 @@ async def handle_media_stream(websocket: WebSocket):
                     if stream_sid.startswith("web_sim_"):
                         is_exotel_stream = False
                         ws_logger.info(f"[BROWSER SIM] Detected web simulator stream, sid={stream_sid}")
-                    elif data.get("stream_sid"):
+                    else:
                         is_exotel_stream = True
-                    ws_logger.info(f"Stream started: sid={stream_sid}, exotel={is_exotel_stream}")
+                        ws_logger.info(f"[EXOTEL] Detected Exotel stream, sid={stream_sid}")
+                    ws_logger.info(f"[DEBUG-REC] Stream started: sid={stream_sid}, exotel={is_exotel_stream}, start_data_keys={list(data.keys())}")
                     
                     # [RACE CONDITION FIX] Map strict CallSid from Exotel payload
                     call_sid = data.get("start", {}).get("callSid") or data.get("call_sid") or data.get("CallSid")
@@ -636,13 +639,18 @@ async def handle_media_stream(websocket: WebSocket):
                 elif data.get("event") == "media":
                     raw_audio = base64.b64decode(data["media"]["payload"])
                     dg_connection.send(raw_audio)
+                    if len(_recording_mic_chunks) % 100 == 0:
+                        ws_logger.info(f"[DEBUG-REC] Media event: {len(raw_audio)} bytes, is_exotel={is_exotel_stream}, mic_chunks={len(_recording_mic_chunks)}")
                     if is_exotel_stream:
                         import audioop as _ao2
                         try:
                             pcm = _ao2.ulaw2lin(raw_audio, 2)
                             _recording_mic_chunks.append((time.time(), pcm))
-                        except Exception:
-                            pass
+                        except Exception as _mic_err:
+                            ws_logger.error(f"[DEBUG-REC] Mic capture error: {_mic_err}")
+                    else:
+                        # Capture anyway for non-exotel streams (browser sim sends PCM directly)
+                        _recording_mic_chunks.append((time.time(), raw_audio))
                 elif data.get("event") == "stop":
                     print("Media stream stopped.")
                     break
