@@ -21,8 +21,8 @@ def test_signup_and_login(browser, base_url):
         print(page.content()[:3000])
         raise e
 
-    # Verify we see the CRM tab header or deal pipeline
-    expect(page.locator("h2:has-text('Deal Pipeline')")).to_be_visible(timeout=10000)
+    # Verify we see the Dashboard heading after login
+    expect(page.locator("h2:has-text('Dashboard')")).to_be_visible(timeout=10000)
     page.close()
 
 
