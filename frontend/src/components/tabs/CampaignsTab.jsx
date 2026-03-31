@@ -350,6 +350,8 @@ export default function CampaignsTab({
                   const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/redial-failed`, { method: 'POST' });
                   const data = await res.json();
                   alert(data.message || 'Redial started');
+                  const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
+                  setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
                 } catch(e) { alert('Redial failed'); }
               }}>
               🔄 Redial Failed ({campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length})
@@ -364,6 +366,9 @@ export default function CampaignsTab({
                   const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
                   const data = await res.json();
                   alert(data.message || 'Dialing started');
+                  // Auto-refresh every 15s while dialing
+                  const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
+                  setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
                 } catch(e) { alert('Dial failed'); }
               }}>
               📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})

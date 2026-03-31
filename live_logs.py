@@ -90,7 +90,7 @@ async def api_campaign_events(token: str = "", campaign_id: int = 0):
         sent = len(_campaign_events)
         # Send recent events for this campaign
         for ev in list(_campaign_events)[-20:]:
-            if campaign_id == 0 or ev.get("campaign_id") == campaign_id:
+            if campaign_id == 0 or ev.get("campaign_id") == campaign_id or ev.get("campaign_id") == 0:
                 yield f"data: {ev['message']}\n\n"
         while True:
             await asyncio.sleep(1)
@@ -100,7 +100,7 @@ async def api_campaign_events(token: str = "", campaign_id: int = 0):
                     break
                 try:
                     ev = _campaign_events[idx]
-                    if campaign_id == 0 or ev.get("campaign_id") == campaign_id:
+                    if campaign_id == 0 or ev.get("campaign_id") == campaign_id or ev.get("campaign_id") == 0:
                         yield f"data: {ev['message']}\n\n"
                 except IndexError:
                     break

@@ -463,14 +463,20 @@ async def exotel_status_webhook(request: Request, background_tasks: BackgroundTa
     if terminal_error:
         from database import log_call_status
         log_call_status(phone, terminal_error, "Exotel Call Error")
-        # Emit user-friendly event
+        # Emit user-friendly event — look up campaign_id and lead name from Redis
         from live_logs import emit_campaign_event
         phone_clean = "".join(filter(str.isdigit, str(phone)))[-10:]
-        emit_campaign_event(0, phone_clean, phone, terminal_error.lower(), f"Exotel: {terminal_error}")
+        _pending = redis_store.get_pending_call(f"phone:{phone_clean}")
+        _evt_campaign = _pending.get("campaign_id", 0) if _pending else 0
+        _evt_name = _pending.get("name", phone_clean) if _pending else phone_clean
+        emit_campaign_event(_evt_campaign, _evt_name, phone, terminal_error.lower(), f"Exotel: {terminal_error}")
     elif status.lower() == "completed":
         from live_logs import emit_campaign_event
         phone_clean = "".join(filter(str.isdigit, str(phone)))[-10:]
-        emit_campaign_event(0, phone_clean, phone, "completed", "Call completed")
+        _pending = redis_store.get_pending_call(f"phone:{phone_clean}")
+        _evt_campaign = _pending.get("campaign_id", 0) if _pending else 0
+        _evt_name = _pending.get("name", phone_clean) if _pending else phone_clean
+        emit_campaign_event(_evt_campaign, _evt_name, phone, "completed", "Call completed")
         
     if recording_url and call_sid:
         log.error(f"[EXOTEL-WEBHOOK] Status payload contained a RecordingUrl for {call_sid}!")
