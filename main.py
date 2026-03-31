@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 import call_logger
-from database import init_db, get_lead_by_id, get_active_crm_integrations, update_crm_last_synced, create_lead
+from database import init_db, get_lead_by_id, get_active_crm_integrations, update_crm_last_synced, create_lead, update_lead_status, save_call_transcript
 from crm_providers import BaseCRM
 
 # ─── App Setup ───────────────────────────────────────────────────────────────
@@ -183,6 +183,21 @@ async def dial_exotel(lead: dict):
         logger.info(f"[DIAL] Exotel response ({resp.status_code}): {resp.text[:300]}")
         call_logger.call_event(phone_clean, "DIAL_RESPONSE", f"status={resp.status_code}", response=resp.text[:200])
         last_dial_result.update({"status": resp.status_code, "response": resp.text[:500]})
+
+        # Handle DND/NDNC blocked calls
+        if resp.status_code == 403 and "NDNC" in resp.text:
+            logger.warning(f"[DIAL] DND blocked: {phone_clean}")
+            lead_id = lead.get("lead_id")
+            if lead_id:
+                save_call_transcript(
+                    lead_id=lead_id,
+                    transcript_json=json.dumps([{"role": "System", "text": "Call blocked — this number is registered on TRAI NDNC (Do Not Call) registry. Exotel cannot connect to DND numbers without compliance approval."}], ensure_ascii=False),
+                    recording_url=None,
+                    call_duration_s=0
+                )
+                update_lead_status(lead_id, "DND Blocked")
+            return
+
         try:
             dial_json = resp.json()
             exotel_sid = dial_json.get("Call", {}).get("Sid", "")
