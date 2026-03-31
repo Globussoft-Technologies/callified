@@ -253,6 +253,25 @@ export default function CampaignsTab({
             </span>
           )}
           {statusBadge(selectedCampaign.status)}
+          <select className="form-input" value={selectedCampaign.lead_source || ''}
+            onChange={async (e) => {
+              const src = e.target.value;
+              await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lead_source: src })
+              });
+              setSelectedCampaign({...selectedCampaign, lead_source: src});
+            }}
+            style={{width: 'auto', height: '28px', fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0', borderRadius: '6px'}}>
+            <option value="">No Source</option>
+            <option value="facebook">Facebook / Meta</option>
+            <option value="google">Google Ads</option>
+            <option value="instagram">Instagram</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="website">Website</option>
+            <option value="referral">Referral</option>
+            <option value="cold">Cold Outreach</option>
+          </select>
         </div>
 
         <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
