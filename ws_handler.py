@@ -363,8 +363,10 @@ async def handle_media_stream(websocket: WebSocket):
                                     conv_logger.info("[HANGUP] TTS drain complete, closing connection.")
                                 except (asyncio.TimeoutError, Exception):
                                     conv_logger.info("[HANGUP] TTS drain timed out, forcing close.")
-                                # Small grace period for audio to reach the client
-                                await asyncio.sleep(1)
+                                # Grace period for browser to finish playing the audio buffer.
+                                # TTS sends chunks faster than realtime — browser needs time to play them.
+                                # ~4 seconds covers a typical farewell sentence at normal speech rate.
+                                await asyncio.sleep(4)
                                 try:
                                     await websocket.close()
                                 except Exception:
