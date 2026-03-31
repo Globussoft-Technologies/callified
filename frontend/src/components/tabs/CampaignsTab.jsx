@@ -290,6 +290,20 @@ export default function CampaignsTab({
               🔄 Redial Failed ({campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length})
             </button>
           )}
+          {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+            <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', fontSize: '0.85rem', padding: '8px 16px'}}
+              onClick={async () => {
+                const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
+                if (!window.confirm(`Dial ALL ${newCount} new leads? (45s gap between calls)`)) return;
+                try {
+                  const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
+                  const data = await res.json();
+                  alert(data.message || 'Dialing started');
+                } catch(e) { alert('Dial failed'); }
+              }}>
+              📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
+            </button>
+          )}
         </div>
 
         <div className="glass-panel" style={{overflowX: 'auto'}}>

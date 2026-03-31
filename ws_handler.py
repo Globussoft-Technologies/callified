@@ -222,9 +222,32 @@ async def handle_media_stream(websocket: WebSocket):
     # Use only first name to address the lead
     _lead_first = lead_name.split()[0] if lead_name.strip() else "Customer"
 
+    # Detect lead source for contextual greeting
+    _lead_source = ""
+    try:
+        _src_conn = get_conn()
+        _src_cur = _src_conn.cursor()
+        _src_cur.execute("SELECT source FROM leads WHERE id = %s", (_call_lead_id,))
+        _src_row = _src_cur.fetchone()
+        if _src_row:
+            _lead_source = (_src_row.get('source') or "").strip().lower()
+        _src_conn.close()
+    except Exception:
+        pass
+
+    # Map source to Hindi platform name
+    _source_map = {
+        'meta': 'Facebook', 'facebook': 'Facebook', 'fb': 'Facebook',
+        'google': 'Google', 'google ads': 'Google Ads',
+        'instagram': 'Instagram', 'insta': 'Instagram',
+        'linkedin': 'LinkedIn', 'website': 'हमारी वेबसाइट',
+    }
+    _platform = _source_map.get(_lead_source, "हमारी वेबसाइट")
+    _source_context = f"{_platform} पर हमारा ad देखकर enquiry की थी" if _platform != "हमारी वेबसाइट" else "हमारी वेबसाइट पर फॉर्म भरा था"
+
     dynamic_context = (
         f"तुम {_agent_name} हो। {_agent_gender_hint} तुम {_company_name} कंपनी से बोल रहे हो।\n"
-        f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {interest} के बारे में वेबसाइट पर फॉर्म भरा था।\n"
+        f"तुम {_lead_first} को कॉल कर रहे हो। इन्होंने {_source_context}।\n"
         f"- लीड को सिर्फ पहले नाम से बुलाओ: '{_lead_first} जी'। फुल नेम या लास्ट नेम कभी मत बोलो।\n\n"
 
         f"## तुम्हारी पहचान\n"
@@ -237,7 +260,7 @@ async def handle_media_stream(websocket: WebSocket):
         f"सिर्फ एक काम — अपॉइंटमेंट बुक करना। प्रोडक्ट समझाना तुम्हारा काम नहीं है।\n\n"
 
         f"## कॉल फ्लो\n"
-        f"1. इंट्रो: 'नमस्ते, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?'\n"
+        f"1. इंट्रो: 'नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?'\n"
         f"2. अगर हाँ: 'अभी भी इंटरेस्ट है क्या इसमें?'\n"
         f"3. अगर इंटरेस्ट है: 'अच्छा बढ़िया, तो आप कल या परसों कब फ्री होंगे? हमारे सीनियर आपको कॉल करेंगे।'\n"
         f"4. टाइम मिलने पर: टाइम रिपीट करो, थैंक यू बोलो।\n"
@@ -525,7 +548,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 if not greeting_sent:
                     greeting_sent = True
-                    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?"
+                    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?"
                     chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
                     call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
@@ -595,7 +618,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
@@ -625,7 +648,7 @@ async def handle_media_stream(websocket: WebSocket):
                         greeting_sent = True
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
+                                f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने {_source_context} क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )

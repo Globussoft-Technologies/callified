@@ -316,7 +316,51 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
         log.info(f"[REDIAL] Campaign {campaign_id} redial complete: {len(failed_leads)} leads")
 
     background_tasks.add_task(_redial_queue)
-    return {"status": "success", "message": f"Redialing {len(failed_leads)} failed leads (30s gap between calls)"}
+    return {"status": "success", "message": f"Redialing {len(failed_leads)} failed leads (45s gap between calls)"}
+
+@app.post("/api/campaigns/{campaign_id}/dial-all")
+async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTasks):
+    """Queue ALL new/undialed leads in a campaign for sequential dialing."""
+    from database import get_campaign_by_id, get_campaign_leads, get_campaign_voice_settings
+    import logging
+    log = logging.getLogger("uvicorn.error")
+
+    campaign = get_campaign_by_id(campaign_id)
+    if not campaign:
+        return {"status": "error", "message": "Campaign not found"}
+
+    leads = get_campaign_leads(campaign_id)
+    dialable = [l for l in leads if l.get("status", "new") in ("new", "New")]
+    if not dialable:
+        return {"status": "error", "message": "No new leads to dial"}
+
+    voice = get_campaign_voice_settings(campaign_id, campaign.get("org_id"))
+
+    async def _dial_all_queue():
+        for i, lead in enumerate(dialable):
+            if i > 0:
+                await asyncio.sleep(45)
+            log.info(f"[DIAL-ALL] {i+1}/{len(dialable)}: Dialing {lead['first_name']} ({lead['phone']})")
+            call_data = {
+                "name": lead["first_name"], "phone_number": lead["phone"],
+                "interest": campaign.get("product_name", lead.get("interest", "our platform")),
+                "provider": DEFAULT_PROVIDER, "lead_id": lead["id"],
+                "campaign_id": campaign_id, "product_id": campaign.get("product_id"),
+            }
+            if voice.get("tts_provider"):
+                call_data["tts_provider"] = voice["tts_provider"]
+            if voice.get("tts_voice_id"):
+                call_data["tts_voice_id"] = voice["tts_voice_id"]
+            if voice.get("tts_language"):
+                call_data["tts_language"] = voice["tts_language"]
+            try:
+                await initiate_call(call_data)
+            except Exception as e:
+                log.error(f"[DIAL-ALL] Failed for {lead['phone']}: {e}")
+        log.info(f"[DIAL-ALL] Campaign {campaign_id} dial-all complete: {len(dialable)} leads")
+
+    background_tasks.add_task(_dial_all_queue)
+    return {"status": "success", "message": f"Dialing {len(dialable)} new leads (45s gap between calls)"}
 
 # ─── Debug Endpoints ─────────────────────────────────────────────────────────
 
