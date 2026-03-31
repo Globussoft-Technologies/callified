@@ -186,6 +186,9 @@ def init_db():
             product_id INT NOT NULL,
             name VARCHAR(255) NOT NULL,
             status VARCHAR(50) DEFAULT 'active',
+            tts_provider VARCHAR(50) DEFAULT NULL,
+            tts_voice_id VARCHAR(255) DEFAULT NULL,
+            tts_language VARCHAR(10) DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
             FOREIGN KEY (product_id) REFERENCES products (id) ON DELETE CASCADE
@@ -773,6 +776,40 @@ def get_campaign_stats(campaign_id: int) -> Dict:
     appointments = cursor.fetchone()['cnt']
     conn.close()
     return {"total": total, "called": called, "qualified": qualified, "appointments": appointments}
+
+
+def get_campaign_voice_settings(campaign_id: int, org_id: int = None) -> Dict:
+    """Get voice settings for a campaign, falling back to org defaults."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT tts_provider, tts_voice_id, tts_language, org_id FROM campaigns WHERE id = %s", (campaign_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return {}
+    # If campaign has its own settings, use them
+    if row.get('tts_provider') and row.get('tts_voice_id'):
+        conn.close()
+        return {"tts_provider": row['tts_provider'], "tts_voice_id": row['tts_voice_id'], "tts_language": row.get('tts_language', 'hi')}
+    # Fall back to org settings
+    _org = org_id or row.get('org_id')
+    if _org:
+        result = get_org_voice_settings(_org)
+        conn.close()
+        return result
+    conn.close()
+    return {}
+
+
+def save_campaign_voice_settings(campaign_id: int, tts_provider: str, tts_voice_id: str, tts_language: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE campaigns SET tts_provider = %s, tts_voice_id = %s, tts_language = %s WHERE id = %s",
+        (tts_provider or None, tts_voice_id or None, tts_language or None, campaign_id)
+    )
+    conn.close()
+    return True
 
 
 def get_product_context_for_campaign(campaign_id: int) -> str:

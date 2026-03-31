@@ -56,7 +56,17 @@ async def handle_media_stream(websocket: WebSocket):
     _tts_voice_override = websocket.query_params.get("voice", None) or None
     _tts_language_override = websocket.query_params.get("tts_language", None) or None
 
-    # If no voice override passed, look up org voice settings from DB
+    # Check Redis pending call for campaign voice overrides (Exotel dial flow)
+    if not _tts_voice_override:
+        _pending_voice = redis_store.get_pending_call("latest")
+        if _pending_voice.get("tts_provider"):
+            _tts_provider_override = _pending_voice["tts_provider"]
+        if _pending_voice.get("tts_voice_id"):
+            _tts_voice_override = _pending_voice["tts_voice_id"]
+        if _pending_voice.get("tts_language"):
+            _tts_language_override = _pending_voice["tts_language"]
+
+    # If still no voice override, look up org voice settings from DB
     if not _tts_voice_override:
         try:
             _vc = get_conn()

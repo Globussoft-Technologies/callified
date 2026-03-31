@@ -31,6 +31,7 @@ from database import (
     log_knowledge_file, update_knowledge_file_status, get_knowledge_files, delete_knowledge_file,
     create_campaign, get_campaigns_by_org, get_campaign_by_id, update_campaign, delete_campaign,
     add_leads_to_campaign, remove_lead_from_campaign, get_campaign_leads, get_campaign_stats,
+    get_campaign_voice_settings, save_campaign_voice_settings,
 )
 import rag
 
@@ -593,7 +594,8 @@ def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     stats = get_campaign_stats(campaign_id)
-    return {**campaign, "stats": stats}
+    voice = get_campaign_voice_settings(campaign_id, current_user.get("org_id"))
+    return {**campaign, "stats": stats, "voice_settings": voice}
 
 @api_router.put("/api/campaigns/{campaign_id}")
 def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
@@ -622,6 +624,15 @@ def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict 
 @api_router.get("/api/campaigns/{campaign_id}/stats")
 def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_current_user)):
     return get_campaign_stats(campaign_id)
+
+@api_router.get("/api/campaigns/{campaign_id}/voice-settings")
+def api_get_campaign_voice(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    return get_campaign_voice_settings(campaign_id, current_user.get("org_id"))
+
+@api_router.put("/api/campaigns/{campaign_id}/voice-settings")
+def api_save_campaign_voice(campaign_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    save_campaign_voice_settings(campaign_id, payload.get("tts_provider"), payload.get("tts_voice_id"), payload.get("tts_language"))
+    return {"status": "ok"}
 
 @api_router.post("/api/campaigns/{campaign_id}/import-csv")
 async def api_campaign_import_csv(campaign_id: int, current_user: dict = Depends(get_current_user), file: UploadFile = File(...)):

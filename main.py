@@ -145,6 +145,12 @@ async def initiate_call(lead: dict):
         pending["campaign_id"] = lead["campaign_id"]
     if lead.get("product_id"):
         pending["product_id"] = lead["product_id"]
+    if lead.get("tts_provider"):
+        pending["tts_provider"] = lead["tts_provider"]
+    if lead.get("tts_voice_id"):
+        pending["tts_voice_id"] = lead["tts_voice_id"]
+    if lead.get("tts_language"):
+        pending["tts_language"] = lead["tts_language"]
     redis_store.set_pending_call("latest", pending)
     if provider == "twilio":
         await dial_twilio(lead)
@@ -236,19 +242,27 @@ async def api_dial_lead(lead_id: int, background_tasks: BackgroundTasks):
 
 @app.post("/api/campaigns/{campaign_id}/dial/{lead_id}")
 async def api_campaign_dial_lead(campaign_id: int, lead_id: int, background_tasks: BackgroundTasks):
-    from database import get_campaign_by_id
+    from database import get_campaign_by_id, get_campaign_voice_settings
     lead = get_lead_by_id(lead_id)
     campaign = get_campaign_by_id(campaign_id)
     if not lead:
         return {"status": "error", "message": "Lead not found"}
     if not campaign:
         return {"status": "error", "message": "Campaign not found"}
-    background_tasks.add_task(initiate_call, {
+    voice = get_campaign_voice_settings(campaign_id, campaign.get("org_id"))
+    call_data = {
         "name": lead["first_name"], "phone_number": lead["phone"],
         "interest": campaign.get("product_name", lead.get("interest", "our platform")),
         "provider": DEFAULT_PROVIDER, "lead_id": lead_id,
         "campaign_id": campaign_id, "product_id": campaign.get("product_id"),
-    })
+    }
+    if voice.get("tts_provider"):
+        call_data["tts_provider"] = voice["tts_provider"]
+    if voice.get("tts_voice_id"):
+        call_data["tts_voice_id"] = voice["tts_voice_id"]
+    if voice.get("tts_language"):
+        call_data["tts_language"] = voice["tts_language"]
+    background_tasks.add_task(initiate_call, call_data)
     return {"status": "success", "message": f"Dialing {lead['first_name']} for campaign '{campaign['name']}'..."}
 
 # ─── Debug Endpoints ─────────────────────────────────────────────────────────
