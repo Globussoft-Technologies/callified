@@ -121,7 +121,10 @@ def api_create_lead(lead: LeadCreate, current_user: dict = Depends(get_current_u
         lead_id = create_lead(lead.dict(), current_user.get("org_id"))
         return {"status": "success", "id": lead_id}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        msg = str(e)
+        if "Duplicate" in msg and "phone" in msg:
+            return {"status": "error", "message": "A lead with this phone number already exists."}
+        return {"status": "error", "message": msg}
 
 @api_router.post("/api/leads/import-csv")
 async def api_import_csv(current_user: dict = Depends(get_current_user), file: UploadFile = File(...)):
@@ -167,7 +170,10 @@ def api_update_lead(lead_id: int, lead: LeadCreate, current_user: dict = Depends
             return {"status": "success", "message": f"Lead {lead_id} updated"}
         return {"status": "error", "message": "Lead not found"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        msg = str(e)
+        if "Duplicate" in msg and "phone" in msg:
+            return {"status": "error", "message": "Another lead with this phone number already exists."}
+        return {"status": "error", "message": msg}
 
 @api_router.delete("/api/leads/{lead_id}")
 def api_delete_lead(lead_id: int, current_user: dict = Depends(get_current_user)):

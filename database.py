@@ -28,14 +28,16 @@ def init_db():
             org_id INT,
             first_name VARCHAR(255) NOT NULL,
             last_name VARCHAR(255),
-            phone VARCHAR(50) NOT NULL UNIQUE,
+            phone VARCHAR(50) NOT NULL,
             source VARCHAR(255),
             status VARCHAR(50) DEFAULT 'new',
             follow_up_note TEXT,
             external_id VARCHAR(255),
             crm_provider VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE SET NULL
+            interest VARCHAR(255),
+            UNIQUE KEY phone_org (phone, org_id),
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
         )
     ''')
     
