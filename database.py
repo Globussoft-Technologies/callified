@@ -358,22 +358,16 @@ def log_call_status(phone: str, call_status: str, error_msg: str = ""):
     cursor = conn.cursor()
     phone_clean = "".join(filter(str.isdigit, str(phone)))
     if len(phone_clean) > 10:
-        phone_clean = phone_clean[-10:]  # Match last 10 digits
-        
+        phone_clean = phone_clean[-10:]
+
     status_label = f"Call Failed ({call_status})"
     if call_status.lower() in ["completed", "in-progress", "ringing", "answered"]:
         status_label = "Calling..."
-    
-    note_update = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Telecom Status: {call_status.upper()}"
-    if error_msg:
-        note_update += f" | Details: {error_msg}"
-        
-    cursor.execute('''
-        UPDATE leads 
-        SET status = %s, follow_up_note = CONCAT_WS('\\n', %s, IFNULL(follow_up_note, ''))
-        WHERE phone LIKE %s
-    ''', (status_label, note_update, f"%{phone_clean}%"))
-    
+
+    # Only update status — never touch follow_up_note
+    # The AI summary is more valuable than "Telecom Status: NO-ANSWER" spam
+    cursor.execute("UPDATE leads SET status = %s WHERE phone LIKE %s", (status_label, f"%{phone_clean}%"))
+
     conn.close()
 
 def get_all_sites(org_id: int) -> List[Dict]:
