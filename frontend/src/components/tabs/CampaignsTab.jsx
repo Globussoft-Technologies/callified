@@ -349,15 +349,23 @@ export default function CampaignsTab({
               const phone = document.getElementById('qa-phone').value.trim();
               if (!name || !phone) { alert('Name and phone required'); return; }
               try {
+                // Try to create lead, if duplicate find existing and add to campaign
                 const res = await apiFetch(`${API_URL}/leads`, {
                   method: 'POST', headers: {'Content-Type': 'application/json'},
                   body: JSON.stringify({ first_name: name, phone: phone, source: 'Manual' })
                 });
                 const data = await res.json();
-                if (data.id) {
+                let leadId = data.id;
+                if (!leadId && data.message && data.message.includes('already exists')) {
+                  // Find existing lead by phone and add to campaign
+                  const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(phone)}`);
+                  const found = await searchRes.json();
+                  if (found.length > 0) leadId = found[0].id;
+                }
+                if (leadId) {
                   await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads`, {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ lead_ids: [data.id] })
+                    body: JSON.stringify({ lead_ids: [leadId] })
                   });
                   document.getElementById('qa-name').value = '';
                   document.getElementById('qa-phone').value = '';
