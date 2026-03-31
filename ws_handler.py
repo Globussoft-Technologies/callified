@@ -155,17 +155,32 @@ async def handle_media_stream(websocket: WebSocket):
     except Exception:
         product_ctx = get_product_knowledge_context()
 
-    # Gender-aware persona based on selected TTS voice
+    # Voice ID → Hindi name + gender mapping
+    _voice_names = {
+        # Sarvam male
+        'aditya': 'आदित्य', 'rahul': 'राहुल', 'amit': 'अमित', 'dev': 'देव', 'rohan': 'रोहन',
+        'varun': 'वरुण', 'kabir': 'कबीर', 'manan': 'मनन', 'sumit': 'सुमित', 'ratan': 'रतन',
+        'aayan': 'आयान', 'shubh': 'शुभ', 'ashutosh': 'आशुतोष', 'advait': 'अद्वैत',
+        # Sarvam female
+        'ritu': 'रितु', 'priya': 'प्रिया', 'neha': 'नेहा', 'pooja': 'पूजा', 'simran': 'सिमरन',
+        'kavya': 'काव्या', 'ishita': 'इशिता', 'shreya': 'श्रेया', 'roopa': 'रूपा',
+        # SmallestAI male
+        'raj': 'राज', 'arnav': 'अर्णव', 'raman': 'रमन', 'raghav': 'राघव', 'aarav': 'आरव',
+        'ankur': 'अंकुर', 'aravind': 'अरविंद', 'saurabh': 'सौरभ', 'chetan': 'चेतन', 'ashish': 'आशीष',
+        # SmallestAI female
+        'kajal': 'काजल', 'pragya': 'प्रज्ञा', 'nisha': 'निशा', 'deepika': 'दीपिका', 'diya': 'दिया',
+        'sushma': 'सुषमा', 'shweta': 'श्वेता', 'ananya': 'अनन्या', 'mithali': 'मिताली',
+        'saina': 'साइना', 'sanya': 'सान्या', 'mansi': 'मानसी',
+    }
     _female_voices = {'kajal', 'pragya', 'nisha', 'deepika', 'diya', 'sushma', 'shweta', 'ananya',
                       'mithali', 'saina', 'sanya', 'pooja', 'mansi', 'priya',
                       'ritu', 'neha', 'simran', 'kavya', 'ishita', 'shreya', 'roopa',
                       'amiAXapsDOAiHJqbsAZj', '6JsmTroalVewG1gA6Jmw', '9vP6R7VVxNwGIGLnpl17', 'hO2yZ8lxM3axUxL8OeKX'}
     _voice_id = (_tts_voice_override or "").lower()
+    _agent_name = _voice_names.get(_voice_id, "अर्जुन")
     if _voice_id in _female_voices:
-        _agent_name = "प्रिया"
         _agent_gender_hint = "तुम लड़की हो। 'रही हूँ', 'करूँगी', 'बोल रही हूँ' बोलो।"
     else:
-        _agent_name = "अर्जुन"
         _agent_gender_hint = "तुम लड़का हो। 'रहा हूँ', 'करूँगा', 'बोल रहा हूँ' बोलो।"
 
     # Extract company name from product context or org name
