@@ -532,6 +532,26 @@ async def handle_media_stream(websocket: WebSocket):
     ws_logger.info(f"Media stream handler started for {lead_name}")
     greeting_sent = False
 
+    # CRITICAL: Send greeting immediately on WebSocket connect
+    # Exotel VoiceBot has a 10-second timeout — if we don't send audio, it kills the session
+    stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
+    is_exotel_stream = True
+    twilio_websockets[stream_sid] = websocket
+    monitor_connections[stream_sid] = set()
+    redis_store.delete_whispers(stream_sid)
+    redis_store.set_takeover(stream_sid, False)
+    _tts_recording_buffers[stream_sid] = []
+    ws_logger.info(f"[WS] Immediate stream init, sid={stream_sid}")
+
+    greeting_text = f"नमस्ते {_lead_first} जी, मैं {_agent_name}, {_company_name} से {_bol}। आपने {_source_context} क्या?"
+    chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
+    ws_logger.info(f"[GREETING] Immediate greeting for {lead_name}, sid={stream_sid}")
+    call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
+    greeting_sent = True
+    active_tts_tasks[stream_sid] = asyncio.create_task(
+        synthesize_and_send_audio(greeting_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
+    )
+
     try:
         while True:
             try:
