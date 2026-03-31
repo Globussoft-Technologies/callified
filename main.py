@@ -13,6 +13,7 @@ Modules:
   - call_logger.py   → Call event logging
 """
 import os
+import json
 import asyncio
 import importlib
 import inspect
