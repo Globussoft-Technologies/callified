@@ -8,6 +8,7 @@ export default function SettingsTab({
   setSystemPromptCustom, setPromptDirty,
   apiFetch, API_URL
 }) {
+  const [agentPersona, setAgentPersona] = React.useState('');
   const [callFlow, setCallFlow] = React.useState('');
   const [generating, setGenerating] = React.useState(false);
   return (
@@ -200,14 +201,24 @@ export default function SettingsTab({
           </div>
           <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.</p>
 
+          {/* Agent Persona */}
+          <div style={{marginBottom: '1.5rem'}}>
+            <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem', color: '#a78bfa'}}>🎭 Agent Persona</label>
+            <textarea className="form-input" rows={5} value={agentPersona}
+              onChange={e => setAgentPersona(e.target.value)}
+              placeholder="e.g. You are Meera, an AI Sales Call Agent for XYZ Company. Sound professional, calm, confident. Speak in natural Hindi. Never argue. Be helpful and consultative..."
+              style={{resize: 'vertical', minHeight: '100px', fontSize: '0.85rem', lineHeight: 1.6}} />
+            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>Who is the AI? Name, role, personality, behavior rules, language preferences.</p>
+          </div>
+
           {/* Call Flow Instructions */}
           <div style={{marginBottom: '1.5rem'}}>
-            <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem'}}>📋 Call Flow Instructions (optional)</label>
-            <textarea className="form-input" rows={4} value={callFlow}
+            <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem', color: '#22d3ee'}}>📋 Call Flow Instructions</label>
+            <textarea className="form-input" rows={6} value={callFlow}
               onChange={e => setCallFlow(e.target.value)}
-              placeholder="e.g. First ask if they filled the form. If yes, check interest. If interested, book appointment for tomorrow. If they ask about pricing, say our senior will explain..."
-              style={{resize: 'vertical', minHeight: '80px', fontSize: '0.85rem', lineHeight: 1.6}} />
-            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>Write your call flow in plain English or Hindi. The AI will use these as instructions during calls.</p>
+              placeholder="e.g. Step 1: Greet and confirm identity. Step 2: Ask if residential or commercial. Step 3: Ask preferred area. Step 4: Ask budget. Step 5: Ask email. Step 6: Book meeting. Step 7: Recap and thank."
+              style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6}} />
+            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>Step-by-step conversation flow. What should the AI ask and in what order?</p>
           </div>
 
           {/* Generate Button */}
@@ -220,7 +231,7 @@ export default function SettingsTab({
                 try {
                   const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/generate-prompt`, {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ call_flow: callFlow })
+                    body: JSON.stringify({ agent_persona: agentPersona, call_flow: callFlow })
                   });
                   const data = await res.json();
                   if (data.prompt) {

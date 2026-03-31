@@ -406,6 +406,7 @@ async def api_generate_prompt(org_id: int, payload: dict, current_user: dict = D
     """Use AI to generate a system prompt from product knowledge + call flow instructions."""
     import httpx
     product_info = get_product_knowledge_context(org_id=org_id)
+    agent_persona = payload.get("agent_persona", "")
     call_flow = payload.get("call_flow", "")
     language = payload.get("language", "Hindi")
 
@@ -425,7 +426,10 @@ The prompt should:
 PRODUCT KNOWLEDGE:
 {product_info}
 
-CUSTOM CALL FLOW INSTRUCTIONS:
+AGENT PERSONA:
+{agent_persona if agent_persona else "Professional, friendly Hindi-speaking sales agent. Calm, confident, never pushy."}
+
+CALL FLOW INSTRUCTIONS:
 {call_flow if call_flow else "Standard qualification call — confirm interest, book appointment with senior representative."}
 
 LANGUAGE: {language}
