@@ -462,6 +462,75 @@ Generate ONLY the system prompt text in Devanagari Hindi. No explanations or met
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@api_router.post("/api/products/{product_id}/generate-persona")
+async def api_generate_product_persona(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    """Use AI to generate agent persona + call flow from a product's scraped website info."""
+    from database import get_products_by_org
+    import os
+    from google import genai
+
+    products = get_products_by_org(current_user.get("org_id"))
+    product = next((p for p in products if p["id"] == product_id), None)
+    if not product:
+        return {"status": "error", "message": "Product not found"}
+
+    product_info = f"Product: {product['name']}"
+    if product.get('scraped_info'):
+        product_info += f"\nWebsite Info:\n{product['scraped_info']}"
+    if product.get('manual_notes'):
+        product_info += f"\nManual Notes: {product['manual_notes']}"
+
+    if not product.get('scraped_info') and not product.get('manual_notes'):
+        return {"status": "error", "message": "No website info or manual notes found. Scrape the website first or add manual notes."}
+
+    meta_prompt = f"""You are an expert at designing AI sales agent personas and call flows for outbound phone calls.
+
+Based on the product/company information below, generate TWO things:
+
+1. AGENT PERSONA — A detailed personality description for the AI sales agent. Include:
+   - Agent name (Indian name), role, speaking style
+   - Personality traits (friendly, professional, etc.)
+   - How they should handle the product knowledge
+   - Language style (conversational Hindi, mix of Hindi-English as natural)
+   - Key rules (one question at a time, short responses, never pushy)
+
+2. CALL FLOW INSTRUCTIONS — Step-by-step conversation flow:
+   - Step 1: Greeting + introduce self + company
+   - Step 2: Confirm they are the right person
+   - Step 3: Pitch the product/service briefly
+   - Step 4: Gauge interest / handle objections
+   - Step 5: Book appointment or next step
+   - Step 6: Polite goodbye
+   Include what to do for common objections (not interested, busy, wrong number, pricing).
+
+PRODUCT/COMPANY INFORMATION:
+{product_info}
+
+Respond in this exact JSON format (no markdown, no code blocks):
+{{"agent_persona": "...", "call_flow_instructions": "..."}}
+
+Write in English. Keep each section detailed but practical (300-500 words each)."""
+
+    try:
+        client = genai.Client(api_key=(os.getenv("GEMINI_API_KEY") or "").strip())
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=meta_prompt)
+        text = response.text.strip()
+        # Strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+        if text.startswith("json"):
+            text = text[4:].strip()
+        import json
+        result = json.loads(text)
+        return {"status": "success", "agent_persona": result.get("agent_persona", ""), "call_flow_instructions": result.get("call_flow_instructions", "")}
+    except json.JSONDecodeError:
+        # If JSON parse fails, return the raw text as persona
+        return {"status": "success", "agent_persona": text, "call_flow_instructions": ""}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 # --- System Prompt & Voice Settings ---
 
 @api_router.get("/api/organizations/{org_id}/system-prompt")

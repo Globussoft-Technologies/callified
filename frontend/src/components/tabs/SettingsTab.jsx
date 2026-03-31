@@ -68,6 +68,24 @@ export default function SettingsTab({
     updateProductPrompt(productId, 'generating', false);
   };
 
+  const handleGeneratePersona = async (productId) => {
+    updateProductPrompt(productId, 'generatingPersona', true);
+    try {
+      const res = await apiFetch(`${API_URL}/products/${productId}/generate-persona`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        updateProductPrompt(productId, 'agent_persona', data.agent_persona);
+        updateProductPrompt(productId, 'call_flow_instructions', data.call_flow_instructions);
+      } else {
+        alert(data.message || 'Generation failed');
+      }
+    } catch(e) { alert('Failed to generate persona'); }
+    updateProductPrompt(productId, 'generatingPersona', false);
+  };
+
   const handleSaveProductPrompt = async (productId) => {
     updateProductPrompt(productId, 'saving', true);
     try {
@@ -267,6 +285,16 @@ export default function SettingsTab({
 
                     {pp.expanded && (
                       <div style={{marginTop: '12px', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid rgba(167,139,250,0.1)'}}>
+                        {(p.scraped_info || p.manual_notes) && (
+                          <div style={{marginBottom: '1rem'}}>
+                            <button className="btn-primary"
+                              style={{background: 'linear-gradient(135deg, #818cf8, #6366f1)', fontSize: '0.85rem', padding: '8px 16px', width: '100%'}}
+                              disabled={pp.generatingPersona}
+                              onClick={() => handleGeneratePersona(p.id)}>
+                              {pp.generatingPersona ? '⏳ Generating from website info...' : '✨ Auto-Generate Persona & Call Flow from Website'}
+                            </button>
+                          </div>
+                        )}
                         <div style={{marginBottom: '1rem'}}>
                           <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem', color: '#a78bfa'}}>🎭 Agent Persona</label>
                           <textarea className="form-input" rows={4}
