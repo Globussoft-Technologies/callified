@@ -464,7 +464,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                 if not greeting_sent:
                     greeting_sent = True
-                    greeting_text = f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?"
+                    greeting_text = f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?"
                     chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
                     ws_logger.info(f"[GREETING] Sending greeting for {lead_name}")
                     call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
@@ -534,7 +534,7 @@ async def handle_media_stream(websocket: WebSocket):
                         ws_logger.info(f"GREETING: Triggering TTS greeting for stream {stream_sid}")
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?",
+                                f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
@@ -564,7 +564,7 @@ async def handle_media_stream(websocket: WebSocket):
                         greeting_sent = True
                         active_tts_tasks[stream_sid] = asyncio.create_task(
                             synthesize_and_send_audio(
-                                f"हैलो {lead_name} जी? मैं AdsGPT से बात कर रहा हूँ, आपने हमारे AI platform के regarding enquiry की थी?",
+                                f"नमस्ते {lead_name} जी, मैं {_agent_name}, {_company_name} से बोल रहा हूँ। आपने हमारी वेबसाइट पर फॉर्म भरा था क्या?",
                                 stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override,
                             )
                         )
