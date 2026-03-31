@@ -276,6 +276,20 @@ export default function CampaignsTab({
           <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}
             onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
           <a href={`${API_URL}/leads/sample-csv`} download style={{color: '#94a3b8', fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center'}}>📋 Sample CSV</a>
+          {campaignLeads.some(l => (l.status || '').startsWith('Call Failed')) && (
+            <button className="btn-call" style={{background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.3)', fontSize: '0.85rem', padding: '8px 16px'}}
+              onClick={async () => {
+                const failedCount = campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length;
+                if (!window.confirm(`Redial ${failedCount} failed leads? (30s gap between calls to avoid spam)`)) return;
+                try {
+                  const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/redial-failed`, { method: 'POST' });
+                  const data = await res.json();
+                  alert(data.message || 'Redial started');
+                } catch(e) { alert('Redial failed'); }
+              }}>
+              🔄 Redial Failed ({campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length})
+            </button>
+          )}
         </div>
 
         <div className="glass-panel" style={{overflowX: 'auto'}}>

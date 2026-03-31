@@ -265,6 +265,50 @@ async def api_campaign_dial_lead(campaign_id: int, lead_id: int, background_task
     background_tasks.add_task(initiate_call, call_data)
     return {"status": "success", "message": f"Dialing {lead['first_name']} for campaign '{campaign['name']}'..."}
 
+@app.post("/api/campaigns/{campaign_id}/redial-failed")
+async def api_campaign_redial_failed(campaign_id: int, background_tasks: BackgroundTasks):
+    """Queue all Call Failed leads in a campaign for sequential redialing with 30s delay."""
+    from database import get_campaign_by_id, get_campaign_leads, get_campaign_voice_settings
+    import logging
+    log = logging.getLogger("uvicorn.error")
+
+    campaign = get_campaign_by_id(campaign_id)
+    if not campaign:
+        return {"status": "error", "message": "Campaign not found"}
+
+    leads = get_campaign_leads(campaign_id)
+    failed_leads = [l for l in leads if l.get("status", "").startswith("Call Failed")]
+    if not failed_leads:
+        return {"status": "error", "message": "No failed leads to redial"}
+
+    voice = get_campaign_voice_settings(campaign_id, campaign.get("org_id"))
+
+    async def _redial_queue():
+        for i, lead in enumerate(failed_leads):
+            if i > 0:
+                await asyncio.sleep(30)  # 30s gap between calls to avoid Exotel throttle
+            log.info(f"[REDIAL] {i+1}/{len(failed_leads)}: Dialing {lead['first_name']} ({lead['phone']})")
+            call_data = {
+                "name": lead["first_name"], "phone_number": lead["phone"],
+                "interest": campaign.get("product_name", lead.get("interest", "our platform")),
+                "provider": DEFAULT_PROVIDER, "lead_id": lead["id"],
+                "campaign_id": campaign_id, "product_id": campaign.get("product_id"),
+            }
+            if voice.get("tts_provider"):
+                call_data["tts_provider"] = voice["tts_provider"]
+            if voice.get("tts_voice_id"):
+                call_data["tts_voice_id"] = voice["tts_voice_id"]
+            if voice.get("tts_language"):
+                call_data["tts_language"] = voice["tts_language"]
+            try:
+                await initiate_call(call_data)
+            except Exception as e:
+                log.error(f"[REDIAL] Failed for {lead['phone']}: {e}")
+        log.info(f"[REDIAL] Campaign {campaign_id} redial complete: {len(failed_leads)} leads")
+
+    background_tasks.add_task(_redial_queue)
+    return {"status": "success", "message": f"Redialing {len(failed_leads)} failed leads (30s gap between calls)"}
+
 # ─── Debug Endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/api/debug/last-dial")
