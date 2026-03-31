@@ -32,6 +32,7 @@ from database import (
     create_campaign, get_campaigns_by_org, get_campaign_by_id, update_campaign, delete_campaign,
     add_leads_to_campaign, remove_lead_from_campaign, get_campaign_leads, get_campaign_stats,
     get_campaign_voice_settings, save_campaign_voice_settings,
+    get_campaign_call_log,
 )
 import rag
 
@@ -624,6 +625,10 @@ def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict 
 @api_router.get("/api/campaigns/{campaign_id}/stats")
 def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_current_user)):
     return get_campaign_stats(campaign_id)
+
+@api_router.get("/api/campaigns/{campaign_id}/call-log")
+def api_get_campaign_call_log(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    return get_campaign_call_log(campaign_id)
 
 @api_router.get("/api/campaigns/{campaign_id}/voice-settings")
 def api_get_campaign_voice(campaign_id: int, current_user: dict = Depends(get_current_user)):

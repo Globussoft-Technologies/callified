@@ -749,6 +749,39 @@ def get_campaign_leads(campaign_id: int) -> List[Dict]:
     return rows
 
 
+def get_campaign_call_log(campaign_id: int) -> List[Dict]:
+    """Get Exotel-style call log for all leads in a campaign."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT
+            ct.id,
+            l.first_name,
+            l.last_name,
+            l.phone,
+            l.source,
+            l.status as lead_status,
+            ct.call_duration_s,
+            ct.recording_url,
+            ct.created_at,
+            CASE
+                WHEN ct.call_duration_s > 30 AND l.status IN ('Summarized', 'Closed') THEN 'Completed'
+                WHEN ct.call_duration_s > 5 THEN 'Connected'
+                WHEN l.status LIKE 'Call Failed (busy)%%' THEN 'Busy'
+                WHEN l.status LIKE 'Call Failed (failed)%%' THEN 'Failed'
+                WHEN l.status LIKE 'DND%%' THEN 'DND Blocked'
+                ELSE 'No Answer'
+            END as outcome
+        FROM call_transcripts ct
+        JOIN leads l ON ct.lead_id = l.id
+        JOIN campaign_leads cl ON l.id = cl.lead_id AND cl.campaign_id = %s
+        ORDER BY ct.created_at DESC
+    ''', (campaign_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def get_campaign_stats(campaign_id: int) -> Dict:
     conn = get_conn()
     cursor = conn.cursor()
