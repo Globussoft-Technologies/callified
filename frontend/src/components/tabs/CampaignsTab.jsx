@@ -6,6 +6,7 @@ export default function CampaignsTab({
   onCampaignDial, onCampaignWebCall,
   handleViewTranscripts, handleNote,
   activeVoiceProvider, activeVoiceId, activeLanguage,
+  INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive
 }) {
   const [view, setView] = useState('list'); // 'list' or 'detail'
@@ -18,6 +19,7 @@ export default function CampaignsTab({
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
+  const [campVoice, setCampVoice] = useState({tts_provider: '', tts_voice_id: '', tts_language: ''});
 
   useEffect(() => { fetchCampaigns(); }, []);
 
@@ -28,10 +30,40 @@ export default function CampaignsTab({
     } catch(e) { setCampaignLeads([]); }
   };
 
+  const fetchCampVoice = async (campaignId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
+      if (res.ok) {
+        const data = await res.json();
+        setCampVoice({tts_provider: data.tts_provider || '', tts_voice_id: data.tts_voice_id || '', tts_language: data.tts_language || ''});
+      } else {
+        setCampVoice({tts_provider: '', tts_voice_id: '', tts_language: ''});
+      }
+    } catch(e) { setCampVoice({tts_provider: '', tts_voice_id: '', tts_language: ''}); }
+  };
+
+  const handleSaveCampVoice = async () => {
+    if (!selectedCampaign) return;
+    await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language})
+    });
+  };
+
+  const handleResetCampVoice = async () => {
+    if (!selectedCampaign) return;
+    await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tts_provider: '', tts_voice_id: '', tts_language: ''})
+    });
+    setCampVoice({tts_provider: '', tts_voice_id: '', tts_language: ''});
+  };
+
   const handleViewCampaign = (campaign) => {
     setSelectedCampaign(campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
+    fetchCampVoice(campaign.id);
   };
 
   const handleBack = () => {
@@ -197,6 +229,46 @@ export default function CampaignsTab({
           <div className="glass-panel metric-card"><div className="metric-label">Called</div><div className="metric-value">{stats.called}</div></div>
           <div className="glass-panel metric-card"><div className="metric-label">Qualified</div><div className="metric-value">{stats.qualified}</div></div>
           <div className="glass-panel metric-card"><div className="metric-label">Appointments</div><div className="metric-value">{stats.booked}</div></div>
+        </div>
+
+        {/* Voice Settings */}
+        <div className="glass-panel" style={{marginBottom: '1.5rem', padding: '12px 16px'}}>
+          <div style={{display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'}}>
+            <span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap'}}>🔊 Campaign Voice Settings</span>
+            <select className="form-input" value={campVoice.tts_provider}
+              onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
+              style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '100px'}}>
+              <option value="">-- Provider --</option>
+              <option value="elevenlabs">ElevenLabs</option>
+              <option value="sarvam">Sarvam AI</option>
+              <option value="smallest">Smallest AI</option>
+            </select>
+            <select className="form-input" value={campVoice.tts_voice_id}
+              onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
+              style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '160px'}}>
+              <option value="">-- Voice --</option>
+              {(INDIAN_VOICES[campVoice.tts_provider] || []).map(v => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </select>
+            <select className="form-input" value={campVoice.tts_language}
+              onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
+              style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '90px'}}>
+              <option value="">-- Language --</option>
+              {INDIAN_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <button style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
+              onClick={handleSaveCampVoice}>Save</button>
+            <button style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
+              onClick={handleResetCampVoice}>Reset to Org Default</button>
+          </div>
+          <div style={{fontSize: '0.7rem', color: '#a78bfa', marginTop: '6px'}}>
+            {campVoice.tts_provider
+              ? `Current: ${campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs' : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI' : 'Smallest AI'} - ${(INDIAN_VOICES[campVoice.tts_provider] || []).find(v => v.id === campVoice.tts_voice_id)?.name || campVoice.tts_voice_id || 'none'}`
+              : 'Using org default'}
+          </div>
         </div>
 
         <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', flexWrap: 'wrap'}}>

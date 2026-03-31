@@ -7,7 +7,8 @@ export default function CrmTab({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   selectedOrg, apiFetch, savedVoiceName, setSavedVoiceName,
   handleStatusChange, handleEditLead, handleDeleteLead, handleOpenDocs, handleViewTranscripts,
-  handleNote, handleDraftEmail, dialingId, webCallActive, handleWebCall, handleDial
+  handleNote, handleDraftEmail, dialingId, webCallActive, handleWebCall, handleDial,
+  campaigns, onCampaignClick
 }) {
   return (
     <div className="crm-container">
@@ -52,6 +53,27 @@ export default function CrmTab({
           </>)}
         </div>
       </div>
+
+      {/* Campaign Overview */}
+      {campaigns && campaigns.length > 0 && (
+        <div style={{marginBottom: '1.5rem'}}>
+          <h3 style={{color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600, marginBottom: '8px'}}>ACTIVE CAMPAIGNS</h3>
+          <div style={{display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px'}}>
+            {campaigns.filter(c => c.status === 'active').map(c => (
+              <div key={c.id} className="glass-panel" onClick={() => onCampaignClick(c)}
+                style={{minWidth: '200px', padding: '12px', cursor: 'pointer', flex: '0 0 auto'}}>
+                <div style={{fontWeight: 700, color: '#e2e8f0', fontSize: '0.9rem'}}>{c.name}</div>
+                <div style={{color: '#22d3ee', fontSize: '0.7rem'}}>{c.product_name}</div>
+                <div style={{display: 'flex', gap: '10px', marginTop: '8px', fontSize: '0.75rem', color: '#94a3b8'}}>
+                  <span>{c.stats?.total || 0} leads</span>
+                  <span style={{color: '#22c55e'}}>{c.stats?.qualified || 0} qual</span>
+                  <span style={{color: '#60a5fa'}}>{c.stats?.appointments || 0} appts</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {userRole === 'Admin' && (
         <div className="metrics-grid">

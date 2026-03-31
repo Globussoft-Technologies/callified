@@ -1049,6 +1049,8 @@ export default function App() {
           handleViewTranscripts={handleViewTranscripts} handleNote={handleNote}
           handleDraftEmail={handleDraftEmail} dialingId={dialingId}
           webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
+          campaigns={campaigns}
+          onCampaignClick={(campaign) => { setActiveTab('campaigns'); }}
         />
       ) : activeTab === 'campaigns' ? (
         <CampaignsTab
@@ -1057,7 +1059,9 @@ export default function App() {
           apiFetch={apiFetch} API_URL={API_URL} selectedOrg={selectedOrg}
           onCampaignDial={handleCampaignDial} onCampaignWebCall={handleCampaignWebCall}
           activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
-          activeLanguage={activeLanguage} dialingId={dialingId} webCallActive={webCallActive}
+          activeLanguage={activeLanguage}
+          INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
+          dialingId={dialingId} webCallActive={webCallActive}
           handleViewTranscripts={handleViewTranscripts} handleNote={handleNote}
         />
       ) : activeTab === 'ops' ? (
