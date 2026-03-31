@@ -295,7 +295,7 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
     async def _redial_queue():
         for i, lead in enumerate(failed_leads):
             if i > 0:
-                await asyncio.sleep(10)  # 45s gap between calls — ensures previous call finishes before next dial
+                await asyncio.sleep(30)  # 45s gap between calls — ensures previous call finishes before next dial
             log.info(f"[REDIAL] {i+1}/{len(failed_leads)}: Dialing {lead['first_name']} ({lead['phone']})")
             call_data = {
                 "name": lead["first_name"], "phone_number": lead["phone"],
@@ -339,7 +339,7 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
     async def _dial_all_queue():
         for i, lead in enumerate(dialable):
             if i > 0:
-                await asyncio.sleep(10)
+                await asyncio.sleep(30)
             log.info(f"[DIAL-ALL] {i+1}/{len(dialable)}: Dialing {lead['first_name']} ({lead['phone']})")
             call_data = {
                 "name": lead["first_name"], "phone_number": lead["phone"],
