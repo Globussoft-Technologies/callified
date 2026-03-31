@@ -131,7 +131,9 @@ async def handle_media_stream(websocket: WebSocket):
 
     # Gender-aware persona based on selected TTS voice
     _female_voices = {'kajal', 'pragya', 'nisha', 'deepika', 'diya', 'sushma', 'shweta', 'ananya',
-                      'mithali', 'saina', 'sanya', 'pooja', 'mansi', 'priya'}
+                      'mithali', 'saina', 'sanya', 'pooja', 'mansi', 'priya',
+                      'ritu', 'neha', 'simran', 'kavya', 'ishita', 'shreya', 'roopa',
+                      'amiAXapsDOAiHJqbsAZj', '6JsmTroalVewG1gA6Jmw', '9vP6R7VVxNwGIGLnpl17', 'hO2yZ8lxM3axUxL8OeKX'}
     _voice_id = (_tts_voice_override or "").lower()
     if _voice_id in _female_voices:
         _agent_name = "Priya"

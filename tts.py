@@ -1,6 +1,6 @@
 """
 tts.py — Text-to-Speech synthesis module for Callified AI Dialer.
-Supports ElevenLabs and SmallestAI providers.
+Supports ElevenLabs, SmallestAI, and Sarvam AI (Bulbul v3) providers.
 Handles audio format conversion (PCM, mulaw) and streaming to WebSocket.
 """
 import os
@@ -28,10 +28,99 @@ async def synthesize_and_send_audio(
 
     tts_provider = (tts_provider_override or os.getenv("TTS_PROVIDER", "elevenlabs")).lower()
 
-    if tts_provider == "smallest":
+    if tts_provider == "sarvam":
+        await _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger)
+    elif tts_provider == "smallest":
         await _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, needs_raw_pcm, tts_logger)
     else:
         await _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, is_exotel, is_browser_sim, tts_logger)
+
+
+async def _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger):
+    """Sarvam AI Bulbul v3 TTS via WebSocket streaming."""
+    import websockets
+
+    SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+    if not SARVAM_API_KEY:
+        tts_logger.error("TTS Sarvam: SARVAM_API_KEY not set, falling back to ElevenLabs")
+        await _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, False, needs_raw_pcm, tts_logger)
+        return
+
+    voice = tts_voice_override or os.getenv("SARVAM_VOICE_ID", "aditya")
+    lang = tts_language_override or "hi-IN"
+    # Map short codes to Sarvam format
+    lang_map = {"hi": "hi-IN", "en": "en-IN", "ta": "ta-IN", "te": "te-IN", "bn": "bn-IN",
+                "gu": "gu-IN", "kn": "kn-IN", "ml": "ml-IN", "mr": "mr-IN", "pa": "pa-IN"}
+    lang = lang_map.get(lang, lang)
+
+    ws_url = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3&send_completion_event=true"
+    headers = {"Api-Subscription-Key": SARVAM_API_KEY}
+
+    tts_logger.info(f"TTS: provider=Sarvam, voice={voice}, lang={lang}, needs_raw_pcm={needs_raw_pcm}")
+
+    try:
+        async with websockets.connect(ws_url, additional_headers=headers) as ws:
+            # Send config
+            config_msg = {
+                "type": "config",
+                "data": {
+                    "model": "bulbul:v3",
+                    "target_language_code": lang,
+                    "speaker": voice,
+                    "pace": 1.0,
+                    "speech_sample_rate": "8000",
+                    "output_audio_codec": "linear16",
+                    "enable_preprocessing": True,
+                    "min_buffer_size": 30,
+                }
+            }
+            await ws.send(json.dumps(config_msg))
+
+            # Send text
+            await ws.send(json.dumps({"type": "text", "data": {"text": text}}))
+            # Flush to ensure processing starts immediately
+            await ws.send(json.dumps({"type": "flush"}))
+
+            # Receive audio chunks
+            chunk_count = 0
+            async for msg in ws:
+                data = json.loads(msg)
+                if data.get("type") == "audio":
+                    audio_b64 = data["data"]["audio"]
+                    pcm_bytes = base64.b64decode(audio_b64)
+
+                    if needs_raw_pcm:
+                        b64_chunk = base64.b64encode(pcm_bytes).decode('utf-8')
+                        await websocket.send_text(json.dumps({
+                            "event": "media",
+                            "stream_sid": stream_sid,
+                            "media": {"payload": b64_chunk}
+                        }))
+                        if stream_sid in _tts_recording_buffers:
+                            import time as _tts_t
+                            _tts_recording_buffers[stream_sid].append((_tts_t.time(), pcm_bytes))
+                    else:
+                        import audioop
+                        ulaw_chunk = audioop.lin2ulaw(pcm_bytes, 2)
+                        b64_chunk = base64.b64encode(ulaw_chunk).decode('utf-8')
+                        await websocket.send_text(json.dumps({
+                            "event": "media",
+                            "streamSid": stream_sid,
+                            "media": {"payload": b64_chunk}
+                        }))
+                    chunk_count += 1
+
+                elif data.get("type") == "event" and data.get("data", {}).get("event_type") == "final":
+                    break
+                elif data.get("type") == "error":
+                    tts_logger.error(f"TTS Sarvam error: {data.get('data', {}).get('message', 'unknown')}")
+                    break
+
+            tts_logger.info(f"TTS Sarvam END: sent {chunk_count} chunks.")
+    except asyncio.CancelledError:
+        tts_logger.info("TTS Sarvam cancelled (barge-in)")
+    except Exception as e:
+        tts_logger.error(f"TTS Sarvam Exception: {e}")
 
 
 async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, needs_raw_pcm, tts_logger):
