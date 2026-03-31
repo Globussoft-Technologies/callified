@@ -414,6 +414,19 @@ export default function CampaignsTab({
               📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
             </button>
           )}
+          <button className="btn-primary" style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', fontSize: '0.85rem', padding: '8px 16px'}}
+            onClick={async () => {
+              if (!window.confirm(`Dial ALL ${campaignLeads.length} leads? (30s gap)`)) return;
+              try {
+                const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, { method: 'POST' });
+                const data = await res.json();
+                alert(data.message || 'Dialing started');
+                const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
+                setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
+              } catch(e) { alert('Failed'); }
+            }}>
+            📞 Dial All ({campaignLeads.length})
+          </button>
         </div>
 
         {/* Tab Switcher: Leads | Call Log */}

@@ -323,8 +323,8 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
     return {"status": "success", "message": f"Redialing {len(failed_leads)} failed leads (30s gap between calls)"}
 
 @app.post("/api/campaigns/{campaign_id}/dial-all")
-async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTasks):
-    """Queue ALL new/undialed leads in a campaign for sequential dialing."""
+async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTasks, force: bool = False):
+    """Queue leads in a campaign for sequential dialing. force=true dials ALL regardless of status."""
     from database import get_campaign_by_id, get_campaign_leads, get_campaign_voice_settings
     import logging
     log = logging.getLogger("uvicorn.error")
@@ -334,9 +334,12 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
         return {"status": "error", "message": "Campaign not found"}
 
     leads = get_campaign_leads(campaign_id)
-    dialable = [l for l in leads if l.get("status", "new") in ("new", "New")]
+    if force:
+        dialable = leads
+    else:
+        dialable = [l for l in leads if l.get("status", "new") in ("new", "New")]
     if not dialable:
-        return {"status": "error", "message": "No new leads to dial"}
+        return {"status": "error", "message": "No leads to dial"}
 
     voice = get_campaign_voice_settings(campaign_id, campaign.get("org_id"))
 
