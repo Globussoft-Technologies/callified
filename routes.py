@@ -28,7 +28,9 @@ from database import (
     get_org_custom_prompt, save_org_custom_prompt,
     get_org_voice_settings, save_org_voice_settings,
     save_crm_integration,
-    log_knowledge_file, update_knowledge_file_status, get_knowledge_files, delete_knowledge_file
+    log_knowledge_file, update_knowledge_file_status, get_knowledge_files, delete_knowledge_file,
+    create_campaign, get_campaigns_by_org, get_campaign_by_id, update_campaign, delete_campaign,
+    add_leads_to_campaign, remove_lead_from_campaign, get_campaign_leads, get_campaign_stats,
 )
 import rag
 
@@ -56,6 +58,17 @@ class NoteCreate(BaseModel):
 class DocumentCreate(BaseModel):
     file_name: str
     file_url: str
+
+class CampaignCreate(BaseModel):
+    name: str
+    product_id: int
+
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    status: Optional[str] = None
+
+class CampaignLeadsAssign(BaseModel):
+    lead_ids: List[int]
 
 # ─── Removed Legacy ChromaDB (Using FAISS instead) ─────────
 
@@ -557,6 +570,54 @@ async def create_pronunciation_endpoint(request: Request, current_user: dict = D
 def remove_pronunciation(pronunciation_id: int, current_user: dict = Depends(get_current_user)):
     ok = delete_pronunciation(pronunciation_id)
     return {"status": "ok" if ok else "not_found"}
+
+# --- Campaigns ---
+
+@api_router.get("/api/campaigns")
+def api_get_campaigns(current_user: dict = Depends(get_current_user)):
+    return get_campaigns_by_org(current_user.get("org_id"))
+
+@api_router.post("/api/campaigns")
+def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    campaign_id = create_campaign(org_id, data.product_id, data.name)
+    return {"status": "success", "id": campaign_id}
+
+@api_router.get("/api/campaigns/{campaign_id}")
+def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    campaign = get_campaign_by_id(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    stats = get_campaign_stats(campaign_id)
+    return {**campaign, "stats": stats}
+
+@api_router.put("/api/campaigns/{campaign_id}")
+def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
+    update_campaign(campaign_id, name=data.name, status=data.status)
+    return {"status": "success"}
+
+@api_router.delete("/api/campaigns/{campaign_id}")
+def api_delete_campaign(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    ok = delete_campaign(campaign_id)
+    return {"status": "ok" if ok else "not_found"}
+
+@api_router.get("/api/campaigns/{campaign_id}/leads")
+def api_get_campaign_leads(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    return get_campaign_leads(campaign_id)
+
+@api_router.post("/api/campaigns/{campaign_id}/leads")
+def api_add_campaign_leads(campaign_id: int, data: CampaignLeadsAssign, current_user: dict = Depends(get_current_user)):
+    added = add_leads_to_campaign(campaign_id, data.lead_ids)
+    return {"status": "success", "added": added}
+
+@api_router.delete("/api/campaigns/{campaign_id}/leads/{lead_id}")
+def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict = Depends(get_current_user)):
+    ok = remove_lead_from_campaign(campaign_id, lead_id)
+    return {"status": "ok" if ok else "not_found"}
+
+@api_router.get("/api/campaigns/{campaign_id}/stats")
+def api_get_campaign_stats(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    return get_campaign_stats(campaign_id)
 
 # --- Mobile API ---
 
