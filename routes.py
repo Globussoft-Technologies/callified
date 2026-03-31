@@ -33,6 +33,7 @@ from database import (
     add_leads_to_campaign, remove_lead_from_campaign, get_campaign_leads, get_campaign_stats,
     get_campaign_voice_settings, save_campaign_voice_settings,
     get_campaign_call_log,
+    get_product_prompt, update_product_prompt,
 )
 import rag
 
@@ -387,6 +388,69 @@ async def api_scrape_product_website(product_id: int, current_user: dict = Depen
         scraped_info = f"LLM extraction failed: {str(e)}"
     update_product(product_id, scraped_info=scraped_info)
     return {"status": "ok", "scraped_info": scraped_info}
+
+@api_router.get("/api/products/{product_id}/prompt")
+def api_get_product_prompt(product_id: int, current_user: dict = Depends(get_current_user)):
+    return get_product_prompt(product_id)
+
+@api_router.put("/api/products/{product_id}/prompt")
+def api_save_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    update_product_prompt(product_id, payload.get("agent_persona", ""), payload.get("call_flow_instructions", ""))
+    return {"status": "ok"}
+
+@api_router.post("/api/products/{product_id}/generate-prompt")
+async def api_generate_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    """Use AI to generate a system prompt from a specific product's knowledge + persona + call flow."""
+    from database import get_products_by_org
+    import os
+    from google import genai
+
+    # Get the product info
+    products = get_products_by_org(current_user.get("org_id"))
+    product = next((p for p in products if p["id"] == product_id), None)
+    if not product:
+        return {"status": "error", "message": "Product not found"}
+
+    product_info = f"Product: {product['name']}"
+    if product.get('scraped_info'):
+        product_info += f"\n{product['scraped_info']}"
+    if product.get('manual_notes'):
+        product_info += f"\nManual Notes: {product['manual_notes']}"
+
+    agent_persona = payload.get("agent_persona", product.get("agent_persona", ""))
+    call_flow = payload.get("call_flow_instructions", product.get("call_flow_instructions", ""))
+
+    meta_prompt = f"""You are an expert at writing AI sales agent system prompts for phone calls.
+
+Based on the product knowledge, agent persona, and call flow instructions below, generate a complete system prompt in Devanagari Hindi that the AI voice agent will use during outbound sales calls.
+
+The prompt should:
+1. Define the agent's persona using the provided personality traits
+2. Include the company name and product info for answering questions
+3. Follow the provided call flow steps exactly
+4. Handle common objections (not interested, wrong number, pricing questions)
+5. Keep responses short (1-2 lines per turn — it's a phone call)
+6. Use natural conversational Hindi, not formal/bookish
+7. End with [HANGUP] command when call should end
+
+PRODUCT KNOWLEDGE:
+{product_info}
+
+AGENT PERSONA:
+{agent_persona if agent_persona else "Professional, friendly Hindi-speaking sales agent. Calm, confident, never pushy."}
+
+CALL FLOW INSTRUCTIONS:
+{call_flow if call_flow else "Standard qualification call — confirm interest, book appointment with senior representative."}
+
+Generate ONLY the system prompt text in Devanagari Hindi. No explanations or meta-text."""
+
+    try:
+        client = genai.Client(api_key=(os.getenv("GEMINI_API_KEY") or "").strip())
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=meta_prompt)
+        generated = response.text.strip()
+        return {"status": "success", "prompt": generated}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # --- System Prompt & Voice Settings ---
 
