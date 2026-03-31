@@ -170,6 +170,31 @@ External Model Clients.
     - Simulates Exotel bytes and Sandbox WebSockets directly inside the ASGI thread.
     - Intercepts LLM, STT, and TTS engines down to the microsecond level so development CI/CD pipelines run natively without live API costs.
 
+17. **Server-Side Stereo Call Recording**
+    - Captures raw PCM audio from both sides of the conversation in real-time during live AI calls.
+    - User audio (phone mic via Exotel/Twilio WebSocket) is captured on the **left channel**, AI audio (TTS synthesis output) on the **right channel**.
+    - Merges both streams into a timestamped stereo `.wav` file at 8000Hz 16-bit — standard telephony quality with zero re-encoding loss.
+    - Acts as an automatic fallback when the telecom provider's recording API is unavailable or delayed, ensuring 100% call recording coverage.
+    - Stereo separation enables independent analysis of agent vs. customer speech for QA, compliance, and training.
+
+18. **Multi-Provider TTS Engine (ElevenLabs, Sarvam AI, SmallestAI)**
+    - Hot-swappable TTS providers selectable per-organization from the dashboard.
+    - **Sarvam AI Bulbul v3**: Native Hindi/Indian language TTS with 25+ voices via WebSocket streaming. Best for natural Devanagari pronunciation.
+    - **ElevenLabs Turbo v2.5**: Premium multilingual voice quality with natural question intonation. Best for Hinglish prosody.
+    - **SmallestAI Lightning**: Sub-100ms latency Indian voices. Best for ultra-low latency telephony.
+    - Gender-aware AI persona automatically switches name, pronouns, and grammar based on selected voice (male: Arjun, female: Priya).
+
+19. **Redis-Backed Call State for Horizontal Scaling**
+    - Serializable call state (pending call metadata, takeover flags, whisper queues) stored in Redis with TTL-based auto-cleanup.
+    - Non-serializable state (asyncio Tasks, WebSocket connections) stays in-memory per process.
+    - Graceful fallback to in-memory dicts if Redis is unavailable — zero downtime on Redis failure.
+
+20. **Comprehensive Playwright E2E Test Suite (19 Tests)**
+    - Full browser automation testing against the live production environment.
+    - Covers: Auth (signup/logout), CRM (add/edit/delete/search leads), Settings (products, pronunciation), Ops, Analytics, WhatsApp, Integrations tabs, and CRM modals (transcripts, documents, notes).
+    - Auto-cleanup fixture removes test data after each session.
+    - GitHub Actions CI pipeline runs all tests on every push.
+
 ## 🛠 Getting Started
 
 Follow these instructions to set up, run, and test the Generative AI Dialer locally.
