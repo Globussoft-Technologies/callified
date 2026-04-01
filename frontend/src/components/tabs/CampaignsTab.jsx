@@ -26,6 +26,8 @@ export default function CampaignsTab({
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
+  const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
+  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({tts_provider: '', tts_voice_id: '', tts_language: ''});
 
@@ -150,6 +152,44 @@ export default function CampaignsTab({
         setSelectedCampaign({ ...campaign, status: nextStatus });
       }
     } catch(e) { console.error(e); }
+  };
+
+  const handleEditCampaign = (campaign) => {
+    setEditCampaignForm({
+      id: campaign.id,
+      name: campaign.name || '',
+      product_id: campaign.product_id || '',
+      lead_source: campaign.lead_source || ''
+    });
+    setShowEditCampaignModal(true);
+  };
+
+  const handleSaveEditCampaign = async (e) => {
+    e.preventDefault();
+    if (!editCampaignForm.name.trim()) return;
+    setLoading(true);
+    try {
+      await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editCampaignForm.name.trim(),
+          product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
+          lead_source: editCampaignForm.lead_source || null
+        })
+      });
+      setShowEditCampaignModal(false);
+      fetchCampaigns();
+      if (selectedCampaign?.id === editCampaignForm.id) {
+        setSelectedCampaign(prev => ({
+          ...prev,
+          name: editCampaignForm.name.trim(),
+          product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
+          lead_source: editCampaignForm.lead_source || null
+        }));
+      }
+    } catch(e) { console.error(e); }
+    setLoading(false);
   };
 
   const handleAddLeads = async () => {
@@ -298,6 +338,7 @@ export default function CampaignsTab({
           apiFetch={apiFetch}
           API_URL={API_URL}
           orgTimezone={orgTimezone}
+          handleEditCampaign={handleEditCampaign}
         />
         <CampaignModals
           showCreateModal={false}
@@ -323,6 +364,11 @@ export default function CampaignsTab({
           editForm={editForm}
           setEditForm={setEditForm}
           handleSaveEdit={handleSaveEdit}
+          showEditCampaignModal={showEditCampaignModal}
+          setShowEditCampaignModal={setShowEditCampaignModal}
+          editCampaignForm={editCampaignForm}
+          setEditCampaignForm={setEditCampaignForm}
+          handleSaveEditCampaign={handleSaveEditCampaign}
         />
       </>
     );
@@ -358,11 +404,18 @@ export default function CampaignsTab({
                       {statusBadge(campaign.status || 'active')}
                     </div>
                   </div>
-                  <button onClick={() => handleDeleteCampaign(campaign.id)}
-                    style={{background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                      color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'}}>
-                    Delete
-                  </button>
+                  <div style={{display: 'flex', gap: '6px'}}>
+                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                      style={{background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
+                        color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'}}>
+                      Edit
+                    </button>
+                    <button onClick={() => handleDeleteCampaign(campaign.id)}
+                      style={{background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'}}>
+                      Delete
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{display: 'flex', gap: '12px', fontSize: '0.75rem', color: '#94a3b8'}}>
@@ -409,6 +462,11 @@ export default function CampaignsTab({
         editForm={editForm}
         setEditForm={setEditForm}
         handleSaveEdit={handleSaveEdit}
+        showEditCampaignModal={showEditCampaignModal}
+        setShowEditCampaignModal={setShowEditCampaignModal}
+        editCampaignForm={editCampaignForm}
+        setEditCampaignForm={setEditCampaignForm}
+        handleSaveEditCampaign={handleSaveEditCampaign}
       />
     </div>
   );

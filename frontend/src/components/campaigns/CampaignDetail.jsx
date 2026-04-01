@@ -14,7 +14,8 @@ export default function CampaignDetail({
   onCampaignDial, onCampaignWebCall,
   dialingId, webCallActive,
   setSelectedLeadIds, setShowAddLeadsModal, setShowCsvImportModal, setCsvFile,
-  apiFetch, API_URL, orgTimezone
+  apiFetch, API_URL, orgTimezone,
+  handleEditCampaign
 }) {
   const stats = getCampaignStats(selectedCampaign);
   return (
@@ -32,6 +33,11 @@ export default function CampaignDetail({
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
+        <button onClick={() => handleEditCampaign(selectedCampaign)}
+          style={{background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
+            color: '#facc15', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600}}>
+          Edit Campaign
+        </button>
         <select className="form-input" value={selectedCampaign.lead_source || ''}
           onChange={async (e) => {
             const src = e.target.value;

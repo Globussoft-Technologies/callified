@@ -10,30 +10,33 @@ export default function SettingsTab({
   apiFetch, API_URL, orgTimezone
 }) {
   const [productPrompts, setProductPrompts] = React.useState({});
+  const loadedProductIds = React.useRef(new Set());
 
   // Load per-product prompts when products change
   React.useEffect(() => {
     if (!orgProducts || orgProducts.length === 0) return;
     orgProducts.forEach(p => {
-      if (productPrompts[p.id]) return; // already loaded
+      if (loadedProductIds.current.has(p.id)) return; // already loaded
+      loadedProductIds.current.add(p.id);
       apiFetch(`${API_URL}/products/${p.id}/prompt`)
         .then(res => res.ok ? res.json() : { agent_persona: '', call_flow_instructions: '' })
         .then(data => {
           setProductPrompts(prev => ({
             ...prev,
             [p.id]: {
+              ...(prev[p.id] || {}),
               agent_persona: data.agent_persona || '',
               call_flow_instructions: data.call_flow_instructions || '',
-              expanded: false,
-              generating: false,
-              saving: false
+              expanded: prev[p.id]?.expanded || false,
+              generating: prev[p.id]?.generating || false,
+              saving: prev[p.id]?.saving || false
             }
           }));
         })
         .catch(() => {
           setProductPrompts(prev => ({
             ...prev,
-            [p.id]: { agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false }
+            [p.id]: { ...(prev[p.id] || {}), agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false }
           }));
         });
     });
@@ -89,15 +92,20 @@ export default function SettingsTab({
   const handleSaveProductPrompt = async (productId) => {
     updateProductPrompt(productId, 'saving', true);
     try {
-      await apiFetch(`${API_URL}/products/${productId}/prompt`, {
+      const pp = productPrompts[productId];
+      const res = await apiFetch(`${API_URL}/products/${productId}/prompt`, {
         method: 'PUT', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-          agent_persona: productPrompts[productId]?.agent_persona || '',
-          call_flow_instructions: productPrompts[productId]?.call_flow_instructions || ''
+          agent_persona: pp?.agent_persona || '',
+          call_flow_instructions: pp?.call_flow_instructions || ''
         })
       });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err || `HTTP ${res.status}`);
+      }
       alert('Persona & call flow saved!');
-    } catch(e) { alert('Failed to save'); }
+    } catch(e) { alert('Failed to save: ' + (e.message || e)); }
     updateProductPrompt(productId, 'saving', false);
   };
 

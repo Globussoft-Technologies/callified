@@ -71,6 +71,7 @@ class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     lead_source: Optional[str] = None
+    product_id: Optional[int] = None
 
 class CampaignLeadsAssign(BaseModel):
     lead_ids: List[int]
@@ -792,7 +793,7 @@ def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_
 
 @api_router.put("/api/campaigns/{campaign_id}")
 def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
-    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source)
+    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id)
     return {"status": "success"}
 
 @api_router.delete("/api/campaigns/{campaign_id}")

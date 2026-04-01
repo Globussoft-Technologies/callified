@@ -14,7 +14,11 @@ export default function CampaignModals({
   csvFile, setCsvFile, handleCsvImport,
   // Edit Lead Modal
   editLead, setEditLead,
-  editForm, setEditForm, handleSaveEdit
+  editForm, setEditForm, handleSaveEdit,
+  // Edit Campaign Modal
+  showEditCampaignModal, setShowEditCampaignModal,
+  editCampaignForm, setEditCampaignForm,
+  handleSaveEditCampaign
 }) {
   return (
     <>
@@ -122,6 +126,57 @@ export default function CampaignModals({
                 {loading ? 'Importing...' : 'Import & Add to Campaign'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Campaign Modal */}
+      {showEditCampaignModal && (
+        <div className="modal-overlay" onClick={() => setShowEditCampaignModal(false)}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()}
+            style={{maxWidth: '450px', width: '90%'}}>
+            <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
+            <form onSubmit={handleSaveEditCampaign}>
+              <div style={{marginBottom: '1rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
+                <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
+                  value={editCampaignForm.name} onChange={e => setEditCampaignForm({...editCampaignForm, name: e.target.value})}
+                  style={{width: '100%'}} />
+              </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product</label>
+                <select className="form-input" value={editCampaignForm.product_id}
+                  onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
+                  style={{width: '100%'}}>
+                  <option value="">-- Select Product --</option>
+                  {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source</label>
+                <select className="form-input" value={editCampaignForm.lead_source}
+                  onChange={e => setEditCampaignForm({...editCampaignForm, lead_source: e.target.value})}
+                  style={{width: '100%'}}>
+                  <option value="">-- Select Source --</option>
+                  <option value="facebook">Facebook / Meta Ads</option>
+                  <option value="google">Google Ads</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="linkedin">LinkedIn</option>
+                  <option value="website">Website Form</option>
+                  <option value="referral">Referral</option>
+                  <option value="cold">Cold Outreach</option>
+                </select>
+              </div>
+              <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+                <button type="button" onClick={() => setShowEditCampaignModal(false)}
+                  style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={loading || !editCampaignForm.name.trim()}>
+                  {loading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

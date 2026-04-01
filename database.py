@@ -697,7 +697,7 @@ def get_campaign_by_id(campaign_id: int) -> Dict:
     return row
 
 
-def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None):
+def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None):
     conn = get_conn()
     cursor = conn.cursor()
     if name:
@@ -706,6 +706,8 @@ def update_campaign(campaign_id: int, name: str = None, status: str = None, lead
         cursor.execute("UPDATE campaigns SET status = %s WHERE id = %s", (status, campaign_id))
     if lead_source is not None:
         cursor.execute("UPDATE campaigns SET lead_source = %s WHERE id = %s", (lead_source or None, campaign_id))
+    if product_id is not None:
+        cursor.execute("UPDATE campaigns SET product_id = %s WHERE id = %s", (product_id, campaign_id))
     conn.close()
     return True
 
