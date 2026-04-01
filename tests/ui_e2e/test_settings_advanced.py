@@ -41,12 +41,12 @@ def _navigate_to_settings(auth_page, base_url):
 
 
 def test_product_persona_section_visible(auth_page, base_url):
-    """Test that Agent Persona & Call Flow section is expandable."""
+    """Test that Product Details, Persona & Call Flow section is expandable."""
     _ensure_product_with_notes()
     _navigate_to_settings(auth_page, base_url)
 
     # Click expand button
-    expand_btn = auth_page.locator("button:has-text('Agent Persona & Call Flow')").first
+    expand_btn = auth_page.locator("button:has-text('Product Details, Persona & Call Flow')").first
     expect(expand_btn).to_be_visible(timeout=8000)
     expand_btn.click()
     time.sleep(1)
@@ -62,7 +62,7 @@ def test_save_product_persona(auth_page, base_url):
     _navigate_to_settings(auth_page, base_url)
 
     # Expand persona section
-    expand_btn = auth_page.locator("button:has-text('Agent Persona & Call Flow')").first
+    expand_btn = auth_page.locator("button:has-text('Product Details, Persona & Call Flow')").first
     expand_btn.click()
     time.sleep(1)
 
@@ -81,7 +81,7 @@ def test_save_product_persona(auth_page, base_url):
 
     # Reload and verify saved
     _navigate_to_settings(auth_page, base_url)
-    auth_page.locator("button:has-text('Agent Persona & Call Flow')").first.click()
+    auth_page.locator("button:has-text('Product Details, Persona & Call Flow')").first.click()
     time.sleep(1)
 
     persona_textarea = auth_page.locator("textarea").nth(0)
@@ -94,7 +94,7 @@ def test_generate_persona_button_visible(auth_page, base_url):
     _ensure_product_with_notes()
     _navigate_to_settings(auth_page, base_url)
 
-    expand_btn = auth_page.locator("button:has-text('Agent Persona & Call Flow')").first
+    expand_btn = auth_page.locator("button:has-text('Product Details, Persona & Call Flow')").first
     expand_btn.click()
     time.sleep(1)
 

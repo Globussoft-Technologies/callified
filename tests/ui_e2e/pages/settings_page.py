@@ -17,13 +17,11 @@ class SettingsPage(BasePage):
     def delete_product(self, product_name):
         # handleDeleteProduct uses confirm() dialog — auto-accept it
         self.page.once("dialog", lambda dialog: dialog.accept())
-        # The product card structure: div > div[span(name) + button(Remove)]
-        # Find the span with the product name, then the sibling Remove button
-        name_span = self.page.locator(f"span:text-is('{product_name}')")
-        # The Remove button is a sibling in the same flex container
-        remove_btn = name_span.locator("xpath=../button[contains(., 'Remove')]")
+        # Product name is now in an editable input field
+        name_input = self.page.locator(f"input[value='{product_name}']")
+        # The Remove button is in the same parent flex container
+        remove_btn = name_input.locator("xpath=ancestor::div[contains(@style,'justify-content')]//button[contains(., 'Remove')]")
         remove_btn.click()
-        # Wait for the API call to complete
         self.page.wait_for_load_state("networkidle")
 
     def add_pronunciation_rule(self, word, phonetic):
