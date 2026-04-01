@@ -507,14 +507,16 @@ export default function CampaignDetail({
                     </button>
                     <button className="btn-call"
                       onClick={() => onCampaignDial(lead, selectedCampaign.id)}
-                      disabled={dialingId === lead.id}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer'}}>
-                      {dialingId === lead.id ? '📞 Dialing...' : '📞 Dial'}
+                      disabled={!!dialingId}
+                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: dialingId ? 'not-allowed' : 'pointer', opacity: dialingId ? 0.5 : 1}}>
+                      {dialingId ? '📞 Wait...' : '📞 Dial'}
                     </button>
                     <button className="btn-call"
                       onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
+                      disabled={!!dialingId && webCallActive !== lead.id}
                       style={{
-                        fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
+                        fontSize: '0.75rem', padding: '4px 10px', cursor: (dialingId && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
+                        opacity: (dialingId && webCallActive !== lead.id) ? 0.5 : 1,
                         borderColor: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
                         color: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
                         background: webCallActive === lead.id ? 'rgba(239,68,68,0.1)' : 'rgba(139,92,246,0.1)'

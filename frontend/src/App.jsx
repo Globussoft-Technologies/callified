@@ -409,7 +409,7 @@ export default function App() {
   };
 
   const handleDial = async (lead) => {
-    setDialingId(lead.id);
+    setDialingId('global');
     try {
       const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
@@ -417,7 +417,7 @@ export default function App() {
     } catch(e) {
       alert("Failed to hit the dialer API. Check console.");
     }
-    setTimeout(() => setDialingId(null), 3000);
+    setTimeout(() => setDialingId(null), 10000);
   };
 
   const handleWebCall = async (lead) => {
@@ -584,11 +584,11 @@ export default function App() {
   };
 
   const handleCampaignDial = async (lead, campaignId) => {
-    setDialingId(lead.id);
+    setDialingId('global');
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
     } catch(e) {}
-    setTimeout(() => setDialingId(null), 3000);
+    setTimeout(() => setDialingId(null), 10000);
   };
 
   const handleCampaignWebCall = async (lead, campaignId) => {
