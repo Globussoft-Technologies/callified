@@ -131,7 +131,7 @@ async def handle_media_stream(websocket: WebSocket):
     _llm_lock = asyncio.Lock()
     _hangup_requested = [False]  # mutable flag to block new transcripts after [HANGUP]
     _last_transcript_time = [0.0]
-    _debounce_delay = 0.05
+    _debounce_delay = 0.35  # 350ms debounce — wait for user to finish speaking
     _recording_mic_chunks = []
     _recording_tts_chunks = []
 
@@ -427,7 +427,7 @@ async def handle_media_stream(websocket: WebSocket):
             encoding="linear16",
             sample_rate=8000,
             channels=1,
-            endpointing=200,          # Aggressive 200ms VAD endpointing
+            endpointing=500,          # 500ms VAD — let user pause naturally mid-sentence
             utterance_end_ms="1000",  # Force utterance generation
             interim_results=True,     # Fix HTTP 400 deepgram crash
         )
