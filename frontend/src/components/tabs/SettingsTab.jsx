@@ -243,13 +243,25 @@ export default function SettingsTab({
                 <div key={p.id} style={{background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.05)'}}>
                   <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                     <div style={{display: 'flex', alignItems: 'center', gap: '8px', flex: 1}}>
-                      <input className="form-input" defaultValue={p.name}
-                        onBlur={e => { if (e.target.value.trim() && e.target.value !== p.name) handleSaveProduct(p.id, { name: e.target.value.trim() }); }}
-                        style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', background: 'transparent', border: '1px solid transparent', borderRadius: '6px', padding: '4px 8px', maxWidth: '400px'}}
-                        onFocus={e => e.target.style.borderColor = 'rgba(34,211,238,0.4)'}
-                        onMouseOut={e => { if (document.activeElement !== e.target) e.target.style.borderColor = 'transparent'; }}
-                      />
-                      <span style={{color: '#64748b', fontSize: '0.7rem'}}>click to edit</span>
+                      {pp.editingName ? (
+                        <>
+                          <input className="form-input" autoFocus defaultValue={p.name}
+                            onBlur={e => {
+                              if (e.target.value.trim() && e.target.value !== p.name) handleSaveProduct(p.id, { name: e.target.value.trim() });
+                              updateProductPrompt(p.id, 'editingName', false);
+                            }}
+                            onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                            style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', border: '1px solid rgba(34,211,238,0.4)', borderRadius: '6px', padding: '4px 8px', maxWidth: '400px'}} />
+                          <button style={{background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.8rem'}}
+                            onClick={() => updateProductPrompt(p.id, 'editingName', false)}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0'}}>{p.name}</span>
+                          <button style={{background: 'rgba(34,211,238,0.1)', border: '1px solid rgba(34,211,238,0.25)', color: '#22d3ee', padding: '3px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600}}
+                            onClick={() => updateProductPrompt(p.id, 'editingName', true)}>✏️ Edit</button>
+                        </>
+                      )}
                     </div>
                     <button style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem'}}
                       onClick={() => handleDeleteProduct(p.id)}>🗑️ Remove</button>
