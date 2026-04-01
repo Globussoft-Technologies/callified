@@ -461,8 +461,10 @@ async def handle_media_stream(websocket: WebSocket):
 
     # CRITICAL: Send greeting immediately on WebSocket connect
     # Exotel VoiceBot has a 10-second timeout — if we don't send audio, it kills the session
-    stream_sid = f"exotel-{_uuid.uuid4().hex[:12]}"
-    is_exotel_stream = True
+    # Detect web sim vs Exotel from query params — web sim passes lead_id + name in URL
+    _is_web_sim = bool(_qp_lead_id and lead_name)
+    stream_sid = f"web_sim_{_call_lead_id}_{int(time.time()*1000)}" if _is_web_sim else f"exotel-{_uuid.uuid4().hex[:12]}"
+    is_exotel_stream = not _is_web_sim
     twilio_websockets[stream_sid] = websocket
     monitor_connections[stream_sid] = set()
     redis_store.delete_whispers(stream_sid)
