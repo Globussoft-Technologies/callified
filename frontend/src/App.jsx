@@ -8,7 +8,7 @@ import CrmTab from './components/tabs/CrmTab';
 import OpsPage from './pages/OpsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import WhatsAppTab from './components/tabs/WhatsAppTab';
-import IntegrationsTab from './components/tabs/IntegrationsTab';
+import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsTab from './components/tabs/SettingsTab';
 import LogsTab from './components/tabs/LogsTab';
 import CheckInTab from './components/tabs/CheckInTab';
@@ -127,20 +127,7 @@ export default function App() {
   // Search Engine State
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Integrations State
-  const [integrations, setIntegrations] = useState([]);
-  const CRM_SCHEMAS = {
-    "Salesforce": [{ key: "client_id", label: "OAuth Client ID", type: "text" }, { key: "client_secret", label: "OAuth Client Secret", type: "password" }, { key: "instance_url", label: "Instance Base URL", type: "text" }],
-    "HubSpot": [{ key: "api_key", label: "Private App Access Token", type: "password" }],
-    "Zoho CRM": [{ key: "client_id", label: "Client ID", type: "text" }, { key: "client_secret", label: "Client Secret", type: "password" }, { key: "refresh_token", label: "OAuth Refresh Token", type: "password" }, { key: "base_url", label: "Data Center (e.g. www.zohoapis.com)", type: "text" }],
-    "Pipedrive": [{ key: "api_key", label: "Personal API Token", type: "password" }],
-    "ActiveCampaign": [{ key: "api_key", label: "Developer API Token", type: "password" }, { key: "base_url", label: "Account URL (https://xyz.api-us1.com/api/3)", type: "text" }],
-    "Freshsales": [{ key: "api_key", label: "API Token", type: "password" }, { key: "base_url", label: "Bundle URL (https://domain.myfreshworks.com/crm/sales/api)", type: "text" }],
-    "Zendesk": [{ key: "api_key", label: "API Token or Password", type: "password" }, { key: "base_url", label: "Subdomain Base URL", type: "text" }, { key: "email", label: "Admin Email (If Basic Auth)", type: "text" }],
-    "Monday": [{ key: "api_key", label: "Personal API Token", type: "password" }, { key: "board_id", label: "Leads Board ID", type: "text" }],
-    "Close": [{ key: "api_key", label: "API Key", type: "password" }]
-  };
-  const [intFormData, setIntFormData] = useState({ provider: 'HubSpot', credentials: {} });
+  // Integrations State — moved to IntegrationsPage
 
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
@@ -207,9 +194,7 @@ export default function App() {
 
   // fetchAnalytics — moved to AnalyticsPage
 
-  const fetchIntegrations = async () => {
-    try { const res = await apiFetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
-  };
+  // fetchIntegrations — moved to IntegrationsPage
 
   const fetchCampaigns = async () => {
     try { const res = await apiFetch(`${API_URL}/campaigns`); setCampaigns(await res.json()); } catch(e){}
@@ -800,27 +785,7 @@ export default function App() {
     }
   };
 
-  const handleCreateIntegration = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      await apiFetch(`${API_URL}/integrations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          provider: intFormData.provider,
-          credentials: intFormData.credentials
-        })
-      });
-      setIntFormData({ provider: 'HubSpot', credentials: {} });
-      fetchIntegrations();
-      alert("Integration saved successfully!");
-    } catch(e) {
-      console.error(e);
-      alert("Failed to save integration.");
-    }
-    setLoading(false);
-  };
+  // handleCreateIntegration — moved to IntegrationsPage
 
   const handleAddPronunciation = async (e) => {
     e.preventDefault();
@@ -988,12 +953,7 @@ export default function App() {
       ) : activeTab === 'whatsapp' ? (
         <WhatsAppTab apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />
       ) : activeTab === 'integrations' ? (
-        <IntegrationsTab
-          handleCreateIntegration={handleCreateIntegration}
-          intFormData={intFormData} setIntFormData={setIntFormData}
-          CRM_SCHEMAS={CRM_SCHEMAS} loading={loading} integrations={integrations}
-          orgTimezone={orgTimezone}
-        />
+        <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />
       ) : activeTab === 'monitor' ? (
         <div style={{padding: '1rem'}}>
           <CallMonitor apiUrl={API_URL} />
