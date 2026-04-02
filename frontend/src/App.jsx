@@ -1089,7 +1089,7 @@ export default function App() {
       ) : activeTab === 'analytics' ? (
         <AnalyticsTab analyticsData={analyticsData} />
       ) : activeTab === 'whatsapp' ? (
-        <WhatsAppTab whatsappLogs={whatsappLogs} orgTimezone={orgTimezone} />
+        <WhatsAppTab apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />
       ) : activeTab === 'integrations' ? (
         <IntegrationsTab
           handleCreateIntegration={handleCreateIntegration}
