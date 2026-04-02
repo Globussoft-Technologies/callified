@@ -86,7 +86,7 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
         </div>
 
         <label style={labelStyle}>Provider</label>
-        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); }} style={inputStyle}>
+        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); }} style={selectStyle}>
           {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
 
@@ -99,7 +99,7 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
         ))}
 
         <label style={labelStyle}>Default Product</label>
-        <select value={defaultProduct} onChange={e => setDefaultProduct(e.target.value)} style={inputStyle}>
+        <select value={defaultProduct} onChange={e => setDefaultProduct(e.target.value)} style={selectStyle}>
           <option value="">— None —</option>
           {(orgProducts || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
@@ -411,8 +411,15 @@ const inputBarStyle = {
 
 const inputStyle = {
   width: '100%', padding: '8px 12px', borderRadius: '8px',
-  border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)',
+  border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b',
   color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',
+};
+
+const selectStyle = {
+  ...inputStyle,
+  appearance: 'auto',
+  WebkitAppearance: 'menulist',
+  cursor: 'pointer',
 };
 
 const labelStyle = {
