@@ -6,7 +6,7 @@ import AuthPage from './components/AuthPage';
 import TopHeader from './components/TopHeader';
 import CrmTab from './components/tabs/CrmTab';
 import OpsTab from './components/tabs/OpsTab';
-import AnalyticsTab from './components/tabs/AnalyticsTab';
+import AnalyticsPage from './pages/AnalyticsPage';
 import WhatsAppTab from './components/tabs/WhatsAppTab';
 import IntegrationsTab from './components/tabs/IntegrationsTab';
 import SettingsTab from './components/tabs/SettingsTab';
@@ -124,8 +124,7 @@ export default function App() {
   const [docs, setDocs] = useState([]);
   const [docFormData, setDocFormData] = useState({ file_name: '', file_url: '' });
 
-  // Analytics State
-  const [analyticsData, setAnalyticsData] = useState([]);
+  // Analytics State — moved to AnalyticsPage
 
   // Search Engine State
   const [searchQuery, setSearchQuery] = useState('');
@@ -214,9 +213,7 @@ export default function App() {
     try { const res = await apiFetch(`${API_URL}/whatsapp`); setWhatsappLogs(await res.json()); } catch(e){}
   };
 
-  const fetchAnalytics = async () => {
-    try { const res = await apiFetch(`${API_URL}/analytics`); setAnalyticsData(await res.json()); } catch(e){}
-  };
+  // fetchAnalytics — moved to AnalyticsPage
 
   const fetchIntegrations = async () => {
     try { const res = await apiFetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
@@ -282,7 +279,6 @@ export default function App() {
     fetchTasks();
     fetchReports();
     fetchWhatsappLogs();
-    fetchAnalytics();
     fetchPronunciations();
     fetchCampaigns();
     fetchOrgs();
@@ -1007,7 +1003,7 @@ export default function App() {
       ) : activeTab === 'ops' ? (
         <OpsTab reports={reports} tasks={tasks} handleCompleteTask={handleCompleteTask} />
       ) : activeTab === 'analytics' ? (
-        <AnalyticsTab analyticsData={analyticsData} />
+        <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />
       ) : activeTab === 'whatsapp' ? (
         <WhatsAppTab apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />
       ) : activeTab === 'integrations' ? (
