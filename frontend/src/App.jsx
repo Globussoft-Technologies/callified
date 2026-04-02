@@ -13,7 +13,6 @@ import SettingsPage from './pages/SettingsPage';
 import LogsPage from './pages/LogsPage';
 import CheckInPage from './pages/CheckInPage';
 import CampaignsPage from './pages/CampaignsPage';
-// LeadModals, DocumentVault, TranscriptModal, EmailDraftModal — moved to CrmPage
 import './index.css';
 import { API_URL } from './constants/api';
 import { INDIAN_VOICES, INDIAN_LANGUAGES } from './constants/voices';
@@ -89,18 +88,11 @@ export default function App() {
 
 
   const [activeTab, setActiveTab] = useState('crm');
-  // leads, isModalOpen, loading — moved to CrmPage
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
   
-  // formData, editModalOpen, editingLead, editFormData — moved to CrmPage
-  // activeLeadDocs, docs, docFormData — moved to CrmPage
-  // searchQuery — moved to CrmPage
-  // emailDraft — moved to CrmPage
-  // transcriptLead, transcripts — moved to CrmPage
-
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
 
@@ -109,9 +101,6 @@ export default function App() {
   const [selectedOrg, setSelectedOrg] = useState(null);
   const [orgTimezone, setOrgTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [orgProducts, setOrgProducts] = useState([]);
-  // scraping, product input, prompt state — moved to SettingsPage
-  const [newOrgName, setNewOrgName] = useState('');
-  const [showOrgInput, setShowOrgInput] = useState(false);
   const [activeVoiceProvider, setActiveVoiceProvider] = useState('elevenlabs');
   const [activeVoiceId, setActiveVoiceId] = useState('');
   const [savedVoiceName, setSavedVoiceName] = useState('');
@@ -120,15 +109,9 @@ export default function App() {
   const [campaigns, setCampaigns] = useState([]);
 
 
-  // Auth block moved down to fix React hooks violation
-
-  // fetchLeads — moved to CrmPage
-
   const fetchCampaigns = async () => {
     try { const res = await apiFetch(`${API_URL}/campaigns`); setCampaigns(await res.json()); } catch(e){}
   };
-
-  // fetchPronunciations — moved to SettingsPage
 
   const fetchOrgs = async () => {
     try {
@@ -151,7 +134,6 @@ export default function App() {
           }).catch(() => {});
         }
         fetchOrgProducts(data[0].id);
-        // fetchSystemPrompt — moved to SettingsPage (loads on mount)
         // Load voice settings
         try {
           const vRes = await apiFetch(`${API_URL}/organizations/${data[0].id}/voice-settings`);
@@ -180,8 +162,6 @@ export default function App() {
     fetchCampaigns();
     fetchOrgs();
   }, [currentUser]);
-
-  // handleStatusChange, handleCreateLead — moved to CrmPage
 
   const handleDial = async (lead) => {
     setDialingId('global');
@@ -527,32 +507,6 @@ export default function App() {
     }
   };
 
-  // handleOpenDocs, handleUploadDoc, handleSearch, handleNote, handleSaveNote,
-  // handleDraftEmail, handleEditLead, handleSaveEdit, handleDeleteLead,
-  // handleViewTranscripts — all moved to CrmPage
-
-  const handleCreateOrg = async () => {
-    if (!newOrgName.trim()) return;
-    await apiFetch(`${API_URL}/organizations`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name: newOrgName.trim() }) });
-    setNewOrgName(''); setShowOrgInput(false);
-    fetchOrgs();
-  };
-
-  const handleDeleteOrg = async (orgId) => {
-    if (!confirm('Delete this organization and all its products?')) return;
-    await apiFetch(`${API_URL}/organizations/${orgId}`, { method: 'DELETE' });
-    if (selectedOrg?.id === orgId) { setSelectedOrg(null); setOrgProducts([]); }
-    fetchOrgs();
-  };
-
-  const handleSelectOrg = (org) => {
-    setSelectedOrg(org);
-    fetchOrgProducts(org.id);
-  };
-
-  // handleAddProduct — moved to SettingsPage
-
-  // handleScrapeProduct, handleSaveProduct, fetchSystemPrompt, handleSaveSystemPrompt, handleDeleteProduct — moved to SettingsPage
 
   // ─── AUTH PAGES (after all hooks) ───
   if (!authToken || !currentUser) {
@@ -629,7 +583,6 @@ export default function App() {
         <CheckInPage apiFetch={apiFetch} API_URL={API_URL} />
       )}
 
-      {/* LeadModals, DocumentVault, TranscriptModal, EmailDraftModal, Note Modal — moved to CrmPage */}
     </div>
   );
 }
