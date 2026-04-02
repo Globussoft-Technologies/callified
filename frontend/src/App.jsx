@@ -16,75 +16,10 @@ import CampaignsPage from './pages/CampaignsPage';
 import './index.css';
 import { API_URL } from './constants/api';
 import { INDIAN_VOICES, INDIAN_LANGUAGES } from './constants/voices';
+import { useAuth } from './contexts/AuthContext';
 
 export default function App() {
-  // Auth State
-  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
-  const apiFetch = async (url, options = {}) => {
-    return fetch(url, {
-      ...options,
-      headers: {
-        ...options.headers,
-        'Authorization': `Bearer ${authToken}`
-      }
-    });
-  };
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authPage, setAuthPage] = useState('login'); // 'login' or 'signup'
-  const [authError, setAuthError] = useState('');
-  const [authLoading, setAuthLoading] = useState(false);
-  const [authForm, setAuthForm] = useState({ org_name: '', full_name: '', email: 'sumit@globussoft.com', password: 'sumit1234' });
-
-  // Check token on mount
-  useEffect(() => {
-    if (authToken) {
-      fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
-        .then(r => r.ok ? r.json() : Promise.reject())
-        .then(u => setCurrentUser(u))
-        .catch(() => { setAuthToken(null); localStorage.removeItem('authToken'); });
-    }
-  }, [authToken]);
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setAuthError(''); setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: authForm.email, password: authForm.password })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Login failed');
-      localStorage.setItem('authToken', data.access_token);
-      setAuthToken(data.access_token);
-      setCurrentUser(data.user);
-    } catch (err) { setAuthError(err.message); }
-    setAuthLoading(false);
-  };
-
-  const handleSignup = async (e) => {
-    e.preventDefault();
-    setAuthError(''); setAuthLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/auth/signup`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(authForm)
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Signup failed');
-      localStorage.setItem('authToken', data.access_token);
-      setAuthToken(data.access_token);
-      setCurrentUser(data.user);
-    } catch (err) { setAuthError(err.message); }
-    setAuthLoading(false);
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('authToken');
-    setAuthToken(null);
-    setCurrentUser(null);
-    setAuthForm({ org_name: '', full_name: '', email: '', password: '' });
-  };
+  const { authToken, currentUser, apiFetch, logout } = useAuth();
 
 
   const [activeTab, setActiveTab] = useState('crm');
@@ -510,15 +445,7 @@ export default function App() {
 
   // ─── AUTH PAGES (after all hooks) ───
   if (!authToken || !currentUser) {
-    return (
-      <AuthPage 
-        authPage={authPage} setAuthPage={setAuthPage}
-        authError={authError} setAuthError={setAuthError}
-        authLoading={authLoading}
-        authForm={authForm} setAuthForm={setAuthForm}
-        handleLogin={handleLogin} handleSignup={handleSignup}
-      />
-    );
+    return <AuthPage />;
   }
 
   return (
@@ -526,7 +453,7 @@ export default function App() {
       <TopHeader 
         activeTab={activeTab} setActiveTab={setActiveTab}
         userRole={userRole} currentUser={currentUser}
-        handleLogout={handleLogout}
+        handleLogout={logout}
       />
       
       {activeTab === 'crm' ? (

@@ -1,16 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 
-export default function AuthPage({
-  authPage,
-  setAuthPage,
-  authError,
-  setAuthError,
-  authLoading,
-  authForm,
-  setAuthForm,
-  handleLogin,
-  handleSignup
-}) {
+export default function AuthPage() {
+  const { login, signup } = useAuth();
+
+  const [authPage, setAuthPage] = useState('login');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authForm, setAuthForm] = useState({ org_name: '', full_name: '', email: 'sumit@globussoft.com', password: 'sumit1234' });
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthError(''); setAuthLoading(true);
+    try {
+      await login(authForm.email, authForm.password);
+    } catch (err) { setAuthError(err.message); }
+    setAuthLoading(false);
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setAuthError(''); setAuthLoading(true);
+    try {
+      await signup(authForm.org_name, authForm.full_name, authForm.email, authForm.password);
+    } catch (err) { setAuthError(err.message); }
+    setAuthLoading(false);
+  };
+
   return (
     <div style={{minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', padding: '20px'}}>

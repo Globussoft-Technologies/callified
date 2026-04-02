@@ -32,6 +32,7 @@ export function AuthProvider({ children }) {
     if (!res.ok) throw new Error((await res.json()).detail || 'Login failed');
     const data = await res.json();
     setAuthToken(data.access_token);
+    setCurrentUser(data.user);
     localStorage.setItem('authToken', data.access_token);
     return data;
   };
@@ -44,6 +45,7 @@ export function AuthProvider({ children }) {
     if (!res.ok) throw new Error((await res.json()).detail || 'Signup failed');
     const data = await res.json();
     setAuthToken(data.access_token);
+    setCurrentUser(data.user);
     localStorage.setItem('authToken', data.access_token);
     return data;
   };
