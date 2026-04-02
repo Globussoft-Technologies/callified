@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import CallMonitor from './CallMonitor';
-import KnowledgeBase from './KnowledgeBase';
-import Sandbox from './Sandbox';
+import MonitorPage from './pages/MonitorPage';
+import KnowledgePage from './pages/KnowledgePage';
+import SandboxPage from './pages/SandboxPage';
 import AuthPage from './components/AuthPage';
 import TopHeader from './components/TopHeader';
 import CrmTab from './components/tabs/CrmTab';
@@ -10,7 +10,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsTab from './components/tabs/SettingsTab';
-import LogsTab from './components/tabs/LogsTab';
+import LogsPage from './pages/LogsPage';
 import CheckInPage from './pages/CheckInPage';
 import CampaignsTab from './components/tabs/CampaignsTab';
 import LeadModals from './components/modals/LeadModals';
@@ -905,17 +905,11 @@ export default function App() {
       ) : activeTab === 'integrations' ? (
         <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />
       ) : activeTab === 'monitor' ? (
-        <div style={{padding: '1rem'}}>
-          <CallMonitor apiUrl={API_URL} />
-        </div>
+        <MonitorPage API_URL={API_URL} />
       ) : activeTab === 'knowledge' ? (
-        <div style={{padding: '1rem'}}>
-          <KnowledgeBase apiUrl={API_URL} />
-        </div>
+        <KnowledgePage API_URL={API_URL} />
       ) : activeTab === 'sandbox' ? (
-        <div style={{padding: '1rem'}}>
-          <Sandbox apiUrl={API_URL} />
-        </div>
+        <SandboxPage API_URL={API_URL} />
       ) : activeTab === 'settings' ? (
         <SettingsTab orgTimezone={orgTimezone}
           handleAddPronunciation={handleAddPronunciation} pronFormData={pronFormData}
@@ -933,7 +927,7 @@ export default function App() {
           apiFetch={apiFetch} API_URL={API_URL}
         />
       ) : activeTab === 'logs' ? (
-        <LogsTab API_URL={API_URL} authToken={authToken} />
+        <LogsPage API_URL={API_URL} authToken={authToken} />
       ) : (
         <CheckInPage apiFetch={apiFetch} API_URL={API_URL} />
       )}
