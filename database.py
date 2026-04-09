@@ -320,6 +320,19 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS demo_requests (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            phone VARCHAR(50),
+            company VARCHAR(255),
+            request_type ENUM('demo','trial') NOT NULL DEFAULT 'demo',
+            message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.close()
 
 def get_all_leads(org_id: int) -> List[Dict]:
@@ -1478,3 +1491,24 @@ def link_wa_conversation_to_lead(org_id: int, contact_phone: str, lead_id: int) 
     affected = cursor.rowcount
     conn.close()
     return affected > 0
+
+
+def create_demo_request(name: str, email: str, phone: str, company: str, request_type: str, message: str) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO demo_requests (name, email, phone, company, request_type, message) VALUES (%s, %s, %s, %s, %s, %s)",
+        (name, email, phone or None, company or None, request_type, message or None)
+    )
+    rid = cursor.lastrowid
+    conn.close()
+    return rid
+
+
+def get_all_demo_requests() -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM demo_requests ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows

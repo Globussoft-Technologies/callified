@@ -153,6 +153,33 @@ ul{list-style:none}
 .footer-socials a{color:#475569;transition:color .2s;font-size:1.1rem}
 .footer-socials a:hover{color:#f8fafc}
 
+/* ===== MODAL ===== */
+.modal-overlay{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s ease}
+.modal-overlay.active{opacity:1;pointer-events:auto}
+.modal-card{background:#1e293b;border:1px solid rgba(148,163,184,.12);border-radius:20px;padding:40px 36px;max-width:480px;width:90%;position:relative;transform:translateY(20px) scale(.97);transition:transform .3s ease;max-height:90vh;overflow-y:auto}
+.modal-overlay.active .modal-card{transform:translateY(0) scale(1)}
+.modal-close{position:absolute;top:16px;right:20px;background:none;border:none;color:#94a3b8;font-size:1.8rem;cursor:pointer;line-height:1;transition:color .2s}
+.modal-close:hover{color:#f8fafc}
+.modal-card h2{font-size:1.6rem;font-weight:800;margin-bottom:8px}
+.modal-subtitle{color:#94a3b8;font-size:.9rem;margin-bottom:28px}
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.form-group input,.form-group textarea{width:100%;padding:12px 14px;background:rgba(15,23,42,.8);border:1px solid rgba(148,163,184,.15);border-radius:10px;color:#f8fafc;font-size:.95rem;font-family:inherit;transition:border-color .2s;outline:none}
+.form-group input:focus,.form-group textarea:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+.form-group input::placeholder,.form-group textarea::placeholder{color:#475569}
+.form-group textarea{resize:vertical;min-height:70px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-submit{width:100%;padding:14px;font-size:1rem;margin-top:4px}
+.form-submit:disabled{opacity:.6;cursor:not-allowed}
+.form-success{text-align:center;padding:32px 0}
+.success-icon{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#22c55e,#16a34a);display:flex;align-items:center;justify-content:center;font-size:2rem;color:#fff;margin:0 auto 20px;font-weight:700}
+.form-success h3{font-size:1.4rem;font-weight:800;margin-bottom:8px}
+.form-success p{color:#94a3b8;font-size:.95rem}
+@media(max-width:768px){
+  .modal-card{padding:28px 20px}
+  .form-row{grid-template-columns:1fr}
+}
+
 /* ===== ANIMATIONS ===== */
 .fade-in{opacity:0;transform:translateY(30px);transition:opacity .6s ease,transform .6s ease}
 .fade-in.visible{opacity:1;transform:translateY(0)}

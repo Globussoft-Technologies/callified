@@ -37,6 +37,7 @@ from database import (
     get_campaign_call_log,
     get_product_prompt, update_product_prompt,
     save_call_review, get_call_reviews_by_campaign, get_call_review_by_transcript,
+    create_demo_request, get_all_demo_requests,
 )
 import rag
 
@@ -93,9 +94,28 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
+class DemoRequestCreate(BaseModel):
+    name: str
+    email: str
+    phone: str = ""
+    company: str = ""
+    request_type: str = "demo"
+    message: str = ""
+
 # ─── Router ──────────────────────────────────────────────────────────────────
 
 api_router = APIRouter()
+
+# --- Public endpoints (no auth) ---
+
+@api_router.post("/api/public/demo-request")
+def api_create_demo_request(data: DemoRequestCreate):
+    rid = create_demo_request(data.name, data.email, data.phone, data.company, data.request_type, data.message)
+    return {"ok": True, "id": rid}
+
+@api_router.get("/api/demo-requests")
+def api_get_demo_requests(current_user: dict = Depends(get_current_user)):
+    return get_all_demo_requests()
 
 @api_router.get("/api/debug/logs")
 def api_fetch_logs():
