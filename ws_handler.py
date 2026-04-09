@@ -133,6 +133,7 @@ async def handle_media_stream(websocket: WebSocket):
     _last_transcript_time = [0.0]
     _debounce_delay = 0.15  # 150ms debounce — near-instant response
     _last_tts_end_time = [0.0]  # Track when TTS last finished, to give user breathing room
+    _tts_playing = [False]  # True while TTS is actively sending audio — suppress STT echo
     _recording_mic_chunks = []
     _recording_tts_chunks = []
 
@@ -233,6 +234,10 @@ async def handle_media_stream(websocket: WebSocket):
             if _hangup_requested[0]:
                 conv_logger.info(f"[STT] IGNORED (hangup pending): {sentence}")
                 return
+            # Suppress echo: ignore STT while TTS is playing or within 1s after
+            if _tts_playing[0] or (time.time() - _last_tts_end_time[0] < 1.0):
+                conv_logger.info(f"[STT] IGNORED (TTS echo suppression): {sentence}")
+                return
             conv_logger.info(f"[STT] USER SAID: {sentence}")
             if stream_sid:
                 call_logger.call_event(stream_sid, "STT_TRANSCRIPT", sentence[:100])
@@ -305,6 +310,7 @@ async def handle_media_stream(websocket: WebSocket):
                                     sentence = await tts_queue.get()
                                     if sentence is None:
                                         break
+                                    _tts_playing[0] = True
                                     await synthesize_and_send_audio(
                                         text=sentence,
                                         stream_sid=stream_sid,
@@ -313,9 +319,11 @@ async def handle_media_stream(websocket: WebSocket):
                                         tts_voice_override=_tts_voice_override,
                                         tts_language_override=_tts_language_override
                                     )
+                                    _tts_playing[0] = False
                                     _last_tts_end_time[0] = time.time()
                                     tts_queue.task_done()
                             except asyncio.CancelledError:
+                                _tts_playing[0] = False
                                 _last_tts_end_time[0] = time.time()
                             except Exception as e:
                                 conv_logger.error(f"TTS Worker Error: {e}")
@@ -341,7 +349,7 @@ async def handle_media_stream(websocket: WebSocket):
                             first_token_time = None
                             
                             _lang = (_tts_language_override or "hi")
-                            _llm_max_tokens = 150  # Keep short for voice — prompt enforces 1 sentence
+                            _llm_max_tokens = 400 if _lang == "mr" else 800
                             async for chunk in llm_provider.generate_response_stream(
                                 chat_history=chat_history,
                                 system_instruction=final_system_instruction,
@@ -406,10 +414,10 @@ async def handle_media_stream(websocket: WebSocket):
                                     conv_logger.info("[HANGUP] TTS drain complete, closing connection.")
                                 except (asyncio.TimeoutError, Exception):
                                     conv_logger.info("[HANGUP] TTS drain timed out, forcing close.")
-                                # Grace period for browser to finish playing the audio buffer.
-                                # TTS sends chunks faster than realtime — browser needs time to play them.
-                                # ~4 seconds covers a typical farewell sentence at normal speech rate.
-                                await asyncio.sleep(4)
+                                # Grace period for the telecom/browser to finish playing the audio buffer.
+                                # TTS sends chunks faster than realtime — phone needs time to play them.
+                                # ~7 seconds covers a typical farewell sentence at telephony speech rate.
+                                await asyncio.sleep(7)
                                 try:
                                     await websocket.close()
                                 except Exception:

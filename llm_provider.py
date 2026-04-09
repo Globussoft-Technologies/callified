@@ -44,7 +44,7 @@ async def _groq_generate(chat_history: list, system_instruction: str, max_tokens
         model=model,
         messages=messages,
         max_tokens=max_tokens,
-        temperature=0.7,
+        temperature=0.3,
     )
     
     # Log rate limit headers
@@ -85,7 +85,7 @@ async def _groq_generate_stream(chat_history: list, system_instruction: str, max
         model=model,
         messages=messages,
         max_tokens=max_tokens,
-        temperature=0.7,
+        temperature=0.3,
         stream=True,
     )
     
@@ -110,6 +110,7 @@ async def _gemini_generate(chat_history: list, system_instruction: str, max_toke
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             max_output_tokens=max_tokens,
+            temperature=0.3,
         ),
     )
 
@@ -130,6 +131,7 @@ async def _gemini_generate_stream(chat_history: list, system_instruction: str, m
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
             max_output_tokens=max_tokens,
+            temperature=0.3,
         ),
     )
 
