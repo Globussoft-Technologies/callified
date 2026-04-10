@@ -1,4 +1,5 @@
 import pymysql
+from dbutils.pooled_db import PooledDB
 import json
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -15,8 +16,23 @@ DB_CONFIG = {
     'autocommit': True
 }
 
+_pool = None
+
+def get_pool():
+    global _pool
+    if _pool is None:
+        _pool = PooledDB(
+            creator=pymysql,
+            maxconnections=20,
+            mincached=5,
+            maxcached=10,
+            blocking=True,
+            **DB_CONFIG
+        )
+    return _pool
+
 def get_conn():
-    return pymysql.connect(**DB_CONFIG)
+    return get_pool().connection()
 
 def init_db():
     conn = get_conn()
