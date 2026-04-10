@@ -365,6 +365,18 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            token VARCHAR(255) NOT NULL UNIQUE,
+            expires_at DATETIME NOT NULL,
+            used BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+    ''')
+
     conn.close()
 
 def get_all_leads(org_id: int) -> List[Dict]:
@@ -764,6 +776,40 @@ def get_user_by_email(email: str) -> Optional[Dict]:
     row = cursor.fetchone()
     conn.close()
     return row
+
+def create_reset_token(user_id: int, token: str, expires_at) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO password_reset_tokens (user_id, token, expires_at)
+        VALUES (%s, %s, %s)
+    ''', (user_id, token, expires_at))
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+def get_valid_reset_token(token: str) -> Optional[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM password_reset_tokens
+        WHERE token = %s AND used = FALSE AND expires_at > NOW()
+    ''', (token,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def mark_token_used(token_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE password_reset_tokens SET used = TRUE WHERE id = %s", (token_id,))
+    conn.close()
+
+def update_user_password(user_id: int, password_hash: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
+    conn.close()
 
 # --- CAMPAIGNS ---
 
