@@ -5,6 +5,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage] = useState(null);
   const [payments, setPayments] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { fetchAll(); }, []);
@@ -12,16 +13,18 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [plansRes, subRes, usageRes, payRes] = await Promise.all([
+      const [plansRes, subRes, usageRes, payRes, invRes] = await Promise.all([
         apiFetch(`${API_URL}/billing/plans`),
         apiFetch(`${API_URL}/billing/subscription`),
         apiFetch(`${API_URL}/billing/usage`),
         apiFetch(`${API_URL}/billing/payments`),
+        apiFetch(`${API_URL}/billing/invoices`),
       ]);
       setPlans(await plansRes.json());
       setSubscription(await subRes.json());
       setUsage(await usageRes.json());
       setPayments(await payRes.json());
+      try { setInvoices(await invRes.json()); } catch(e) { setInvoices([]); }
     } catch(e) { console.error('Billing fetch error:', e); }
     setLoading(false);
   };
@@ -202,7 +205,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
 
       {/* Payment History */}
       {payments.length > 0 && (
-        <div className="glass-panel" style={{padding: '1.5rem'}}>
+        <div className="glass-panel" style={{padding: '1.5rem', marginBottom: '1.5rem'}}>
           <h3 style={{fontSize: '1rem', marginBottom: '1rem', color: '#94a3b8'}}>Payment History</h3>
           <table style={{width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse'}}>
             <thead>
@@ -232,6 +235,51 @@ export default function BillingPage({ apiFetch, API_URL }) {
           </table>
         </div>
       )}
+
+      {/* Invoices */}
+      <div className="glass-panel" style={{padding: '1.5rem'}}>
+        <h3 style={{fontSize: '1rem', marginBottom: '1rem', color: '#94a3b8'}}>Invoices</h3>
+        {invoices.length === 0 ? (
+          <div style={{textAlign: 'center', padding: '1.5rem', color: '#64748b', fontSize: '0.85rem'}}>No invoices yet</div>
+        ) : (
+          <table style={{width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse'}}>
+            <thead>
+              <tr style={{borderBottom: '1px solid rgba(148,163,184,0.1)'}}>
+                <th style={{textAlign: 'left', padding: '8px 4px', color: '#64748b', fontWeight: 600}}>Invoice #</th>
+                <th style={{textAlign: 'left', padding: '8px 4px', color: '#64748b', fontWeight: 600}}>Date</th>
+                <th style={{textAlign: 'left', padding: '8px 4px', color: '#64748b', fontWeight: 600}}>Amount</th>
+                <th style={{textAlign: 'left', padding: '8px 4px', color: '#64748b', fontWeight: 600}}>Status</th>
+                <th style={{textAlign: 'right', padding: '8px 4px', color: '#64748b', fontWeight: 600}}>Download</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map(inv => (
+                <tr key={inv.id} style={{borderBottom: '1px solid rgba(148,163,184,0.06)'}}>
+                  <td style={{padding: '8px 4px', fontFamily: 'monospace', color: '#cbd5e1'}}>{inv.invoice_number || inv.id}</td>
+                  <td style={{padding: '8px 4px'}}>{inv.created_at ? new Date(inv.created_at).toLocaleDateString() : inv.date ? new Date(inv.date).toLocaleDateString() : '-'}</td>
+                  <td style={{padding: '8px 4px', fontWeight: 600}}>{formatINR(inv.amount_paise)}</td>
+                  <td style={{padding: '8px 4px'}}>
+                    <span style={{
+                      padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600,
+                      background: inv.status === 'paid' ? 'rgba(34,197,94,0.15)' : inv.status === 'pending' ? 'rgba(245,158,11,0.15)' : 'rgba(148,163,184,0.15)',
+                      color: inv.status === 'paid' ? '#22c55e' : inv.status === 'pending' ? '#fbbf24' : '#94a3b8',
+                    }}>{inv.status}</span>
+                  </td>
+                  <td style={{padding: '8px 4px', textAlign: 'right'}}>
+                    <button onClick={() => {
+                      const token = localStorage.getItem('token');
+                      window.open(`${API_URL}/billing/invoices/${inv.id}/download?token=${encodeURIComponent(token)}`, '_blank');
+                    }} style={{
+                      padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                      background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',
+                    }}>View / Print</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
