@@ -4,6 +4,8 @@ Handles JWT tokens, password hashing, login, signup, and user retrieval.
 """
 import os
 import time
+import secrets
+import logging
 import threading
 import jwt
 from typing import Optional
@@ -12,7 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from passlib.context import CryptContext
 from pydantic import BaseModel
-from database import get_user_by_email, create_user, create_organization, get_all_organizations
+from database import (
+    get_user_by_email, create_user, create_organization, get_all_organizations,
+    create_reset_token, get_valid_reset_token, mark_token_used, update_user_password,
+)
+from email_service import send_email, _wrap_html, APP_URL
+
+logger = logging.getLogger("uvicorn.error")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -137,6 +145,13 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
 # ─── Router ──────────────────────────────────────────────────────────────────
 
 auth_router = APIRouter()
@@ -188,3 +203,47 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         "full_name": current_user.get("full_name", ""), "role": current_user.get("role"),
         "org_id": org_id, "org_name": org_name
     }
+
+@auth_router.post("/api/auth/forgot-password")
+def forgot_password(data: ForgotPasswordRequest, request: Request):
+    """Send a password reset link. Always returns success to avoid leaking user existence."""
+    check_rate_limit(request, limit=5, window=60)
+    user = get_user_by_email(data.email)
+    if user:
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(hours=1)
+        create_reset_token(user["id"], token, expires_at)
+        reset_link = f"{APP_URL}/reset-password?token={token}"
+        body = f"""\
+            <h2 style="color:#a5b4fc;margin-top:0;">Reset Your Password</h2>
+            <p>We received a request to reset your password. Click the button below to set a new password.</p>
+            <p>
+              <a href="{reset_link}" style="display:inline-block;background:#6366f1;color:#f8fafc;
+                 padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">
+                Reset Password
+              </a>
+            </p>
+            <p style="color:#94a3b8;margin-top:24px;font-size:13px;">
+              This link expires in 1 hour. If you didn't request this, you can safely ignore this email.
+            </p>"""
+        html = _wrap_html("Password Reset", body)
+        send_email(user["email"], "Reset Your Password - Callified AI", html)
+        logger.info(f"[AUTH] Password reset email sent to {data.email}")
+    else:
+        logger.info(f"[AUTH] Password reset requested for unknown email: {data.email}")
+    return {"message": "If an account with that email exists, a reset link has been sent."}
+
+@auth_router.post("/api/auth/reset-password")
+def reset_password(data: ResetPasswordRequest, request: Request):
+    """Reset password using a valid token."""
+    check_rate_limit(request, limit=5, window=60)
+    token_row = get_valid_reset_token(data.token)
+    if not token_row:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    if len(data.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    hashed = get_password_hash(data.new_password)
+    update_user_password(token_row["user_id"], hashed)
+    mark_token_used(token_row["id"])
+    logger.info(f"[AUTH] Password reset completed for user_id={token_row['user_id']}")
+    return {"message": "Password has been reset successfully. You can now log in."}
