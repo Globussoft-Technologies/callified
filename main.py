@@ -76,6 +76,8 @@ async def on_startup():
     init_billing_tables()
     seed_default_plans()
     asyncio.create_task(poll_crm_leads())
+    from scheduler import run_scheduler
+    asyncio.create_task(run_scheduler())
 
 async def poll_crm_leads():
     while True:

@@ -38,6 +38,7 @@ from database import (
     get_product_prompt, update_product_prompt,
     save_call_review, get_call_reviews_by_campaign, get_call_review_by_transcript,
     create_demo_request, get_all_demo_requests,
+    create_scheduled_call, get_scheduled_calls_by_org, update_scheduled_call_status,
 )
 import rag
 
@@ -79,6 +80,11 @@ class CampaignUpdate(BaseModel):
 
 class CampaignLeadsAssign(BaseModel):
     lead_ids: List[int]
+
+class ScheduledCallCreate(BaseModel):
+    lead_id: int
+    scheduled_time: str
+    campaign_id: Optional[int] = None
 
 # ─── Removed Legacy ChromaDB (Using FAISS instead) ─────────
 
@@ -963,6 +969,31 @@ async def api_campaign_import_csv(campaign_id: int, current_user: dict = Depends
         add_leads_to_campaign(campaign_id, lead_ids)
     _il.info(f"[CAMPAIGN CSV IMPORT] campaign={campaign_id}, imported={imported}, added_to_campaign={len(lead_ids)}, errors={len(errors)}")
     return {"status": "success", "imported": imported, "added_to_campaign": len(lead_ids), "errors": errors[:10]}
+
+# ─── Scheduled Calls ────────────────────────────────────────────────────────
+
+@api_router.post("/api/scheduled-calls")
+def api_create_scheduled_call(payload: ScheduledCallCreate, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization assigned")
+    lead = get_lead_by_id(payload.lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    call_id = create_scheduled_call(org_id, payload.lead_id, payload.scheduled_time, payload.campaign_id)
+    return {"status": "success", "id": call_id}
+
+@api_router.get("/api/scheduled-calls")
+def api_get_scheduled_calls(current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization assigned")
+    return get_scheduled_calls_by_org(org_id)
+
+@api_router.delete("/api/scheduled-calls/{call_id}")
+def api_cancel_scheduled_call(call_id: int, current_user: dict = Depends(get_current_user)):
+    update_scheduled_call_status(call_id, "cancelled")
+    return {"status": "success", "message": "Scheduled call cancelled"}
 
 # --- Mobile API ---
 

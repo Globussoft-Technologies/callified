@@ -332,6 +332,21 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS scheduled_calls (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            campaign_id INT,
+            lead_id INT NOT NULL,
+            scheduled_time DATETIME NOT NULL,
+            status ENUM('pending','dialing','completed','failed','cancelled') DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+            FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE,
+            INDEX idx_scheduled_pending (status, scheduled_time)
+        )
+    ''')
+
     conn.close()
 
 def get_all_leads(org_id: int) -> List[Dict]:
@@ -1508,6 +1523,57 @@ def get_all_demo_requests() -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM demo_requests ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+# ─── Scheduled Calls ────────────────────────────────────────────────────────
+
+def create_scheduled_call(org_id: int, lead_id: int, scheduled_time: str, campaign_id: int = None) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO scheduled_calls (org_id, lead_id, scheduled_time, campaign_id) VALUES (%s, %s, %s, %s)",
+        (org_id, lead_id, scheduled_time, campaign_id)
+    )
+    call_id = cursor.lastrowid
+    conn.close()
+    return call_id
+
+
+def get_pending_scheduled_calls() -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT sc.*, l.first_name, l.phone, l.interest, l.source
+        FROM scheduled_calls sc
+        JOIN leads l ON sc.lead_id = l.id
+        WHERE sc.status = 'pending' AND sc.scheduled_time <= NOW()
+        ORDER BY sc.scheduled_time ASC
+    ''')
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
+def update_scheduled_call_status(call_id: int, status: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE scheduled_calls SET status = %s WHERE id = %s", (status, call_id))
+    conn.close()
+
+
+def get_scheduled_calls_by_org(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT sc.*, l.first_name, l.phone
+        FROM scheduled_calls sc
+        JOIN leads l ON sc.lead_id = l.id
+        WHERE sc.org_id = %s
+        ORDER BY sc.scheduled_time DESC
+    ''', (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
