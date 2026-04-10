@@ -349,7 +349,7 @@ async def handle_media_stream(websocket: WebSocket):
                             first_token_time = None
                             
                             _lang = (_tts_language_override or "hi")
-                            _llm_max_tokens = 400 if _lang == "mr" else 800
+                            _llm_max_tokens = 400 if _lang == "mr" else 150 if _lang in ("hi", "bn") else 800
                             async for chunk in llm_provider.generate_response_stream(
                                 chat_history=chat_history,
                                 system_instruction=final_system_instruction,
