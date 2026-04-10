@@ -937,6 +937,37 @@ def get_user_by_email(email: str) -> Optional[Dict]:
     conn.close()
     return row
 
+def get_user_by_id(user_id: int) -> Optional[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def get_team_members(org_id: int) -> List[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, email, full_name, role, created_at FROM users WHERE org_id = %s ORDER BY created_at",
+        (org_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def update_user_role(user_id: int, role: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET role = %s WHERE id = %s", (role, user_id))
+    conn.close()
+
+def delete_user(user_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.close()
+
 def create_reset_token(user_id: int, token: str, expires_at) -> int:
     conn = get_conn()
     cursor = conn.cursor()

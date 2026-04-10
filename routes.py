@@ -18,7 +18,7 @@ import logging
 logger = logging.getLogger("uvicorn.error")
 import string
 import secrets
-from auth import get_current_user, create_user_direct
+from auth import get_current_user, create_user_direct, get_password_hash
 from billing import create_subscription, get_growth_plan_id
 from database import (
     get_all_leads, get_lead_by_id, create_lead, update_lead, delete_lead,
@@ -48,6 +48,7 @@ from database import (
     add_dnd_number, add_dnd_numbers_bulk, is_dnd_number, remove_dnd_number,
     get_dnd_count, get_dnd_numbers,
     is_onboarding_completed, mark_onboarding_completed,
+    get_team_members, get_user_by_id, update_user_role, delete_user, create_user,
 )
 import rag
 from email_service import send_email, _wrap_html
@@ -95,6 +96,15 @@ class ScheduledCallCreate(BaseModel):
     lead_id: int
     scheduled_time: str
     campaign_id: Optional[int] = None
+
+class TeamInvite(BaseModel):
+    email: str
+    full_name: str
+    role: str = "Agent"
+    password: str
+
+class RoleUpdate(BaseModel):
+    role: str
 
 # ─── Removed Legacy ChromaDB (Using FAISS instead) ─────────
 
@@ -1361,6 +1371,64 @@ def api_onboarding_complete(current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("org_id")
     mark_onboarding_completed(org_id)
     return {"status": "ok"}
+
+
+# --- Team Management ---
+
+def _require_admin(user: dict):
+    if user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+@api_router.get("/api/team")
+def api_get_team(current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    org_id = current_user.get("org_id")
+    members = get_team_members(org_id)
+    # Serialize datetimes to ISO strings
+    for m in members:
+        if m.get("created_at"):
+            m["created_at"] = m["created_at"].isoformat()
+    return members
+
+@api_router.post("/api/team/invite")
+def api_invite_team_member(data: TeamInvite, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    org_id = current_user.get("org_id")
+    if data.role not in ("Admin", "Agent", "Viewer"):
+        raise HTTPException(status_code=400, detail="Role must be Admin, Agent, or Viewer")
+    if len(data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    from database import get_user_by_email
+    existing = get_user_by_email(data.email)
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed = get_password_hash(data.password)
+    user_id = create_user(data.email, hashed, data.full_name, role=data.role, org_id=org_id)
+    return {"status": "success", "user_id": user_id, "message": f"Invited {data.email} as {data.role}"}
+
+@api_router.put("/api/team/{user_id}/role")
+def api_update_team_role(user_id: int, data: RoleUpdate, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    if data.role not in ("Admin", "Agent", "Viewer"):
+        raise HTTPException(status_code=400, detail="Role must be Admin, Agent, or Viewer")
+    target = get_user_by_id(user_id)
+    if not target or target.get("org_id") != current_user.get("org_id"):
+        raise HTTPException(status_code=404, detail="User not found in your organization")
+    update_user_role(user_id, data.role)
+    return {"status": "success", "message": f"Role updated to {data.role}"}
+
+@api_router.delete("/api/team/{user_id}")
+def api_delete_team_member(user_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+    target = get_user_by_id(user_id)
+    if not target or target.get("org_id") != current_user.get("org_id"):
+        raise HTTPException(status_code=404, detail="User not found in your organization")
+    delete_user(user_id)
+    return {"status": "success", "message": "User removed from team"}
 
 
 # --- Mobile API ---
