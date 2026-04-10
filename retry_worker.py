@@ -11,6 +11,7 @@ from database import (
     is_dnd_number,
 )
 from call_guard import is_calling_allowed, get_org_timezone
+from worker_health import beat
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -28,6 +29,7 @@ async def retry_worker_loop():
     logger.info("[RETRY-WORKER] Started — polling every 120s")
 
     while True:
+        beat("retry_worker")
         try:
             pending = get_pending_retries()
             if pending:

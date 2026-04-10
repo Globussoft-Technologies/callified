@@ -149,14 +149,92 @@ def debug_logs(n: int = 100, level: str = "", keyword: str = ""):
 def debug_call_timeline(n: int = 5):
     return call_logger.get_timelines(n=n)
 
+@app.get("/ping")
+def ping():
+    """Lightweight endpoint for external monitoring (UptimeRobot etc.)."""
+    return {"pong": True}
+
+
 @app.get("/api/debug/health")
 def debug_health():
     import time
+    import shutil
+    from datetime import datetime, timedelta
+    from worker_health import get_heartbeat
+
+    uptime_s = round(time.time() - _app_start_time, 1)
+    active_calls = len(call_logger._active_timelines)
+    checks = {}
+    overall = "ok"
+
+    # --- Database check ---
+    try:
+        from database import get_conn
+        t0 = time.time()
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.fetchone()
+        conn.close()
+        latency_ms = round((time.time() - t0) * 1000, 1)
+        checks["database"] = {"status": "ok", "latency_ms": latency_ms}
+    except Exception as e:
+        checks["database"] = {"status": "degraded", "error": str(e)}
+        overall = "degraded"
+
+    # --- Redis check ---
+    try:
+        from redis_store import _get_client
+        rc = _get_client()
+        if rc is not None:
+            rc.ping()
+            checks["redis"] = {"status": "ok"}
+        else:
+            checks["redis"] = {"status": "degraded", "error": "client unavailable"}
+            overall = "degraded"
+    except Exception as e:
+        checks["redis"] = {"status": "degraded", "error": str(e)}
+        overall = "degraded"
+
+    # --- Disk space check (recordings dir) ---
+    try:
+        rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+        if not os.path.isdir(rec_dir):
+            os.makedirs(rec_dir, exist_ok=True)
+        usage = shutil.disk_usage(rec_dir)
+        free_gb = round(usage.free / (1024 ** 3), 2)
+        checks["disk"] = {"status": "ok" if free_gb > 1 else "degraded", "free_gb": free_gb}
+        if free_gb <= 1:
+            overall = "degraded"
+    except Exception as e:
+        checks["disk"] = {"status": "degraded", "error": str(e)}
+        overall = "degraded"
+
+    # --- Worker heartbeat checks ---
+    now = datetime.utcnow()
+    for worker_name, max_age_s in [("scheduler", 120), ("retry_worker", 240)]:
+        hb = get_heartbeat(worker_name)
+        if hb is None:
+            # Worker may not have run yet right after startup
+            if uptime_s > max_age_s:
+                checks[worker_name] = {"status": "degraded", "error": "no heartbeat recorded"}
+                overall = "degraded"
+            else:
+                checks[worker_name] = {"status": "ok", "note": "awaiting first run"}
+        else:
+            age = (now - hb).total_seconds()
+            checks[worker_name] = {
+                "status": "ok" if age < max_age_s else "degraded",
+                "last_run": hb.isoformat(),
+            }
+            if age >= max_age_s:
+                overall = "degraded"
+
     return {
-        "status": "ok", "uptime_s": round(time.time() - _app_start_time, 1),
-        "active_calls": len(call_logger._active_timelines),
-        "total_logs": len(call_logger._log_buffer),
-        "last_dial": last_dial_result.get("status", "none"),
+        "status": overall,
+        "uptime_s": uptime_s,
+        "checks": checks,
+        "active_calls": active_calls,
     }
 
 # ─── WebSocket Endpoints ─────────────────────────────────────────────────────

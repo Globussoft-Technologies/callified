@@ -8,6 +8,7 @@ import logging
 from database import get_pending_scheduled_calls, update_scheduled_call_status, get_campaign_by_id, get_campaign_voice_settings, is_dnd_number
 from dial_routes import initiate_call, DEFAULT_PROVIDER
 from call_guard import is_calling_allowed, get_org_timezone
+from worker_health import beat
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -15,6 +16,7 @@ logger = logging.getLogger("uvicorn.error")
 async def run_scheduler():
     """Infinite loop that checks for due scheduled calls every 60 seconds."""
     while True:
+        beat("scheduler")
         try:
             pending = get_pending_scheduled_calls()
             # Check TRAI calling hours before processing any calls
