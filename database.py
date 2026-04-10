@@ -323,12 +323,11 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS demo_requests (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            email VARCHAR(255) NOT NULL,
+            first_name VARCHAR(255) NOT NULL,
+            last_name VARCHAR(255),
             phone VARCHAR(50),
-            company VARCHAR(255),
+            email VARCHAR(255) NOT NULL,
             request_type ENUM('demo','trial') NOT NULL DEFAULT 'demo',
-            message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -1493,12 +1492,12 @@ def link_wa_conversation_to_lead(org_id: int, contact_phone: str, lead_id: int) 
     return affected > 0
 
 
-def create_demo_request(name: str, email: str, phone: str, company: str, request_type: str, message: str) -> int:
+def create_demo_request(first_name: str, last_name: str, phone: str, email: str, request_type: str) -> int:
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO demo_requests (name, email, phone, company, request_type, message) VALUES (%s, %s, %s, %s, %s, %s)",
-        (name, email, phone or None, company or None, request_type, message or None)
+        "INSERT INTO demo_requests (first_name, last_name, phone, email, request_type) VALUES (%s, %s, %s, %s, %s)",
+        (first_name, last_name or None, phone or None, email, request_type)
     )
     rid = cursor.lastrowid
     conn.close()

@@ -21,7 +21,7 @@
       <a href="#features">Features</a>
       <a href="#pricing">Pricing</a>
       <a href="#faq">FAQ</a>
-      <a href="javascript:void(0)" class="btn btn-primary nav-cta" onclick="openModal('trial')">Start Free Trial</a>
+      <a href="trial.html" class="btn btn-primary nav-cta">Start Free Trial</a>
     </div>
     <button class="hamburger" id="hamburger" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -40,8 +40,8 @@
       <h1>Your AI Sales Team That <span class="gradient-text">Never Sleeps</span></h1>
       <p>Automate outbound sales calls in natural Hindi, Hinglish, and English. Your AI voice agent dials leads, handles objections, and books qualified appointments &mdash; while your team focuses on closing.</p>
       <div class="hero-actions">
-        <a href="javascript:void(0)" class="btn btn-primary" onclick="openModal('trial')">Start Free Trial</a>
-        <a href="javascript:void(0)" class="btn btn-secondary" onclick="openModal('demo')">Book a Demo</a>
+        <a href="trial.html" class="btn btn-primary">Start Free Trial</a>
+        <a href="demo.html" class="btn btn-secondary">Book a Demo</a>
       </div>
       <div class="hero-stats">
         <div class="hero-stat">
@@ -200,7 +200,7 @@
           <li>CSV lead import</li>
           <li>Email support</li>
         </ul>
-        <a href="javascript:void(0)" class="btn btn-secondary" onclick="openModal('trial')">Get Started</a>
+        <a href="trial.html" class="btn btn-secondary">Get Started</a>
       </div>
       <!-- Growth -->
       <div class="price-card popular fade-in fade-in-delay-1">
@@ -216,7 +216,7 @@
           <li>Analytics dashboard</li>
           <li>Priority support</li>
         </ul>
-        <a href="javascript:void(0)" class="btn btn-primary" onclick="openModal('trial')">Start Free Trial</a>
+        <a href="trial.html" class="btn btn-primary">Start Free Trial</a>
       </div>
       <!-- Enterprise -->
       <div class="price-card fade-in fade-in-delay-2">
@@ -232,7 +232,7 @@
           <li>Dedicated account manager</li>
           <li>SLA &amp; onboarding support</li>
         </ul>
-        <a href="javascript:void(0)" class="btn btn-secondary" onclick="openModal('demo')">Contact Sales</a>
+        <a href="demo.html" class="btn btn-secondary">Contact Sales</a>
       </div>
     </div>
   </div>
@@ -348,52 +348,12 @@
       <h2>Ready to <span class="gradient-text">10x your sales calls?</span></h2>
       <p>Join hundreds of Indian businesses automating outbound with AI. Start your free trial today &mdash; no credit card required.</p>
       <div class="hero-actions">
-        <a href="javascript:void(0)" class="btn btn-primary" onclick="openModal('trial')">Start Free Trial</a>
-        <a href="javascript:void(0)" class="btn btn-secondary" onclick="openModal('demo')">Book a Demo</a>
+        <a href="trial.html" class="btn btn-primary">Start Free Trial</a>
+        <a href="demo.html" class="btn btn-secondary">Book a Demo</a>
       </div>
     </div>
   </div>
 </section>
-
-<!-- ===== MODAL ===== -->
-<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
-  <div class="modal-card" onclick="event.stopPropagation()">
-    <button class="modal-close" onclick="closeModal()">&times;</button>
-    <h2 id="modalTitle">Book a Demo</h2>
-    <p id="modalSubtitle" class="modal-subtitle">Fill in your details and we'll get back to you within 24 hours.</p>
-    <form id="demoForm" onsubmit="submitForm(event)">
-      <input type="hidden" id="requestType" name="request_type" value="demo">
-      <div class="form-group">
-        <label for="formName">Full Name *</label>
-        <input type="text" id="formName" name="name" required placeholder="e.g. Rajesh Kumar">
-      </div>
-      <div class="form-group">
-        <label for="formEmail">Work Email *</label>
-        <input type="email" id="formEmail" name="email" required placeholder="e.g. rajesh@company.com">
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label for="formPhone">Phone</label>
-          <input type="tel" id="formPhone" name="phone" placeholder="e.g. +91 98765 43210">
-        </div>
-        <div class="form-group">
-          <label for="formCompany">Company</label>
-          <input type="text" id="formCompany" name="company" placeholder="e.g. Globussoft">
-        </div>
-      </div>
-      <div class="form-group" id="messageGroup">
-        <label for="formMessage">Anything you'd like us to know?</label>
-        <textarea id="formMessage" name="message" rows="3" placeholder="e.g. We make 500 calls/day in Hindi..."></textarea>
-      </div>
-      <button type="submit" class="btn btn-primary form-submit" id="formSubmitBtn">Submit</button>
-    </form>
-    <div id="formSuccess" class="form-success" style="display:none">
-      <div class="success-icon">&#10003;</div>
-      <h3>Thank you!</h3>
-      <p id="successMsg">We'll reach out within 24 hours.</p>
-    </div>
-  </div>
-</div>
 
 <!-- ===== FOOTER ===== -->
 <footer class="footer">
@@ -481,73 +441,6 @@ function toggleFaq(el) {
   if (!wasActive) item.classList.add('active');
 }
 
-// Modal
-const API_BASE = 'https://test.callified.ai';
-function openModal(type) {
-  const overlay = document.getElementById('modalOverlay');
-  const title = document.getElementById('modalTitle');
-  const subtitle = document.getElementById('modalSubtitle');
-  const reqType = document.getElementById('requestType');
-  document.getElementById('demoForm').style.display = '';
-  document.getElementById('formSuccess').style.display = 'none';
-  document.getElementById('demoForm').reset();
-  document.getElementById('formSubmitBtn').disabled = false;
-  document.getElementById('formSubmitBtn').textContent = 'Submit';
-  if (type === 'trial') {
-    title.textContent = 'Start Your Free Trial';
-    subtitle.textContent = 'Get 50 free minutes to test Callified AI with your own leads.';
-    reqType.value = 'trial';
-  } else {
-    title.textContent = 'Book a Demo';
-    subtitle.textContent = "Fill in your details and we'll get back to you within 24 hours.";
-    reqType.value = 'demo';
-  }
-  overlay.classList.add('active');
-  document.body.style.overflow = 'hidden';
-}
-function closeModal(e) {
-  if (e && e.target !== e.currentTarget) return;
-  document.getElementById('modalOverlay').classList.remove('active');
-  document.body.style.overflow = '';
-}
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
-
-async function submitForm(e) {
-  e.preventDefault();
-  const btn = document.getElementById('formSubmitBtn');
-  btn.disabled = true;
-  btn.textContent = 'Submitting...';
-  const form = document.getElementById('demoForm');
-  const data = {
-    name: form.name.value.trim(),
-    email: form.email.value.trim(),
-    phone: form.phone.value.trim(),
-    company: form.company.value.trim(),
-    request_type: form.request_type.value,
-    message: form.message.value.trim(),
-  };
-  try {
-    const res = await fetch(API_BASE + '/api/public/demo-request', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) throw new Error('Request failed');
-    form.style.display = 'none';
-    const successEl = document.getElementById('formSuccess');
-    const successMsg = document.getElementById('successMsg');
-    if (data.request_type === 'trial') {
-      successMsg.textContent = "We'll set up your trial account and reach out shortly!";
-    } else {
-      successMsg.textContent = "We'll reach out within 24 hours to schedule your demo.";
-    }
-    successEl.style.display = '';
-  } catch (err) {
-    btn.disabled = false;
-    btn.textContent = 'Submit';
-    alert('Something went wrong. Please try again or email us at hello@callified.ai');
-  }
-}
 </script>
 
 </body>

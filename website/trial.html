@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Start Free Trial — Callified AI</title>
+  <meta name="description" content="Start your free trial of Callified AI. Get 50 free minutes to test AI-powered outbound calling with your own leads.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="logo-square.jpg">
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar scrolled">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="logo-horizontal.jpg" alt="Callified AI" style="height:40px">
+    </a>
+  </div>
+</nav>
+
+<section class="form-page">
+  <div class="form-card">
+    <h1>Start Your <span class="gradient-text">Free Trial</span></h1>
+    <p class="form-subtitle">Get 50 free minutes to test Callified AI with your own leads. No credit card required.</p>
+    <form id="trialForm" onsubmit="submitForm(event)">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="firstName">First Name *</label>
+          <input type="text" id="firstName" name="first_name" required placeholder="Rajesh">
+        </div>
+        <div class="form-group">
+          <label for="lastName">Last Name *</label>
+          <input type="text" id="lastName" name="last_name" required placeholder="Kumar">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="phone">Phone Number *</label>
+        <input type="tel" id="phone" name="phone" required placeholder="+91 98765 43210">
+      </div>
+      <div class="form-group">
+        <label for="email">Email *</label>
+        <input type="email" id="email" name="email" required placeholder="rajesh@company.com">
+      </div>
+      <button type="submit" class="btn btn-primary form-submit" id="submitBtn">Start Free Trial</button>
+    </form>
+    <div id="formSuccess" class="form-success" style="display:none">
+      <div class="success-icon">&#10003;</div>
+      <h3>You're in!</h3>
+      <p>We'll set up your trial account and reach out shortly.</p>
+      <a href="index.html" class="form-back">&larr; Back to Callified AI</a>
+    </div>
+  </div>
+</section>
+
+<script>
+const API_BASE = 'https://test.callified.ai';
+async function submitForm(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+  const form = document.getElementById('trialForm');
+  const data = {
+    first_name: form.first_name.value.trim(),
+    last_name: form.last_name.value.trim(),
+    phone: form.phone.value.trim(),
+    email: form.email.value.trim(),
+    request_type: 'trial',
+  };
+  try {
+    const res = await fetch(API_BASE + '/api/public/demo-request', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Failed');
+    form.style.display = 'none';
+    document.getElementById('formSuccess').style.display = '';
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Start Free Trial';
+    alert('Something went wrong. Please try again or email us at hello@callified.ai');
+  }
+}
+</script>
+
+</body>
+</html>

@@ -95,12 +95,11 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 class DemoRequestCreate(BaseModel):
-    name: str
-    email: str
+    first_name: str
+    last_name: str = ""
     phone: str = ""
-    company: str = ""
+    email: str
     request_type: str = "demo"
-    message: str = ""
 
 # ─── Router ──────────────────────────────────────────────────────────────────
 
@@ -110,7 +109,7 @@ api_router = APIRouter()
 
 @api_router.post("/api/public/demo-request")
 def api_create_demo_request(data: DemoRequestCreate):
-    rid = create_demo_request(data.name, data.email, data.phone, data.company, data.request_type, data.message)
+    rid = create_demo_request(data.first_name, data.last_name, data.phone, data.email, data.request_type)
     return {"ok": True, "id": rid}
 
 @api_router.get("/api/demo-requests")
