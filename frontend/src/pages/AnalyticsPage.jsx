@@ -30,9 +30,48 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
   return (
     <div className="analytics-container">
-      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
-        <h3><span style={{color: '#f59e0b'}}>Analytics</span> Dashboard</h3>
-        <p>Real-time metrics from your AI dialer campaigns.</p>
+      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+        <div>
+          <h3><span style={{color: '#f59e0b'}}>Analytics</span> Dashboard</h3>
+          <p>Real-time metrics from your AI dialer campaigns.</p>
+        </div>
+        <div style={{display: 'flex', gap: '0.5rem', paddingTop: '0.25rem'}}>
+          <button
+            onClick={async () => {
+              try {
+                const res = await apiFetch(`${API_URL}/analytics/export/csv`);
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = res.headers.get('content-disposition')?.split('filename=')[1] || 'callified_report.csv';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+              } catch (e) { console.error('CSV export failed', e); }
+            }}
+            style={{background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '0.5rem 1rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px'}}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export CSV
+          </button>
+          <button
+            onClick={async () => {
+              try {
+                const res = await apiFetch(`${API_URL}/analytics/export/report`);
+                const html = await res.text();
+                const win = window.open('', '_blank');
+                win.document.write(html);
+                win.document.close();
+              } catch (e) { console.error('Report export failed', e); }
+            }}
+            style={{background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', padding: '0.5rem 1rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px'}}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            Export Report
+          </button>
+        </div>
       </div>
 
       {/* Top Stats Row */}

@@ -498,6 +498,258 @@ def api_get_language_analytics(current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("org_id")
     return get_language_analytics(org_id)
 
+@api_router.get("/api/analytics/export/csv")
+def api_export_analytics_csv(current_user: dict = Depends(get_current_user)):
+    """Export campaign performance as CSV download."""
+    from database import get_conn
+    from datetime import datetime
+    org_id = current_user.get("org_id")
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            SELECT camp.name,
+                   COUNT(DISTINCT ct.id) as total_calls,
+                   SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) as appointments,
+                   COALESCE(AVG(cr.quality_score), 0) as avg_score,
+                   COALESCE(AVG(ct.call_duration_s), 0) as avg_duration
+            FROM campaigns camp
+            LEFT JOIN call_transcripts ct ON ct.campaign_id = camp.id
+            LEFT JOIN call_reviews cr ON cr.campaign_id = camp.id AND cr.transcript_id = ct.id
+            WHERE camp.org_id = %s
+            GROUP BY camp.id, camp.name
+            ORDER BY total_calls DESC
+        """, (org_id,))
+        rows = cursor.fetchall()
+
+        campaign_data = []
+        for r in rows:
+            campaign_data.append({
+                "name": r['name'],
+                "total_calls": r['total_calls'] or 0,
+                "appointments": r['appointments'] or 0,
+                "avg_score": round(float(r['avg_score'] or 0), 1),
+                "avg_duration": round(float(r['avg_duration'] or 0), 1),
+            })
+
+        # Build CSV
+        stream = io.StringIO()
+        writer = csv.writer(stream)
+        writer.writerow(["Campaign Name", "Total Calls", "Appointments Booked", "Avg Quality Score", "Avg Duration (s)"])
+        for c in campaign_data:
+            writer.writerow([c['name'], c['total_calls'], c['appointments'], c['avg_score'], c['avg_duration']])
+
+        today = datetime.now().strftime('%Y-%m-%d')
+        response = StreamingResponse(iter([stream.getvalue()]), media_type="text/csv")
+        response.headers["Content-Disposition"] = f"attachment; filename=callified_report_{today}.csv"
+        return response
+    finally:
+        conn.close()
+
+@api_router.get("/api/analytics/export/report")
+def api_export_analytics_report(current_user: dict = Depends(get_current_user)):
+    """Generate a printable HTML analytics report."""
+    from database import get_conn
+    from datetime import datetime, timedelta
+    org_id = current_user.get("org_id")
+    conn = get_conn()
+    cursor = conn.cursor()
+    try:
+        # --- Gather all analytics data ---
+        cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s", (org_id,))
+        total_calls = cursor.fetchone()['cnt'] or 0
+
+        cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s AND DATE(c.created_at) = CURDATE()", (org_id,))
+        calls_today = cursor.fetchone()['cnt'] or 0
+
+        cursor.execute("SELECT COALESCE(AVG(ct.call_duration_s), 0) as avg_dur FROM call_transcripts ct JOIN leads l ON ct.lead_id = l.id WHERE l.org_id = %s AND ct.call_duration_s > 0", (org_id,))
+        avg_duration = round(cursor.fetchone()['avg_dur'] or 0, 1)
+
+        pickup_rate = 0
+        if total_calls > 0:
+            cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s AND c.status != 'no-answer'", (org_id,))
+            pickup_rate = round((cursor.fetchone()['cnt'] or 0) / total_calls * 100)
+
+        cursor.execute("""
+            SELECT COUNT(*) as total, SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) as booked
+            FROM call_reviews cr JOIN campaigns camp ON cr.campaign_id = camp.id WHERE camp.org_id = %s
+        """, (org_id,))
+        rev = cursor.fetchone()
+        appt_rate = round((rev['booked'] or 0) / (rev['total'] or 1) * 100)
+
+        # Sentiment
+        cursor.execute("""
+            SELECT cr.customer_sentiment as sentiment, COUNT(*) as cnt
+            FROM call_reviews cr JOIN campaigns camp ON cr.campaign_id = camp.id
+            WHERE camp.org_id = %s AND cr.customer_sentiment IS NOT NULL
+            GROUP BY cr.customer_sentiment
+        """, (org_id,))
+        sentiment = {"positive": 0, "neutral": 0, "negative": 0}
+        for row in cursor.fetchall():
+            s = (row['sentiment'] or '').lower()
+            if s in sentiment:
+                sentiment[s] = row['cnt']
+
+        # Daily calls
+        cursor.execute("""
+            SELECT DATE(c.created_at) as call_date, COUNT(*) as cnt
+            FROM calls c JOIN leads l ON c.lead_id = l.id
+            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            GROUP BY DATE(c.created_at) ORDER BY call_date
+        """, (org_id,))
+        daily_map = {str(r['call_date']): r['cnt'] for r in cursor.fetchall()}
+        daily_calls = []
+        for i in range(6, -1, -1):
+            d = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_calls.append({"date": d, "count": daily_map.get(d, 0)})
+
+        # Campaign performance
+        cursor.execute("""
+            SELECT camp.name, COUNT(DISTINCT ct.id) as calls,
+                   SUM(CASE WHEN cr.appointment_booked = 1 THEN 1 ELSE 0 END) as appointments,
+                   COALESCE(AVG(cr.quality_score), 0) as avg_score,
+                   COALESCE(AVG(ct.call_duration_s), 0) as avg_dur
+            FROM campaigns camp
+            LEFT JOIN call_transcripts ct ON ct.campaign_id = camp.id
+            LEFT JOIN call_reviews cr ON cr.campaign_id = camp.id AND cr.transcript_id = ct.id
+            WHERE camp.org_id = %s
+            GROUP BY camp.id, camp.name ORDER BY calls DESC LIMIT 20
+        """, (org_id,))
+        campaigns = cursor.fetchall()
+
+        # Org name
+        cursor.execute("SELECT name FROM organizations WHERE id = %s", (org_id,))
+        org_row = cursor.fetchone()
+        org_name = org_row['name'] if org_row else 'Callified AI'
+
+        now = datetime.now()
+        generated_at = now.strftime('%B %d, %Y at %I:%M %p')
+        date_range = f"{(now - timedelta(days=6)).strftime('%b %d')} - {now.strftime('%b %d, %Y')}"
+        max_daily = max((d['count'] for d in daily_calls), default=1) or 1
+        sent_total = sum(sentiment.values()) or 1
+
+        # --- Build HTML ---
+        campaign_rows = ""
+        for c in campaigns:
+            score = round(float(c['avg_score'] or 0), 1)
+            score_color = '#22c55e' if score >= 4 else '#f59e0b' if score >= 3 else '#ef4444' if score > 0 else '#64748b'
+            campaign_rows += f"""<tr>
+                <td>{c['name']}</td>
+                <td style="text-align:center">{c['calls'] or 0}</td>
+                <td style="text-align:center">{c['appointments'] or 0}</td>
+                <td style="text-align:center;color:{score_color};font-weight:600">{score if score > 0 else '--'}</td>
+                <td style="text-align:center">{round(float(c['avg_dur'] or 0), 1)}s</td>
+            </tr>"""
+
+        daily_bars = ""
+        for d in daily_calls:
+            pct = max(4, int(d['count'] / max_daily * 100))
+            day_label = d['date'][-5:]  # MM-DD
+            daily_bars += f"""<div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%;justify-content:flex-end">
+                <span style="font-size:12px;color:#e2e8f0;margin-bottom:4px">{d['count']}</span>
+                <div style="width:100%;max-width:48px;height:{pct}%;background:linear-gradient(180deg,#f59e0b,#d97706);border-radius:4px 4px 0 0"></div>
+                <span style="font-size:11px;color:#94a3b8;margin-top:6px">{day_label}</span>
+            </div>"""
+
+        def sent_bar(label, count, color):
+            pct = round(count / sent_total * 100)
+            return f"""<div style="margin-bottom:12px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:14px">
+                    <span style="color:#e2e8f0">{label}</span><span style="color:#94a3b8">{count} ({pct}%)</span>
+                </div>
+                <div style="height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden">
+                    <div style="height:100%;width:{pct}%;background:{color};border-radius:4px"></div>
+                </div>
+            </div>"""
+
+        sentiment_html = sent_bar("Positive", sentiment['positive'], "#22c55e")
+        sentiment_html += sent_bar("Neutral", sentiment['neutral'], "#f59e0b")
+        sentiment_html += sent_bar("Negative", sentiment['negative'], "#ef4444")
+
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Callified Analytics Report - {date_range}</title>
+<style>
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; }}
+  .container {{ max-width: 900px; margin: 0 auto; }}
+  .header {{ text-align: center; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+  .header h1 {{ font-size: 1.75rem; color: #f59e0b; margin-bottom: 0.25rem; }}
+  .header .subtitle {{ color: #94a3b8; font-size: 0.9rem; }}
+  .section {{ background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }}
+  .section h2 {{ font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 1rem; }}
+  .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }}
+  .stat {{ text-align: center; padding: 1rem; background: rgba(255,255,255,0.04); border-radius: 8px; }}
+  .stat .value {{ font-size: 1.75rem; font-weight: 700; color: #e2e8f0; }}
+  .stat .label {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; color: #94a3b8; margin-bottom: 0.5rem; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+  th {{ text-align: left; padding: 0.75rem 1rem; color: #94a3b8; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.1); }}
+  td {{ padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.05); }}
+  .print-btn {{ position: fixed; top: 1rem; right: 1rem; background: #f59e0b; color: #0f172a; border: none; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }}
+  .print-btn:hover {{ background: #d97706; }}
+  .footer {{ text-align: center; color: #64748b; font-size: 0.8rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.05); }}
+  @media print {{
+    body {{ background: #fff; color: #1e293b; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+    .print-btn {{ display: none !important; }}
+    .section {{ border-color: #e2e8f0; }}
+    .stat .value {{ color: #1e293b; }}
+    th {{ color: #475569; }}
+    td {{ color: #1e293b; }}
+  }}
+</style>
+</head>
+<body>
+<button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+<div class="container">
+  <div class="header">
+    <h1>{org_name} - Analytics Report</h1>
+    <div class="subtitle">{date_range} &bull; Generated {generated_at}</div>
+  </div>
+
+  <div class="section">
+    <h2>Summary</h2>
+    <div class="stats-grid">
+      <div class="stat"><div class="label">Total Calls</div><div class="value">{total_calls}</div></div>
+      <div class="stat"><div class="label">Calls Today</div><div class="value">{calls_today}</div></div>
+      <div class="stat"><div class="label">Pickup Rate</div><div class="value" style="color:{'#22c55e' if pickup_rate >= 50 else '#ef4444'}">{pickup_rate}%</div></div>
+      <div class="stat"><div class="label">Appt Rate</div><div class="value" style="color:{'#22c55e' if appt_rate >= 20 else '#f59e0b'}">{appt_rate}%</div></div>
+      <div class="stat"><div class="label">Avg Duration</div><div class="value">{avg_duration}s</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Campaign Performance</h2>
+    <table>
+      <thead><tr><th>Campaign</th><th style="text-align:center">Calls</th><th style="text-align:center">Appointments</th><th style="text-align:center">Avg Score</th><th style="text-align:center">Avg Duration</th></tr></thead>
+      <tbody>{campaign_rows if campaign_rows else '<tr><td colspan="5" style="color:#64748b;text-align:center">No campaigns found.</td></tr>'}</tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Daily Call Volume (Last 7 Days)</h2>
+    <div style="display:flex;align-items:flex-end;gap:8px;height:160px">{daily_bars}</div>
+  </div>
+
+  <div class="section">
+    <h2>Sentiment Breakdown</h2>
+    {sentiment_html}
+  </div>
+
+  <div class="footer">Powered by Callified AI &bull; callified.ai</div>
+</div>
+</body>
+</html>"""
+
+        from starlette.responses import HTMLResponse
+        response = HTMLResponse(content=html)
+        response.headers["Content-Disposition"] = "inline"
+        return response
+    finally:
+        conn.close()
+
 @api_router.get("/api/leads/scored")
 def api_get_scored_leads(current_user: dict = Depends(get_current_user)):
     """Leads ranked by composite lead score (quality + sentiment + appointment)."""
