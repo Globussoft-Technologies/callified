@@ -21,6 +21,11 @@ import importlib
 import inspect
 from datetime import datetime
 from dotenv import load_dotenv
+
+# load_dotenv() MUST run before any module that reads os.getenv() at import time
+# (database.py builds DB_CONFIG at module level)
+load_dotenv()
+
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,8 +36,6 @@ from database import init_db, get_active_crm_integrations, update_crm_last_synce
 from crm_providers import BaseCRM
 
 # ─── App Setup ───────────────────────────────────────────────────────────────
-
-load_dotenv()
 call_logger.setup_logging()
 app = FastAPI()
 
