@@ -32,6 +32,25 @@ active_tts_tasks = {}
 monitor_connections: dict[str, set[WebSocket]] = {}
 twilio_websockets: dict[str, WebSocket] = {}
 
+# ─── Language Detection ───────────────────────────────────────────────────────
+def _detect_script_language(text: str):
+    """Detect spoken language from Unicode script ranges. Returns 'hi', 'bn', 'en', or None."""
+    bengali    = sum(1 for c in text if '\u0980' <= c <= '\u09FF')
+    devanagari = sum(1 for c in text if '\u0900' <= c <= '\u097F')
+    latin      = sum(1 for c in text if c.isascii() and c.isalpha())
+    total = bengali + devanagari + latin
+    if total < 3:
+        return None  # too short to detect reliably
+    if bengali > devanagari and bengali > latin:
+        return 'bn'
+    if devanagari > bengali and devanagari > latin:
+        return 'hi'
+    if latin > bengali and latin > devanagari:
+        return 'en'
+    return None
+
+_LANG_LABEL = {'bn': 'Bengali', 'hi': 'Hindi', 'en': 'English', 'mr': 'Marathi'}
+
 # Serializable state backed by Redis (falls back to in-memory if Redis unavailable)
 # Access via redis_store.get_pending_call(), redis_store.get_takeover(), etc.
 # Legacy aliases kept for backward-compat in main.py dial functions:
@@ -95,6 +114,9 @@ async def handle_media_stream(websocket: WebSocket):
                 _tts_language_override = _tts_language_override or _vs.get('tts_language', 'hi')
         except Exception:
             pass
+
+    # Mutable active language — updated dynamically when customer switches language mid-call
+    _active_lang = [_tts_language_override or 'hi']
 
     if not lead_name or lead_name == "Customer":
         # Try to look up by phone number first (supports concurrent dialing)
@@ -247,6 +269,14 @@ async def handle_media_stream(websocket: WebSocket):
                 pass
             chat_history.append({"role": "user", "parts": [{"text": sentence}]})
 
+            # Detect customer's language and update active lang for TTS + LLM directive
+            _detected = _detect_script_language(sentence)
+            if _detected and _detected != _active_lang[0]:
+                logging.getLogger("uvicorn.error").info(
+                    f"[LANG SWITCH] {_active_lang[0]} → {_detected} (user said: {sentence[:60]})"
+                )
+                _active_lang[0] = _detected
+
             async def _process_transcript():
                 try:
                     t_start = time.time()
@@ -291,7 +321,14 @@ async def handle_media_stream(websocket: WebSocket):
                                 conv_logger.error(f"RAG FAISS lookup error: {e}")
 
                         t_pre_llm = time.time()
-                        final_system_instruction = dynamic_context + rag_context
+                        _lang_label = _LANG_LABEL.get(_active_lang[0], _active_lang[0])
+                        _lang_directive = (
+                            f"\n\n⚠️ LANGUAGE OVERRIDE — MANDATORY: "
+                            f"The customer is speaking in {_lang_label}. "
+                            f"Your ENTIRE response MUST be in {_lang_label} ONLY. "
+                            f"Do NOT use any other language. Not even one word."
+                        )
+                        final_system_instruction = dynamic_context + rag_context + _lang_directive
 
                         # Start TTS Worker Queue for Streaming Pipeline
                         tts_queue = asyncio.Queue()
@@ -317,7 +354,7 @@ async def handle_media_stream(websocket: WebSocket):
                                         websocket=websocket,
                                         tts_provider_override=_tts_provider_override,
                                         tts_voice_override=_tts_voice_override,
-                                        tts_language_override=_tts_language_override
+                                        tts_language_override=_active_lang[0]
                                     )
                                     _tts_playing[0] = False
                                     _last_tts_end_time[0] = time.time()
@@ -348,7 +385,7 @@ async def handle_media_stream(websocket: WebSocket):
                             current_sentence = ""
                             first_token_time = None
                             
-                            _lang = (_tts_language_override or "hi")
+                            _lang = (_active_lang[0] or "hi")
                             _llm_max_tokens = 400 if _lang == "mr" else 150 if _lang in ("hi", "bn") else 800
                             async for chunk in llm_provider.generate_response_stream(
                                 chat_history=chat_history,
