@@ -50,37 +50,64 @@ export default function TopHeader({
         {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
         {userRole === 'Admin' && <button data-testid="tab-team" className={`tab-btn ${activeTab === 'team' ? 'active' : ''}`} onClick={() => navigate('/team')}>👥 Team</button>}
 
-        <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px'}}>
+        <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
           {callingStatus && (
             <span style={{
-              fontSize: '0.75rem',
-              display: 'flex',
+              height: '38px',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              padding: '4px 10px',
-              borderRadius: '6px',
+              padding: '0 12px',
+              borderRadius: '8px',
               background: callingStatus.allowed ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
               border: `1px solid ${callingStatus.allowed ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
               color: callingStatus.allowed ? '#4ade80' : '#fca5a5',
               fontWeight: 600,
+              fontSize: '0.78rem',
               whiteSpace: 'nowrap',
             }}>
               <span style={{
-                width: '8px', height: '8px', borderRadius: '50%',
+                width: '7px', height: '7px', borderRadius: '50%',
                 background: callingStatus.allowed ? '#22c55e' : '#ef4444',
-                display: 'inline-block',
+                flexShrink: 0,
               }} />
-              {callingStatus.allowed ? 'Calls Active' : 'Calls Paused (TRAI: 9AM-9PM)'}
+              {callingStatus.allowed ? 'Calls Active' : 'Calls Paused'}
             </span>
           )}
           {currentUser && (
-            <span style={{fontSize: '0.8rem', color: '#94a3b8', letterSpacing: '0.5px'}}>
-              👤 {currentUser.full_name || currentUser.email} {currentUser.org_name ? `(${currentUser.org_name})` : ''}
+            <span style={{
+              height: '38px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '0 12px',
+              borderRadius: '8px',
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              fontSize: '0.78rem',
+              color: '#94a3b8',
+              whiteSpace: 'nowrap',
+              fontWeight: 600,
+            }}>
+              👤 {currentUser.full_name || currentUser.email}{currentUser.org_name ? ` (${currentUser.org_name})` : ''}
             </span>
           )}
           <button data-testid="logout-btn" onClick={handleLogout}
-            style={{background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px',
-              color: '#fca5a5', padding: '6px 14px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem'}}>
+            style={{
+              height: '38px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '0 14px',
+              background: 'rgba(239,68,68,0.15)',
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: '8px',
+              color: '#fca5a5',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.82rem',
+              whiteSpace: 'nowrap',
+            }}>
             🚪 Logout
           </button>
         </div>
