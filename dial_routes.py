@@ -13,7 +13,8 @@ from fastapi import APIRouter, BackgroundTasks
 
 import call_logger
 import redis_store
-from database import get_lead_by_id, update_lead_status, save_call_transcript, is_dnd_number
+import logging as _logging
+from database import get_lead_by_id, update_lead_status, save_call_transcript, is_dnd_number, get_conn
 from billing import get_usage_summary
 from call_guard import is_calling_allowed, get_next_allowed_time, get_org_timezone
 
@@ -201,6 +202,24 @@ async def api_campaign_dial_lead(campaign_id: int, lead_id: int, background_task
                 return {"status": "error", "message": "No minutes remaining. Please upgrade your plan."}
         except Exception:
             pass  # Don't block calls if billing check fails
+    # Multi-campaign guard: log if same lead is assigned to multiple campaigns
+    try:
+        _mcg_conn = get_conn()
+        _mcg_cur = _mcg_conn.cursor()
+        _mcg_cur.execute(
+            "SELECT campaign_id FROM campaign_leads WHERE lead_id = %s AND campaign_id != %s",
+            (lead_id, campaign_id),
+        )
+        _other_campaigns = _mcg_cur.fetchall()
+        _mcg_conn.close()
+        if _other_campaigns:
+            _logging.getLogger("uvicorn.error").warning(
+                "[MULTI-CAMPAIGN] Lead %s is in multiple campaigns: %s + current %s — check for duplicate assignment",
+                lead_id, [r["campaign_id"] for r in _other_campaigns], campaign_id,
+            )
+    except Exception:
+        pass
+
     voice = get_campaign_voice_settings(campaign_id, org_id)
     call_data = {
         "name": lead["first_name"], "phone_number": lead["phone"],

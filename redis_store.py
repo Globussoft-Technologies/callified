@@ -136,6 +136,25 @@ def delete_whispers(stream_sid: str):
         _mem_whisper.pop(stream_sid, None)
 
 
+# ─── Raw Key Access ──────────────────────────────────────────────────────────
+# Direct get/set for arbitrary keys (e.g. per-lead voice cache).
+
+def get_raw(key: str) -> str | None:
+    r = _get_client()
+    if r:
+        return r.get(key)
+    return None
+
+
+def set_raw(key: str, value: str, ex: int | None = None):
+    r = _get_client()
+    if r:
+        if ex:
+            r.setex(key, ex, value)
+        else:
+            r.set(key, value)
+
+
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 
 def cleanup_call(stream_sid: str):

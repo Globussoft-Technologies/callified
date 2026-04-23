@@ -49,7 +49,87 @@ def _detect_script_language(text: str):
         return 'en'
     return None
 
+# Words that appear across languages and should NOT trigger a language switch.
+# e.g. "হ্যালো" is just "hello" in Bengali script — not a Bengali sentence.
+_LANG_NEUTRAL_WORDS: frozenset = frozenset({
+    # Latin / romanised
+    'hello', 'hi', 'hey', 'helo', 'hallo',
+    'ok', 'okay', 'okie',
+    'hmm', 'hm', 'umm', 'um', 'uh', 'ah', 'oh',
+    'yes', 'no', 'ya', 'yaa', 'yah',
+    'bye', 'goodbye',
+    'haan', 'han', 'ha', 'ji',
+    'accha', 'achha', 'acha',
+    'thanks', 'thank',
+    # Bengali script
+    'হ্যালো',   # hello
+    'হ্যাঁ',    # yes
+    'হাঁ',      # yes
+    'ঠিক',      # right/okay
+    'ওকে',      # okay
+    # Devanagari
+    'हाँ', 'हां', 'हा',
+    'ओके', 'ओक',
+    'जी',
+    'अच्छा',
+})
+
+def _is_lang_neutral(text: str) -> bool:
+    """Return True if the entire utterance is only language-neutral filler/greeting words."""
+    stripped = text.strip().rstrip('.,!?।')
+    if stripped in _LANG_NEUTRAL_WORDS:
+        return True
+    words = stripped.split()
+    return bool(words) and all(
+        w.strip('.,!?।') in _LANG_NEUTRAL_WORDS or w.strip('.,!?।').lower() in _LANG_NEUTRAL_WORDS
+        for w in words
+    )
+
+# Explicit language-switch command keywords (Latin script).
+# Detected BEFORE any other logic — even a single matching word triggers a switch.
+# Handles cases like: "hindi me bolo", "speak in english", "hindi hello"
+# where the STT may only partially capture the phrase but still includes the keyword.
+_LANG_INTENT_MAP: dict[str, list[str]] = {
+    'hi': ['hindi', 'hindi me', 'hindi mein', 'hindi bolo', 'hindi me baat'],
+    'bn': ['bengali', 'bangla', 'bangla te', 'bangla bolo'],
+    'en': ['english', 'speak english', 'in english', 'english me', 'english mein'],
+    'mr': ['marathi', 'marathi me', 'marathi mein'],
+}
+
+def _detect_lang_intent(text: str):
+    """
+    Scan STT text for an explicit language-switch command word.
+    Returns language code ('hi', 'bn', 'en', 'mr') or None.
+    Checked FIRST — overrides neutral-word guard and script detection.
+    """
+    lower = text.lower()
+    for lang, keywords in _LANG_INTENT_MAP.items():
+        for kw in keywords:
+            if kw in lower:
+                return lang
+    return None
+
 _LANG_LABEL = {'bn': 'Bengali', 'hi': 'Hindi', 'en': 'English', 'mr': 'Marathi'}
+
+# ─── Voicemail Detection ──────────────────────────────────────────────────────
+_VOICEMAIL_PHRASES = (
+    "not available", "unavailable", "unable to take your call",
+    "please leave a message", "leave a message", "leave your message",
+    "please record your message", "record your message",
+    "after the beep", "after the tone", "at the tone",
+    "you have reached", "you've reached",
+    "the number you have dialed", "the person you are trying",
+    "this mailbox", "voicemail", "voice mail",
+    "please press", "press 1", "press 0",
+    "call back later", "try again later",
+    # Hindi voicemail phrases
+    "abhi uplabdh nahi", "sandesh chhodein", "beep ke baad",
+    "is samay upalabdh nahi",
+)
+
+def _is_voicemail(text: str) -> bool:
+    lower = text.lower()
+    return any(phrase in lower for phrase in _VOICEMAIL_PHRASES)
 
 # Serializable state backed by Redis (falls back to in-memory if Redis unavailable)
 # Access via redis_store.get_pending_call(), redis_store.get_takeover(), etc.
@@ -78,6 +158,19 @@ async def handle_media_stream(websocket: WebSocket):
     _tts_provider_override = websocket.query_params.get("tts_provider", None) or None
     _tts_voice_override = websocket.query_params.get("voice", None) or None
     _tts_language_override = websocket.query_params.get("tts_language", None) or None
+
+    # Check Redis lead-voice cache — ensures same agent voice for repeat calls to same lead
+    _redis_voice_key = f"lead_voice:{_call_lead_id}" if _call_lead_id else None
+    if _redis_voice_key and not _tts_voice_override:
+        try:
+            _cached_voice = redis_store.get_raw(_redis_voice_key)
+            if _cached_voice:
+                _cv = json.loads(_cached_voice)
+                _tts_voice_override = _cv.get("voice_id")
+                _tts_provider_override = _cv.get("provider") or _tts_provider_override
+                _tts_language_override = _tts_language_override or _cv.get("language")
+        except Exception:
+            pass
 
     # Check Redis pending call for campaign voice overrides (Exotel dial flow)
     if not _tts_voice_override:
@@ -115,8 +208,23 @@ async def handle_media_stream(websocket: WebSocket):
         except Exception:
             pass
 
+    # Write resolved voice to Redis so next call to this lead gets same agent (TTL 90 days)
+    if _redis_voice_key and _tts_voice_override:
+        try:
+            if not redis_store.get_raw(_redis_voice_key):
+                redis_store.set_raw(
+                    _redis_voice_key,
+                    json.dumps({"voice_id": _tts_voice_override, "provider": _tts_provider_override, "language": _tts_language_override}),
+                    ex=60 * 60 * 24 * 90,
+                )
+        except Exception:
+            pass
+
     # Mutable active language — updated dynamically when customer switches language mid-call
     _active_lang = [_tts_language_override or 'hi']
+    # Once the user switches language for the first time, lock it.
+    # Prevents garbled STT or low-confidence transcripts from reverting mid-call.
+    _lang_locked = [False]
 
     if not lead_name or lead_name == "Customer":
         # Try to look up by phone number first (supports concurrent dialing)
@@ -159,6 +267,14 @@ async def handle_media_stream(websocket: WebSocket):
     _tts_playing = [False]  # True while TTS is actively sending audio — suppress STT echo
     _recording_mic_chunks = []
     _recording_tts_chunks = []
+
+    # ── Dual-STT merge state ──────────────────────────────────────────────────
+    # Parallel Deepgram connections: primary (language=multi) + secondary (language=hi)
+    # to catch Hindi speech that "multi" misidentifies as Spanish/other languages.
+    _pending_stt = [None]       # (sentence, confidence, source, result, arrival_time) or None
+    _pending_stt_task = [None]  # asyncio.Task for the 300ms merge-window flush
+    _MERGE_WINDOW_S = 0.30      # Wait up to 300ms for the other connection's result
+    _voicemail_detected = [False]  # Set True on first voicemail phrase — blocks all further STT
 
     # Load pronunciation guide
     pronunciation_ctx = get_pronunciation_context()
@@ -235,6 +351,7 @@ async def handle_media_stream(websocket: WebSocket):
         llm_client = genai.Client(api_key=(os.getenv("GEMINI_API_KEY") or "dummy").strip())
 
     dg_connection = dg_client.listen.websocket.v("1")
+    dg_connection_hi = dg_client.listen.websocket.v("1")  # secondary: explicit Hindi
     loop = asyncio.get_event_loop()
 
     def on_error(self, error, **kwargs):
@@ -249,239 +366,385 @@ async def handle_media_stream(websocket: WebSocket):
         if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
             loop.call_soon_threadsafe(active_tts_tasks[stream_sid].cancel)
 
-    def on_message(self, result, **kwargs):
+    # ── Dual-STT: shared processing after merge picks the best transcript ──
+    def _do_process_stt(sentence, result):
+        """Run language detection + enqueue for LLM. Called once per utterance after merge."""
+        conv_logger = logging.getLogger("uvicorn.error")
+        conv_logger.info(f"[STT] USER SAID: {sentence}")
+        if stream_sid:
+            call_logger.call_event(stream_sid, "STT_TRANSCRIPT", sentence[:100])
+        try:
+            asyncio.run_coroutine_threadsafe(websocket.send_json({"event": "user_speech", "text": sentence}), loop)
+        except Exception:
+            pass
+
+        # ── Language detection (three-pass, with lock) ───────────────────
+        if _lang_locked[0]:
+            _intent_lang = _detect_lang_intent(sentence)
+            if _intent_lang and _intent_lang != _active_lang[0]:
+                conv_logger.info(f"[LANG INTENT-LOCKED] {_active_lang[0]} → {_intent_lang} (keyword: '{sentence[:60]}')")
+                _active_lang[0] = _intent_lang
+            else:
+                conv_logger.info(f"[LANG LOCKED] Keeping {_active_lang[0]} — ignoring detection on: '{sentence[:60]}'")
+        else:
+            _intent_lang = _detect_lang_intent(sentence)
+            if _intent_lang and _intent_lang != _active_lang[0]:
+                conv_logger.info(f"[LANG INTENT] {_active_lang[0]} → {_intent_lang} (keyword: '{sentence[:60]}')")
+                _active_lang[0] = _intent_lang
+                _lang_locked[0] = True
+            else:
+                _dg_lang = getattr(result.channel, 'detected_language', None) if result else None
+                _lang_map = {
+                    'hi': 'hi', 'hi-IN': 'hi', 'hi-latn': 'hi',
+                    'bn': 'bn', 'bn-IN': 'bn',
+                    'en': 'en', 'en-US': 'en', 'en-IN': 'en', 'en-AU': 'en', 'en-GB': 'en',
+                    'mr': 'mr', 'mr-IN': 'mr',
+                }
+                _resolved = _lang_map.get(_dg_lang, None) if _dg_lang else None
+                if not _resolved:
+                    _resolved = _detect_script_language(sentence)
+                if _resolved and _resolved != _active_lang[0] and not _is_lang_neutral(sentence):
+                    conv_logger.info(f"[LANG SWITCH] {_active_lang[0]} → {_resolved} (dg={_dg_lang}, text={sentence[:60]})")
+                    _active_lang[0] = _resolved
+                    _lang_locked[0] = True
+                elif _resolved and _resolved != _active_lang[0]:
+                    conv_logger.info(f"[LANG NEUTRAL] Skipping switch {_active_lang[0]} → {_resolved} for: '{sentence[:60]}'")
+        # ─────────────────────────────────────────────────────────────────
+
+        chat_history.append({"role": "user", "parts": [{"text": sentence}]})
+
+    # ── Dual-STT: merge callback — buffers transcripts, picks best ─────
+    def _on_stt_result(result, source):
+        """Called by both primary (multi) and secondary (hi) Deepgram callbacks."""
         sentence = result.channel.alternatives[0].transcript
-        if sentence and result.is_final:
-            conv_logger = logging.getLogger("uvicorn.error")
-            if _hangup_requested[0]:
-                conv_logger.info(f"[STT] IGNORED (hangup pending): {sentence}")
-                return
-            # Suppress echo: ignore STT while TTS is playing or within 1s after
-            if _tts_playing[0] or (time.time() - _last_tts_end_time[0] < 1.0):
-                conv_logger.info(f"[STT] IGNORED (TTS echo suppression): {sentence}")
-                return
-            conv_logger.info(f"[STT] USER SAID: {sentence}")
-            if stream_sid:
-                call_logger.call_event(stream_sid, "STT_TRANSCRIPT", sentence[:100])
-            try:
-                asyncio.run_coroutine_threadsafe(websocket.send_json({"event": "user_speech", "text": sentence}), loop)
-            except Exception:
-                pass
-            chat_history.append({"role": "user", "parts": [{"text": sentence}]})
+        if not sentence or not result.is_final:
+            return
+        conv_logger = logging.getLogger("uvicorn.error")
 
-            # Detect customer's language and update active lang for TTS + LLM directive
-            _detected = _detect_script_language(sentence)
-            if _detected and _detected != _active_lang[0]:
-                logging.getLogger("uvicorn.error").info(
-                    f"[LANG SWITCH] {_active_lang[0]} → {_detected} (user said: {sentence[:60]})"
-                )
-                _active_lang[0] = _detected
+        # ── Voicemail detection — highest priority, before all other checks ──
+        if not _voicemail_detected[0] and _is_voicemail(sentence):
+            _voicemail_detected[0] = True
+            _hangup_requested[0] = True
+            conv_logger.info(f"[VOICEMAIL] Detected: '{sentence[:80]}' — leaving pitch and hanging up")
 
-            async def _process_transcript():
-                try:
-                    t_start = time.time()
-                    _last_transcript_time[0] = t_start
-
-                    # Brief cooldown after TTS ends so user can start speaking
-                    time_since_tts = t_start - _last_tts_end_time[0]
-                    if time_since_tts < 0.2:
-                        await asyncio.sleep(0.2 - time_since_tts)
-
-                    await asyncio.sleep(_debounce_delay)
-                    if _last_transcript_time[0] != t_start:
-                        logging.getLogger("uvicorn.error").info("[DEBOUNCE] Skipping older transcript — newer one pending.")
-                        return
-                    if _llm_lock.locked():
-                        logging.getLogger("uvicorn.error").info("[TURN_GUARD] Skipping — LLM already processing.")
-                        return
-
-                    async with _llm_lock:
-                        if stream_sid:
-                            for monitor in monitor_connections.get(stream_sid, set()):
-                                try:
-                                    await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
-                                except Exception:
-                                    pass
-                            if redis_store.get_takeover(stream_sid):
-                                return
-                            pending = redis_store.pop_all_whispers(stream_sid)
-                            if pending:
-                                for whisper in pending:
-                                    chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
-
-                        # RAG via Local FAISS
-                        rag_context = ""
-                        if _call_org_id:
-                            try:
-                                import rag
-                                context = rag.retrieve_context(sentence, _call_org_id, top_k=2)
-                                if context:
-                                    rag_context = "\n\n[COMPANY KNOWLEDGE - Check if this has facts relevant to the discussion and explicitly use it]:\n" + context
-                            except Exception as e:
-                                conv_logger.error(f"RAG FAISS lookup error: {e}")
-
-                        t_pre_llm = time.time()
-                        _lang_label = _LANG_LABEL.get(_active_lang[0], _active_lang[0])
-                        _lang_directive = (
-                            f"\n\n⚠️ LANGUAGE OVERRIDE — MANDATORY: "
-                            f"The customer is speaking in {_lang_label}. "
-                            f"Your ENTIRE response MUST be in {_lang_label} ONLY. "
-                            f"Do NOT use any other language. Not even one word."
-                        )
-                        final_system_instruction = dynamic_context + rag_context + _lang_directive
-
-                        # Start TTS Worker Queue for Streaming Pipeline
-                        tts_queue = asyncio.Queue()
-                        
-                        # [Phase 2: Conversational Backchanneling]
-                        # Only inject a filler word if the user spoke a meaningful sentence (>2 words)
-                        if len(sentence.split()) > 2:
-                            import random
-                            if random.random() < 0.6:  # 60% chance to trigger a human filler
-                                fillers = ["Hmm...", "Achha...", "Okay...", "Haan..."]
-                                await tts_queue.put(random.choice(fillers))
-                        
-                        async def tts_worker():
-                            try:
-                                while True:
-                                    sentence = await tts_queue.get()
-                                    if sentence is None:
-                                        break
-                                    _tts_playing[0] = True
-                                    await synthesize_and_send_audio(
-                                        text=sentence,
-                                        stream_sid=stream_sid,
-                                        websocket=websocket,
-                                        tts_provider_override=_tts_provider_override,
-                                        tts_voice_override=_tts_voice_override,
-                                        tts_language_override=_active_lang[0]
-                                    )
-                                    _tts_playing[0] = False
-                                    _last_tts_end_time[0] = time.time()
-                                    tts_queue.task_done()
-                            except asyncio.CancelledError:
-                                _tts_playing[0] = False
-                                _last_tts_end_time[0] = time.time()
-                            except Exception as e:
-                                conv_logger.error(f"TTS Worker Error: {e}")
-
-                        if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
-                            active_tts_tasks[stream_sid].cancel()
-                            try:
-                                await active_tts_tasks[stream_sid]
-                            except (asyncio.CancelledError, Exception):
-                                pass
-                                
-                        worker_task = asyncio.create_task(tts_worker())
-                        if stream_sid:
-                            active_tts_tasks[stream_sid] = worker_task
-
+            async def _leave_voicemail_and_hangup():
+                # Cancel any active TTS (greeting may still be playing)
+                if stream_sid and stream_sid in active_tts_tasks:
+                    t = active_tts_tasks[stream_sid]
+                    if not t.done():
+                        t.cancel()
                         try:
-                            import llm_provider
-                            import re
-                            
-                            sentence_separators = re.compile(r'([.!?|\n]+)')
-                            full_response = ""
-                            current_sentence = ""
-                            first_token_time = None
-                            
-                            _lang = (_active_lang[0] or "hi")
-                            _llm_max_tokens = 400 if _lang == "mr" else 150 if _lang in ("hi", "bn") else 800
-                            async for chunk in llm_provider.generate_response_stream(
-                                chat_history=chat_history,
-                                system_instruction=final_system_instruction,
-                                max_tokens=_llm_max_tokens,
-                            ):
-                                if first_token_time is None:
-                                    first_token_time = time.time()
-                                    conv_logger.info(f"TIMING: TTFB LLM = {first_token_time - t_pre_llm:.2f}s")
-                                    
-                                full_response += chunk
-                                current_sentence += chunk
-                                
-                                parts = sentence_separators.split(current_sentence)
-                                if len(parts) > 1:
-                                    complete_text = "".join(parts[:-1]).strip()
-                                    remaining_text = parts[-1]
-                                    
-                                    if complete_text:
-                                        clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', complete_text)
-                                        clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
-                                        clean_text = clean_text.strip()
-                                        if clean_text:
-                                            await tts_queue.put(clean_text)
-                                            
-                                    current_sentence = remaining_text
-                            
-                            if current_sentence.strip():
-                                clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', current_sentence.strip())
+                            await t
+                        except (asyncio.CancelledError, Exception):
+                            pass
+
+                # Build a one-sentence pitch in the campaign language
+                lang = _active_lang[0]
+                name = _lead_first or lead_name.split()[0] if lead_name else "जी"
+                if lang == 'bn':
+                    pitch = (f"নমস্কার {name} জি, আমি {_agent_name}, {_company_name} থেকে বলছিলাম — "
+                             f"আপনার enquiry সম্পর্কে কথা বলতে চেয়েছিলাম, সময় পেলে এই নম্বরে call back করুন।")
+                elif lang == 'en':
+                    pitch = (f"Hi {name}, this is {_agent_name} from {_company_name} — "
+                             f"I was calling regarding your enquiry, please call us back at your convenience.")
+                else:  # default Hindi
+                    pitch = (f"नमस्ते {name} जी, मैं {_agent_name}, {_company_name} से बोल रहा था — "
+                             f"आपकी enquiry के बारे में बात करनी थी, समय मिले तो इस नंबर पर call back करें।")
+
+                _tts_playing[0] = True
+                await synthesize_and_send_audio(
+                    text=pitch,
+                    stream_sid=stream_sid,
+                    websocket=websocket,
+                    tts_provider_override=_tts_provider_override,
+                    tts_voice_override=_tts_voice_override,
+                    tts_language_override=lang,
+                )
+                _tts_playing[0] = False
+
+                # Grace period for audio to finish playing before closing
+                await asyncio.sleep(4)
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+
+            asyncio.run_coroutine_threadsafe(_leave_voicemail_and_hangup(), loop)
+            return
+        # ────────────────────────────────────────────────────────────────────
+
+        if _hangup_requested[0]:
+            conv_logger.info(f"[STT-{source}] IGNORED (hangup pending): {sentence}")
+            return
+        if _voicemail_detected[0]:
+            return
+        if _tts_playing[0] or (time.time() - _last_tts_end_time[0] < 1.0):
+            conv_logger.info(f"[STT-{source}] IGNORED (TTS echo suppression): {sentence}")
+            return
+
+        confidence = getattr(result.channel.alternatives[0], 'confidence', 0.0) or 0.0
+        arrival = time.time()
+        conv_logger.info(f"[STT-{source}] conf={confidence:.2f}: {sentence}")
+
+        if not _use_secondary_stt:
+            # Single-connection mode (English campaigns) — process directly
+            _do_process_stt(sentence, result)
+            asyncio.run_coroutine_threadsafe(_process_transcript(sentence), loop)
+            return
+
+        # Dual mode: merge with pending transcript from the other connection
+        async def _merge_then_process():
+            if _pending_stt[0] is not None:
+                # Second to arrive — compare and pick best
+                prev_sent, prev_conf, prev_src, prev_result = _pending_stt[0]
+                _pending_stt[0] = None
+                # Cancel the pending flush timer
+                if _pending_stt_task[0] and not _pending_stt_task[0].done():
+                    _pending_stt_task[0].cancel()
+                    _pending_stt_task[0] = None
+
+                if confidence >= prev_conf:
+                    winner_sent, winner_result, winner_src = sentence, result, source
+                    loser_src, loser_conf = prev_src, prev_conf
+                else:
+                    winner_sent, winner_result, winner_src = prev_sent, prev_result, prev_src
+                    loser_src, loser_conf = source, confidence
+                conv_logger.info(f"[STT MERGE] Winner={winner_src} ({confidence if winner_src == source else prev_conf:.2f}), "
+                                 f"loser={loser_src} ({loser_conf:.2f})")
+                _do_process_stt(winner_sent, winner_result)
+                await _process_transcript(winner_sent)
+            else:
+                # First to arrive — buffer and wait for the other
+                _pending_stt[0] = (sentence, confidence, source, result)
+
+                async def _flush():
+                    await asyncio.sleep(_MERGE_WINDOW_S)
+                    if _pending_stt[0] is not None:
+                        flushed_sent, flushed_conf, flushed_src, flushed_result = _pending_stt[0]
+                        _pending_stt[0] = None
+                        conv_logger.info(f"[STT MERGE] Flush: only {flushed_src} arrived (conf={flushed_conf:.2f})")
+                        _do_process_stt(flushed_sent, flushed_result)
+                        await _process_transcript(flushed_sent)
+
+                _pending_stt_task[0] = asyncio.ensure_future(_flush())
+
+        asyncio.run_coroutine_threadsafe(_merge_then_process(), loop)
+
+    def on_message_primary(self, result, **kwargs):
+        _on_stt_result(result, source="multi")
+
+    def on_message_secondary(self, result, **kwargs):
+        _on_stt_result(result, source="hi")
+
+    async def _process_transcript(sentence):
+        conv_logger = logging.getLogger("uvicorn.error")
+        try:
+            t_start = time.time()
+            _last_transcript_time[0] = t_start
+
+            # Brief cooldown after TTS ends so user can start speaking
+            time_since_tts = t_start - _last_tts_end_time[0]
+            if time_since_tts < 0.2:
+                await asyncio.sleep(0.2 - time_since_tts)
+
+            await asyncio.sleep(_debounce_delay)
+            if _last_transcript_time[0] != t_start:
+                conv_logger.info("[DEBOUNCE] Skipping older transcript — newer one pending.")
+                return
+            if _llm_lock.locked():
+                conv_logger.info("[TURN_GUARD] Skipping — LLM already processing.")
+                return
+
+            async with _llm_lock:
+                if stream_sid:
+                    for monitor in monitor_connections.get(stream_sid, set()):
+                        try:
+                            await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
+                        except Exception:
+                            pass
+                    if redis_store.get_takeover(stream_sid):
+                        return
+                    pending = redis_store.pop_all_whispers(stream_sid)
+                    if pending:
+                        for whisper in pending:
+                            chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
+
+                # RAG via Local FAISS
+                rag_context = ""
+                if _call_org_id:
+                    try:
+                        import rag
+                        context = rag.retrieve_context(sentence, _call_org_id, top_k=2)
+                        if context:
+                            rag_context = "\n\n[COMPANY KNOWLEDGE - Check if this has facts relevant to the discussion and explicitly use it]:\n" + context
+                    except Exception as e:
+                        conv_logger.error(f"RAG FAISS lookup error: {e}")
+
+                t_pre_llm = time.time()
+                _lang_label = _LANG_LABEL.get(_active_lang[0], _active_lang[0])
+                _lang_directive = (
+                    f"\n\n⚠️ LANGUAGE OVERRIDE — MANDATORY: "
+                    f"The customer is speaking in {_lang_label}. "
+                    f"Your ENTIRE response MUST be in {_lang_label} ONLY. "
+                    f"Do NOT use any other language. Not even one word."
+                )
+                final_system_instruction = dynamic_context + rag_context + _lang_directive
+
+                # Start TTS Worker Queue for Streaming Pipeline
+                tts_queue = asyncio.Queue()
+
+                # [Phase 2: Conversational Backchanneling]
+                if len(sentence.split()) > 2:
+                    import random
+                    if random.random() < 0.6:
+                        fillers = ["Hmm...", "Achha...", "Okay...", "Haan..."]
+                        await tts_queue.put(random.choice(fillers))
+
+                async def tts_worker():
+                    try:
+                        while True:
+                            tts_text = await tts_queue.get()
+                            if tts_text is None:
+                                break
+                            _tts_playing[0] = True
+                            await synthesize_and_send_audio(
+                                text=tts_text,
+                                stream_sid=stream_sid,
+                                websocket=websocket,
+                                tts_provider_override=_tts_provider_override,
+                                tts_voice_override=_tts_voice_override,
+                                tts_language_override=_active_lang[0]
+                            )
+                            _tts_playing[0] = False
+                            _last_tts_end_time[0] = time.time()
+                            tts_queue.task_done()
+                    except asyncio.CancelledError:
+                        _tts_playing[0] = False
+                        _last_tts_end_time[0] = time.time()
+                    except Exception as e:
+                        conv_logger.error(f"TTS Worker Error: {e}")
+
+                if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
+                    active_tts_tasks[stream_sid].cancel()
+                    try:
+                        await active_tts_tasks[stream_sid]
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                worker_task = asyncio.create_task(tts_worker())
+                if stream_sid:
+                    active_tts_tasks[stream_sid] = worker_task
+
+                try:
+                    import llm_provider
+                    import re
+
+                    sentence_separators = re.compile(r'([.!?|\n]+)')
+                    full_response = ""
+                    current_sentence = ""
+                    first_token_time = None
+
+                    _lang = (_active_lang[0] or "hi")
+                    _llm_max_tokens = 300 if _lang == "mr" else 80 if _lang in ("hi", "bn") else 400
+                    async for chunk in llm_provider.generate_response_stream(
+                        chat_history=chat_history,
+                        system_instruction=final_system_instruction,
+                        max_tokens=_llm_max_tokens,
+                    ):
+                        if first_token_time is None:
+                            first_token_time = time.time()
+                            conv_logger.info(f"TIMING: TTFB LLM = {first_token_time - t_pre_llm:.2f}s")
+
+                        full_response += chunk
+                        current_sentence += chunk
+
+                        parts = sentence_separators.split(current_sentence)
+                        if len(parts) > 1:
+                            complete_text = "".join(parts[:-1]).strip()
+                            remaining_text = parts[-1]
+
+                            if complete_text:
+                                clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', complete_text)
                                 clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
                                 clean_text = clean_text.strip()
-                                if clean_text and "[HANGUP]" not in clean_text:
+                                if clean_text:
                                     await tts_queue.put(clean_text)
-                                    
-                            await tts_queue.put(None)
 
-                            t_post_llm = time.time()
-                            chat_history.append({"role": "model", "parts": [{"text": full_response}]})
-                            conv_logger.info(f"[LLM] AI STREAM RESPONSE FULL: {full_response[:200]}")
-                            conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, first_token={first_token_time - t_pre_llm if first_token_time else 0:.2f}s, total_gen={t_post_llm - t_pre_llm:.2f}s")
-                            
+                            current_sentence = remaining_text
+
+                    if current_sentence.strip():
+                        clean_text = re.sub(r'[\*\_\#\`\~\>\|]', '', current_sentence.strip())
+                        clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
+                        clean_text = clean_text.strip()
+                        if clean_text and "[HANGUP]" not in clean_text:
+                            await tts_queue.put(clean_text)
+
+                    await tts_queue.put(None)
+
+                    t_post_llm = time.time()
+                    chat_history.append({"role": "model", "parts": [{"text": full_response}]})
+                    conv_logger.info(f"[LLM] AI STREAM RESPONSE FULL: {full_response[:200]}")
+                    conv_logger.info(f"TIMING: pre_llm={t_pre_llm - t_start:.2f}s, first_token={first_token_time - t_pre_llm if first_token_time else 0:.2f}s, total_gen={t_post_llm - t_pre_llm:.2f}s")
+
+                    try:
+                        await websocket.send_json({"event": "llm_response", "text": full_response.replace("[HANGUP]", "")})
+                    except Exception:
+                        pass
+                    if stream_sid:
+                        call_logger.call_event(stream_sid, "LLM_RESPONSE", full_response[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
+                        for monitor in monitor_connections.get(stream_sid, set()):
                             try:
-                                await websocket.send_json({"event": "llm_response", "text": full_response.replace("[HANGUP]", "")})
+                                await monitor.send_json({"type": "transcript", "role": "agent", "text": full_response.replace("[HANGUP]", "")})
                             except Exception:
                                 pass
-                            if stream_sid:
-                                call_logger.call_event(stream_sid, "LLM_RESPONSE", full_response[:100], llm_time_s=round(t_post_llm - t_pre_llm, 3))
-                                for monitor in monitor_connections.get(stream_sid, set()):
-                                    try:
-                                        await monitor.send_json({"type": "transcript", "role": "agent", "text": full_response.replace("[HANGUP]", "")})
-                                    except Exception:
-                                        pass
-                                        
-                            # AI Physical Disconnect Command Handler
-                            if "[HANGUP]" in full_response:
-                                _hangup_requested[0] = True
-                                conv_logger.info("[COMMAND] LLM explicitly commanded a websocket disconnect.")
-                                if stream_sid:
-                                    call_logger.call_event(stream_sid, "LLM_HANGUP", "AI explicitly ended the call block.")
-                                # Wait for TTS worker to finish speaking ALL queued sentences
-                                try:
-                                    await asyncio.wait_for(worker_task, timeout=15)
-                                    conv_logger.info("[HANGUP] TTS drain complete, closing connection.")
-                                except (asyncio.TimeoutError, Exception):
-                                    conv_logger.info("[HANGUP] TTS drain timed out, forcing close.")
-                                # Grace period for the telecom/browser to finish playing the audio buffer.
-                                # TTS sends chunks faster than realtime — phone needs time to play them.
-                                # ~7 seconds covers a typical farewell sentence at telephony speech rate.
-                                await asyncio.sleep(7)
-                                try:
-                                    await websocket.close()
-                                except Exception:
-                                    pass
-                                return
-                        except Exception as e:
-                            import traceback
-                            conv_logger.error(f"Error streaming LLM response: {e}")
-                            conv_logger.error(traceback.format_exc())
-                            await tts_queue.put(None)
-                            return
-                except Exception as _crash:
-                    import traceback
-                    logging.getLogger("uvicorn.error").error(f"[SYSTEM FATAL] _process_transcript SILENT CRASH: {_crash}")
-                    logging.getLogger("uvicorn.error").error(traceback.format_exc())
 
-            asyncio.run_coroutine_threadsafe(_process_transcript(), loop)
+                    # AI Physical Disconnect Command Handler
+                    if "[HANGUP]" in full_response:
+                        _hangup_requested[0] = True
+                        conv_logger.info("[COMMAND] LLM explicitly commanded a websocket disconnect.")
+                        if stream_sid:
+                            call_logger.call_event(stream_sid, "LLM_HANGUP", "AI explicitly ended the call block.")
+                        try:
+                            await asyncio.wait_for(worker_task, timeout=15)
+                            conv_logger.info("[HANGUP] TTS drain complete, closing connection.")
+                        except (asyncio.TimeoutError, Exception):
+                            conv_logger.info("[HANGUP] TTS drain timed out, forcing close.")
+                        await asyncio.sleep(7)
+                        try:
+                            await websocket.close()
+                        except Exception:
+                            pass
+                        return
+                except Exception as e:
+                    import traceback
+                    conv_logger.error(f"Error streaming LLM response: {e}")
+                    conv_logger.error(traceback.format_exc())
+                    await tts_queue.put(None)
+                    return
+        except Exception as _crash:
+            import traceback
+            logging.getLogger("uvicorn.error").error(f"[SYSTEM FATAL] _process_transcript SILENT CRASH: {_crash}")
+            logging.getLogger("uvicorn.error").error(traceback.format_exc())
 
     dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
-    dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
+    dg_connection.on(LiveTranscriptionEvents.Transcript, on_message_primary)
+    dg_connection.on(LiveTranscriptionEvents.Error, on_error)
 
     _stt_lang = _tts_language_override or "hi"
-    _stt_model = "nova-3" if _stt_lang in ("mr", "mr-IN", "bn", "bn-IN") else "nova-2"
+    # Use Deepgram's multi-language model for non-English campaigns so it can
+    # recognise mid-call language switches (Bengali ↔ Hindi ↔ English).
+    # "multi" is supported in nova-2 streaming and doesn't require detect_language.
+    _use_multi = _stt_lang not in ("en", "en-US", "en-IN")
+    _stt_effective_lang = "multi" if _use_multi else _stt_lang
+    # Dual-STT: run a secondary Hindi connection alongside "multi" to catch
+    # Hindi speech that the multi-language model misidentifies as Spanish/other.
+    _use_secondary_stt = _use_multi
+    _secondary_stt_lang = "hi"
+
     dg_connection.start(
         LiveOptions(
-            model=_stt_model,
-            language=_stt_lang,
+            model="nova-2",
+            language=_stt_effective_lang,
             encoding="linear16",
             sample_rate=8000,
             channels=1,
@@ -491,8 +754,25 @@ async def handle_media_stream(websocket: WebSocket):
         )
     )
 
+    if _use_secondary_stt:
+        dg_connection_hi.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
+        dg_connection_hi.on(LiveTranscriptionEvents.Transcript, on_message_secondary)
+        dg_connection_hi.on(LiveTranscriptionEvents.Error, on_error)
+        dg_connection_hi.start(
+            LiveOptions(
+                model="nova-2",
+                language=_secondary_stt_lang,
+                encoding="linear16",
+                sample_rate=8000,
+                channels=1,
+                endpointing=300,
+                utterance_end_ms="1000",
+                interim_results=True,
+            )
+        )
+
     ws_logger = logging.getLogger("uvicorn.error")
-    ws_logger.info(f"Media stream handler started for {lead_name}")
+    ws_logger.info(f"Media stream handler started for {lead_name} (dual_stt={_use_secondary_stt})")
     greeting_sent = False
     _dg_alive = True
 
@@ -503,7 +783,12 @@ async def handle_media_stream(websocket: WebSocket):
             try:
                 dg_connection.keep_alive()
             except Exception:
-                break
+                pass
+            if _use_secondary_stt:
+                try:
+                    dg_connection_hi.keep_alive()
+                except Exception:
+                    pass
     _keepalive_task = asyncio.create_task(_deepgram_keepalive())
 
     # CRITICAL: Send greeting immediately on WebSocket connect
@@ -563,8 +848,10 @@ async def handle_media_stream(websocket: WebSocket):
                         synthesize_and_send_audio(greeting_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
                     )
 
-                # Forward raw audio to Deepgram
+                # Forward raw audio to Deepgram (both connections in dual-STT mode)
                 dg_connection.send(audio_data)
+                if _use_secondary_stt:
+                    dg_connection_hi.send(audio_data)
                 # Capture mic audio for recording
                 if is_exotel_stream:
                     import audioop as _ao
@@ -636,6 +923,8 @@ async def handle_media_stream(websocket: WebSocket):
                 elif data.get("event") == "media":
                     raw_audio = base64.b64decode(data["media"]["payload"])
                     dg_connection.send(raw_audio)
+                    if _use_secondary_stt:
+                        dg_connection_hi.send(raw_audio)
                     if len(_recording_mic_chunks) % 100 == 0:
                         ws_logger.info(f"[DEBUG-REC] Media event: {len(raw_audio)} bytes, is_exotel={is_exotel_stream}, mic_chunks={len(_recording_mic_chunks)}")
                     if is_exotel_stream:
@@ -728,6 +1017,11 @@ async def handle_media_stream(websocket: WebSocket):
             dg_connection.finish()
         except Exception:
             pass
+        if _use_secondary_stt:
+            try:
+                dg_connection_hi.finish()
+            except Exception:
+                pass
         try:
             await websocket.close()
         except Exception:

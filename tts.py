@@ -31,7 +31,7 @@ async def synthesize_and_send_audio(
     if tts_provider == "sarvam":
         await _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger)
     elif tts_provider == "smallest":
-        await _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, needs_raw_pcm, tts_logger)
+        await _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger)
     else:
         await _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, is_exotel, is_browser_sim, tts_logger)
 
@@ -123,8 +123,17 @@ async def _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tt
         tts_logger.error(f"TTS Sarvam Exception: {e}")
 
 
-async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, needs_raw_pcm, tts_logger):
+async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger):
     import audioop
+    # SmallestAI language name map (lang code → API language name)
+    _smallest_lang_map = {
+        'hi': 'hindi', 'hi-IN': 'hindi',
+        'bn': 'bengali', 'bn-IN': 'bengali',
+        'en': 'english', 'en-IN': 'english', 'en-US': 'english',
+        'mr': 'marathi', 'mr-IN': 'marathi',
+        'ta': 'tamil', 'te': 'telugu', 'gu': 'gujarati',
+        'kn': 'kannada', 'ml': 'malayalam', 'pa': 'punjabi',
+    }
     url = "https://waves-api.smallest.ai/api/v1/lightning/get_speech"
     headers = {
         "Authorization": f"Bearer {os.getenv('SMALLEST_API_KEY')}",
@@ -135,9 +144,12 @@ async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, 
         "voice_id": tts_voice_override or os.getenv("SMALLEST_VOICE_ID", "emily"),
         "sample_rate": 8000,
         "add_wav_header": False,
-        "speed": 1.0
+        "speed": 1.0,
     }
-    tts_logger.info(f"TTS: provider=SmallestAI, needs_raw_pcm={needs_raw_pcm}")
+    if tts_language_override:
+        lang_name = _smallest_lang_map.get(tts_language_override, tts_language_override)
+        payload["language"] = lang_name
+    tts_logger.info(f"TTS: provider=SmallestAI, lang={tts_language_override}, needs_raw_pcm={needs_raw_pcm}")
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("POST", url, json=payload, headers=headers) as response:
