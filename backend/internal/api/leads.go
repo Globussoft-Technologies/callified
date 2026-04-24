@@ -435,7 +435,7 @@ func (s *Server) draftLeadEmail(w http.ResponseWriter, r *http.Request) {
 	// Gather last transcript for context (optional)
 	transcriptContext := ""
 	if transcripts, err := s.db.GetTranscriptsByLead(id); err == nil && len(transcripts) > 0 {
-		transcriptContext = "\n\nLast call transcript (JSON): " + transcripts[0].Transcript
+		transcriptContext = "\n\nLast call transcript (JSON): " + string(transcripts[0].Transcript)
 	}
 
 	name := strings.TrimSpace(lead.FirstName + " " + lead.LastName)

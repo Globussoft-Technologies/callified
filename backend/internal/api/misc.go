@@ -204,18 +204,30 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 }
 
 // attachRecordingToLatestTranscript finds the most recent transcript for
-// leadID and updates its recording_url. Polls because the transcript row may
-// not have been written yet (finalizeCall runs in a goroutine).
+// leadID and fills in recording_url ONLY IF it's still empty. Mirrors Python
+// routes.py:1181-1190 — the server-side stereo WAV (saved by finalizeCall) is
+// the canonical recording, so we only let the browser webm "win" when the WAV
+// path produced nothing. Without this guard the webm overwrites a perfectly
+// good 8kHz stereo mix and the modal renders "Browser Recording" instead of
+// "Server Recording (Stereo)".
+//
+// Polls because finalizeCall runs in a goroutine — the transcript row may not
+// exist yet when the browser POSTs the file.
 func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID int64, recURL string) {
 	for attempt := 0; attempt < 6; attempt++ {
 		transcripts, err := s.db.GetTranscriptsByLead(leadID)
 		if err == nil && len(transcripts) > 0 {
-			latest := transcripts[0] // GetTranscriptsByLead orders by created_at DESC
+			latest := transcripts[0] // ordered by created_at DESC
+			if latest.RecordingURL != "" {
+				s.logger.Sugar().Infow("uploadRecording: server recording already attached, skipping webm",
+					"transcript_id", latest.ID, "existing", latest.RecordingURL)
+				return
+			}
 			if err := s.db.UpdateCallTranscriptRecording(latest.ID, recURL); err != nil {
 				s.logger.Sugar().Warnw("uploadRecording: update transcript url failed",
 					"transcript_id", latest.ID, "err", err)
 			} else {
-				s.logger.Sugar().Infow("uploadRecording: transcript url updated",
+				s.logger.Sugar().Infow("uploadRecording: transcript url updated (no server WAV present)",
 					"transcript_id", latest.ID, "url", recURL)
 			}
 			return

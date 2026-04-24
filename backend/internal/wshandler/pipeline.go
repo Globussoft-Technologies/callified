@@ -278,12 +278,23 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 		frameKey = "stream_sid"
 	}
 
+	payloadB64 := base64.StdEncoding.EncodeToString(audioBytes)
 	frame, _ := json.Marshal(map[string]interface{}{
 		"event":   "media",
 		frameKey:  sess.StreamSid,
-		"media":   map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
+		"media":   map[string]string{"payload": payloadB64},
 	})
 	_ = sess.SendText(frame)
+
+	// Relay a copy of the agent's outbound audio to any attached monitors so
+	// external consumers can render / play back what the AI is saying.
+	if sess.hasMonitors() {
+		format := "pcm16_8k"
+		if sess.IsExotel {
+			format = "ulaw_8k"
+		}
+		sess.BroadcastAudio("agent", payloadB64, format)
+	}
 }
 
 func max(a, b int) int {

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -208,14 +209,23 @@ func (d *DB) CreateDocument(leadID int64, fileName, fileURL string) error {
 }
 
 // Transcript mirrors call_transcripts.
+//
+// Transcript is the MySQL JSON column — we use json.RawMessage so it passes
+// through encoding/json unmolested (as a real JSON array), instead of being
+// re-encoded as a JSON string. The frontend's TranscriptModal does
+// `Array.isArray(t.transcript)` and iterates directly, so the API must send
+// an array, not an escaped string. Python's MySQL driver decodes JSON natively
+// (returns list[dict]), and FastAPI serialises it the same way — this matches
+// that behavior so the modal renders transcript bubbles.
 type Transcript struct {
-	ID            int64   `json:"id"`
-	LeadID        int64   `json:"lead_id"`
-	CampaignID    int64   `json:"campaign_id"`
-	Transcript    string  `json:"transcript"`
-	RecordingURL  string  `json:"recording_url"`
-	CallDurationS float64 `json:"call_duration_s"`
-	CreatedAt     string  `json:"created_at"`
+	ID            int64           `json:"id"`
+	LeadID        int64           `json:"lead_id"`
+	CampaignID    int64           `json:"campaign_id"`
+	Transcript    json.RawMessage `json:"transcript"`
+	RecordingURL  string          `json:"recording_url"`
+	TTSLanguage   string          `json:"tts_language"`
+	CallDurationS float64         `json:"call_duration_s"`
+	CreatedAt     string          `json:"created_at"`
 }
 
 // GetTranscriptsByLead returns all transcripts for a lead.
@@ -223,6 +233,7 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
 		        COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		        COALESCE(tts_language,''),
 		        COALESCE(call_duration_s,0),
 		        DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		 FROM call_transcripts WHERE lead_id=? ORDER BY created_at DESC`, leadID)
@@ -233,7 +244,7 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	var list []Transcript
 	for rows.Next() {
 		var t Transcript
-		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, t)
@@ -246,6 +257,7 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 	rows, err := d.pool.Query(`
 		SELECT ct.id, COALESCE(ct.lead_id,0), COALESCE(ct.campaign_id,0),
 		COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
+		COALESCE(ct.tts_language,''),
 		COALESCE(ct.call_duration_s,0),
 		DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts ct
@@ -260,7 +272,7 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 	for rows.Next() {
 		var t Transcript
 		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript,
-			&t.RecordingURL, &t.CallDurationS, &t.CreatedAt); err != nil {
+			&t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, t)
@@ -270,11 +282,22 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 
 // SaveCallTranscript inserts a call transcript row and returns the new ID.
 // transcriptJSON should be a JSON array of {role,text} objects.
-func (d *DB) SaveCallTranscript(leadID, campaignID int64, transcriptJSON, recordingURL string, durationS float32) (int64, error) {
+// ttsLanguage is the BCP-47-ish language code the call was conducted in
+// (hi, mr, bn, gu, pa, ta, te, kn, ml, en); empty string stores NULL.
+//
+// orgID is the owning org. If the caller passes 0 we fall back to the lead's
+// org — this matters because web-sim calls don't hit the Redis hydration path
+// that populates sess.OrgID, so without the fallback every web-sim row would
+// land with org_id=NULL and get filtered out of the Analytics dashboard.
+func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
+	if orgID == 0 && leadID > 0 {
+		_ = d.pool.QueryRow(`SELECT org_id FROM leads WHERE id=?`, leadID).Scan(&orgID)
+	}
 	res, err := d.pool.Exec(
-		`INSERT INTO call_transcripts (lead_id, campaign_id, transcript, recording_url, call_duration_s)
-		 VALUES (?,?,?,?,?)`,
-		nullInt64(leadID), nullInt64(campaignID), transcriptJSON, nullString(recordingURL), durationS)
+		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, transcript, recording_url, tts_language, call_duration_s)
+		 VALUES (?,?,?,?,?,?,?)`,
+		nullInt64(leadID), nullInt64(campaignID), nullInt64(orgID),
+		transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
 	if err != nil {
 		return 0, err
 	}

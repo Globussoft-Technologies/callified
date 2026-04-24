@@ -74,11 +74,20 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Match Python auth.py:202 — return a nested `user` object with
+	// org_name, so AuthContext.signup's `setCurrentUser(data.user)` gets
+	// the full profile and the TopHeader renders "Name (Org)".
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"access_token": token,
 		"token_type":   "bearer",
-		"user_id":      userID,
-		"org_id":       orgID,
+		"user": map[string]any{
+			"id":        userID,
+			"email":     req.Email,
+			"full_name": req.FullName,
+			"role":      role,
+			"org_id":    orgID,
+			"org_name":  req.OrgName,
+		},
 	})
 }
 
@@ -113,17 +122,23 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Response shape matches Python auth.py:220 — `user` is nested so the
+	// frontend's AuthContext.login() line `setCurrentUser(data.user)` picks
+	// up the full profile (including org_name). A flat response leaves
+	// `data.user` undefined and currentUser loses the org suffix.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": token,
 		"token_type":   "bearer",
-		"user_id":      user.ID,
-		"org_id":       user.OrgID,
-		"role":         user.Role,
-		"full_name":    user.FullName,
+		"user":         userResponse(s, user),
 	})
 }
 
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────
+//
+// Response shape mirrors Python's auth.py:223-235 — in particular, `org_name`
+// is looked up and attached so the TopHeader can render "Name (Org)". Without
+// it the frontend's `{currentUser.org_name ? ` (${org_name})` : ''}` branch
+// silently evaluates to empty and the org suffix disappears.
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
@@ -137,13 +152,27 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeJSON(w, http.StatusOK, userResponse(s, user))
+}
+
+// userResponse builds the user-profile object returned by /auth/me, login,
+// and signup. One canonical shape keeps the frontend (AuthContext.jsx,
+// TopHeader.jsx) consistent across all three endpoints.
+func userResponse(s *Server, user *db.User) map[string]any {
+	orgName := ""
+	if user.OrgID > 0 {
+		if org, err := s.db.GetOrganizationByID(user.OrgID); err == nil && org != nil {
+			orgName = org.Name
+		}
+	}
+	return map[string]any{
 		"id":        user.ID,
 		"email":     user.Email,
 		"full_name": user.FullName,
 		"role":      user.Role,
 		"org_id":    user.OrgID,
-	})
+		"org_name":  orgName,
+	}
 }
 
 // ── JWT helpers ───────────────────────────────────────────────────────────────

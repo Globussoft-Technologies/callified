@@ -68,7 +68,7 @@ func (rw *RetryWorker) tick(ctx context.Context) {
 			TTSLanguage: vs.TTSLanguage,
 		}
 
-		if err := rw.initiator.Initiate(ctx, data); err != nil {
+		if _, err := rw.initiator.Initiate(ctx, data); err != nil {
 			rw.log.Warn("retry_worker: initiate failed",
 				zap.Error(err), zap.Int64("retry_id", r.ID))
 			exhausted, _ := rw.db.IncrRetryAttempt(r.ID)

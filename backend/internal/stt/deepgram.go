@@ -176,20 +176,27 @@ func (c *Client) handleMessage(raw []byte) {
 	}
 }
 
-// mapLanguage converts our language code to Deepgram's language + model selection.
-// Deepgram nova-2 currently supports only Hindi and English among Indian languages.
-// Unsupported languages fall back to English STT so the call stays alive — the
-// transcript quality will be poor but the session will not die.
+// mapLanguage converts our language code to Deepgram's language + model
+// selection. Matches Python ws_handler.py:733-738:
+//
+//   en / ""  → nova-2, language=en
+//   hi       → nova-2, language=hi        (dedicated Hindi model — best quality)
+//   mr, ta, te, kn, ml, gu, bn, pa  → nova-2, language=multi
+//
+// `multi` is Deepgram's multilingual-detection mode — it autoselects from
+// the supported language set per utterance. Critical for non-Hindi Indian
+// languages: with a plain English fallback the customer's Marathi/Tamil/etc.
+// speech was being transcribed as English gibberish, which made the LLM
+// reply incoherently. Symptom: "dial doesn't work for non-English languages".
 func mapLanguage(lang string) (dgLang, dgModel string) {
 	switch lang {
 	case "hi":
 		return "hi", "nova-2"
 	case "en", "":
 		return "en", "nova-2"
-	// Unsupported by Deepgram nova-2 — fall back to English.
 	case "ta", "te", "kn", "ml", "gu", "bn", "pa", "mr":
-		return "en", "nova-2"
+		return "multi", "nova-2"
 	default:
-		return "en", "nova-2"
+		return "multi", "nova-2"
 	}
 }

@@ -5,6 +5,7 @@ package redis
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -216,6 +217,110 @@ func (s *Store) Publish(ctx context.Context, channel, message string) {
 		return
 	}
 	s.rdb.Publish(ctx, keyPrefix+channel, message)
+}
+
+// EmitCampaignEvent fan-outs a user-friendly dial event to the campaign's
+// SSE subscribers. Mirrors Python's live_logs.emit_campaign_event exactly —
+// same icon map, same timestamped format:
+//
+//	{icon} [HH:MM:SS] {lead_name} ({phone}) — {EVENT_TYPE} | {detail}
+//
+// Published to two channels so the frontend can subscribe to either the
+// specific campaign or an "all campaigns" firehose:
+//   - campaign:<campaignID>   (per-campaign)
+//   - campaign:all            (firehose)
+//
+// Without this publisher, the SSE endpoint /api/campaign-events connects
+// fine but stays silent forever — the "Live Campaign Activity" panel on the
+// detail page stays empty even when calls are happening.
+func (s *Store) EmitCampaignEvent(ctx context.Context, campaignID int64, leadName, phone, eventType, detail string) {
+	if s.rdb == nil {
+		return
+	}
+	icons := map[string]string{
+		"dialing": "📞", "connected": "✅", "no-answer": "❌", "busy": "📵",
+		"failed": "⚠️", "completed": "🎯", "dnd": "🚫", "hangup": "👋",
+		"error": "💥", "started": "🚀", "finished": "🏁",
+		"retry_dialing": "🔁",
+	}
+	icon, ok := icons[eventType]
+	if !ok {
+		icon = "📋"
+	}
+	ts := time.Now().Format("15:04:05")
+	msg := fmt.Sprintf("%s [%s] %s (%s) — %s", icon, ts, leadName, phone, strings.ToUpper(eventType))
+	if detail != "" {
+		msg += " | " + detail
+	}
+	// Fan out to both channels — frontend can subscribe to either.
+	chanSpecific := fmt.Sprintf("campaign:%d", campaignID)
+	s.rdb.Publish(ctx, keyPrefix+chanSpecific, msg)
+	s.rdb.Publish(ctx, keyPrefix+"campaign:all", msg)
+
+	// Persist into capped history lists so newly-connecting SSE clients can
+	// replay recent events. Two keys:
+	//   - campaign:history:<id>   per-campaign, 50 newest (panel scroll)
+	//   - campaign:history:all    global firehose, 200 newest (System Logs)
+	// Mirrors Python's in-memory deque (maxlen=500 replayed last 20 on
+	// connect). Without the "all" key the /logs "Activity" tab stayed empty
+	// on first load — it subscribes to campaign:all but had no history to
+	// replay, so the operator saw "Waiting for campaign activity…" even
+	// when calls had just happened.
+	histKey := fmt.Sprintf("%scampaign:history:%d", keyPrefix, campaignID)
+	allKey := keyPrefix + "campaign:history:all"
+	pipe := s.rdb.TxPipeline()
+	pipe.LPush(ctx, histKey, msg)
+	pipe.LTrim(ctx, histKey, 0, 49) // keep newest 50 per campaign
+	pipe.Expire(ctx, histKey, 7*24*time.Hour)
+	pipe.LPush(ctx, allKey, msg)
+	pipe.LTrim(ctx, allKey, 0, 199) // keep newest 200 across all campaigns
+	pipe.Expire(ctx, allKey, 7*24*time.Hour)
+	_, _ = pipe.Exec(ctx)
+}
+
+// RecentAllCampaignEvents returns up to `limit` most-recent events across
+// every campaign, chronologically. Backs the /logs "Activity" firehose
+// (campaign_id=0 / "all") so the panel is not blank on initial load.
+func (s *Store) RecentAllCampaignEvents(ctx context.Context, limit int) []string {
+	if s.rdb == nil {
+		return nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	items, err := s.rdb.LRange(ctx, keyPrefix+"campaign:history:all", 0, int64(limit-1)).Result()
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, v := range items {
+		out[len(items)-1-i] = v
+	}
+	return out
+}
+
+// RecentCampaignEvents returns up to `limit` most-recent campaign events
+// (newest first in the list, but returned in chronological order so the UI
+// renders top-to-bottom matching arrival order).
+func (s *Store) RecentCampaignEvents(ctx context.Context, campaignID int64, limit int) []string {
+	if s.rdb == nil {
+		return nil
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	histKey := fmt.Sprintf("%scampaign:history:%d", keyPrefix, campaignID)
+	// LRANGE 0..limit-1 returns newest→oldest (we LPUSH'd); reverse to
+	// show oldest→newest so the live panel reads naturally.
+	items, err := s.rdb.LRange(ctx, histKey, 0, int64(limit-1)).Result()
+	if err != nil || len(items) == 0 {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, v := range items {
+		out[len(items)-1-i] = v
+	}
+	return out
 }
 
 // Subscribe returns a channel that receives messages published to the given channel.

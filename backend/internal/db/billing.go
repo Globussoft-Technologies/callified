@@ -173,8 +173,11 @@ func (d *DB) GetBillingUsage(orgID int64) (*BillingUsage, error) {
 	u.MinutesIncluded = minutesIncluded
 	u.PeriodEnd = periodEnd
 
-	// Count call seconds in the current period, convert to minutes
-	var totalSec int
+	// Count call seconds in the current period, convert to minutes.
+	// call_duration_s is FLOAT so SUM() returns DOUBLE — scanning into int
+	// fails with a driver error which previously bubbled up as a 500 and
+	// hid the "Current Plan + usage bar" card on the Billing page entirely.
+	var totalSec float64
 	err = d.pool.QueryRow(`
 		SELECT COALESCE(SUM(call_duration_s), 0)
 		FROM call_transcripts
@@ -182,7 +185,7 @@ func (d *DB) GetBillingUsage(orgID int64) (*BillingUsage, error) {
 	if err != nil {
 		return u, err
 	}
-	minutesUsed := totalSec / 60
+	minutesUsed := int(totalSec) / 60
 	u.MinutesUsed = minutesUsed
 
 	if minutesUsed >= minutesIncluded {

@@ -5,24 +5,47 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
-// ServeMonitor handles /ws/monitor/{stream_sid}.
-// Managers connect here to:
-//   - Receive real-time transcripts: {"type":"transcript","role":"user|agent","text":"..."}
-//   - Inject whispers:               {"action":"whisper","text":"hint for AI"}
-//   - Trigger takeover:              {"action":"takeover"}
-//   - Send audio during takeover:    {"action":"audio_chunk","payload":"<base64>"}
+// lookupSession resolves a monitor-WS key to an active CallSession. The key
+// may be either a stream_sid or a call_sid. The call_sid index is populated
+// only after the carrier sends the "start" event for an outbound dial, so we
+// poll for up to maxWait to cover the ringing gap between /api/manual-call
+// returning and the media stream opening.
+func (h *Handler) lookupSession(key string, maxWait time.Duration) (*CallSession, bool) {
+	deadline := time.Now().Add(maxWait)
+	for {
+		if raw, ok := h.sessions.Load(key); ok {
+			return raw.(*CallSession), true
+		}
+		if raw, ok := h.sessionsByCallSid.Load(key); ok {
+			return raw.(*CallSession), true
+		}
+		if time.Now().After(deadline) {
+			return nil, false
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// ServeMonitor handles /ws/monitor/{key} where key is a stream_sid OR call_sid.
+// External consumers connect here to:
+//   - Receive live transcripts: {"type":"transcript","role":"user|agent","text":"..."}
+//   - Receive live audio chunks: {"type":"audio","role":"user|agent","format":"...","payload":"<base64>"}
+//   - Inject whispers:           {"action":"whisper","text":"hint for AI"}
+//   - Trigger takeover:          {"action":"takeover"}
+//   - Send audio during takeover:{"action":"audio_chunk","payload":"<base64>"}
 //
-// Mirrors Python ws_handler.py monitor_call().
+// Accepting call_sid lets /api/manual-call return a URL the client can open
+// immediately, before the carrier has dialled through to /media-stream.
 func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
-	// Parse stream_sid from path: /ws/monitor/{stream_sid}
-	streamSid := strings.TrimPrefix(r.URL.Path, "/ws/monitor/")
-	if streamSid == "" {
-		http.Error(w, "stream_sid required", http.StatusBadRequest)
+	key := strings.TrimPrefix(r.URL.Path, "/ws/monitor/")
+	if key == "" {
+		http.Error(w, "stream_sid or call_sid required", http.StatusBadRequest)
 		return
 	}
 
@@ -33,23 +56,29 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Look up the active call session
-	raw, ok := h.sessions.Load(streamSid)
+	// Try an immediate lookup first; if the caller is monitoring by call_sid
+	// on an outbound dial we may need to wait for the media stream to open.
+	sess, ok := h.lookupSession(key, 30*time.Second)
 	if !ok {
-		// Session not found — accept anyway, but nothing to monitor
-		h.log.Warn("monitor: session not found", zap.String("stream_sid", streamSid))
+		h.log.Warn("monitor: session not found", zap.String("key", key))
 		conn.WriteMessage( //nolint:errcheck
 			websocket.TextMessage,
 			[]byte(`{"error":"session not found"}`),
 		)
 		return
 	}
-	sess := raw.(*CallSession)
+
+	// Use the session's actual stream_sid for Redis-backed ops (whispers,
+	// takeover) since those keys always live under stream_sid.
+	streamSid := sess.StreamSid
 
 	sess.AddMonitor(conn)
 	defer sess.RemoveMonitor(conn)
 
-	h.log.Info("monitor connected", zap.String("stream_sid", streamSid))
+	h.log.Info("monitor connected",
+		zap.String("key", key),
+		zap.String("stream_sid", streamSid),
+	)
 
 	for {
 		_, msg, err := conn.ReadMessage()

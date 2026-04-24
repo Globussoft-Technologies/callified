@@ -151,6 +151,38 @@ func (s *CallSession) RemoveMonitor(conn *websocket.Conn) {
 	s.monitorMu.Unlock()
 }
 
+// hasMonitors returns true if at least one monitor WS is attached. Used as a
+// fast-path guard on hot audio broadcasts so we don't marshal JSON for nothing.
+func (s *CallSession) hasMonitors() bool {
+	s.monitorMu.RLock()
+	defer s.monitorMu.RUnlock()
+	return len(s.monitorConns) > 0
+}
+
+// BroadcastAudio relays a single audio chunk to all attached monitor clients.
+// role is "user" (inbound from phone/mic) or "agent" (outbound TTS).
+// payloadB64 is the already base64-encoded audio. Format is "ulaw_8k" for
+// Exotel calls (both directions) and "pcm16_8k" for web-sim calls.
+//
+// This is on the hot audio path — callers MUST guard with hasMonitors() to
+// avoid JSON marshalling when nobody's listening.
+func (s *CallSession) BroadcastAudio(role, payloadB64, format string) {
+	msg, err := json.Marshal(map[string]string{
+		"type":    "audio",
+		"role":    role,
+		"format":  format,
+		"payload": payloadB64,
+	})
+	if err != nil {
+		return
+	}
+	s.monitorMu.RLock()
+	defer s.monitorMu.RUnlock()
+	for conn := range s.monitorConns {
+		conn.WriteMessage(websocket.TextMessage, msg) //nolint:errcheck
+	}
+}
+
 // BroadcastTranscript sends a real-time transcript event to all connected monitor clients.
 // role is "user" or "agent". Matches Python:
 //

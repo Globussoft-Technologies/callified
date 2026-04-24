@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -76,10 +77,32 @@ func (s *Server) streamCampaignEvents(w http.ResponseWriter, r *http.Request, ca
 		return
 	}
 
-	fmt.Fprint(w, "event: ping\ndata: connected\n\n")
+	// Initial ack as an SSE comment (not a named event) — keeps the stream
+	// warm for proxies but doesn't show up on the client as a message.
+	fmt.Fprint(w, ": connected\n\n")
 	flusher.Flush()
 
 	ctx := r.Context()
+
+	// Replay recent history first so a freshly-opened page immediately shows
+	// the last ~20 events instead of an empty panel waiting for the next
+	// dial. Matches Python's live_logs.py:90-94 which pushes the last 20
+	// items from the in-memory deque on connect.
+	//
+	// "all" (firehose / System Logs page) reads the global history; numeric
+	// IDs (Campaign Detail page) read their per-campaign history.
+	if campaignID == "all" {
+		for _, past := range s.store.RecentAllCampaignEvents(ctx, 20) {
+			fmt.Fprintf(w, "data: %s\n\n", past)
+		}
+		flusher.Flush()
+	} else if cid, err := strconv.ParseInt(campaignID, 10, 64); err == nil && cid > 0 {
+		for _, past := range s.store.RecentCampaignEvents(ctx, cid, 20) {
+			fmt.Fprintf(w, "data: %s\n\n", past)
+		}
+		flusher.Flush()
+	}
+
 	msgs := s.store.Subscribe(ctx, "campaign:"+campaignID)
 
 	ticker := time.NewTicker(25 * time.Second)
@@ -93,7 +116,13 @@ func (s *Server) streamCampaignEvents(w http.ResponseWriter, r *http.Request, ca
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "event: campaign\ndata: %s\n\n", msg)
+			// Unnamed SSE event (just `data:`) so the frontend's default
+			// `EventSource.onmessage` handler fires. Previously we sent
+			// `event: campaign\ndata: …` which requires
+			// `addEventListener('campaign', …)` — the frontend doesn't
+			// register that listener, so every published event was
+			// silently dropped. Matches Python's live_logs.py format.
+			fmt.Fprintf(w, "data: %s\n\n", msg)
 			flusher.Flush()
 		case <-ticker.C:
 			fmt.Fprint(w, ": heartbeat\n\n")

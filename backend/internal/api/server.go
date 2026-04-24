@@ -167,9 +167,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/dnd/check", auth(s.checkDND))
+	// Path-param flavour the frontend Check button uses
+	// (GET /api/dnd/check/{phone}).
+	mux.HandleFunc("GET /api/dnd/check/{phone}", auth(s.checkDNDByPhone))
 	mux.HandleFunc("GET /api/dnd", auth(s.listDND))
 	mux.HandleFunc("POST /api/dnd", auth(s.addDND))
 	mux.HandleFunc("POST /api/dnd/import-csv", auth(s.importDNDCSV))
+	// Alias for the frontend upload CSV input which posts to /dnd/import.
+	mux.HandleFunc("POST /api/dnd/import", auth(s.importDNDCSV))
 	mux.HandleFunc("DELETE /api/dnd/{id}", auth(s.removeDND))
 
 	// ── Webhooks ──────────────────────────────────────────────────────────────
@@ -233,10 +238,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", auth(s.campaignDialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", auth(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", auth(s.campaignRedialFailed))
+	mux.HandleFunc("POST /api/manual-call", auth(s.manualCall))
 
 	// ── Telephony webhooks (no auth — provider-initiated) ──────────────────────
 	mux.HandleFunc("GET /webhook/twilio", s.twilioTwiML)
 	mux.HandleFunc("POST /webhook/twilio/status", s.twilioStatus)
+	mux.HandleFunc("GET /webhook/exotel", s.exotelXML)
+	mux.HandleFunc("POST /webhook/exotel", s.exotelXML)
 	mux.HandleFunc("POST /webhook/exotel/status", s.exotelStatus)
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
@@ -273,6 +281,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/wa/channels/{id}/toggle-ai", auth(s.toggleWAAI))
 	mux.HandleFunc("GET /api/wa/conversations", auth(s.listWAConversations))
 	mux.HandleFunc("GET /api/wa/conversations/{id}/history", auth(s.getWAHistory))
+	// Frontend-shape routes (match WhatsAppTab.jsx). Python exposed a
+	// single-config-per-org /api/wa/config and phone-scoped messages/toggle
+	// routes; Go's native /api/wa/channels/* is ID-based. Add these aliases
+	// so the existing UI works without a rewrite.
+	mux.HandleFunc("GET /api/wa/config", auth(s.getWAConfig))
+	mux.HandleFunc("POST /api/wa/config", auth(s.saveWAConfig))
+	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", auth(s.getWAMessagesByPhone))
+	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", auth(s.toggleWAAIByPhone))
 	mux.HandleFunc("POST /api/wa/send", auth(s.sendWAMessage))
 
 	// ── WhatsApp Provider Webhooks (Phase 3C) ─────────────────────────────────
@@ -290,7 +306,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Knowledge Base (Phase 3C) ─────────────────────────────────────────────
 	mux.HandleFunc("GET /api/knowledge", auth(s.listKnowledge))
-	mux.HandleFunc("POST /api/knowledge", auth(s.uploadKnowledge))
+	// POST path matches Python (routes.py:1255) — the RAG tab hits
+	// /api/knowledge/upload. Without /upload the fetch 404s and the
+	// "Upload & Embed PDF" button appears to silently do nothing.
+	mux.HandleFunc("POST /api/knowledge/upload", auth(s.uploadKnowledge))
 	mux.HandleFunc("DELETE /api/knowledge/{id}", auth(s.deleteKnowledge))
 
 	// ── SSE (Phase 3C) ────────────────────────────────────────────────────────

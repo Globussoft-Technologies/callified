@@ -158,10 +158,20 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 		go s.fetchAndSaveRecording(callSid, recordingURL)
 	}
 
-	// Fire webhook on terminal states
-	if status == "completed" || status == "failed" || status == "no-answer" {
+	// Emit live-feed event + fire webhook on terminal states. The
+	// EmitCampaignEvent call is what populates the "Live Campaign Activity"
+	// panel on the campaign detail page — matches Python's emit_campaign_event
+	// calls in webhook_routes.py:101/108.
+	if status == "completed" || status == "failed" || status == "no-answer" || status == "busy" {
 		cl, _ := s.db.GetCallLogByCallSid(callSid)
 		if cl != nil {
+			// Pull lead details for a friendly "Name (phone)" label.
+			var leadName string
+			if lead, err := s.db.GetLeadByID(cl.LeadID); err == nil && lead != nil {
+				leadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+			}
+			s.store.EmitCampaignEvent(r.Context(), cl.CampaignID, leadName, cl.Phone, status,
+				fmt.Sprintf("Exotel: %s", callStatus))
 			s.dispatcher.Dispatch(r.Context(), cl.OrgID, "call.completed", map[string]any{
 				"call_sid":    callSid,
 				"status":      status,

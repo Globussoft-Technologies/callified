@@ -64,13 +64,27 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		return
 	}
 
-	// Look up the channel config by provider + destination phone
+	// Look up the channel config by provider + destination phone. cfg may be
+	// nil if the provider points at a number we don't own — still log the
+	// message so the operator can see orphaned traffic in the DB, but
+	// against org_id=0 (only truly unattributable case).
 	cfg, _ := s.db.GetWAChannelConfigByPhone(provider, msg.ToPhone)
+	var orgID int64
+	if cfg != nil {
+		orgID = cfg.OrgID
+	}
+
+	// Always persist the inbound message before any AI processing so the
+	// Inbox shows it. Previously the AI branch skipped the save entirely,
+	// and the non-AI branch saved with org_id=0 which orphaned the row
+	// (every org's /api/wa/conversations filters by the authed user's
+	// org_id, so org_id=0 rows are invisible to everyone).
+	convID, _ := s.db.GetOrCreateWAConversation(orgID, msg.FromPhone, provider)
+	if convID > 0 {
+		_, _ = s.db.SaveWAMessage(convID, "inbound", msg.Text, msg.MessageType, msg.ProviderMsgID)
+	}
+
 	if cfg == nil || !cfg.AIEnabled {
-		// No AI — just log the message
-		if convID, err := s.db.GetOrCreateWAConversation(0, msg.FromPhone, provider); err == nil {
-			_, _ = s.db.SaveWAMessage(convID, "inbound", msg.Text, msg.MessageType, msg.ProviderMsgID)
-		}
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -93,6 +107,12 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		if err := s.waSender.SendText(r.Context(), channelCfg, msg.FromPhone, reply); err != nil {
 			s.logger.Warn("waWebhook: send reply failed",
 				zap.String("provider", provider), zap.Error(err))
+			return
+		}
+		// Persist the AI's reply as an outbound message so both sides of the
+		// conversation show up in the inbox.
+		if convID > 0 {
+			_, _ = s.db.SaveWAMessage(convID, "outbound", reply, "text", "")
 		}
 	}()
 

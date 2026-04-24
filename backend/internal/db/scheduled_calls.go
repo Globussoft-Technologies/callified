@@ -3,15 +3,23 @@ package db
 import "time"
 
 // ScheduledCall mirrors the scheduled_calls table.
+//
+// JSON keys match the Python response shape so the ScheduledCallsPage can
+// render without frontend changes — in particular `scheduled_time` (the page
+// reads call.scheduled_time, not scheduled_at) and the lead's first_name/phone
+// joined from the leads table. Without the JOIN the page rendered rows with
+// blank Lead Name / Phone cells even when data was present.
 type ScheduledCall struct {
-	ID          int64  `json:"id"`
-	OrgID       int64  `json:"org_id"`
-	LeadID      int64  `json:"lead_id"`
-	CampaignID  int64  `json:"campaign_id"`
-	ScheduledAt string `json:"scheduled_at"`
-	Status      string `json:"status"`
-	Notes       string `json:"notes"`
-	CreatedAt   string `json:"created_at"`
+	ID            int64  `json:"id"`
+	OrgID         int64  `json:"org_id"`
+	LeadID        int64  `json:"lead_id"`
+	CampaignID    int64  `json:"campaign_id"`
+	ScheduledAt   string `json:"scheduled_time"`
+	Status        string `json:"status"`
+	Notes         string `json:"notes"`
+	CreatedAt     string `json:"created_at"`
+	FirstName     string `json:"first_name"`
+	Phone         string `json:"phone"`
 }
 
 // CreateScheduledCall inserts a new scheduled call.
@@ -27,13 +35,18 @@ func (d *DB) CreateScheduledCall(orgID, leadID, campaignID int64, scheduledAt ti
 }
 
 // GetScheduledCallsByOrg returns all scheduled calls for an org ordered by scheduled_at ASC.
+// Joins leads so the UI can show Lead Name + Phone on each row (matches Python
+// get_scheduled_calls_by_org which also joins leads).
 func (d *DB) GetScheduledCallsByOrg(orgID int64) ([]ScheduledCall, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, org_id, lead_id, COALESCE(campaign_id,0),
-		DATE_FORMAT(scheduled_at,'%Y-%m-%d %H:%i:%s'),
-		COALESCE(status,'pending'), COALESCE(notes,''),
-		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM scheduled_calls WHERE org_id=? ORDER BY scheduled_at ASC`, orgID)
+		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		COALESCE(sc.status,'pending'), COALESCE(sc.notes,''),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		COALESCE(l.first_name,''), COALESCE(l.phone,'')
+		FROM scheduled_calls sc
+		LEFT JOIN leads l ON sc.lead_id=l.id
+		WHERE sc.org_id=? ORDER BY sc.scheduled_at ASC`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,15 +55,17 @@ func (d *DB) GetScheduledCallsByOrg(orgID int64) ([]ScheduledCall, error) {
 }
 
 // GetPendingScheduledCalls returns all pending calls whose scheduled_at has passed.
+// No lead join here — the scheduler worker resolves lead details via GetLeadByID.
 func (d *DB) GetPendingScheduledCalls() ([]ScheduledCall, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, org_id, lead_id, COALESCE(campaign_id,0),
-		DATE_FORMAT(scheduled_at,'%Y-%m-%d %H:%i:%s'),
-		COALESCE(status,'pending'), COALESCE(notes,''),
-		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM scheduled_calls
-		WHERE status='pending' AND scheduled_at <= NOW()
-		ORDER BY scheduled_at ASC`)
+		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		COALESCE(sc.status,'pending'), COALESCE(sc.notes,''),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		'', ''
+		FROM scheduled_calls sc
+		WHERE sc.status='pending' AND sc.scheduled_at <= NOW()
+		ORDER BY sc.scheduled_at ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +100,8 @@ func scanScheduledCalls(rows interface {
 	for rows.Next() {
 		var sc ScheduledCall
 		if err := rows.Scan(&sc.ID, &sc.OrgID, &sc.LeadID, &sc.CampaignID,
-			&sc.ScheduledAt, &sc.Status, &sc.Notes, &sc.CreatedAt); err != nil {
+			&sc.ScheduledAt, &sc.Status, &sc.Notes, &sc.CreatedAt,
+			&sc.FirstName, &sc.Phone); err != nil {
 			return nil, err
 		}
 		list = append(list, sc)

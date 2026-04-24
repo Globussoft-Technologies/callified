@@ -60,8 +60,11 @@ var ErrDND = fmt.Errorf("lead is on DND list")
 var ErrCallHours = fmt.Errorf("outside TRAI calling hours (9 AM – 9 PM)")
 
 // Initiate performs the full dial sequence for one lead.
-// Returns nil on successful dial initiation (not call completion).
-func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
+// Returns the carrier-issued call SID plus nil on successful dial initiation
+// (not call completion). The call_sid lets callers index the call for later
+// lookup — e.g., the manual-call REST endpoint returns it so external clients
+// can open /ws/monitor/{call_sid} before the media stream connects.
+func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error) {
 	// 1. DND check
 	isDND, err := i.db.IsDNDNumber(data.OrgID, data.LeadPhone)
 	if err != nil {
@@ -69,14 +72,16 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
 	}
 	if isDND {
 		_ = i.db.UpdateLeadStatus(data.LeadID, "DND — do not call")
-		return ErrDND
+		// Live-feed: tell the campaign detail page why this number was skipped.
+		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "dnd", "number is on DND list")
+		return "", ErrDND
 	}
 
 	// 2. TRAI calling hours
 	tz, _ := i.db.GetOrgTimezone(data.OrgID)
 	status := callguard.Check(tz)
 	if !status.Allowed {
-		return fmt.Errorf("%w: %s", ErrCallHours, status.Reason)
+		return "", fmt.Errorf("%w: %s", ErrCallHours, status.Reason)
 	}
 
 	// 3. Store pending call info in Redis (wshandler reads this on stream connect)
@@ -109,7 +114,10 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
-		return fmt.Errorf("dial %s: %w", provider, err)
+		// Live-feed: surface the dial-time failure (bad params, provider
+		// rejected, etc.) on the campaign detail page.
+		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", fmt.Sprintf("%s: %v", provider, err))
+		return "", fmt.Errorf("dial %s: %w", provider, err)
 	}
 
 	// 5. Persist pending call under the call SID for webhook lookup
@@ -134,6 +142,8 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
 		zap.Int64("lead_id", data.LeadID),
 		zap.Int64("campaign_id", data.CampaignID),
 	)
+	// Live-feed: dial went out successfully.
+	i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "dialing", fmt.Sprintf("via %s", provider))
 
 	// 7. Fire dial.initiated webhook
 	dialData, _ := json.Marshal(map[string]any{
@@ -150,5 +160,5 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
 		"campaign_id": data.CampaignID,
 	})
 
-	return nil
+	return callSid, nil
 }

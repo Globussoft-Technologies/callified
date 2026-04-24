@@ -111,6 +111,65 @@ func (d *DB) DeleteWAChannelConfig(id, orgID int64) error {
 	return err
 }
 
+// UpsertWAChannelConfig inserts-or-updates the channel config for an
+// (org, provider) pair. Frontend modal saves one config at a time and doesn't
+// track row IDs, so we upsert on the (org_id, provider) unique key rather
+// than branching on insert-vs-update in application code. autoReply nil
+// means "don't change the stored value" (modal toggle is optional).
+func (d *DB) UpsertWAChannelConfig(orgID int64, provider, phone, apiKey, appID, webhookURL string, autoReply *bool) (int64, error) {
+	ai := 1
+	if autoReply != nil && !*autoReply {
+		ai = 0
+	}
+	res, err := d.pool.Exec(`
+		INSERT INTO wa_channel_configs
+			(org_id, provider, phone_number, api_key, app_id, webhook_url, is_active, ai_enabled, auto_reply)
+		VALUES (?,?,?,?,?,?,1,?,?)
+		ON DUPLICATE KEY UPDATE
+			phone_number=VALUES(phone_number),
+			api_key=VALUES(api_key),
+			app_id=VALUES(app_id),
+			webhook_url=VALUES(webhook_url),
+			is_active=1,
+			ai_enabled=VALUES(ai_enabled),
+			auto_reply=VALUES(auto_reply)`,
+		orgID, provider, phone, apiKey, appID, webhookURL, ai, ai)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	return id, nil
+}
+
+// GetWAConversationIDByPhone resolves a contact phone to the internal
+// conversation PK for this org. Returns 0 when no conversation exists yet
+// (frontend renders an empty message list in that case, not a 500).
+func (d *DB) GetWAConversationIDByPhone(orgID int64, phone string) (int64, error) {
+	var id int64
+	err := d.pool.QueryRow(
+		`SELECT id FROM whatsapp_conversations
+		 WHERE org_id=? AND phone=?
+		 ORDER BY updated_at DESC LIMIT 1`, orgID, phone).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return id, err
+}
+
+// ToggleWAConversationAI flips ai_enabled on a single conversation
+// (phone-scoped) so the operator can mute AI for one contact without
+// affecting other threads on the same channel.
+func (d *DB) ToggleWAConversationAI(orgID int64, phone string, enabled bool) error {
+	v := 0
+	if enabled {
+		v = 1
+	}
+	_, err := d.pool.Exec(
+		`UPDATE whatsapp_conversations SET ai_enabled=?
+		 WHERE org_id=? AND phone=?`, v, orgID, phone)
+	return err
+}
+
 // ToggleWAAI enables/disables AI for a channel config.
 func (d *DB) ToggleWAAI(id, orgID int64, enabled bool) error {
 	v := 0

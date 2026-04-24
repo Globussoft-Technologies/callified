@@ -192,7 +192,7 @@ body {
   backdrop-filter: blur(8px);
   display: grid;
   place-items: center;
-  z-index: 50;
+  z-index: 200;
   opacity: 0;
   animation: fadeIn 0.2s forwards;
 }

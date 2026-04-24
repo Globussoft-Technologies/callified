@@ -113,6 +113,12 @@ export default function CampaignDetail({
   const [billingUsage, setBillingUsage] = useState(null);
   const [retries, setRetries] = useState([]);
   const [retriesLoading, setRetriesLoading] = useState(false);
+  // Schedule Call modal state — POSTs to /api/scheduled-calls which the
+  // backend worker (workers/scheduler.go) polls every 60s and auto-dials.
+  const [scheduleLead, setScheduleLead] = useState(null);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [scheduleNotes, setScheduleNotes] = useState('');
+  const [scheduleSaving, setScheduleSaving] = useState(false);
 
   const fetchInsights = async () => {
     setInsightsLoading(true);
@@ -382,22 +388,6 @@ export default function CampaignDetail({
         <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}
           onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
         <a href={`${API_URL}/leads/sample-csv`} download style={{color: '#94a3b8', fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center'}}>📋 Sample CSV</a>
-        {campaignLeads.some(l => (l.status || '').startsWith('Call Failed')) && (
-          <button className="btn-call" style={{background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.3)', fontSize: '0.85rem', padding: '8px 16px'}}
-            onClick={async () => {
-              const failedCount = campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length;
-              if (!window.confirm(`Redial ${failedCount} failed leads? (30s gap between calls to avoid spam)`)) return;
-              try {
-                const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/redial-failed`, { method: 'POST' });
-                const data = await res.json();
-                alert(data.message || 'Redial started');
-                const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
-                setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-              } catch(e) { alert('Redial failed'); }
-            }}>
-            🔄 Redial Failed ({campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length})
-          </button>
-        )}
         {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', fontSize: '0.85rem', padding: '8px 16px'}}
             onClick={async () => {
@@ -780,6 +770,19 @@ export default function CampaignDetail({
                       style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.3)'}}>
                       📝 Note
                     </button>
+                    <button className="btn-call"
+                      onClick={() => {
+                        setScheduleLead(lead);
+                        // Default to one hour from now in local time — typed
+                        // into a datetime-local input (YYYY-MM-DDTHH:MM).
+                        const d = new Date(Date.now() + 60 * 60 * 1000);
+                        const pad = n => String(n).padStart(2, '0');
+                        setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                        setScheduleNotes('');
+                      }}
+                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderColor: 'rgba(59,130,246,0.3)'}}>
+                      📅 Schedule
+                    </button>
                     <button onClick={() => handleRemoveLead(lead.id)}
                       style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
                         background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
@@ -802,6 +805,94 @@ export default function CampaignDetail({
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* ── Schedule Call Modal ─────────────────────────────────────────────
+          Simple datetime + optional notes, POSTs to /api/scheduled-calls.
+          The datetime-local input returns "YYYY-MM-DDTHH:MM" (no seconds),
+          so we append ":00" and convert the T→space to match the backend's
+          accepted "2006-01-02 15:04:05" format. Avoids RFC3339/timezone
+          ambiguity — the backend interprets as server-local time, which is
+          what the user sees in the input. */}
+      {scheduleLead && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}
+        >
+          <div className="modal-content glass-panel" style={{maxWidth: '440px', padding: '1.5rem'}}>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+              <h3 style={{margin: 0, color: '#e2e8f0'}}>📅 Schedule Call</h3>
+              <button onClick={() => setScheduleLead(null)}
+                style={{background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer'}}>✕</button>
+            </div>
+            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem'}}>
+              {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
+            </p>
+            <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
+              <label style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600}}>
+                Date &amp; Time
+                <input
+                  type="datetime-local"
+                  className="form-input"
+                  value={scheduleAt}
+                  onChange={e => setScheduleAt(e.target.value)}
+                  min={(() => { const d = new Date(); d.setSeconds(0, 0); return d.toISOString().slice(0, 16); })()}
+                  style={{width: '100%', marginTop: '6px'}}
+                />
+              </label>
+              <label style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600}}>
+                Notes (optional)
+                <textarea
+                  className="form-input"
+                  value={scheduleNotes}
+                  onChange={e => setScheduleNotes(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. follow-up on pricing discussion"
+                  style={{width: '100%', marginTop: '6px', resize: 'vertical'}}
+                />
+              </label>
+            </div>
+            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '1.25rem'}}>
+              <button onClick={() => setScheduleLead(null)}
+                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                disabled={scheduleSaving || !scheduleAt}
+                onClick={async () => {
+                  if (!scheduleAt) return;
+                  setScheduleSaving(true);
+                  try {
+                    // "2026-04-24T21:00" → "2026-04-24 21:00:00"
+                    const serverTime = scheduleAt.replace('T', ' ') + ':00';
+                    const res = await apiFetch(`${API_URL}/scheduled-calls`, {
+                      method: 'POST',
+                      headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({
+                        lead_id: scheduleLead.id,
+                        campaign_id: selectedCampaign.id,
+                        scheduled_at: serverTime,
+                        notes: scheduleNotes,
+                      }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      alert('Failed to schedule: ' + (data.error || data.detail || res.status));
+                    } else {
+                      setScheduleLead(null);
+                      alert('✅ Call scheduled. Visit the Scheduled page to manage it.');
+                    }
+                  } catch (e) {
+                    alert('Network error while scheduling.');
+                  }
+                  setScheduleSaving(false);
+                }}>
+                {scheduleSaving ? 'Scheduling…' : 'Schedule Call'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -73,10 +73,13 @@ func (s *Server) uploadKnowledge(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
+	// Response shape mirrors Python routes.py:1283 — the frontend checks
+	// `data.status === 'success'`; anything else renders as an error.
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":       fileID,
+		"status":   "success",
+		"message":  "File is being processed automatically in the background.",
+		"file_id":  fileID,
 		"filename": filename,
-		"status":   "processing",
 	})
 }
 

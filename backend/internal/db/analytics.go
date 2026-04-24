@@ -59,17 +59,24 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 1. Aggregate counts ───────────────────────────────────────────────────
+	// Appointment count comes from call_reviews.appointment_booked — the
+	// recording/analysis pipeline (recording.SaveAndAnalyze) writes there,
+	// not to call_transcripts.appointment_booked which stays at its default 0.
+	// Reading the transcript column instead would peg "APPOINTMENT RATE" at
+	// 0% forever, which is why the dashboard looked empty.
 	var totalCalls, callsToday, callsThisWeek, connected, appointments int64
 	var avgDur float64
 	err := d.pool.QueryRow(`
 		SELECT
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN DATE(created_at)=CURDATE() THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN appointment_booked=1 THEN 1 ELSE 0 END),0),
-			COALESCE(AVG(NULLIF(call_duration_s,0)),0)
-		FROM call_transcripts WHERE org_id=?`, orgID).
+			COALESCE(SUM(CASE WHEN DATE(ct.created_at)=CURDATE() THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN ct.created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN ct.status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN cr.appointment_booked=1 THEN 1 ELSE 0 END),0),
+			COALESCE(AVG(NULLIF(ct.call_duration_s,0)),0)
+		FROM call_transcripts ct
+		LEFT JOIN call_reviews cr ON cr.transcript_id=ct.id
+		WHERE ct.org_id=?`, orgID).
 		Scan(&totalCalls, &callsToday, &callsThisWeek, &connected, &appointments, &avgDur)
 	if err != nil {
 		return s, err
@@ -122,10 +129,11 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 4. Campaign performance ───────────────────────────────────────────────
+	// Same fix as block 1 — appointment count comes from call_reviews.
 	cpRows, err := d.pool.Query(`
 		SELECT ct.campaign_id, c.name,
 			COUNT(*) AS calls,
-			COALESCE(SUM(CASE WHEN ct.appointment_booked=1 THEN 1 ELSE 0 END),0) AS appts,
+			COALESCE(SUM(CASE WHEN cr.appointment_booked=1 THEN 1 ELSE 0 END),0) AS appts,
 			COALESCE(AVG(cr.quality_score),0) AS avg_score
 		FROM call_transcripts ct
 		JOIN campaigns c ON ct.campaign_id=c.id
@@ -144,11 +152,16 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 5. Top failure reasons ────────────────────────────────────────────────
+	// Mirrors Backup_Callified's routes.py:477 — the reviewer/Gemini-tagged
+	// failure_reason in call_reviews is what the user wants to see (prose like
+	// "The AI failed to actively listen…"), not the 3-value dial status enum.
+	// Limit matches Python (top 10) so the list looks the same in the UI.
 	frRows, err := d.pool.Query(`
-		SELECT COALESCE(status,'unknown') AS reason, COUNT(*) AS cnt
-		FROM call_transcripts
-		WHERE org_id=? AND status IN ('no-answer','busy','failed')
-		GROUP BY status ORDER BY cnt DESC LIMIT 5`, orgID)
+		SELECT cr.failure_reason, COUNT(*) AS cnt
+		FROM call_reviews cr
+		JOIN call_transcripts ct ON cr.transcript_id=ct.id
+		WHERE ct.org_id=? AND cr.failure_reason IS NOT NULL AND cr.failure_reason<>''
+		GROUP BY cr.failure_reason ORDER BY cnt DESC LIMIT 10`, orgID)
 	if err == nil {
 		defer frRows.Close()
 		for frRows.Next() {

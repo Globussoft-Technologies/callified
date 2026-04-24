@@ -75,7 +75,7 @@ func (s *Scheduler) tick(ctx context.Context) {
 			TTSLanguage: vs.TTSLanguage,
 		}
 
-		if err := s.initiator.Initiate(ctx, data); err != nil {
+		if _, err := s.initiator.Initiate(ctx, data); err != nil {
 			s.log.Warn("scheduler: initiate failed",
 				zap.Error(err), zap.Int64("scheduled_call_id", sc.ID))
 			_ = s.db.UpdateScheduledCallStatus(sc.ID, "failed")

@@ -274,8 +274,15 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   </td>
                   <td style={{padding: '8px 4px', textAlign: 'right'}}>
                     <button onClick={() => {
-                      const token = localStorage.getItem('token');
-                      window.open(`${API_URL}/billing/invoices/${inv.id}/download?token=${encodeURIComponent(token)}`, '_blank');
+                      // App stores JWT under 'authToken' (see AuthContext.jsx),
+                      // not 'token' — the old key silently read `null` and
+                      // passed it as a query string, making the download URL
+                      // 401 before the PDF renderer ever ran.
+                      const token = localStorage.getItem('authToken');
+                      // Backend path is /invoices/{invoice_number}/download —
+                      // an integer ID won't match the route variable or the
+                      // DB lookup (GetInvoiceByNumber).
+                      window.open(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download?token=${encodeURIComponent(token || '')}`, '_blank');
                     }} style={{
                       padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
                       background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',

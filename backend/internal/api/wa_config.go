@@ -126,6 +126,131 @@ func (s *Server) getWAHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(history))
 }
 
+// ── /api/wa/config ──────────────────────────────────────────────────────────
+//
+// Single-config-per-org compatibility shim for the frontend modal
+// (WhatsAppTab.jsx). Python exposes /api/wa/config returning a shape
+// like `{provider, credentials{}, default_product_id, auto_reply}` and the
+// Go native endpoints work with flat columns under /api/wa/channels.
+// These two handlers translate between the shapes so the existing UI works
+// without a rewrite.
+
+// GET /api/wa/config — returns the org's first active WA channel config in
+// Python's response shape, or a default empty object when none exists.
+func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	configs, err := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if len(configs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"provider":           "gupshup",
+			"credentials":        map[string]string{},
+			"default_product_id": nil,
+			"auto_reply":         true,
+		})
+		return
+	}
+	cfg := configs[0]
+	creds := map[string]string{}
+	if cfg.APIKey != "" {
+		creds["api_key"] = cfg.APIKey
+	}
+	if cfg.AppID != "" {
+		creds["app_id"] = cfg.AppID
+	}
+	if cfg.PhoneNumber != "" {
+		creds["phone_number"] = cfg.PhoneNumber
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":                 cfg.ID,
+		"provider":           cfg.Provider,
+		"credentials":        creds,
+		"default_product_id": nil, // column exists but not wired through Go struct yet
+		"auto_reply":         cfg.AIEnabled,
+	})
+}
+
+// POST /api/wa/config — upsert the org's single WA channel config. The
+// frontend posts `{provider, credentials{}, default_product_id, auto_reply}`;
+// we fan it out onto the flat columns. UNIQUE(org_id,provider) makes this
+// an upsert.
+func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	var body struct {
+		Provider         string            `json:"provider"`
+		Credentials      map[string]string `json:"credentials"`
+		DefaultProductID *int64            `json:"default_product_id"`
+		AutoReply        *bool             `json:"auto_reply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Provider == "" {
+		writeError(w, http.StatusBadRequest, "provider required")
+		return
+	}
+	apiKey := body.Credentials["api_key"]
+	appID := body.Credentials["app_id"]
+	phone := body.Credentials["phone_number"]
+	webhookURL := body.Credentials["webhook_url"]
+
+	// UNIQUE(org_id, provider) turns this INSERT into an upsert. Avoids the
+	// need for a separate update path + lookup.
+	if _, err := s.db.UpsertWAChannelConfig(ac.OrgID, body.Provider, phone, apiKey, appID, webhookURL, body.AutoReply); err != nil {
+		s.logger.Sugar().Errorw("saveWAConfig", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
+// GET /api/wa/conversations/{phone}/messages — per-phone message history.
+// The frontend looks up conversations by phone number, not the internal
+// conversation ID, so we resolve phone → conversation for this org first.
+func (s *Server) getWAMessagesByPhone(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := r.PathValue("phone")
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	convID, err := s.db.GetWAConversationIDByPhone(ac.OrgID, phone)
+	if err != nil || convID == 0 {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	history, err := s.db.GetWAChatHistory(convID, 200)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(history))
+}
+
+// POST /api/wa/toggle-ai/{phone} — flip ai_enabled on one conversation row.
+// Body: `{enabled: bool}`. Stored per-conversation (so one runaway contact
+// can be muted without disabling AI for the whole channel).
+func (s *Server) toggleWAAIByPhone(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := r.PathValue("phone")
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if err := s.db.ToggleWAConversationAI(ac.OrgID, phone, body.Enabled); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ai_enabled": body.Enabled})
+}
+
 // POST /api/wa/send
 func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)

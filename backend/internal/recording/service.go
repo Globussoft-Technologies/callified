@@ -30,6 +30,7 @@ type SaveRequest struct {
 	OrgID       int64
 	LeadPhone   string
 	AgentName   string
+	TTSLanguage string // language the call was synthesised in (hi/mr/bn/gu/pa/ta/te/kn/ml/en)
 	ChatHistory []llm.ChatMessage
 	DurationS   float32
 	StereoWav   []byte // nil → no server-side recording
@@ -84,7 +85,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	}
 
 	// 4. Persist transcript row — same INSERT columns as Python save_call_transcript.
-	transcriptID, err := s.database.SaveCallTranscript(req.LeadID, req.CampaignID, transcriptJSON, recordingURL, req.DurationS)
+	transcriptID, err := s.database.SaveCallTranscript(req.LeadID, req.CampaignID, req.OrgID, transcriptJSON, recordingURL, req.TTSLanguage, req.DurationS)
 	if err != nil {
 		s.log.Error("recording: SaveCallTranscript failed", zap.Error(err))
 		return

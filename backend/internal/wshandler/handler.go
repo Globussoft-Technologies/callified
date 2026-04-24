@@ -39,6 +39,7 @@ type Handler struct {
 	ttsKeys       map[string]string
 	log           *zap.Logger
 	sessions      sync.Map // stream_sid → *CallSession (for monitor WebSocket)
+	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
 }
 
 // New creates a Handler wired to the provided dependencies.
@@ -109,7 +110,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	h.sessions.Store(sess.StreamSid, sess)
-	defer h.sessions.Delete(sess.StreamSid)
+	defer func() {
+		h.sessions.Delete(sess.StreamSid)
+		if sess.CallSid != "" {
+			h.sessionsByCallSid.Delete(sess.CallSid)
+		}
+	}()
 
 	metrics.ActiveCalls.Inc()
 	defer func() {
@@ -277,6 +283,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		}
 		if callSid, _ := startData["callSid"].(string); callSid != "" {
 			sess.CallSid = callSid
+			h.sessionsByCallSid.Store(callSid, sess)
 			// Redis lookup: override lead info with what Python dialer stored
 			info, ok := h.store.GetPendingCall(ctx, callSid)
 			if !ok {
@@ -302,6 +309,15 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	if sid, _ := event["stream_sid"].(string); sid != "" && sess.StreamSid == "" {
 		sess.StreamSid = sid
 		sess.UpdateStreamType()
+	}
+
+	// Live-feed: tell the campaign detail page that audio is flowing.
+	// Fires on first "start" event so the Live Campaign Activity panel
+	// shows one entry per connected call (web-sim + real Exotel both
+	// send `start`, so both paths contribute to the live feed).
+	if sess.CampaignID > 0 {
+		h.store.EmitCampaignEvent(ctx, sess.CampaignID, sess.LeadName, sess.LeadPhone,
+			"connected", "audio stream opened")
 	}
 }
 
@@ -336,6 +352,15 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	select {
 	case sess.AudioIn <- pcm:
 	default:
+	}
+
+	// Relay a copy of the caller's inbound audio to any attached monitors.
+	if sess.hasMonitors() {
+		format := "pcm16_8k"
+		if sess.IsExotel {
+			format = "ulaw_8k"
+		}
+		sess.BroadcastAudio("user", payload, format)
 	}
 }
 
@@ -373,6 +398,16 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 	micChunks, ttsChunks := sess.DrainRecordingBuffers()
 	wavBytes := audio.BuildStereoWAV(micChunks, ttsChunks)
 
+	// Live-feed: emit completion so the Live Campaign Activity panel closes
+	// out the entry. For web-sim calls this is the ONLY event that fires
+	// (web-sim never goes through the Exotel webhook that emits dialing /
+	// no-answer / etc.), so without it the panel stays empty during testing.
+	if sess.CampaignID > 0 {
+		durS := int(time.Since(sess.CallStart).Seconds())
+		h.store.EmitCampaignEvent(ctx, sess.CampaignID, sess.LeadName, sess.LeadPhone,
+			"completed", fmt.Sprintf("%ds call", durS))
+	}
+
 	h.store.CleanupCall(ctx, sess.StreamSid)
 	h.store.DeletePendingCall(ctx, sess.CallSid)
 
@@ -388,6 +423,7 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		OrgID:       sess.OrgID,
 		LeadPhone:   sess.LeadPhone,
 		AgentName:   sess.AgentName,
+		TTSLanguage: sess.TTSLanguage,
 		ChatHistory: sess.HistorySnapshot(),
 		DurationS:   float32(time.Since(sess.CallStart).Seconds()),
 		StereoWav:   wavBytes,

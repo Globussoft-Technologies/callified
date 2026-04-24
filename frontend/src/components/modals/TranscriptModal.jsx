@@ -1,6 +1,17 @@
 import React, { useEffect } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 
+// Language code → display name. Covers the 10 languages the dialer supports.
+// We show this as a small badge on each call header so you can tell at a
+// glance which language the call was conducted in — the transcript text
+// itself is already in the native script, but the label is handy when
+// scanning a long history.
+const LANG_NAMES = {
+  en: 'English',  hi: 'Hindi',   mr: 'Marathi', bn: 'Bengali',
+  gu: 'Gujarati', pa: 'Punjabi', ta: 'Tamil',   te: 'Telugu',
+  kn: 'Kannada',  ml: 'Malayalam',
+};
+
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
   // Esc-to-close so there's always a keyboard escape even if the ✕ is
   // somehow hidden by an overflow/scroll edge case.
@@ -18,58 +29,16 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
   return (
     // Clicking the dark backdrop closes — instinctive escape.
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) close(); }}>
-      {/*
-        VIEWPORT-FIXED close button: position: fixed anchors it to the
-        browser window, NOT the modal panel — so it cannot be clipped by
-        any flex/overflow/scroll edge-case on the panel. Large, red, and
-        pinned to the top-right of the browser tab. Impossible to miss,
-        impossible to hide. Sits above the modal at z-index 100.
-      */}
-      <button
-        type="button"
-        aria-label="Close transcripts"
-        onClick={close}
-        style={{
-          position: 'fixed', top: '16px', right: '16px', zIndex: 100,
-          width: '48px', height: '48px', borderRadius: '50%',
-          border: '2px solid #fff',
-          background: '#ef4444', color: '#fff',
-          fontSize: '1.4rem', fontWeight: 700, lineHeight: 1,
-          cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >✕</button>
-
       <div className="modal-content glass-panel" style={{position: 'relative', background: 'rgba(15, 23, 42, 0.97)', border: '1px solid rgba(99, 102, 241, 0.2)', maxWidth: '700px', maxHeight: '85vh', display: 'flex', flexDirection: 'column'}}>
 
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1rem', paddingRight: '44px'}}>
+        <div style={{flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1rem'}}>
           <div>
             <h2 style={{marginTop: 0, marginBottom: '4px', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px'}}>📋 Call Transcripts</h2>
             <p style={{margin: 0, color: '#94a3b8', fontSize: '0.9rem'}}>{transcriptLead.first_name} — {transcriptLead.phone}</p>
           </div>
         </div>
 
-        {/* Bottom-of-modal close bar — belt-and-braces in case the fixed
-            top-right button is obstructed by a browser extension or custom
-            toolbar. Sticks to the bottom of the panel, always in view. */}
-        <div style={{order: 99, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px', marginTop: '12px', textAlign: 'center'}}>
-          <button
-            type="button"
-            onClick={close}
-            style={{
-              background: 'rgba(99, 102, 241, 0.15)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
-              color: '#cbd5e1',
-              padding: '8px 24px',
-              borderRadius: '8px',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >Close</button>
-        </div>
-
-        <div style={{flex: 1, overflowY: 'auto', paddingRight: '8px'}}>
+        <div style={{flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '8px'}}>
           {transcripts.length === 0 ? (
             <div style={{padding: '3rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '12px'}}>
               <div style={{fontSize: '2rem', marginBottom: '12px'}}>📞</div>
@@ -84,9 +53,18 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     <span style={{color: '#818cf8', fontWeight: 600}}>Call #{transcripts.length - idx}</span>
                     <span style={{fontSize: '0.8rem', color: '#64748b'}}>{formatDateTime(t.created_at, orgTimezone)}</span>
                   </div>
-                  {t.call_duration_s > 0 && (
-                    <span className="badge" style={{background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', fontSize: '0.75rem'}}>{Math.round(t.call_duration_s)}s</span>
-                  )}
+                  <div style={{display: 'flex', gap: '6px', alignItems: 'center'}}>
+                    {t.tts_language && (
+                      <span
+                        className="badge"
+                        title={`Call language: ${LANG_NAMES[t.tts_language] || t.tts_language}`}
+                        style={{background: 'rgba(34, 197, 94, 0.1)', color: '#4ade80', fontSize: '0.75rem', border: '1px solid rgba(34, 197, 94, 0.25)'}}
+                      >🗣 {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}</span>
+                    )}
+                    {t.call_duration_s > 0 && (
+                      <span className="badge" style={{background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', fontSize: '0.75rem'}}>{Math.round(t.call_duration_s)}s</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Audio Player — color-coded by source */}
@@ -157,6 +135,23 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
               </div>
             ))
           )}
+        </div>
+
+        <div style={{flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px', marginTop: '12px', textAlign: 'center'}}>
+          <button
+            type="button"
+            onClick={close}
+            style={{
+              background: 'rgba(99, 102, 241, 0.15)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              color: '#cbd5e1',
+              padding: '8px 24px',
+              borderRadius: '8px',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >Close</button>
         </div>
       </div>
     </div>
