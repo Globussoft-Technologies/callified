@@ -12,8 +12,13 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
           apiFetch(`${API_URL}/analytics/dashboard`),
           apiFetch(`${API_URL}/analytics/languages`),
         ]);
-        setData(await dashRes.json());
-        setLangData(await langRes.json());
+        const dash = await dashRes.json();
+        const lang = await langRes.json();
+        setData(dash && typeof dash === 'object' && !Array.isArray(dash) ? dash : null);
+        setLangData(Array.isArray(lang) ? lang : []);
+        if (!Array.isArray(lang)) {
+          console.warn('[analytics/languages] expected array, got:', { status: langRes.status, body: lang });
+        }
       } catch (e) {
         console.error('Failed to load analytics', e);
       } finally {

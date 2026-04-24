@@ -183,7 +183,13 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 // runTTSWorker reads sentences from sess.TTSSentences, calls the TTS provider,
 // and sends the resulting PCM audio to the phone via the WebSocket.
 // An empty sentence ("") is the HANGUP sentinel: drain + grace period + close.
-func runTTSWorker(ctx context.Context, sess *CallSession, provider tts.Provider) {
+//
+// The provider is looked up on the session each iteration (rather than closed
+// over at worker start) so that handleStartEvent can swap the instance when
+// the Redis-hydrated campaign uses a different provider than the pre-loaded
+// default. Without this, a call whose campaign is configured for SmallestAI
+// but whose default was Sarvam would always synthesise via Sarvam.
+func runTTSWorker(ctx context.Context, sess *CallSession) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -205,6 +211,12 @@ func runTTSWorker(ctx context.Context, sess *CallSession, provider tts.Provider)
 				metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 				sess.WS.Close() //nolint:errcheck
 				return
+			}
+			provider := sess.TTSInstance()
+			if provider == nil {
+				sess.Log.Warn("TTS worker: no provider available, dropping sentence",
+					zap.String("sentence", sentence))
+				continue
 			}
 			synthesizeAndSend(ctx, sess, provider, sentence)
 		}

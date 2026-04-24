@@ -84,8 +84,10 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 2. Daily calls (last 7 days) ──────────────────────────────────────────
+	// SELECT and GROUP BY must use the same expression under MySQL 8's
+	// only_full_group_by (the default); both are DATE(created_at).
 	rows, err := d.pool.Query(`
-		SELECT DATE_FORMAT(created_at,'%Y-%m-%d'), COUNT(*)
+		SELECT DATE_FORMAT(DATE(created_at),'%Y-%m-%d'), COUNT(*)
 		FROM call_transcripts
 		WHERE org_id=? AND created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY)
 		GROUP BY DATE(created_at) ORDER BY DATE(created_at) ASC`, orgID)

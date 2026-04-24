@@ -34,20 +34,30 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *Exot
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
 // callbackURL receives status events (answered, completed, etc.).
+//
+// Payload mirrors the (working) Python dial_exotel — app-based flow:
+//   - From       : customer phone (91XXXXXXXXXX, no leading +)
+//   - CallerId   : Exotel DID
+//   - Url        : ExoML app URL (no account SID in path)
+//   - CallType   : "trans" (transactional, TRAI DLT compliant)
+//   - StatusCallback
+//
+// Do NOT send "To" in app-based flow — Exotel rejects the combination of
+// Url + To with 400 Bad/missing parameters (code 34001).
 func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
 
-	phone := NormalizePhone(toPhone)
+	phone := ExotelPhone(toPhone)
 	form := url.Values{}
 	form.Set("From", phone)
-	form.Set("To", e.callerID)
 	form.Set("CallerId", e.callerID)
-	form.Set("Url", fmt.Sprintf("http://my.exotel.com/%s/exoml/start/%s", e.accountSID, e.appID))
-	form.Set("StatusCallback", callbackURL)
-	form.Set("Record", "true")
-	form.Set("RecordingChannels", "dual")
+	form.Set("Url", fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID))
+	form.Set("CallType", "trans")
+	if callbackURL != "" {
+		form.Set("StatusCallback", callbackURL)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
 		strings.NewReader(form.Encode()))
@@ -97,6 +107,18 @@ func NormalizePhone(phone string) string {
 	}
 	if len(phone) == 10 {
 		return "+91" + phone
+	}
+	return phone
+}
+
+// ExotelPhone returns the phone in the format Exotel's Connect API accepts:
+// "91XXXXXXXXXX" (country code + number, no leading +). 10-digit numbers get
+// "91" prefixed. Matches the Python dial_exotel normalisation.
+func ExotelPhone(phone string) string {
+	phone = strings.TrimSpace(NormalizePhone(phone))
+	phone = strings.TrimPrefix(phone, "+")
+	if len(phone) == 10 {
+		return "91" + phone
 	}
 	return phone
 }

@@ -2,9 +2,12 @@ package llm
 
 // ChatMessage is a single conversation turn stored in session history.
 // Role is "user" for the caller or "model" for the AI agent.
+// JSON tags are lowercase so persisted transcripts match the Python shape
+// ([{"role":"user","text":"..."}]) — the frontend and Python's recording_service
+// both expect lowercase keys.
 type ChatMessage struct {
-	Role string
-	Text string
+	Role string `json:"role"`
+	Text string `json:"text"`
 }
 
 // SentenceChunk is one complete sentence streamed back from the LLM.

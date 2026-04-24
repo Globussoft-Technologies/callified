@@ -3,10 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/globussoft/callified-backend/internal/callguard"
 )
@@ -120,6 +124,110 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 
 	fullPath := filepath.Join(s.cfg.RecordingsDir, filename)
 	http.ServeFile(w, r, fullPath)
+}
+
+// ── POST /api/upload-recording ───────────────────────────────────────────────
+//
+// Accepts the browser-side MediaRecorder upload (Opus-in-webm, captured at the
+// AudioContext's native rate — typically 48kHz). The server-side stereo WAV
+// we already save is 8kHz telephony audio and sounds muffled; the webm
+// recording is noticeably clearer. Ported from Python routes.py
+// api_upload_recording — the frontend has always been uploading this, but Go
+// was missing the handler (404 → file lost → user only has the 8kHz WAV to
+// play back, which is what "recording not clear" was actually about).
+//
+// After saving the file we replace the transcript row's recording_url with
+// the webm URL so the UI plays the higher-quality version. Polls briefly
+// because finalizeCall runs in a goroutine — the transcript row may not
+// exist yet when the browser POSTs the file.
+
+func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.RecordingsDir == "" {
+		writeError(w, http.StatusServiceUnavailable, "recordings dir not configured")
+		return
+	}
+	// Room for ~5 minutes of Opus at 128kbps ≈ 5MB; 20MB is generous.
+	if err := r.ParseMultipartForm(20 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "parse form: "+err.Error())
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file field required")
+		return
+	}
+	defer file.Close()
+
+	leadIDStr := r.FormValue("lead_id")
+
+	// Prefer client-provided filename; fall back to synthesised name.
+	fname := filepath.Base(header.Filename)
+	if fname == "" || fname == "." || fname == "/" {
+		fname = fmt.Sprintf("call_%s_%d.webm", leadIDStr, time.Now().UnixMilli())
+	}
+	// Defence: strip any path traversal — only the basename survives.
+	fname = filepath.Base(fname)
+
+	if err := os.MkdirAll(s.cfg.RecordingsDir, 0o755); err != nil {
+		s.logger.Sugar().Errorw("uploadRecording: mkdir", "err", err)
+		writeError(w, http.StatusInternalServerError, "mkdir failed")
+		return
+	}
+	fpath := filepath.Join(s.cfg.RecordingsDir, fname)
+	out, err := os.Create(fpath)
+	if err != nil {
+		s.logger.Sugar().Errorw("uploadRecording: create", "err", err, "path", fpath)
+		writeError(w, http.StatusInternalServerError, "create failed")
+		return
+	}
+	written, copyErr := io.Copy(out, file)
+	_ = out.Close()
+	if copyErr != nil {
+		s.logger.Sugar().Errorw("uploadRecording: copy", "err", copyErr)
+		writeError(w, http.StatusInternalServerError, "write failed")
+		return
+	}
+
+	recURL := "/api/recordings/" + fname
+	s.logger.Sugar().Infow("uploadRecording: saved",
+		"path", fpath, "bytes", written, "lead_id", leadIDStr)
+
+	// Swap the stereo-WAV URL on the most recent transcript for this lead
+	// to point at the higher-quality webm instead. Poll up to ~3s because
+	// the transcript row is inserted asynchronously by finalizeCall —
+	// matches the Python handler's retry loop.
+	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
+		s.attachRecordingToLatestTranscript(r.Context(), leadID, recURL)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "url": recURL})
+}
+
+// attachRecordingToLatestTranscript finds the most recent transcript for
+// leadID and updates its recording_url. Polls because the transcript row may
+// not have been written yet (finalizeCall runs in a goroutine).
+func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID int64, recURL string) {
+	for attempt := 0; attempt < 6; attempt++ {
+		transcripts, err := s.db.GetTranscriptsByLead(leadID)
+		if err == nil && len(transcripts) > 0 {
+			latest := transcripts[0] // GetTranscriptsByLead orders by created_at DESC
+			if err := s.db.UpdateCallTranscriptRecording(latest.ID, recURL); err != nil {
+				s.logger.Sugar().Warnw("uploadRecording: update transcript url failed",
+					"transcript_id", latest.ID, "err", err)
+			} else {
+				s.logger.Sugar().Infow("uploadRecording: transcript url updated",
+					"transcript_id", latest.ID, "url", recURL)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	s.logger.Sugar().Warnw("uploadRecording: no transcript found to attach URL to",
+		"lead_id", leadID, "url", recURL)
 }
 
 // ── GET /ping ─────────────────────────────────────────────────────────────────

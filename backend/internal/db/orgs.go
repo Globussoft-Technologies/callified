@@ -116,20 +116,58 @@ func (d *DB) UpdateOrganizationTimezone(orgID int64, tz string) error {
 	return err
 }
 
-// GetOrganizationVoiceSettings returns TTS settings for an org with fallback defaults.
+// GetOrganizationVoiceSettings returns TTS settings for an org with fallback
+// defaults. When the org has nothing configured (or the row is missing), we
+// return Sarvam / Aditya / English — the platform-wide default the user asked
+// to keep for all calls. Each column also coalesces individually so partial
+// configs don't leak blanks into the call pipeline.
 func (d *DB) GetOrganizationVoiceSettings(orgID int64) (VoiceSettings, error) {
 	var provider, voiceID, lang sql.NullString
 	err := d.pool.QueryRow(
 		`SELECT tts_provider, tts_voice_id, tts_language FROM organizations WHERE id=?`, orgID,
 	).Scan(&provider, &voiceID, &lang)
 	if errors.Is(err, sql.ErrNoRows) || err != nil {
-		return VoiceSettings{TTSProvider: "elevenlabs", TTSLanguage: "hi"}, nil
+		return VoiceSettings{
+			TTSProvider: DefaultTTSProvider,
+			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage: DefaultTTSLanguage,
+		}, nil
 	}
+	prov := coalesceStr(provider.String, DefaultTTSProvider)
 	return VoiceSettings{
-		TTSProvider: coalesceStr(provider.String, "elevenlabs"),
-		TTSVoiceID:  voiceID.String,
-		TTSLanguage: coalesceStr(lang.String, "hi"),
+		TTSProvider: prov,
+		TTSVoiceID:  coalesceStr(voiceID.String, DefaultVoiceIDFor(prov)),
+		TTSLanguage: coalesceStr(lang.String, DefaultTTSLanguage),
 	}, nil
+}
+
+// Platform-wide voice defaults used whenever an org or campaign has nothing
+// configured. Kept as package-level constants so every fallback path (org,
+// campaign, pipeline) stays in sync.
+//
+// DefaultTTSVoiceID is the "Aditya persona" equivalent on Sarvam. Other
+// providers don't have a voice literally named Aditya, so DefaultVoiceIDFor
+// returns the closest-role male default for each provider.
+const (
+	DefaultTTSProvider = "sarvam"
+	DefaultTTSVoiceID  = "aditya"
+	DefaultTTSLanguage = "en"
+)
+
+// DefaultVoiceIDFor returns the platform-default voice ID for a given TTS
+// provider — the "Aditya persona" equivalent that the caller expects when no
+// voice is explicitly configured. Voice IDs are provider-specific, so we keep
+// one canonical mapping in one place.
+func DefaultVoiceIDFor(provider string) string {
+	switch provider {
+	case "smallest", "smallestai":
+		return "raj" // first male voice, analogous role to Aditya
+	case "elevenlabs":
+		return "s0oIsoSJ9raiUm7DJNzW" // voices.js marks this as "⭐ Default Voice"
+	case "sarvam", "":
+		return DefaultTTSVoiceID
+	}
+	return DefaultTTSVoiceID
 }
 
 // SaveOrganizationVoiceSettings updates tts_* columns on an org.

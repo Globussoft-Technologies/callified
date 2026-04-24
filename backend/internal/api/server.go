@@ -144,6 +144,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Recordings ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/recordings/{filename}", auth(s.serveRecording))
+	// Browser-side MediaRecorder upload (Opus/webm at native sample rate).
+	// Handler exists in misc.go; the route was missing, so the browser POST
+	// was 404'ing and the high-quality recording was being lost — only the
+	// 8kHz server-side WAV survived. That was the "recording not clear"
+	// symptom reported after Quick-Add + Sim Web Call.
+	mux.HandleFunc("POST /api/upload-recording", auth(s.uploadRecording))
 
 	// ── WhatsApp Campaign Blast ────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}", auth(s.campaignBlast))

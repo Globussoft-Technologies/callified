@@ -67,15 +67,32 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		recordingURL = s.saveWAV(req.StreamSid, req.StereoWav)
 	}
 
-	// 2. Serialise chat history → JSON for storage.
-	transcriptJSON := historyToJSON(req.ChatHistory)
+	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
+	//    Mirrors recording_service.py: role mapping model→AI / user→User,
+	//    empty-text turns dropped.
+	transcriptJSON, turnCount := historyToTranscript(req.ChatHistory)
 
-	// 3. Persist transcript row.
+	// 3. Skip persistence when nothing was actually said — matches the Python
+	//    guard `if transcript_turns: save_call_transcript(...)`. Checking the
+	//    filtered count (not raw history length) is important so a history of
+	//    only empty-text frames doesn't leave a blank row behind.
+	if turnCount == 0 {
+		s.log.Info("recording: skipping empty transcript",
+			zap.String("stream_sid", req.StreamSid),
+			zap.Int("raw_turns", len(req.ChatHistory)))
+		return
+	}
+
+	// 4. Persist transcript row — same INSERT columns as Python save_call_transcript.
 	transcriptID, err := s.database.SaveCallTranscript(req.LeadID, req.CampaignID, transcriptJSON, recordingURL, req.DurationS)
 	if err != nil {
 		s.log.Error("recording: SaveCallTranscript failed", zap.Error(err))
 		return
 	}
+	s.log.Info("recording: transcript saved",
+		zap.Int64("transcript_id", transcriptID),
+		zap.Int("turn_count", turnCount),
+		zap.Float32("duration_s", req.DurationS))
 
 	// 4. Run Gemini analysis (non-critical — log and continue on failure).
 	review := &db.CallReview{
@@ -228,12 +245,42 @@ func (s *Service) sendAppointmentConfirmation(ctx context.Context, orgID int64, 
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func historyToJSON(history []llm.ChatMessage) string {
-	b, err := json.Marshal(history)
-	if err != nil {
-		return "[]"
+// historyToTranscript builds the persisted transcript turns in the shape the
+// frontend reads and Python's recording_service produces:
+//
+//	[{"role":"AI","text":"..."}, {"role":"User","text":"..."}]
+//
+// Role mapping follows the Python code exactly (recording_service.py:38):
+//   - internal "model" → "AI"   (agent bubble in TranscriptModal)
+//   - everything else  → "User" (customer bubble)
+//
+// Empty-text turns are skipped — matching Python's `if text:` guard — so a
+// row is never saved for a "connected but nothing said" call.
+//
+// Returns (json_string, turn_count). The caller checks turn_count to decide
+// whether to persist (Python: `if transcript_turns: save_call_transcript(...)`).
+func historyToTranscript(history []llm.ChatMessage) (string, int) {
+	type persistedTurn struct {
+		Role string `json:"role"`
+		Text string `json:"text"`
 	}
-	return string(b)
+	out := make([]persistedTurn, 0, len(history))
+	for _, m := range history {
+		text := strings.TrimSpace(m.Text)
+		if text == "" {
+			continue
+		}
+		role := "User"
+		if m.Role == "model" {
+			role = "AI"
+		}
+		out = append(out, persistedTurn{Role: role, Text: text})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "[]", 0
+	}
+	return string(b), len(out)
 }
 
 func formatTranscript(history []llm.ChatMessage) string {

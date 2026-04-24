@@ -95,7 +95,7 @@ export default function CampaignDetail({
   campaignLeads, callLog, detailTab, setDetailTab,
   handleBack, fetchCampaignLeads, fetchCallLog, fetchCampaigns,
   statusBadge, getProductName, getCampaignStats,
-  campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice,
+  campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead,
@@ -260,8 +260,21 @@ export default function CampaignDetail({
               <option key={l.code} value={l.code}>{l.name}</option>
             ))}
           </select>
-          <button style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
-            onClick={handleSaveCampVoice}>Save</button>
+          <button style={{
+              background: campVoiceSaveStatus === 'saved' ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                : campVoiceSaveStatus === 'error' ? 'linear-gradient(135deg, #ef4444, #b91c1c)'
+                : 'linear-gradient(135deg, #8b5cf6, #6d28d9)',
+              border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px',
+              cursor: campVoiceSaveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+              opacity: campVoiceSaveStatus === 'saving' ? 0.7 : 1, transition: 'background 0.2s'
+            }}
+            disabled={campVoiceSaveStatus === 'saving'}
+            onClick={handleSaveCampVoice}>
+            {campVoiceSaveStatus === 'saving' ? 'Saving…'
+              : campVoiceSaveStatus === 'saved' ? '✓ Saved'
+              : campVoiceSaveStatus === 'error' ? '✗ Failed'
+              : 'Save'}
+          </button>
           <button style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
             onClick={handleResetCampVoice}>Reset to Org Default</button>
         </div>
@@ -337,10 +350,12 @@ export default function CampaignDetail({
               });
               const data = await res.json();
               let leadId = data.id;
-              if (!leadId && data.message && data.message.includes('already exists')) {
+              const errMsg = data.error || data.message || '';
+              const isDuplicate = res.status === 409 || errMsg.includes('already exists');
+              if (!leadId && isDuplicate) {
                 const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(phone)}`);
                 const found = await searchRes.json();
-                if (found.length > 0) leadId = found[0].id;
+                if (Array.isArray(found) && found.length > 0) leadId = found[0].id;
               }
               if (leadId) {
                 await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads`, {
@@ -351,8 +366,8 @@ export default function CampaignDetail({
                 document.getElementById('qa-phone').value = '';
                 fetchCampaignLeads(selectedCampaign.id);
                 fetchCampaigns();
-              } else { alert(data.message || 'Error'); }
-            } catch(e) { alert('Failed'); }
+              } else { alert(errMsg || `Error (${res.status})`); }
+            } catch(e) { alert('Failed: ' + (e?.message || 'network error')); }
           }}>Add & Assign</button>
       </div>
 

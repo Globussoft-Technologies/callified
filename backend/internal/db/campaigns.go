@@ -6,19 +6,22 @@ import (
 )
 
 // Campaign mirrors the campaigns table (joined with products.name).
+// Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
+// nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID          int64  `json:"id"`
-	OrgID       int64  `json:"org_id"`
-	ProductID   int64  `json:"product_id"`
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	TTSProvider string `json:"tts_provider"`
-	TTSVoiceID  string `json:"tts_voice_id"`
-	TTSLanguage string `json:"tts_language"`
-	LeadSource  string `json:"lead_source"`
-	Channel     string `json:"channel"`
-	ProductName string `json:"product_name"`
-	CreatedAt   string `json:"created_at"`
+	ID          int64          `json:"id"`
+	OrgID       int64          `json:"org_id"`
+	ProductID   int64          `json:"product_id"`
+	Name        string         `json:"name"`
+	Status      string         `json:"status"`
+	TTSProvider string         `json:"tts_provider"`
+	TTSVoiceID  string         `json:"tts_voice_id"`
+	TTSLanguage string         `json:"tts_language"`
+	LeadSource  string         `json:"lead_source"`
+	Channel     string         `json:"channel"`
+	ProductName string         `json:"product_name"`
+	CreatedAt   string         `json:"created_at"`
+	Stats       *CampaignStats `json:"stats,omitempty"`
 }
 
 const campaignCols = `c.id, c.org_id, c.product_id, c.name,
@@ -36,21 +39,46 @@ func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 }
 
 // GetCampaignsByOrg returns all campaigns for an org ordered newest first.
+// Stats (total/called/qualified/appointments) are computed in the same query
+// via a LEFT JOIN on campaign_leads so the list endpoint stays single-round-trip.
 func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
+	const statsSub = `
+		SELECT
+			cl.campaign_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
+			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		GROUP BY cl.campaign_id`
+
 	rows, err := d.pool.Query(
-		`SELECT `+campaignCols+` FROM campaigns c JOIN products p ON c.product_id=p.id
-		WHERE c.org_id=? ORDER BY c.created_at DESC`, orgID)
+		`SELECT `+campaignCols+`,
+			COALESCE(s.total,0), COALESCE(s.called,0),
+			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
+		FROM campaigns c
+		JOIN products p ON c.product_id = p.id
+		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		WHERE c.org_id=?
+		ORDER BY c.created_at DESC`, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var list []Campaign
 	for rows.Next() {
-		c, err := scanCampaign(rows)
-		if err != nil {
+		c := Campaign{}
+		stats := CampaignStats{}
+		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
+			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
+			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
+		); err != nil {
 			return nil, err
 		}
-		list = append(list, *c)
+		c.Stats = &stats
+		list = append(list, c)
 	}
 	return list, rows.Err()
 }

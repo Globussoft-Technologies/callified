@@ -33,6 +33,7 @@ export default function CampaignsTab({
   const [createError, setCreateError] = useState('');
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
+  const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
   useEffect(() => { fetchCampaigns(); }, []);
 
@@ -64,10 +65,23 @@ export default function CampaignsTab({
 
   const handleSaveCampVoice = async () => {
     if (!selectedCampaign) return;
-    await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
-    });
+    setCampVoiceSaveStatus('saving');
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
+      });
+      if (!res.ok) {
+        setCampVoiceSaveStatus('error');
+        setTimeout(() => setCampVoiceSaveStatus(''), 3000);
+        return;
+      }
+      setCampVoiceSaveStatus('saved');
+      setTimeout(() => setCampVoiceSaveStatus(''), 2000);
+    } catch (e) {
+      setCampVoiceSaveStatus('error');
+      setTimeout(() => setCampVoiceSaveStatus(''), 3000);
+    }
   };
 
   const handleResetCampVoice = async () => {
@@ -365,6 +379,7 @@ export default function CampaignsTab({
           setCampVoice={setCampVoice}
           handleSaveCampVoice={handleSaveCampVoice}
           handleResetCampVoice={handleResetCampVoice}
+          campVoiceSaveStatus={campVoiceSaveStatus}
           INDIAN_VOICES={INDIAN_VOICES}
           INDIAN_LANGUAGES={INDIAN_LANGUAGES}
           liveEvents={liveEvents}

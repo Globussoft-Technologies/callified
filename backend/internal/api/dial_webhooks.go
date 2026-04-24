@@ -22,10 +22,11 @@ import (
 func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 	leadID := r.URL.Query().Get("lead_id")
 	campaignID := r.URL.Query().Get("campaign_id")
+	orgID := r.URL.Query().Get("org_id")
 
 	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = fmt.Sprintf("%s/media-stream?lead_id=%s&campaign_id=%s", wsURL, leadID, campaignID)
+	wsURL = fmt.Sprintf("%s/media-stream?lead_id=%s&campaign_id=%s&org_id=%s", wsURL, leadID, campaignID, orgID)
 
 	twiml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -33,13 +34,56 @@ func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
     <Stream url="%s">
       <Parameter name="lead_id" value="%s"/>
       <Parameter name="campaign_id" value="%s"/>
+      <Parameter name="org_id" value="%s"/>
     </Stream>
   </Connect>
-</Response>`, wsURL, leadID, campaignID)
+</Response>`, wsURL, leadID, campaignID, orgID)
 
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(twiml))
+}
+
+// ── GET/POST /webhook/exotel ─────────────────────────────────────────────────
+//
+// Returns dynamic XML telling the carrier to <Connect><Stream> the call to
+// our /media-stream WebSocket. Matches Python's dynamic_webhook (Backup_Callified
+// webhook_routes.py:48-56) which served the same XML for both Twilio and Exotel.
+//
+// Why this exists: the ExoML app on the Exotel dashboard (the one referenced
+// by EXOTEL_APP_ID) typically has a Passthru applet that fetches XML from
+// {PUBLIC_SERVER_URL}/webhook/exotel. When Python ran, Python served this and
+// the call connected. After switching to Go, this URL was 404'ing — Exotel
+// got no instructions and the call never reached our WebSocket. With this
+// handler in place the existing dashboard config works again, no Exotel-side
+// change required.
+//
+// Carrier-passed query params (name / interest / phone) are forwarded into
+// the WebSocket URL so the WS handler can hydrate the session immediately
+// without waiting for Redis lookup.
+
+func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
+	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL = fmt.Sprintf("%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%s&campaign_id=%s&org_id=%s",
+		wsURL,
+		url.QueryEscape(q.Get("name")),
+		url.QueryEscape(q.Get("interest")),
+		url.QueryEscape(q.Get("phone")),
+		url.QueryEscape(q.Get("lead_id")),
+		url.QueryEscape(q.Get("campaign_id")),
+		url.QueryEscape(q.Get("org_id")),
+	)
+	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="%s"/>
+  </Connect>
+</Response>`, wsURL)
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(xml))
 }
 
 // ── POST /webhook/twilio/status ───────────────────────────────────────────────

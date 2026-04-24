@@ -137,6 +137,11 @@ func (s *Server) saveOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── GET /api/organizations/{id}/system-prompt ────────────────────────────────
+//
+// Response shape matches the Python backend the frontend was written for:
+//   { "auto_generated": "...", "custom_prompt": "..." }
+// auto_generated is the product-knowledge context assembled from the org's
+// products; custom_prompt is the optional override stored on the organization.
 
 func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -144,16 +149,22 @@ func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	prompt, err := s.db.GetOrgSystemPrompt(id)
+	custom, err := s.db.GetOrgSystemPrompt(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getOrgSystemPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"system_prompt": prompt})
+	auto := s.buildProductKnowledgeContext(id)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"auto_generated": auto,
+		"custom_prompt":  custom,
+	})
 }
 
 // ── PUT /api/organizations/{id}/system-prompt ─────────────────────────────────
+//
+// Request body matches the Python contract: { "custom_prompt": "..." }.
 
 func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -162,18 +173,44 @@ func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		SystemPrompt string `json:"system_prompt"`
+		CustomPrompt string `json:"custom_prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.SaveOrgSystemPrompt(id, body.SystemPrompt); err != nil {
+	if err := s.db.SaveOrgSystemPrompt(id, body.CustomPrompt); err != nil {
 		s.logger.Sugar().Errorw("saveOrgSystemPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
+// buildProductKnowledgeContext mirrors Python's get_product_knowledge_context:
+// joins every product under the org into a single block the LLM can consume.
+// Returns "" when the org has no products.
+func (s *Server) buildProductKnowledgeContext(orgID int64) string {
+	products, err := s.db.GetProductsByOrg(orgID)
+	if err != nil || len(products) == 0 {
+		return ""
+	}
+	orgName := ""
+	if org, err := s.db.GetOrganizationByID(orgID); err == nil && org != nil {
+		orgName = org.Name
+	}
+	parts := make([]string, 0, len(products))
+	for _, p := range products {
+		info := fmt.Sprintf("Product: %s (by %s)", p.Name, orgName)
+		if p.ScrapedInfo != "" {
+			info += " — " + p.ScrapedInfo
+		}
+		if p.ManualNotes != "" {
+			info += " | Admin notes: " + p.ManualNotes
+		}
+		parts = append(parts, info)
+	}
+	return "\n\n[PRODUCT KNOWLEDGE - Yeh information use karo jab user product ke baare mein puchhe]:\n" + strings.Join(parts, "\n")
 }
 
 // ── GET /api/organizations/{id}/products ─────────────────────────────────────

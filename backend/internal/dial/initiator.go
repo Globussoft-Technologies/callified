@@ -84,6 +84,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) error {
 		Name:        data.LeadName,
 		Phone:       data.LeadPhone,
 		LeadID:      data.LeadID,
+		OrgID:       data.OrgID,
 		Interest:    data.Interest,
 		CampaignID:  data.CampaignID,
 		TTSProvider: data.TTSProvider,

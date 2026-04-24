@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -115,9 +116,21 @@ func (c *Client) connect() (*websocket.Conn, error) {
 	headers := http.Header{}
 	headers.Set("Authorization", "Token "+c.apiKey)
 
-	conn, _, err := websocket.DefaultDialer.DialContext(context.Background(), u.String(), headers)
+	conn, resp, err := websocket.DefaultDialer.DialContext(context.Background(), u.String(), headers)
 	if err != nil {
-		return nil, fmt.Errorf("deepgram dial: %w", err)
+		var body string
+		var dgErrHdr string
+		if resp != nil {
+			dgErrHdr = resp.Header.Get("dg-error")
+			if resp.Body != nil {
+				b, _ := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				body = string(b)
+			}
+			return nil, fmt.Errorf("deepgram dial: %w (status=%d dg-error=%q body=%q model=%s lang=%s)",
+				err, resp.StatusCode, dgErrHdr, body, c.model, c.language)
+		}
+		return nil, fmt.Errorf("deepgram dial: %w (model=%s lang=%s)", err, c.model, c.language)
 	}
 	return conn, nil
 }
@@ -164,30 +177,19 @@ func (c *Client) handleMessage(raw []byte) {
 }
 
 // mapLanguage converts our language code to Deepgram's language + model selection.
+// Deepgram nova-2 currently supports only Hindi and English among Indian languages.
+// Unsupported languages fall back to English STT so the call stays alive — the
+// transcript quality will be poor but the session will not die.
 func mapLanguage(lang string) (dgLang, dgModel string) {
 	switch lang {
-	case "mr":
-		return "mr-IN", "nova-3"
 	case "hi":
 		return "hi", "nova-2"
-	case "ta":
-		return "ta-IN", "nova-2"
-	case "te":
-		return "te-IN", "nova-2"
-	case "bn":
-		return "bn-IN", "nova-2"
-	case "gu":
-		return "gu-IN", "nova-2"
-	case "kn":
-		return "kn-IN", "nova-2"
-	case "ml":
-		return "ml-IN", "nova-2"
-	case "pa":
-		return "pa-IN", "nova-2"
+	case "en", "":
+		return "en", "nova-2"
+	// Unsupported by Deepgram nova-2 — fall back to English.
+	case "ta", "te", "kn", "ml", "gu", "bn", "pa", "mr":
+		return "en", "nova-2"
 	default:
-		if lang == "" {
-			return "en", "nova-2"
-		}
-		return lang, "nova-2"
+		return "en", "nova-2"
 	}
 }

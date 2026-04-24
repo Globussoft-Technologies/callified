@@ -41,7 +41,18 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   const fetchCampaigns = async () => {
-    try { const res = await apiFetch(`${API_URL}/campaigns`); setCampaigns(await res.json()); } catch(e){}
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns`);
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        console.warn('[fetchCampaigns] expected array, got:', { status: res.status, body: data });
+        setCampaigns([]);
+        return;
+      }
+      setCampaigns(data);
+    } catch(e) {
+      console.warn('[fetchCampaigns] error:', e);
+    }
   };
 
   useEffect(() => {

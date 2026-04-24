@@ -48,6 +48,18 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── GET /api/campaigns/{id} ──────────────────────────────────────────────────
+//
+// Attaches up-to-date stats (and voice settings) on the same response, so the
+// Campaign Detail page renders live numbers on every open — not whatever stale
+// snapshot the campaigns-list fetch had. Matches the Python endpoint shape
+// (routes.py:1335-1341) exactly:
+//
+//     {...campaign_fields, "stats": {...}, "voice_settings": {...}}
+//
+// Before this change, the Total/Called/Qualified/Appointments KPI cards read
+// from selectedCampaign.stats, which the list endpoint populates once — so any
+// call or lead add that happened after the list was fetched left the cards
+// frozen at 0 until a full page reload.
 
 func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
@@ -65,7 +77,38 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	// Attach fresh stats — best-effort; we don't fail the whole response if
+	// the stats query breaks.
+	if stats, err := s.db.GetCampaignStats(id); err == nil {
+		c.Stats = &stats
+	} else {
+		s.logger.Sugar().Warnw("getCampaign: stats lookup failed", "id", id, "err", err)
+	}
+	// Attach voice settings in a merged map so we stay backwards-compatible
+	// with clients that still read c.* directly.
+	resp := map[string]any{
+		"id":           c.ID,
+		"org_id":       c.OrgID,
+		"product_id":   c.ProductID,
+		"name":         c.Name,
+		"status":       c.Status,
+		"tts_provider": c.TTSProvider,
+		"tts_voice_id": c.TTSVoiceID,
+		"tts_language": c.TTSLanguage,
+		"lead_source":  c.LeadSource,
+		"channel":      c.Channel,
+		"product_name": c.ProductName,
+		"created_at":   c.CreatedAt,
+		"stats":        c.Stats,
+	}
+	if vs, err := s.db.GetCampaignVoiceSettings(id); err == nil {
+		resp["voice_settings"] = map[string]string{
+			"tts_provider": vs.TTSProvider,
+			"tts_voice_id": vs.TTSVoiceID,
+			"tts_language": vs.TTSLanguage,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ── PUT /api/campaigns/{id} ──────────────────────────────────────────────────

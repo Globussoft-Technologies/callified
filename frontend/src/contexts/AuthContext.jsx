@@ -3,26 +3,54 @@ import { API_URL } from '../constants/api';
 
 const AuthContext = createContext(null);
 
+// Safely parse a cached user blob from localStorage.
+function loadCachedUser() {
+  try {
+    const raw = localStorage.getItem('currentUser');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
-  const [currentUser, setCurrentUser] = useState(null);
+  // Seed currentUser from localStorage so the dashboard renders instantly on
+  // refresh — no login-page flash, no loading splash. /auth/me revalidates in
+  // the background and clears the session if the token is no longer good.
+  const [currentUser, setCurrentUser] = useState(loadCachedUser);
+
+  const clearSession = useCallback(() => {
+    setAuthToken(null);
+    setCurrentUser(null);
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('currentUser');
+  }, []);
 
   const apiFetch = useCallback(async (url, options = {}) => {
-    return fetch(url, {
+    const res = await fetch(url, {
       ...options,
       headers: { ...options.headers, 'Authorization': `Bearer ${authToken}` }
     });
-  }, [authToken]);
-
-  // Check token on mount
-  useEffect(() => {
-    if (authToken) {
-      fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
-        .then(r => r.ok ? r.json() : Promise.reject())
-        .then(u => setCurrentUser(u))
-        .catch(() => { setAuthToken(null); localStorage.removeItem('authToken'); });
+    if (res.status === 401) {
+      clearSession();
+      throw new Error('Session expired');
     }
-  }, [authToken]);
+    return res;
+  }, [authToken, clearSession]);
+
+  // Background revalidation: if we have a token, verify it's still valid.
+  // Runs without blocking the UI — dashboard is already on-screen.
+  useEffect(() => {
+    if (!authToken) return;
+    fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(u => {
+        setCurrentUser(u);
+        localStorage.setItem('currentUser', JSON.stringify(u));
+      })
+      .catch(() => clearSession());
+  }, [authToken, clearSession]);
 
   const login = async (email, password) => {
     const res = await fetch(`${API_URL}/auth/login`, {
@@ -34,6 +62,7 @@ export function AuthProvider({ children }) {
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
     localStorage.setItem('authToken', data.access_token);
+    localStorage.setItem('currentUser', JSON.stringify(data.user));
     return data;
   };
 
@@ -47,14 +76,11 @@ export function AuthProvider({ children }) {
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
     localStorage.setItem('authToken', data.access_token);
+    localStorage.setItem('currentUser', JSON.stringify(data.user));
     return data;
   };
 
-  const logout = () => {
-    setAuthToken(null);
-    setCurrentUser(null);
-    localStorage.removeItem('authToken');
-  };
+  const logout = clearSession;
 
   return (
     <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, login, signup, logout }}>

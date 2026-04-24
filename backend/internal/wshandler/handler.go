@@ -94,6 +94,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if id := q.Get("campaign_id"); id != "" {
 		fmt.Sscanf(id, "%d", &sess.CampaignID)
 	}
+	if l := q.Get("tts_language"); l != "" {
+		sess.Language = l
+		sess.TTSLanguage = l
+	}
+	if p := q.Get("tts_provider"); p != "" {
+		sess.TTSProvider = p
+	}
+	if v := q.Get("voice"); v != "" {
+		sess.TTSVoiceID = v
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -114,9 +124,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Select TTS provider ---
+	// Store the instance on the session so runTTSWorker (which reads it every
+	// sentence) and the greeting dispatch can both use it. Previously this was
+	// a closure variable, but the worker now lives outside this function.
 	ttsProvider, err := tts.New(sess.TTSProvider, h.ttsKeys)
 	if err != nil {
 		h.log.Warn("TTS provider unavailable", zap.Error(err), zap.String("provider", sess.TTSProvider))
+	}
+	if ttsProvider != nil {
+		sess.SetTTSInstance(ttsProvider)
 	}
 
 	// --- Start Deepgram STT client ---
@@ -160,14 +176,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runPipeline(ctx, sess, h.provider, h.store)
 	}()
 
-	// g5: TTS worker (only if provider is available)
-	if ttsProvider != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runTTSWorker(ctx, sess, ttsProvider)
-		}()
-	}
+	// g5: TTS worker. Reads the provider from sess.TTSInstance() on each
+	// sentence; the worker no-ops with a warning if no provider is loaded.
+	// Launched unconditionally so that if the provider becomes available
+	// mid-call (e.g. after Redis hydration of a campaign with a different
+	// provider), synthesis resumes without needing to relaunch the worker.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runTTSWorker(ctx, sess)
+	}()
 
 	// Send greeting immediately (Exotel 10s VoiceBot timeout)
 	if sess.TrySetGreeting() && sess.GreetingText != "" && ttsProvider != nil {

@@ -23,6 +23,7 @@ type PendingCallInfo struct {
 	Name          string `json:"name"`
 	Phone         string `json:"phone"`
 	LeadID        int64  `json:"lead_id"`
+	OrgID         int64  `json:"org_id"`
 	Interest      string `json:"interest"`
 	ExotelCallSid string `json:"exotel_call_sid"`
 	CampaignID    int64  `json:"campaign_id"`

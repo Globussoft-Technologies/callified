@@ -14,6 +14,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/globussoft/callified-backend/internal/tts"
 )
 
 // CallSession holds all per-call state for one WebSocket connection.
@@ -81,9 +82,33 @@ type CallSession struct {
 	AgentName    string
 	Language     string
 
+	// ttsInstance is the actual TTS client (Sarvam/Smallest/ElevenLabs) that
+	// synthesises audio for this call. Stored on the session — not captured as
+	// a closure in ServeHTTP — so handleStartEvent can dispatch the greeting
+	// AFTER we learn the campaign's voice/language from Redis. Guarded by
+	// ttsMu because handleStartEvent may replace it if the campaign's
+	// provider differs from the defaults we initialised with.
+	ttsMu       sync.RWMutex
+	ttsInstance tts.Provider
+
 	CallStart time.Time
 	WS        *websocket.Conn
 	Log       *zap.Logger
+}
+
+// SetTTSInstance stores the TTS client for this call.
+func (s *CallSession) SetTTSInstance(p tts.Provider) {
+	s.ttsMu.Lock()
+	s.ttsInstance = p
+	s.ttsMu.Unlock()
+}
+
+// TTSInstance returns the current TTS client (may be nil if no provider was
+// available — e.g., missing API key).
+func (s *CallSession) TTSInstance() tts.Provider {
+	s.ttsMu.RLock()
+	defer s.ttsMu.RUnlock()
+	return s.ttsInstance
 }
 
 // NewCallSession allocates a CallSession. streamSid may be empty at this point
