@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -48,9 +47,7 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		zap.Int32("max_tokens", req.MaxTokens),
 	)
 
-	var gotToken bool
 	onToken := func(token string) {
-		gotToken = true
 		buf.WriteString(token)
 		sentences, remainder := SplitBuffer(buf.String())
 		buf.Reset()
@@ -63,41 +60,10 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	}
 
 	var err error
-	// Retry transient 5xx / 429 failures up to 2 additional times as long as no
-	// tokens have been emitted yet. Gemini's "UNAVAILABLE" 503 under load is the
-	// most common case; Groq occasionally returns 429 on rate limit.
-	backoff := []time.Duration{0, 250 * time.Millisecond, 750 * time.Millisecond}
-	for attempt, wait := range backoff {
-		if wait > 0 {
-			select {
-			case <-time.After(wait):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		if useGemini {
-			err = p.gemini.StreamTokens(ctx, req, onToken)
-		} else {
-			err = p.groq.StreamTokens(ctx, req, onToken)
-		}
-		if err == nil || !isRetriableLLMError(err) || gotToken {
-			break
-		}
-		p.log.Warn("[LLM] retrying after transient error",
-			zap.Int("attempt", attempt+1),
-			zap.String("provider", providerName),
-			zap.Error(err),
-		)
-	}
-	// If the preferred provider still fails and the other is configured, try it once.
-	if err != nil && !gotToken && isRetriableLLMError(err) {
-		if useGemini && p.cfg.GroqAPIKey != "" {
-			p.log.Warn("[LLM] falling back to Groq after Gemini failures", zap.Error(err))
-			err = p.groq.StreamTokens(ctx, req, onToken)
-		} else if !useGemini && p.cfg.GeminiAPIKey != "" {
-			p.log.Warn("[LLM] falling back to Gemini after Groq failures", zap.Error(err))
-			err = p.gemini.StreamTokens(ctx, req, onToken)
-		}
+	if useGemini {
+		err = p.gemini.StreamTokens(ctx, req, onToken)
+	} else {
+		err = p.groq.StreamTokens(ctx, req, onToken)
 	}
 
 	// Flush any text left in the buffer after stream ends (no trailing punctuation)
@@ -146,23 +112,6 @@ func (p *Provider) GenerateResponse(ctx context.Context, systemPrompt string, hi
 // Suitable for batch extraction tasks like product scraping and prompt generation.
 func (p *Provider) GenerateText(ctx context.Context, systemPrompt, userMessage string, maxOutputTokens int) (string, error) {
 	return p.gemini.GenerateText(ctx, systemPrompt, userMessage, maxOutputTokens)
-}
-
-// isRetriableLLMError reports whether the provider returned a transient error
-// (5xx overload, 429 rate-limit, timeouts) that a retry might overcome.
-func isRetriableLLMError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "status 429") ||
-		strings.Contains(s, "status 500") ||
-		strings.Contains(s, "status 502") ||
-		strings.Contains(s, "status 503") ||
-		strings.Contains(s, "status 504") ||
-		strings.Contains(s, "UNAVAILABLE") ||
-		strings.Contains(s, "deadline exceeded") ||
-		strings.Contains(s, "connection reset")
 }
 
 // parseChunk strips [HANGUP] from text and returns (cleanText, hasHangup).
