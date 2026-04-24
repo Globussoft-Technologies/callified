@@ -7,6 +7,7 @@ const PROVIDERS = [
   { value: 'aisensei', label: 'AiSensei' },
   { value: 'interakt', label: 'Interakt' },
   { value: 'meta', label: 'Meta (Cloud API)' },
+  { value: 'wasender', label: 'WaSender' },
 ];
 
 // Field `key` values are the JSON keys posted to /api/wa/config; backend
@@ -39,6 +40,10 @@ const PROVIDER_FIELDS = {
     { key: 'phone_number_id', label: 'Phone Number ID', type: 'text' },
     { key: 'app_secret', label: 'App Secret', type: 'password' },
     { key: 'verify_token', label: 'Verify Token', type: 'text' },
+  ],
+  wasender: [
+    { key: 'api_key', label: 'API Key', type: 'password' },
+    { key: 'base_url', label: 'Base URL (optional)', type: 'text' },
   ],
 };
 
@@ -494,10 +499,6 @@ const inputBarStyle = {
 };
 
 const inputStyle = {
-  // boxSizing: 'border-box' so the 12px horizontal padding + 1px border are
-  // included in the 100% width — without this the input renders ~26px wider
-  // than its container, which is what was producing the stray horizontal
-  // scrollbar at the bottom of the WhatsApp Channel Config modal.
   width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
   border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b',
   color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',

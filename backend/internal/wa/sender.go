@@ -34,6 +34,8 @@ func SendText(ctx context.Context, cfg ChannelConfig, toPhone, text string) erro
 		return sendMetaText(ctx, cfg, toPhone, text)
 	case "aisensei":
 		return sendGupshupText(ctx, cfg, toPhone, text) // same API
+	case "wasender":
+		return sendWaSenderText(ctx, cfg, toPhone, text)
 	default:
 		return fmt.Errorf("unknown WA provider: %s", cfg.Provider)
 	}
@@ -96,6 +98,30 @@ func sendMetaText(ctx context.Context, cfg ChannelConfig, toPhone, text string) 
 	})
 	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/messages", cfg.PhoneNumber)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	return doRequest(req)
+}
+
+func sendWaSenderText(ctx context.Context, cfg ChannelConfig, toPhone, text string) error {
+	baseURL := cfg.AppID // AppID reused for optional base_url
+	if baseURL == "" {
+		baseURL = "https://www.wasender.app"
+	}
+	to := toPhone
+	if !strings.Contains(to, "@") {
+		to = strings.TrimPrefix(to, "+") + "@s.whatsapp.net"
+	}
+	body, _ := json.Marshal(map[string]any{
+		"to":   to,
+		"type": "text",
+		"text": map[string]string{"body": text},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(baseURL, "/")+"/api/send-message", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

@@ -29,6 +29,11 @@ func (s *Server) waWebhookInterakt(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "interakt", wa.ParseInterakt)
 }
 
+// POST /wa/webhook/wasender
+func (s *Server) waWebhookWaSender(w http.ResponseWriter, r *http.Request) {
+	s.handleWAWebhook(w, r, "wasender", wa.ParseWaSender)
+}
+
 // POST /wa/webhook/meta — inbound messages
 // GET  /wa/webhook/meta — Meta hub.challenge verification
 func (s *Server) waWebhookMeta(w http.ResponseWriter, r *http.Request) {

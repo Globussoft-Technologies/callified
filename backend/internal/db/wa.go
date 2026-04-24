@@ -67,6 +67,55 @@ func (d *DB) GetActiveWAConfig(orgID int64) (*WAChannelConfig, error) {
 	return cfg, nil
 }
 
+// UpsertWAConfig saves (insert or update) a WA channel config for an org+provider.
+// Phone is derived from credentials where available, otherwise defaults to ''.
+func (d *DB) UpsertWAConfig(orgID int64, provider string, credentials map[string]string, defaultProductID int64, autoReply bool) error {
+	credsJSON, _ := json.Marshal(credentials)
+
+	// Extract flat fields from credentials for provider-specific lookups
+	apiKey := credentials["api_key"]
+	if apiKey == "" {
+		apiKey = credentials["access_token"] // meta
+	}
+	if apiKey == "" {
+		apiKey = credentials["bearer_token"] // wati
+	}
+	appID := credentials["base_url"]
+	if appID == "" {
+		appID = credentials["tenant_url"] // wati
+	}
+	if appID == "" {
+		appID = credentials["app_name"] // gupshup
+	}
+	if appID == "" {
+		appID = credentials["phone_number_id"] // meta
+	}
+	phone := credentials["source_phone"] // gupshup
+	if phone == "" {
+		phone = credentials["phone_number"]
+	}
+
+	var defaultProd interface{} = nil
+	if defaultProductID > 0 {
+		defaultProd = defaultProductID
+	}
+
+	_, err := d.pool.Exec(`
+		INSERT INTO wa_channel_config
+		  (org_id, provider, phone_number, api_key, app_id, credentials, default_product_id, auto_reply_enabled, is_active)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+		ON DUPLICATE KEY UPDATE
+		  api_key            = VALUES(api_key),
+		  app_id             = VALUES(app_id),
+		  credentials        = VALUES(credentials),
+		  default_product_id = VALUES(default_product_id),
+		  auto_reply_enabled = VALUES(auto_reply_enabled),
+		  is_active          = 1,
+		  updated_at         = NOW()`,
+		orgID, provider, phone, apiKey, appID, string(credsJSON), defaultProd, autoReply)
+	return err
+}
+
 // SaveWAConversationMessage inserts an outbound AI message into wa_conversations.
 // Returns the new message ID.
 func (d *DB) SaveWAConversationMessage(orgID, configID, leadID int64, phone, name, content string) (int64, error) {

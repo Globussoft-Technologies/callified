@@ -144,6 +144,45 @@ func ParseAiSensei(body []byte) (*IncomingMessage, error) {
 	return msg, err
 }
 
+// ParseWaSender parses an inbound WaSender webhook payload.
+func ParseWaSender(body []byte) (*IncomingMessage, error) {
+	var p struct {
+		Event string `json:"event"`
+		Data  struct {
+			Key struct {
+				RemoteJid string `json:"remoteJid"`
+				FromMe    bool   `json:"fromMe"`
+				ID        string `json:"id"`
+			} `json:"key"`
+			Message struct {
+				Conversation        string `json:"conversation"`
+				ExtendedTextMessage struct {
+					Text string `json:"text"`
+				} `json:"extendedTextMessage"`
+			} `json:"message"`
+			MessageType string `json:"messageType"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, err
+	}
+	if p.Data.Key.FromMe {
+		return nil, nil // skip echo of our own sent messages
+	}
+	text := p.Data.Message.Conversation
+	if text == "" {
+		text = p.Data.Message.ExtendedTextMessage.Text
+	}
+	from := strings.TrimSuffix(p.Data.Key.RemoteJid, "@s.whatsapp.net")
+	return &IncomingMessage{
+		ProviderMsgID: p.Data.Key.ID,
+		FromPhone:     from,
+		Text:          text,
+		MessageType:   coalesce(p.Data.MessageType, "text"),
+		Provider:      "wasender",
+	}, nil
+}
+
 // NormalizePhone ensures a phone number has a + prefix.
 func NormalizePhone(phone string) string {
 	phone = strings.TrimSpace(phone)

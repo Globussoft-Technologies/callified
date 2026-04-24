@@ -77,3 +77,6 @@ server-missing-files.md
 # PLAN-crm-integration.md
 # Compiled Go binaries (built locally and on testgo, not source)
 backend/bin/
+
+# Kubernetes (local-only deployment, has secrets)
+kubernetes/

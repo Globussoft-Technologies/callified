@@ -6,6 +6,57 @@ import (
 	"strings"
 )
 
+// GET /api/wa/config — returns the active WA config for the org (used by config modal)
+func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	cfg, err := s.db.GetActiveWAConfig(ac.OrgID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if cfg == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"provider":    "gupshup",
+			"credentials": map[string]string{},
+			"auto_reply":  true,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"provider":           cfg.Provider,
+		"credentials":        cfg.Credentials,
+		"default_product_id": cfg.DefaultProductID,
+		"auto_reply":         cfg.AutoReplyEnabled,
+	})
+}
+
+// POST /api/wa/config — upserts the WA channel config (used by config modal)
+func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	var body struct {
+		Provider         string            `json:"provider"`
+		Credentials      map[string]string `json:"credentials"`
+		DefaultProductID *int64            `json:"default_product_id"`
+		AutoReply        bool              `json:"auto_reply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Provider == "" {
+		writeError(w, http.StatusBadRequest, "provider required")
+		return
+	}
+	if body.Credentials == nil {
+		body.Credentials = map[string]string{}
+	}
+	var defaultProd int64
+	if body.DefaultProductID != nil {
+		defaultProd = *body.DefaultProductID
+	}
+	if err := s.db.UpsertWAConfig(ac.OrgID, body.Provider, body.Credentials, defaultProd, body.AutoReply); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
 // GET /api/wa/channels
 func (s *Server) listWAChannels(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
