@@ -202,9 +202,23 @@ body {
   animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 @keyframes fadeIn { to { opacity: 1; } }
-@keyframes slideUp { 
+@keyframes slideUp {
   from { transform: translateY(30px) scale(0.95); opacity: 0; }
-  to { transform: translateY(0) scale(1); opacity: 1; } 
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+/* Call-log audio player — themed to match the dark surface. The native
+   <audio> element renders a chrome-grey pill by default which clashes with
+   the panel; this nudges the colors and gives it a translucent border so it
+   reads as part of the row instead of an OS popup. */
+.call-log-audio {
+  border-radius: 18px;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  filter: invert(0.85) hue-rotate(180deg);
+}
+.call-log-audio::-webkit-media-controls-panel {
+  background: transparent;
 }
 .form-group {
   margin-bottom: 1.5rem;

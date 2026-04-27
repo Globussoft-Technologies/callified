@@ -65,6 +65,16 @@ func (s *Server) billingSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Companion invoice — without this the Billing page's Invoices section
+	// stays empty for an active plan, which looks broken to the user.
+	// Razorpay-verified path creates one in billing.VerifyAndActivate; this
+	// is the dev/test parallel.
+	if plan, perr := s.db.GetBillingPlanByID(body.PlanID); perr == nil && plan != nil {
+		invNum := fmt.Sprintf("INV-%d-%d", time.Now().Unix(), ac.OrgID)
+		if _, err := s.db.CreateInvoice(ac.OrgID, invNum, "", "INR", float64(plan.PricePaise)/100); err != nil {
+			s.logger.Sugar().Warnw("billingSubscribe: CreateInvoice failed", "err", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": true})
 }
 
@@ -177,24 +187,45 @@ func (s *Server) downloadInvoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get org name for invoice
-	orgName := "Your Organization"
-	if org, err := s.db.GetOrganizationByID(ac.OrgID); err == nil && org != nil {
-		orgName = org.Name
+	data := billing.InvoiceData{
+		InvoiceNumber: inv.InvoiceNumber,
+		Date:          firstDate(inv.CreatedAt),
+		Status:        capitalizeStatus(inv.Status),
+		OrgName:       "Your Organization",
+		PlanName:      "Subscription",
+		PaymentID:     inv.InvoiceNumber, // we don't track a separate payment id in the dev path
 	}
-
-	html := billing.GenerateInvoiceHTML(
-		orgName, "Subscription",
-		fmt.Sprintf("%.2f", float64(inv.AmountPaise)/100),
-		inv.InvoiceNumber, // use invoice number as payment reference
-		time.Now().Format("2006-01-02"),
-		inv.InvoiceNumber,
-	)
+	if org, err := s.db.GetOrganizationByID(ac.OrgID); err == nil && org != nil {
+		data.OrgName = org.Name
+	}
+	if sub, err := s.db.GetSubscriptionByOrg(ac.OrgID); err == nil && sub != nil {
+		data.PlanName = sub.PlanName
+		data.PeriodStart = firstDate(sub.PeriodStart)
+		data.PeriodEnd = firstDate(sub.PeriodEnd)
+	}
+	data.Subtotal, data.GST, data.Total = billing.NewInvoiceData(inv.AmountPaise)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=invoice_%s.html", invoiceNumber))
-	_, _ = io.WriteString(w, html)
+	_, _ = io.WriteString(w, billing.GenerateInvoiceHTML(data))
+}
+
+// firstDate returns just the YYYY-MM-DD prefix of a "YYYY-MM-DD HH:MM:SS"
+// timestamp. Empty input returns empty (template hides empty fields).
+func firstDate(ts string) string {
+	if len(ts) >= 10 {
+		return ts[:10]
+	}
+	return ts
+}
+
+// capitalizeStatus turns "paid" → "Paid" so the template's badge styles match.
+func capitalizeStatus(s string) string {
+	if s == "" {
+		return ""
+	}
+	return string(s[0]-32) + s[1:]
 }
 
 // POST /api/billing/webhook  (no auth — HMAC-verified)

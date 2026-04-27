@@ -5,7 +5,8 @@ export default function SettingsTab({
   handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
   selectedOrg, orgs, showProductInput, setShowProductInput, newProductName, setNewProductName,
   handleAddProduct, orgProducts, handleDeleteProduct, handleSaveProduct, scraping, handleScrapeProduct,
-  promptDirty, handleSaveSystemPrompt, promptSaving, systemPromptAuto, systemPromptCustom,
+  promptDirty, handleSaveSystemPrompt, promptSaving, promptSaveStatus,
+  systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
   apiFetch, API_URL, orgTimezone
 }) {
@@ -414,12 +415,60 @@ export default function SettingsTab({
 
           <div>
             <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem'}}>✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}</label>
-            <textarea className="form-input" rows={8}
-              placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
-              value={systemPromptCustom}
-              onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
-              style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6}} />
-            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.</p>
+            {(() => {
+              // Word count splits on any whitespace run — spaces, tabs,
+              // newlines all delimit. Empty token filtered out so leading
+              // whitespace doesn't inflate the count.
+              const wordCount = systemPromptCustom.trim()
+                ? systemPromptCustom.trim().split(/\s+/).length
+                : 0;
+              const MAX_WORDS = 1000;
+              const SOFT = 900;
+              const overSoft = wordCount >= SOFT;
+              const overHard = wordCount > MAX_WORDS;
+              const color = overHard ? '#ef4444' : overSoft ? '#f59e0b' : '#64748b';
+              return (
+                <>
+                  <textarea className="form-input" rows={8}
+                    placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
+                    value={systemPromptCustom}
+                    onChange={e => {
+                      // Hard cap at MAX_WORDS — refuse the change if it
+                      // would push the user over. They keep the previous
+                      // value, which is the standard React-controlled-
+                      // input way to enforce a limit.
+                      const next = e.target.value;
+                      const nextCount = next.trim() ? next.trim().split(/\s+/).length : 0;
+                      if (nextCount > MAX_WORDS && nextCount > wordCount) return;
+                      setSystemPromptCustom(next);
+                      setPromptDirty(true);
+                    }}
+                    style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6}} />
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '8px'}}>
+                    <div style={{fontSize: '0.75rem', color}}>
+                      {wordCount.toLocaleString()} / {MAX_WORDS.toLocaleString()} words
+                      {overHard && ' — limit reached'}
+                      {!overHard && overSoft && ' — approaching limit'}
+                    </div>
+                    {promptSaveStatus === 'saved' && (
+                      <div style={{fontSize: '0.75rem', color: '#22c55e', fontWeight: 600}}>✓ Saved</div>
+                    )}
+                    {promptSaveStatus === 'error' && (
+                      <div style={{fontSize: '0.75rem', color: '#ef4444', fontWeight: 600}}>⚠️ Save failed — try again</div>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+            <details style={{marginTop: '10px', fontSize: '0.75rem', color: '#94a3b8'}}>
+              <summary style={{cursor: 'pointer', userSelect: 'none'}}>📘 Formatting & syntax help</summary>
+              <ul style={{marginTop: '6px', paddingLeft: '20px', lineHeight: 1.7}}>
+                <li><b>Plain text only.</b> Markdown won't be parsed — write naturally as if instructing a person.</li>
+                <li>Bracketed sections like <code>[PRODUCT KNOWLEDGE - ...]</code> are <b>auto-injected</b> by the system; you don't need to write them.</li>
+                <li>Keep instructions short and concrete: tone, persona, key talking points, what to avoid. Long prompts dilute focus and cost more per call.</li>
+                <li>Leave empty to use the auto-generated prompt assembled from your products. A custom prompt fully overrides it.</li>
+              </ul>
+            </details>
           </div>
         </div>
       )}

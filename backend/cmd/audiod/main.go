@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// WebSocket handler — shared across /media-stream and /ws/sandbox
-	wsHandler := wshandler.New(cfg, promptBuilder, recordingSvc, store, logger)
+	wsHandler := wshandler.New(cfg, promptBuilder, recordingSvc, store, database, logger)
 
 	mux := http.NewServeMux()
 

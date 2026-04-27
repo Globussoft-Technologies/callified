@@ -11,7 +11,17 @@ import (
 	"github.com/globussoft/callified-backend/internal/dial"
 )
 
-// Scheduler polls the scheduled_calls table every 60 seconds and dials due calls.
+// schedulerTickInterval is how often the scheduler polls for due calls.
+const schedulerTickInterval = 1 * time.Second
+
+// dialLeadTimeSeconds: how many seconds *before* the user-requested time we
+// pull rows out of "pending" and dial them. The provider API call needs
+// ~2–4 s to actually ring the phone (Twilio/Exotel handoff + telco routing),
+// so kicking the dial off this many seconds early lets the phone ring at
+// the exact second the user scheduled.
+const dialLeadTimeSeconds = 3
+
+// Scheduler polls the scheduled_calls table on a short interval and dials due calls.
 type Scheduler struct {
 	db        *db.DB
 	initiator *dial.Initiator
@@ -25,9 +35,9 @@ func NewScheduler(database *db.DB, initiator *dial.Initiator, log *zap.Logger) *
 
 // Run starts the scheduler loop. Blocks until ctx is cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
-	s.log.Info("scheduler: started")
+	s.log.Info("scheduler: started", zap.Duration("interval", schedulerTickInterval))
 	for {
 		select {
 		case <-ctx.Done():
@@ -40,7 +50,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) tick(ctx context.Context) {
-	calls, err := s.db.GetPendingScheduledCalls()
+	calls, err := s.db.GetPendingScheduledCalls(dialLeadTimeSeconds)
 	if err != nil {
 		s.log.Warn("scheduler: GetPendingScheduledCalls", zap.Error(err))
 		return
@@ -49,9 +59,11 @@ func (s *Scheduler) tick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		// Mark as processing immediately to avoid double-dial on next tick
-		if err := s.db.UpdateScheduledCallStatus(sc.ID, "processing"); err != nil {
-			s.log.Warn("scheduler: mark processing", zap.Error(err), zap.Int64("id", sc.ID))
+		// Mark as dialing immediately to avoid double-dial on next tick.
+		// (Must be one of the scheduled_calls.status enum values:
+		// pending|dialing|completed|failed|cancelled.)
+		if err := s.db.UpdateScheduledCallStatus(sc.ID, "dialing"); err != nil {
+			s.log.Warn("scheduler: mark dialing", zap.Error(err), zap.Int64("id", sc.ID))
 			continue
 		}
 

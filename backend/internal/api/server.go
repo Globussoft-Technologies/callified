@@ -310,6 +310,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// /api/knowledge/upload. Without /upload the fetch 404s and the
 	// "Upload & Embed PDF" button appears to silently do nothing.
 	mux.HandleFunc("POST /api/knowledge/upload", auth(s.uploadKnowledge))
+	mux.HandleFunc("GET /api/knowledge/{id}/download", auth(s.downloadKnowledge))
 	mux.HandleFunc("DELETE /api/knowledge/{id}", auth(s.deleteKnowledge))
 
 	// ── SSE (Phase 3C) ────────────────────────────────────────────────────────

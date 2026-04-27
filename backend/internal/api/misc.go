@@ -80,6 +80,12 @@ func (s *Server) addPronunciation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "word and phonetic required")
 		return
 	}
+	body.Word = strings.TrimSpace(body.Word)
+	body.Phonetic = strings.TrimSpace(body.Phonetic)
+	if strings.EqualFold(body.Word, body.Phonetic) {
+		writeError(w, http.StatusBadRequest, "phonetic must differ from word")
+		return
+	}
 	if err := s.db.UpsertPronunciation(body.Word, body.Phonetic); err != nil {
 		s.logger.Sugar().Errorw("addPronunciation", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

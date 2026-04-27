@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -47,6 +48,11 @@ func (s *Server) addDND(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "phone required")
 		return
 	}
+	body.Phone = strings.TrimSpace(body.Phone)
+	if !isValidPhone(body.Phone) {
+		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+		return
+	}
 	src := body.Source
 	if src == "" {
 		src = body.Reason
@@ -82,13 +88,23 @@ func (s *Server) importDNDCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var phones []string
+	var skipped []string
 	for i, rec := range records {
 		if i == 0 {
 			continue // skip header row
 		}
-		if len(rec) > 0 && strings.TrimSpace(rec[0]) != "" {
-			phones = append(phones, strings.TrimSpace(rec[0]))
+		if len(rec) == 0 {
+			continue
 		}
+		p := strings.TrimSpace(rec[0])
+		if p == "" {
+			continue
+		}
+		if !isValidPhone(p) {
+			skipped = append(skipped, fmt.Sprintf("row %d: %q not 10 digits", i+1, p))
+			continue
+		}
+		phones = append(phones, p)
 	}
 
 	if err := s.db.AddDNDNumbersBulk(ac.OrgID, phones, "manual"); err != nil {
@@ -96,7 +112,7 @@ func (s *Server) importDNDCSV(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": len(phones)})
+	writeJSON(w, http.StatusOK, map[string]any{"imported": len(phones), "skipped": skipped})
 }
 
 // ── DELETE /api/dnd/{id} ──────────────────────────────────────────────────────
@@ -142,9 +158,13 @@ func (s *Server) removeDND(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) checkDND(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	phone := r.URL.Query().Get("phone")
+	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
 	if phone == "" {
 		writeError(w, http.StatusBadRequest, "phone query param required")
+		return
+	}
+	if !isValidPhone(phone) {
+		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
 		return
 	}
 	isDND, err := s.db.IsDNDNumber(ac.OrgID, phone)
@@ -161,9 +181,13 @@ func (s *Server) checkDND(w http.ResponseWriter, r *http.Request) {
 // the query-param version above.
 func (s *Server) checkDNDByPhone(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	phone := r.PathValue("phone")
+	phone := strings.TrimSpace(r.PathValue("phone"))
 	if phone == "" {
 		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	if !isValidPhone(phone) {
+		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
 		return
 	}
 	isDND, err := s.db.IsDNDNumber(ac.OrgID, phone)

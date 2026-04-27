@@ -45,6 +45,13 @@ type Config struct {
 	// Recordings directory
 	RecordingsDir string `env:"RECORDINGS_DIR" envDefault:"recordings"`
 
+	// Knowledge-base uploads (PDFs/TXT/DOCX). Files are kept on disk so
+	// users can preview/download what was indexed; the FAISS embeddings
+	// live separately in the RAG service. Default sits under recordings/
+	// because that directory is already a writable volume owned by the
+	// audiod user — keeps deployments simple (no extra volume mount).
+	KnowledgeDir string `env:"KNOWLEDGE_DIR" envDefault:"recordings/knowledge"`
+
 	// Telephony — Phase 2
 	TwilioAccountSID string `env:"TWILIO_ACCOUNT_SID"`
 	TwilioAuthToken  string `env:"TWILIO_AUTH_TOKEN"`

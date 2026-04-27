@@ -16,6 +16,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   const [systemPromptCustom, setSystemPromptCustom] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
+  const [promptSaveStatus, setPromptSaveStatus] = useState(''); // '' | 'saved' | 'error'
 
   useEffect(() => {
     fetchPronunciations();
@@ -38,12 +39,18 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
 
   const handleAddPronunciation = async (e) => {
     e.preventDefault();
-    if (!pronFormData.word.trim() || !pronFormData.phonetic.trim()) return;
+    const word = pronFormData.word.trim();
+    const phonetic = pronFormData.phonetic.trim();
+    if (!word || !phonetic) return;
+    if (word.toLowerCase() === phonetic.toLowerCase()) {
+      alert('"How to Pronounce" must differ from "Written Word" — otherwise the rule has no effect. Try spacing the letters (e.g. "B D R P L") or a phonetic spelling (e.g. "Bee-Dee-Are-Pee-El").');
+      return;
+    }
     try {
       await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pronFormData)
+        body: JSON.stringify({ word, phonetic })
       });
       setPronFormData({ word: '', phonetic: '' });
       fetchPronunciations();
@@ -95,12 +102,23 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   const handleSaveSystemPrompt = async () => {
     if (!selectedOrg) return;
     setPromptSaving(true);
-    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ custom_prompt: systemPromptCustom })
-    });
+    setPromptSaveStatus('');
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ custom_prompt: systemPromptCustom })
+      });
+      if (!res.ok) {
+        setPromptSaveStatus('error');
+      } else {
+        setPromptSaveStatus('saved');
+        setPromptDirty(false);
+        setTimeout(() => setPromptSaveStatus(''), 2500);
+      }
+    } catch (e) {
+      setPromptSaveStatus('error');
+    }
     setPromptSaving(false);
-    setPromptDirty(false);
   };
 
   return (
@@ -115,7 +133,8 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       handleDeleteProduct={handleDeleteProduct} handleSaveProduct={handleSaveProduct}
       scraping={scraping} handleScrapeProduct={handleScrapeProduct}
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
-      promptSaving={promptSaving} systemPromptAuto={systemPromptAuto}
+      promptSaving={promptSaving} promptSaveStatus={promptSaveStatus}
+      systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
       setPromptDirty={setPromptDirty}
       apiFetch={apiFetch} API_URL={API_URL}

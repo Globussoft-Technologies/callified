@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 export default function DndPage({ apiFetch, API_URL }) {
   const [numbers, setNumbers] = useState([]);
@@ -7,11 +7,34 @@ export default function DndPage({ apiFetch, API_URL }) {
   const [loading, setLoading] = useState(true);
   const [addPhone, setAddPhone] = useState('');
   const [addSource, setAddSource] = useState('');
+  const [addError, setAddError] = useState('');
   const [checkPhone, setCheckPhone] = useState('');
   const [checkResult, setCheckResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
   const perPage = 50;
+
+  const isValidPhone = (p) => /^\d{10}$/.test(p);
+
+  // Toast-style transient warnings auto-dismiss after 2.5s so the red border
+  // and "Only digits allowed" message don't stick around when the user stops
+  // typing into an empty field (no later onChange fires to clear them).
+  const addErrTimer = useRef(null);
+  const checkErrTimer = useRef(null);
+  const flashAddError = (msg) => {
+    setAddError(msg);
+    if (addErrTimer.current) clearTimeout(addErrTimer.current);
+    addErrTimer.current = setTimeout(() => setAddError(''), 2500);
+  };
+  const flashCheckError = (msg) => {
+    setCheckResult({ error: msg });
+    if (checkErrTimer.current) clearTimeout(checkErrTimer.current);
+    checkErrTimer.current = setTimeout(() => setCheckResult(null), 2500);
+  };
+  useEffect(() => () => {
+    if (addErrTimer.current) clearTimeout(addErrTimer.current);
+    if (checkErrTimer.current) clearTimeout(checkErrTimer.current);
+  }, []);
 
   const fetchNumbers = async (p = page) => {
     setLoading(true);
@@ -28,20 +51,27 @@ export default function DndPage({ apiFetch, API_URL }) {
 
   const handleAdd = async () => {
     const phone = addPhone.trim();
-    if (!phone) return;
+    if (!phone) { setAddError('Phone number is required'); return; }
+    if (!isValidPhone(phone)) { setAddError('Phone must be exactly 10 digits'); return; }
+    setAddError('');
     try {
       const body = { phone };
       if (addSource.trim()) body.source = addSource.trim();
-      await apiFetch(`${API_URL}/dnd`, {
+      const res = await apiFetch(`${API_URL}/dnd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setAddError(data.error || `Add failed (${res.status})`);
+        return;
+      }
       setAddPhone('');
       setAddSource('');
       fetchNumbers(1);
       setPage(1);
-    } catch (e) { alert('Failed to add number: ' + e.message); }
+    } catch (e) { setAddError('Failed to add number: ' + e.message); }
   };
 
   const handleRemove = async (phone) => {
@@ -54,7 +84,8 @@ export default function DndPage({ apiFetch, API_URL }) {
 
   const handleCheck = async () => {
     const phone = checkPhone.trim();
-    if (!phone) return;
+    if (!phone) { setCheckResult({ error: 'Phone number is required' }); return; }
+    if (!isValidPhone(phone)) { setCheckResult({ error: 'Phone must be exactly 10 digits' }); return; }
     try {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(phone)}`);
       const data = await res.json();
@@ -106,16 +137,28 @@ export default function DndPage({ apiFetch, API_URL }) {
 
       {/* Top controls */}
       <div className="glass-panel" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-end' }}>
+        {/* flex-start (not flex-end) so when the Add column grows because of an
+            inline error, neighbouring controls don't shift up/down. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-start' }}>
           {/* Add Number */}
           <div style={{ flex: '1 1 300px' }}>
             <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Add Number to DND</div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                type="text" placeholder="Phone number" value={addPhone}
-                onChange={e => setAddPhone(e.target.value)}
+                type="text" inputMode="numeric" maxLength={10}
+                placeholder="10-digit phone (e.g. 9876543210)" value={addPhone}
+                onChange={e => {
+                  const raw = e.target.value;
+                  const digits = raw.replace(/\D/g, '').slice(0, 10);
+                  setAddPhone(digits);
+                  if (raw !== digits && raw.length > digits.length) {
+                    flashAddError('Only digits allowed (0-9)');
+                  } else if (addError) {
+                    setAddError('');
+                  }
+                }}
                 onKeyDown={e => e.key === 'Enter' && handleAdd()}
-                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(148,163,184,0.2)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
+                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: `1px solid ${addError ? 'rgba(239,68,68,0.5)' : 'rgba(148,163,184,0.2)'}`, background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
               />
               <input
                 type="text" placeholder="Source (optional)" value={addSource}
@@ -124,6 +167,11 @@ export default function DndPage({ apiFetch, API_URL }) {
               />
               <button className="btn-primary" onClick={handleAdd} style={{ padding: '8px 16px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>Add</button>
             </div>
+            {addError && (
+              <div role="alert" aria-live="polite" style={{ fontSize: '0.75rem', color: '#fca5a5', marginTop: '4px', fontWeight: 600 }}>
+                {addError}
+              </div>
+            )}
           </div>
 
           {/* Import CSV */}
@@ -144,10 +192,20 @@ export default function DndPage({ apiFetch, API_URL }) {
             <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Check Number</div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                type="text" placeholder="Phone number" value={checkPhone}
-                onChange={e => { setCheckPhone(e.target.value); setCheckResult(null); }}
+                type="text" inputMode="numeric" maxLength={10}
+                placeholder="10-digit phone" value={checkPhone}
+                onChange={e => {
+                  const raw = e.target.value;
+                  const digits = raw.replace(/\D/g, '').slice(0, 10);
+                  setCheckPhone(digits);
+                  if (raw !== digits && raw.length > digits.length) {
+                    flashCheckError('Only digits allowed (0-9)');
+                  } else {
+                    setCheckResult(null);
+                  }
+                }}
                 onKeyDown={e => e.key === 'Enter' && handleCheck()}
-                style={{ width: '160px', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(148,163,184,0.2)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
+                style={{ width: '180px', padding: '8px 12px', borderRadius: '6px', border: `1px solid ${checkResult && checkResult.error ? 'rgba(239,68,68,0.5)' : 'rgba(148,163,184,0.2)'}`, background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
               />
               <button onClick={handleCheck} style={{
                 padding: '8px 16px', borderRadius: '6px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
@@ -155,7 +213,7 @@ export default function DndPage({ apiFetch, API_URL }) {
               }}>Check</button>
             </div>
             {checkResult && (
-              <div style={{ fontSize: '0.75rem', marginTop: '4px', fontWeight: 600, color: checkResult.is_dnd ? '#ef4444' : checkResult.error ? '#f59e0b' : '#22c55e' }}>
+              <div aria-live="polite" style={{ fontSize: '0.75rem', marginTop: '4px', fontWeight: 600, color: checkResult.is_dnd ? '#ef4444' : checkResult.error ? '#f59e0b' : '#22c55e' }}>
                 {checkResult.error ? checkResult.error : checkResult.is_dnd ? 'On DND list' : 'Not on DND list'}
               </div>
             )}

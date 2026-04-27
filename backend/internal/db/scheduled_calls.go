@@ -54,9 +54,17 @@ func (d *DB) GetScheduledCallsByOrg(orgID int64) ([]ScheduledCall, error) {
 	return scanScheduledCalls(rows)
 }
 
-// GetPendingScheduledCalls returns all pending calls whose scheduled_at has passed.
+// GetPendingScheduledCalls returns pending calls due within the next
+// `leadTimeSeconds` seconds. Picking rows up slightly *before* their target
+// time absorbs the provider-API + telco handoff (~2–4 s for Twilio/Exotel),
+// so the phone rings at the exact second the user scheduled. Pass 0 for
+// strict "<= NOW()" semantics.
+//
 // No lead join here — the scheduler worker resolves lead details via GetLeadByID.
-func (d *DB) GetPendingScheduledCalls() ([]ScheduledCall, error) {
+func (d *DB) GetPendingScheduledCalls(leadTimeSeconds int) ([]ScheduledCall, error) {
+	if leadTimeSeconds < 0 {
+		leadTimeSeconds = 0
+	}
 	rows, err := d.pool.Query(`
 		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
 		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
@@ -64,8 +72,8 @@ func (d *DB) GetPendingScheduledCalls() ([]ScheduledCall, error) {
 		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
 		'', ''
 		FROM scheduled_calls sc
-		WHERE sc.status='pending' AND sc.scheduled_at <= NOW()
-		ORDER BY sc.scheduled_at ASC`)
+		WHERE sc.status='pending' AND sc.scheduled_at <= DATE_ADD(NOW(), INTERVAL ? SECOND)
+		ORDER BY sc.scheduled_at ASC`, leadTimeSeconds)
 	if err != nil {
 		return nil, err
 	}

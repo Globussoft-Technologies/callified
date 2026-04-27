@@ -117,7 +117,17 @@ export default function CampaignsTab({
     const token = localStorage.getItem('authToken');
     if (!token) return;
     const es = new EventSource(`${API_URL}/campaign-events?token=${token}&campaign_id=${campaignId}`);
-    es.onmessage = (e) => setLiveEvents(prev => [...prev.slice(-49), e.data]);
+    es.onmessage = (e) => {
+      // Backend publishes a JSON envelope with a pre-formatted `label` field;
+      // legacy events arrive as plain strings, so fall back to the raw line
+      // when JSON parse fails or no label is present.
+      let display = e.data;
+      try {
+        const j = JSON.parse(e.data);
+        if (j && j.label) display = j.label;
+      } catch (_) { /* plain-text legacy event */ }
+      setLiveEvents(prev => [...prev.slice(-49), display]);
+    };
     es.onerror = () => es.close();
     eventSourceRef.current = es;
   };
@@ -246,7 +256,8 @@ export default function CampaignsTab({
           ...prev,
           name: editCampaignForm.name.trim(),
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
-          lead_source: editCampaignForm.lead_source || null
+          lead_source: editCampaignForm.lead_source || null,
+          channel: editCampaignForm.channel || 'voice'
         }));
       }
     } catch (e) { console.error(e); }

@@ -247,11 +247,34 @@ func (s *Store) EmitCampaignEvent(ctx context.Context, campaignID int64, leadNam
 	if !ok {
 		icon = "📋"
 	}
-	ts := time.Now().Format("15:04:05")
-	msg := fmt.Sprintf("%s [%s] %s (%s) — %s", icon, ts, leadName, phone, strings.ToUpper(eventType))
+	now := time.Now().UTC()
+	label := fmt.Sprintf("%s [%s] %s (%s) — %s", icon, now.Local().Format("15:04:05"), leadName, phone, strings.ToUpper(eventType))
 	if detail != "" {
-		msg += " | " + detail
+		label += " | " + detail
 	}
+	// Frontend filters need structured fields; `label` keeps the existing
+	// pre-formatted display so the UI render path stays unchanged.
+	payload, err := json.Marshal(struct {
+		Ts         string `json:"ts"`
+		CampaignID int64  `json:"campaign_id"`
+		LeadName   string `json:"lead_name"`
+		Phone      string `json:"phone"`
+		Status     string `json:"status"`
+		Detail     string `json:"detail"`
+		Label      string `json:"label"`
+	}{
+		Ts:         now.Format(time.RFC3339),
+		CampaignID: campaignID,
+		LeadName:   leadName,
+		Phone:      phone,
+		Status:     strings.ToUpper(eventType),
+		Detail:     detail,
+		Label:      label,
+	})
+	if err != nil {
+		return
+	}
+	msg := string(payload)
 	// Fan out to both channels — frontend can subscribe to either.
 	chanSpecific := fmt.Sprintf("campaign:%d", campaignID)
 	s.rdb.Publish(ctx, keyPrefix+chanSpecific, msg)

@@ -13,6 +13,7 @@ const LANG_NAMES = {
 };
 
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
+  const list = Array.isArray(transcripts) ? transcripts : [];
   // Esc-to-close so there's always a keyboard escape even if the ✕ is
   // somehow hidden by an overflow/scroll edge case.
   useEffect(() => {
@@ -39,18 +40,18 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
         </div>
 
         <div style={{flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '8px'}}>
-          {transcripts.length === 0 ? (
+          {list.length === 0 ? (
             <div style={{padding: '3rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '12px'}}>
               <div style={{fontSize: '2rem', marginBottom: '12px'}}>📞</div>
               <div>No call transcripts yet.</div>
               <div style={{fontSize: '0.85rem', marginTop: '8px'}}>Transcripts will appear here after AI calls are completed.</div>
             </div>
           ) : (
-            transcripts.map((t, idx) => (
+            list.map((t, idx) => (
               <div key={t.id || idx} style={{marginBottom: '1.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.05)'}}>
                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
                   <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                    <span style={{color: '#818cf8', fontWeight: 600}}>Call #{transcripts.length - idx}</span>
+                    <span style={{color: '#818cf8', fontWeight: 600}}>Call #{list.length - idx}</span>
                     <span style={{fontSize: '0.8rem', color: '#64748b'}}>{formatDateTime(t.created_at, orgTimezone)}</span>
                   </div>
                   <div style={{display: 'flex', gap: '6px', alignItems: 'center'}}>

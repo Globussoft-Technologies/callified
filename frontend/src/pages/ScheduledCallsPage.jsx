@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { formatDateTime } from '../utils/dateFormat';
 
-export default function ScheduledCallsPage({ apiFetch, API_URL }) {
+export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -70,7 +71,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL }) {
                 return (
                   <tr key={call.id}>
                     <td style={{fontSize: '0.85rem', color: '#e2e8f0'}}>
-                      {call.scheduled_time ? new Date(call.scheduled_time).toLocaleString() : '-'}
+                      {formatDateTime(call.scheduled_time, orgTimezone)}
                     </td>
                     <td style={{fontWeight: 600}}>{call.lead_name || call.first_name || '-'}</td>
                     <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>

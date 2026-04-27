@@ -94,6 +94,18 @@ func (d *DB) GetLeadByID(id int64) (*Lead, error) {
 	return l, err
 }
 
+// GetLeadByPhone fetches one lead by phone number. Returns nil when not found.
+// Used by the live-feed label fallback when the carrier's call_sid didn't
+// match a Redis pending entry but the start event still exposes the phone.
+func (d *DB) GetLeadByPhone(phone string) (*Lead, error) {
+	row := d.pool.QueryRow(`SELECT `+leadCols+` FROM leads WHERE phone = ? LIMIT 1`, phone)
+	l, err := scanLead(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return l, err
+}
+
 // CreateLead inserts a new lead. Returns the new ID.
 func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(

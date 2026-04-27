@@ -31,14 +31,36 @@ type campaignCreateRequest struct {
 	Channel    string `json:"channel"`
 }
 
+// validateCampaignName mirrors frontend/src/utils/campaignName.js. Defense
+// in depth — the React UI auto-escapes JSX text, but the same string can
+// leak into less-defended surfaces (emails, CSV exports, plain-text logs)
+// where `<` / `>` would matter, so we reject them at the API boundary too.
+func validateCampaignName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "name is required"
+	}
+	if len(trimmed) > 100 {
+		return "name must be 100 characters or fewer"
+	}
+	if strings.ContainsAny(trimmed, "<>") {
+		return "name cannot contain < or > characters"
+	}
+	return ""
+}
+
 func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var req campaignCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.ProductID == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProductID == 0 {
 		writeError(w, http.StatusBadRequest, "name and product_id required")
 		return
 	}
-	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, req.Name, req.LeadSource, coalesceStr(req.Channel, "voice"))
+	if msg := validateCampaignName(req.Name); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"))
 	if err != nil {
 		s.logger.Sugar().Errorw("createCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -131,6 +153,16 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
+	}
+	// Only validate name when the caller is actually changing it. Empty Name
+	// in this PATCH-style endpoint means "leave as-is" (UpdateCampaign
+	// already skips empty fields).
+	if req.Name != "" {
+		if msg := validateCampaignName(req.Name); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		req.Name = strings.TrimSpace(req.Name)
 	}
 	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID); err != nil {
 		s.logger.Sugar().Errorw("updateCampaign", "err", err)

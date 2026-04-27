@@ -204,7 +204,9 @@ export default function CrmPage({
     setTranscriptLead(lead);
     try {
       const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts`);
-      setTranscripts(await res.json());
+      if (!res.ok) { setTranscripts([]); return; }
+      const data = await res.json();
+      setTranscripts(Array.isArray(data) ? data : []);
     } catch(e) { setTranscripts([]); }
   };
 

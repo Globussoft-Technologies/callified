@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
+import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -23,8 +24,8 @@ export default function CampaignModals({
   handleSaveEditCampaign,
 }) {
   const [nameTouched, setNameTouched] = useState(false);
-  const nameEmpty = !createForm.name.trim();
-  const showNameError = nameTouched && nameEmpty;
+  const nameError = validateCampaignName(createForm.name);
+  const showNameError = nameTouched && !!nameError;
 
   const handleClose = () => {
     setNameTouched(false);
@@ -92,7 +93,11 @@ export default function CampaignModals({
             </div>
 
             <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
-              <form onSubmit={e => { setNameTouched(true); handleCreateCampaign(e); }}>
+              <form onSubmit={e => {
+                setNameTouched(true);
+                if (nameError) { e.preventDefault(); return; }
+                handleCreateCampaign(e);
+              }}>
                 <div style={{marginBottom: '1rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                     Campaign Name <span style={{color: '#ef4444'}}>*</span>
@@ -101,6 +106,7 @@ export default function CampaignModals({
                     className="form-input"
                     placeholder="e.g. AdsGPT March Campaign"
                     value={createForm.name}
+                    maxLength={CAMPAIGN_NAME_MAX_LEN}
                     onChange={e => { setNameTouched(true); setCreateForm({...createForm, name: e.target.value}); }}
                     onBlur={() => setNameTouched(true)}
                     style={{
@@ -111,7 +117,7 @@ export default function CampaignModals({
                   />
                   {showNameError && (
                     <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
-                      Campaign name is required.
+                      {nameError}
                     </p>
                   )}
                 </div>
@@ -162,7 +168,7 @@ export default function CampaignModals({
                     style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={loading}>
+                  <button type="submit" className="btn-primary" disabled={loading || !!nameError}>
                     {loading ? 'Creating...' : selectedTemplate ? 'Create from Template' : 'Create'}
                   </button>
                 </div>
@@ -235,12 +241,27 @@ export default function CampaignModals({
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
-            <form onSubmit={handleSaveEditCampaign}>
+            {(() => {
+              const editNameError = validateCampaignName(editCampaignForm.name);
+              return (
+            <form onSubmit={e => {
+              if (editNameError) { e.preventDefault(); return; }
+              handleSaveEditCampaign(e);
+            }}>
               <div style={{marginBottom: '1rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
-                  value={editCampaignForm.name} onChange={e => setEditCampaignForm({...editCampaignForm, name: e.target.value})}
-                  style={{width: '100%'}} />
+                  value={editCampaignForm.name}
+                  maxLength={CAMPAIGN_NAME_MAX_LEN}
+                  onChange={e => setEditCampaignForm({...editCampaignForm, name: e.target.value})}
+                  style={{
+                    width: '100%',
+                    borderColor: editNameError ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: editNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                  }} />
+                {editNameError && (
+                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>{editNameError}</p>
+                )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product</label>
@@ -280,11 +301,13 @@ export default function CampaignModals({
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" disabled={loading || !editCampaignForm.name.trim()}>
+                <button type="submit" className="btn-primary" disabled={loading || !!editNameError}>
                   {loading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
             </form>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -303,8 +326,10 @@ export default function CampaignModals({
               <input className="form-input" value={editForm.last_name} onChange={e => setEditForm({...editForm, last_name: e.target.value})} />
             </div>
             <div className="form-group">
-              <label>Phone</label>
-              <input className="form-input" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+              <label>Phone (10 digits)</label>
+              <input className="form-input" value={editForm.phone}
+                inputMode="numeric" maxLength={10} pattern="\d{10}"
+                onChange={e => setEditForm({...editForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10)})} />
             </div>
             <div className="form-group">
               <label>Source</label>
@@ -312,7 +337,10 @@ export default function CampaignModals({
             </div>
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
-              <button className="btn-primary" onClick={handleSaveEdit}>Save</button>
+              <button className="btn-primary" onClick={() => {
+                if (!/^\d{10}$/.test(editForm.phone || '')) { alert('Phone must be exactly 10 digits'); return; }
+                handleSaveEdit();
+              }}>Save</button>
             </div>
           </div>
         </div>

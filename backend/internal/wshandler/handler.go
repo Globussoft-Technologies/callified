@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/config"
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/prompt"
@@ -35,6 +37,7 @@ type Handler struct {
 	promptBuilder *prompt.Builder    // Phase 3C: replaces gRPC InitializeCall
 	recordingSvc  *recording.Service // Phase 4: replaces gRPC FinalizeCall
 	store         *rstore.Store
+	db            *db.DB        // for lead lookups when Redis pending-call info is sparse
 	provider      *llm.Provider // Phase 0: native Go LLM
 	ttsKeys       map[string]string
 	log           *zap.Logger
@@ -48,6 +51,7 @@ func New(
 	promptBuilder *prompt.Builder,
 	recordingSvc *recording.Service,
 	store *rstore.Store,
+	database *db.DB,
 	log *zap.Logger,
 ) *Handler {
 	var provider *llm.Provider
@@ -59,6 +63,7 @@ func New(
 		promptBuilder: promptBuilder,
 		recordingSvc:  recordingSvc,
 		store:         store,
+		db:            database,
 		provider:      provider,
 		ttsKeys: map[string]string{
 			"elevenlabs": cfg.ElevenLabsAPIKey,
@@ -86,8 +91,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
-	sess.LeadName = q.Get("lead_name")
-	sess.LeadPhone = q.Get("lead_phone")
+	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
+	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
+	// the lead label instead of the empty "()" we used to show.
+	sess.LeadName = firstNonEmpty(q.Get("name"), q.Get("lead_name"))
+	sess.LeadPhone = firstNonEmpty(q.Get("phone"), q.Get("lead_phone"))
 	sess.Interest = q.Get("interest")
 	if id := q.Get("lead_id"); id != "" {
 		fmt.Sscanf(id, "%d", &sess.LeadID)
@@ -122,6 +130,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.ActiveCalls.Dec()
 		metrics.CallDuration.Observe(time.Since(sess.CallStart).Seconds())
 	}()
+
+	// Web-sim path doesn't go through dial.Initiator, so the live-feed never
+	// gets a DIALING entry — operators only saw CONNECTED + COMPLETED with
+	// empty "()". Emit one here so the activity panel renders the same
+	// 3-event sequence (DIALING → CONNECTED → COMPLETED) as a real dial.
+	if sess.CampaignID > 0 && strings.HasPrefix(streamSid, "web_sim_") {
+		h.store.EmitCampaignEvent(ctx, sess.CampaignID, sess.LeadName, sess.LeadPhone,
+			"dialing", "via web-sim")
+	}
 
 	// --- Initialize call via gRPC (get system prompt + voice config) ---
 	if err := h.initializeCall(ctx, sess); err != nil {
@@ -275,27 +292,51 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {
-	// Extract stream_sid and call_sid from the "start" event
+	// Extract stream_sid and call_sid from the "start" event. Exotel sometimes
+	// sends snake_case (call_sid / stream_sid) and sometimes Twilio-style
+	// camelCase (callSid / streamSid) depending on the integration; read both
+	// so the Redis-pending-call lookup that hydrates lead name/phone never
+	// silently misses on field-name casing.
 	if startData, ok := event["start"].(map[string]interface{}); ok {
-		if sid, _ := startData["streamSid"].(string); sid != "" {
+		if sid := pickStr(startData, "streamSid", "stream_sid", "StreamSid"); sid != "" {
 			sess.StreamSid = sid
 			sess.UpdateStreamType()
 		}
-		if callSid, _ := startData["callSid"].(string); callSid != "" {
+		if callSid := pickStr(startData, "callSid", "call_sid", "CallSid"); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
-			// Redis lookup: override lead info with what Python dialer stored
+			// Redis lookup precedence:
+			//   1) under the carrier-issued call_sid (set by dial.Initiator)
+			//   2) under "phone:<E164>" (set by manual-call web-sim mode)
+			//   3) under "latest" (last-resort fallback)
 			info, ok := h.store.GetPendingCall(ctx, callSid)
 			if !ok {
-				// fallback: try "latest"
+				if phone := pickStr(startData, "from", "From", "to", "To"); phone != "" {
+					info, ok = h.store.GetPendingCall(ctx, "phone:"+phone)
+				}
+			}
+			if !ok {
 				info, ok = h.store.GetPendingCall(ctx, "latest")
 			}
 			if ok {
-				sess.LeadName = info.Name
-				sess.LeadPhone = info.Phone
-				sess.LeadID = info.LeadID
-				sess.Interest = info.Interest
-				sess.CampaignID = info.CampaignID
+				// Only overwrite when Redis has something — otherwise we wipe
+				// good values (e.g. set from query params on web-sim) with
+				// empty strings from a stale "latest" key.
+				if info.Name != "" {
+					sess.LeadName = info.Name
+				}
+				if info.Phone != "" {
+					sess.LeadPhone = info.Phone
+				}
+				if info.LeadID != 0 {
+					sess.LeadID = info.LeadID
+				}
+				if info.Interest != "" {
+					sess.Interest = info.Interest
+				}
+				if info.CampaignID != 0 {
+					sess.CampaignID = info.CampaignID
+				}
 				if info.TTSProvider != "" {
 					sess.TTSProvider = info.TTSProvider
 				}
@@ -305,8 +346,8 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			}
 		}
 	}
-	// Also accept top-level stream_sid
-	if sid, _ := event["stream_sid"].(string); sid != "" && sess.StreamSid == "" {
+	// Also accept top-level stream_sid (snake_case or camel)
+	if sid := pickStr(event, "stream_sid", "streamSid"); sid != "" && sess.StreamSid == "" {
 		sess.StreamSid = sid
 		sess.UpdateStreamType()
 	}
@@ -316,9 +357,77 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	// shows one entry per connected call (web-sim + real Exotel both
 	// send `start`, so both paths contribute to the live feed).
 	if sess.CampaignID > 0 {
-		h.store.EmitCampaignEvent(ctx, sess.CampaignID, sess.LeadName, sess.LeadPhone,
+		name, phone := h.leadLabel(ctx, sess)
+		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"connected", "audio stream opened")
 	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// pickStr returns the first non-empty string value found at any of the given
+// keys in m. Used to tolerate camelCase / snake_case / PascalCase variants
+// that Exotel and Twilio send for the same field.
+func pickStr(m map[string]interface{}, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// leadLabel returns the (name, phone) pair to display in live-feed events.
+// Falls back to a DB lookup when the session struct has empty values — this
+// happens when the Redis pending-call entry hasn't been written or doesn't
+// carry name/phone (e.g. some Exotel start events arrive before the dialer
+// publishes lead context). Without this fallback, CONNECTED and COMPLETED
+// events render as "() — COMPLETED" in the activity panel.
+func (h *Handler) leadLabel(ctx context.Context, sess *CallSession) (string, string) {
+	name, phone := sess.LeadName, sess.LeadPhone
+	if name != "" && phone != "" {
+		return name, phone
+	}
+	if h.db == nil {
+		return name, phone
+	}
+	// Try by lead_id first (cheapest — primary key).
+	if sess.LeadID != 0 {
+		if lead, err := h.db.GetLeadByID(sess.LeadID); err == nil && lead != nil {
+			if name == "" {
+				name = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+				sess.LeadName = name
+			}
+			if phone == "" {
+				phone = lead.Phone
+				sess.LeadPhone = phone
+			}
+			if name != "" && phone != "" {
+				return name, phone
+			}
+		}
+	}
+	// Last resort: lookup by phone. Covers the Exotel case where the carrier's
+	// call_sid didn't match the Redis key (stale TTL, race, or field-name
+	// mismatch) and we lost the lead_id, but the session still knows the
+	// phone number from the start event.
+	if phone != "" {
+		if lead, err := h.db.GetLeadByPhone(phone); err == nil && lead != nil && name == "" {
+			name = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+			sess.LeadName = name
+			if sess.LeadID == 0 {
+				sess.LeadID = lead.ID
+			}
+		}
+	}
+	return name, phone
 }
 
 func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface{}) {
@@ -404,7 +513,8 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 	// no-answer / etc.), so without it the panel stays empty during testing.
 	if sess.CampaignID > 0 {
 		durS := int(time.Since(sess.CallStart).Seconds())
-		h.store.EmitCampaignEvent(ctx, sess.CampaignID, sess.LeadName, sess.LeadPhone,
+		name, phone := h.leadLabel(ctx, sess)
+		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"completed", fmt.Sprintf("%ds call", durS))
 	}
 

@@ -15,6 +15,20 @@ import (
 	"github.com/globussoft/callified-backend/internal/llm"
 )
 
+// isValidPhone enforces exactly 10 digits, no other characters. Mirrors the
+// frontend constraint in the Quick Add / Edit Lead inputs.
+func isValidPhone(p string) bool {
+	if len(p) != 10 {
+		return false
+	}
+	for _, r := range p {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // ── GET /api/leads/sample-csv ─────────────────────────────────────────────────
 // Returns a downloadable CSV template showing the expected import format.
 
@@ -105,6 +119,10 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "first_name and phone required")
 		return
 	}
+	if !isValidPhone(req.Phone) {
+		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+		return
+	}
 	id, err := s.db.CreateLead(req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
@@ -159,6 +177,10 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 	var req leadUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if !isValidPhone(req.Phone) {
+		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
 		return
 	}
 	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)
@@ -291,6 +313,7 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []db.LeadImportRow
+	var skipped []string
 	get := func(record []string, i int) string {
 		if i < 0 || i >= len(record) {
 			return ""
@@ -298,11 +321,16 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 		return strings.TrimSpace(record[i])
 	}
 
-	for _, rec := range records[1:] {
+	for rowIdx, rec := range records[1:] {
+		phone := get(rec, iPhone)
+		if !isValidPhone(phone) {
+			skipped = append(skipped, fmt.Sprintf("row %d: phone %q not 10 digits", rowIdx+2, phone))
+			continue
+		}
 		rows = append(rows, db.LeadImportRow{
 			FirstName: get(rec, iFirst),
 			LastName:  get(rec, iLast),
-			Phone:     get(rec, iPhone),
+			Phone:     phone,
 			Source:    get(rec, iSource),
 		})
 	}
@@ -310,7 +338,7 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	imported, errs := s.db.BulkCreateLeads(rows, ac.OrgID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported": imported,
-		"errors":   errs,
+		"errors":   append(errs, skipped...),
 	})
 }
 

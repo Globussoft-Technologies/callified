@@ -141,11 +141,11 @@ export default function App() {
             fetchOrgProducts={fetchOrgProducts}
           />
         } />
-        <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} />} />
+        <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} apiFetch={apiFetch} />} />
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/billing" element={<BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/dnd" element={<DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
         <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>

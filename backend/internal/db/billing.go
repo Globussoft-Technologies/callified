@@ -244,6 +244,22 @@ func (d *DB) GetPaymentsByOrg(orgID int64) ([]BillingPayment, error) {
 	return list, rows.Err()
 }
 
+// GetBillingPlanByID fetches a single plan. Returns nil when not found.
+func (d *DB) GetBillingPlanByID(id int64) (*BillingPlan, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, name, price_paise, minutes_included, extra_minute_paise,
+		       COALESCE(billing_interval,'monthly'), COALESCE(trial_days,0),
+		       COALESCE(features,'[]'), COALESCE(is_active,1)
+		FROM billing_plans WHERE id=?`, id)
+	var p BillingPlan
+	if err := row.Scan(&p.ID, &p.Name, &p.PricePaise, &p.MinutesIncluded,
+		&p.ExtraMinutePaise, &p.BillingInterval, &p.TrialDays,
+		&p.Features, &p.IsActive); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
 // CreateInvoice inserts an invoice row. Returns new ID.
 func (d *DB) CreateInvoice(orgID int64, invoiceNumber, paymentID, currency string, amount float64) (int64, error) {
 	amountPaise := int64(amount * 100)

@@ -100,20 +100,34 @@ export default function KnowledgeBase({ apiUrl }) {
               <p style={{color: '#64748b', textAlign: 'center', marginTop: '3rem'}}>No documents in the vector database yet.</p>
             ) : (
               <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px'}}>
-                {files.map((f, i) => (
+                {files.map((f, i) => {
+                  // /api/knowledge/{id}/download is auth-gated. <a target=_blank>
+                  // can't send Authorization headers, so append the JWT as a
+                  // ?token= query param — the backend's bearerToken() helper
+                  // already accepts this fallback path.
+                  const token = localStorage.getItem('authToken');
+                  const downloadURL = `${apiUrl}/knowledge/${f.id}/download?token=${encodeURIComponent(token || '')}`;
+                  return (
                   <li key={i} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
                     <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                       <span style={{fontSize: '1.2rem'}}>📄</span>
                       <div>
-                        <div style={{color: '#cbd5e1', fontWeight: 500}}>{f.filename}</div>
+                        <a href={downloadURL} target="_blank" rel="noopener noreferrer"
+                          style={{color: '#93c5fd', fontWeight: 500, textDecoration: 'none', cursor: 'pointer'}}
+                          onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                          onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                          title="Open document">
+                          {f.filename}
+                        </a>
                         <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>
                           {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(f.id, f.filename)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}}>🗑️</button>
+                    <button onClick={() => handleDelete(f.id, f.filename)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}} title="Delete">🗑️</button>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </div>

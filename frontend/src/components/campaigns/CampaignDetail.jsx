@@ -342,13 +342,16 @@ export default function CampaignDetail({
         <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600}}>➕ Quick Add:</span>
         <input className="form-input" placeholder="Name" id="qa-name"
           style={{width: '120px', height: '32px', fontSize: '0.8rem', padding: '4px 8px'}} />
-        <input className="form-input" placeholder="Phone" id="qa-phone"
-          style={{width: '130px', height: '32px', fontSize: '0.8rem', padding: '4px 8px'}} />
+        <input className="form-input" placeholder="Phone (10 digits)" id="qa-phone"
+          inputMode="numeric" maxLength={10} pattern="\d{10}"
+          onInput={e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10); }}
+          style={{width: '150px', height: '32px', fontSize: '0.8rem', padding: '4px 8px'}} />
         <button className="btn-primary" style={{height: '32px', fontSize: '0.8rem', padding: '4px 12px'}}
           onClick={async () => {
             const name = document.getElementById('qa-name').value.trim();
             const phone = document.getElementById('qa-phone').value.trim();
             if (!name || !phone) { alert('Name and phone required'); return; }
+            if (!/^\d{10}$/.test(phone)) { alert('Phone must be exactly 10 digits'); return; }
             try {
               const res = await apiFetch(`${API_URL}/leads`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -521,9 +524,28 @@ export default function CampaignDetail({
                       {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
                     </td>
                     <td>
-                      {call.recording_url ? (
-                        <audio controls style={{height: '28px', width: '150px'}} src={call.recording_url} />
-                      ) : (
+                      {call.recording_url ? (() => {
+                        // /api/recordings/* is auth-gated on the Go backend; <audio>
+                        // cannot send Authorization headers, so append the JWT as a
+                        // ?token= query param. External URLs are left untouched.
+                        let src = call.recording_url;
+                        if (src.startsWith('/api/recordings/')) {
+                          const token = localStorage.getItem('authToken');
+                          if (token) {
+                            const sep = src.includes('?') ? '&' : '?';
+                            src = `${src}${sep}token=${encodeURIComponent(token)}`;
+                          }
+                        }
+                        return (
+                          <audio
+                            controls
+                            preload="none"
+                            src={src}
+                            className="call-log-audio"
+                            style={{height: '36px', width: '260px'}}
+                          />
+                        );
+                      })() : (
                         <span style={{color: '#64748b', fontSize: '0.8rem'}}>—</span>
                       )}
                     </td>
@@ -864,8 +886,14 @@ export default function CampaignDetail({
                   if (!scheduleAt) return;
                   setScheduleSaving(true);
                   try {
-                    // "2026-04-24T21:00" → "2026-04-24 21:00:00"
-                    const serverTime = scheduleAt.replace('T', ' ') + ':00';
+                    // <input type="datetime-local"> gives a naive local-time
+                    // string ("2026-04-25T10:20"). new Date() interprets it in
+                    // the browser's local TZ, then toISOString() emits UTC
+                    // RFC3339 — which the backend parses as the first branch.
+                    // Without this, the value would be stored as UTC verbatim
+                    // and the scheduler (which compares against UTC NOW())
+                    // would not pick it up until the local time matched UTC.
+                    const serverTime = new Date(scheduleAt).toISOString();
                     const res = await apiFetch(`${API_URL}/scheduled-calls`, {
                       method: 'POST',
                       headers: {'Content-Type': 'application/json'},
