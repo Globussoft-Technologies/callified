@@ -54,6 +54,7 @@ func main() {
 	voice := flag.String("voice", "", "tts voice id (optional)")
 	lang := flag.String("lang", "en", "tts language")
 	duration := flag.Duration("duration", 8*time.Second, "how long to listen before closing")
+	verbose := flag.Bool("verbose", false, "print full frame payloads (instead of one-line summaries)")
 	flag.Parse()
 
 	// Build the query string the same way the browser does.
@@ -131,11 +132,22 @@ func main() {
 		switch mt {
 		case websocket.TextMessage:
 			textCount++
-			summary := summarizeText(data)
-			fmt.Printf("← text     %s\n", summary)
+			if *verbose {
+				// Pretty-print structured frames; replace the base64 audio
+				// payload with a placeholder so the terminal isn't flooded
+				// with kilobytes of opaque text per frame.
+				fmt.Printf("← text     %s\n", redactPayload(data))
+			} else {
+				fmt.Printf("← text     %s\n", summarizeText(data))
+			}
 		case websocket.BinaryMessage:
 			binCount++
-			fmt.Printf("← binary   %d bytes (audio)\n", len(data))
+			if *verbose {
+				fmt.Printf("← binary   %d bytes (audio, first 32 hex): %x...\n",
+					len(data), data[:min(32, len(data))])
+			} else {
+				fmt.Printf("← binary   %d bytes (audio)\n", len(data))
+			}
 		}
 	}
 done:
@@ -182,4 +194,30 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// redactPayload prints the full frame as JSON but replaces any base64-encoded
+// "payload" field (which is per-frame TTS audio, often kilobytes long) with
+// a "<<N bytes>>" placeholder. Keeps verbose output readable instead of
+// burying everything else under audio.
+func redactPayload(buf []byte) string {
+	var raw map[string]any
+	if err := json.Unmarshal(buf, &raw); err != nil {
+		// Not JSON — print as-is, truncated.
+		return truncate(string(buf), 200)
+	}
+	// Top-level "media.payload" (Exotel/Twilio shape) and top-level "payload".
+	if media, ok := raw["media"].(map[string]any); ok {
+		if p, ok := media["payload"].(string); ok {
+			media["payload"] = fmt.Sprintf("<<%d bytes b64>>", len(p))
+		}
+	}
+	if p, ok := raw["payload"].(string); ok {
+		raw["payload"] = fmt.Sprintf("<<%d bytes b64>>", len(p))
+	}
+	out, err := json.Marshal(raw)
+	if err != nil {
+		return truncate(string(buf), 200)
+	}
+	return string(out)
 }

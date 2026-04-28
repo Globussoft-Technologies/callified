@@ -442,6 +442,92 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(transcripts))
 }
 
+// ── GET /api/leads/by-phone/{phone}/calls ─────────────────────────────────────
+//
+// Returns all completed calls for the lead with the given phone — combining
+// the audio recording URL and the interaction transcript turns into one row
+// per call. Convenience for callers that have only the phone (e.g. external
+// integrations, the wsprobe tool) and want everything about a lead's history
+// in one fetch instead of search → get → transcripts → recording.
+//
+// Response shape:
+//
+//	[
+//	  {
+//	    "id":            <transcript id>,
+//	    "lead_id":       <id>,
+//	    "lead_name":     "Harsha",
+//	    "phone":         "9177007429",
+//	    "duration_s":    56.78,
+//	    "tts_language":  "en",
+//	    "created_at":    "2026-04-28 10:01:08",
+//	    "recording_url": "/api/recordings/web_sim_..._.wav",
+//	    "transcript":    [ {"role":"agent","text":"..."}, {"role":"user","text":"..."} ]
+//	  },
+//	  ...
+//	]
+//
+// Org-scoped via GetLeadByPhoneOrg so an Agent in org A can't query org B's
+// leads by guessing phone numbers. Returns an empty array (200 OK) when the
+// phone matches no lead in the caller's org — same shape as a lead with no
+// calls — so consumers don't need a 404 branch.
+func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
+	phone := strings.TrimSpace(r.PathValue("phone"))
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+
+	ac := getAuth(r)
+	lead, err := s.db.GetLeadByPhoneOrg(phone, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getLeadCallsByPhone: lookup", "err", err, "phone", phone)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if lead == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	transcripts, err := s.db.GetTranscriptsByLead(lead.ID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getLeadCallsByPhone: transcripts", "err", err, "lead_id", lead.ID)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+	out := make([]map[string]any, 0, len(transcripts))
+	for _, t := range transcripts {
+		// Decode the transcript JSON ([{role,text}, …]) into a structured
+		// array so consumers don't have to re-parse a string-of-JSON. Falls
+		// back to an empty array on malformed rows so a single corrupt
+		// transcript can't blank out the whole response.
+		var turns []map[string]any
+		if len(t.Transcript) > 0 {
+			if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+				turns = []map[string]any{}
+			}
+		}
+		if turns == nil {
+			turns = []map[string]any{}
+		}
+		out = append(out, map[string]any{
+			"id":            t.ID,
+			"lead_id":       t.LeadID,
+			"lead_name":     leadName,
+			"phone":         lead.Phone,
+			"duration_s":    t.CallDurationS,
+			"tts_language":  t.TTSLanguage,
+			"created_at":    t.CreatedAt,
+			"recording_url": t.RecordingURL,
+			"transcript":    turns,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // GET /api/leads/{id}/draft-email — Phase 4
 // Asks Gemini to draft a personalised follow-up email for the lead.
 func (s *Server) draftLeadEmail(w http.ResponseWriter, r *http.Request) {

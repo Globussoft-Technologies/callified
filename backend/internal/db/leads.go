@@ -106,6 +106,28 @@ func (d *DB) GetLeadByPhone(phone string) (*Lead, error) {
 	return l, err
 }
 
+// GetLeadByPhoneOrg fetches one lead by phone within a single org. The plain
+// GetLeadByPhone is fine as an internal lookup (used by leadLabel for any
+// lead in any org), but anything driven by an authenticated user MUST scope
+// to their org_id — otherwise a non-Admin agent could enumerate other tenants'
+// leads by phone. orgID == 0 falls back to global match for backward compat
+// (legacy single-tenant deployments where leads.org_id is NULL).
+func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64) (*Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads WHERE phone = ?`
+	args := []any{phone}
+	if orgID > 0 {
+		q += ` AND (org_id = ? OR org_id IS NULL)`
+		args = append(args, orgID)
+	}
+	q += ` LIMIT 1`
+	row := d.pool.QueryRow(q, args...)
+	l, err := scanLead(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return l, err
+}
+
 // CreateLead inserts a new lead. Returns the new ID.
 func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(

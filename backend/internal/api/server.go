@@ -118,6 +118,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/leads/{id}/documents", auth(s.uploadLeadDocument))
 	mux.HandleFunc("GET /api/leads/{id}/documents", auth(s.getLeadDocuments))
 	mux.HandleFunc("GET /api/leads/{id}/transcripts", auth(s.getLeadTranscripts))
+	// Convenience lookup by phone — returns audio + interaction transcripts
+	// in one fetch. Org-scoped at the DB layer so cross-tenant leakage is
+	// impossible. Useful for external integrations that only have the phone.
+	mux.HandleFunc("GET /api/leads/by-phone/{phone}/calls", auth(s.getLeadCallsByPhone))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
 	// Reads stay open to any authenticated user (CRM agents need to see the
