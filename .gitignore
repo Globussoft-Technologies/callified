@@ -67,6 +67,9 @@ recordings/
 *.webm
 *.mp3
 
+# Frontend build output (generated — deploy via rsync, not git)
+frontend/dist/
+
 # Deploy artifacts
 deploy.zip
 deploy.tar.gz
@@ -75,6 +78,12 @@ deploy.tar.gz
 DEPLOYMENT.md
 server-missing-files.md
 # PLAN-crm-integration.md
+# Local SQLite databases
+*.db
+
+# Logs
+*.log
+
 # Compiled Go binaries (built locally and on testgo, not source)
 backend/bin/
 
