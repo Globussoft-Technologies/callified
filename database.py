@@ -398,6 +398,25 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_invites (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            token VARCHAR(255) NOT NULL UNIQUE,
+            org_id INT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            full_name VARCHAR(255) NOT NULL DEFAULT '',
+            role VARCHAR(32) NOT NULL DEFAULT 'Agent',
+            invited_by_user_id INT,
+            expires_at DATETIME NOT NULL,
+            accepted_at DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+            FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
+            INDEX idx_team_invites_org (org_id),
+            INDEX idx_team_invites_email (email)
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS webhooks (
             id INT AUTO_INCREMENT PRIMARY KEY,
             org_id INT NOT NULL,

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import AcceptInvitePage from './pages/AcceptInvitePage';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -73,6 +74,9 @@ export default function App() {
   const location = useLocation();
   if (location.pathname === '/reset-password') {
     return <ResetPasswordPage />;
+  }
+  if (location.pathname === '/accept-invite') {
+    return <AcceptInvitePage />;
   }
 
   // ─── AUTH PAGES (after all hooks) ───

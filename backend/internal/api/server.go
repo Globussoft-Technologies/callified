@@ -225,8 +225,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Team management (invite, role change, delete) is strictly Admin.
 	mux.HandleFunc("GET /api/team", adminAuth(s.listTeam))
 	mux.HandleFunc("POST /api/team/invite", adminAuth(s.inviteTeamMember))
+	mux.HandleFunc("GET /api/team/invites", adminAuth(s.listPendingInvites))
+	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
+
+	// Public invite endpoints — no auth. The token in the URL path is the
+	// authorization. Issue #55: invitee sets their own password.
+	mux.HandleFunc("GET /api/invite/{token}", s.getInvite)
+	mux.HandleFunc("POST /api/invite/{token}/accept", s.acceptInvite)
 
 	// ── API keys ──────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/api-keys", adminAuth(s.listAPIKeys))

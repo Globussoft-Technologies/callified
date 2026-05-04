@@ -64,6 +64,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [campaigns, setCampaigns] = useState([]);
+  const [confirmClear, setConfirmClear] = useState(false);
   const verboseRef = useRef(null);
   const activityEsRef = useRef(null);
   const verboseEsRef = useRef(null);
@@ -194,7 +195,6 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   useEffect(() => { setPage(1); }, [statusFilter, campaignFilter, dateFrom, dateTo, search]);
 
   const handleClear = () => {
-    if (!window.confirm('Clear all visible logs from this view? Streamed events will continue to arrive after clearing.')) return;
     setActivityLogs([]);
     if (verboseRef.current) verboseRef.current.innerHTML = '';
   };
@@ -232,11 +232,25 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
             {paused ? '⏸ Paused' : '▶ Live'}
           </button>
 
-          <button onClick={handleClear}
-            style={{padding: '6px 12px', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.2)',
-              background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: 'pointer', fontSize: '0.8rem'}}>
-            🗑️ Clear
-          </button>
+          {confirmClear ? (
+            <div style={{display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)'}}>
+              <span style={{color: '#fbbf24', fontSize: '0.75rem'}}>Clear logs?</span>
+              <button onClick={() => { setConfirmClear(false); handleClear(); }}
+                style={{background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)', color: '#ef4444', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
+                Confirm
+              </button>
+              <button onClick={() => setConfirmClear(false)}
+                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setConfirmClear(true)}
+              style={{padding: '6px 12px', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.2)',
+                background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: 'pointer', fontSize: '0.8rem'}}>
+              🗑️ Clear
+            </button>
+          )}
         </div>
       </div>
 

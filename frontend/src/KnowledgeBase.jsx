@@ -6,6 +6,7 @@ export default function KnowledgeBase({ apiUrl }) {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const fileInputRef = useRef(null);
 
   const fetchFiles = async () => {
@@ -60,12 +61,11 @@ export default function KnowledgeBase({ apiUrl }) {
   };
 
   const handleDelete = async (fileId, filename) => {
-    if (!window.confirm(`Delete ${filename} from the Knowledge Base?`)) return;
     try {
       const authToken = localStorage.getItem('authToken');
-      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, { 
+      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` } 
+        headers: { 'Authorization': `Bearer ${authToken}` }
       });
       fetchFiles();
     } catch(e) {}
@@ -135,7 +135,21 @@ export default function KnowledgeBase({ apiUrl }) {
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(f.id, f.filename)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}} title="Delete">🗑️</button>
+                    {confirmDeleteId === f.id ? (
+                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                        <span style={{color: '#fbbf24', fontSize: '0.78rem'}}>Delete?</span>
+                        <button onClick={() => { setConfirmDeleteId(null); handleDelete(f.id, f.filename); }}
+                          style={{background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)', color: '#ef4444', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
+                          Confirm
+                        </button>
+                        <button onClick={() => setConfirmDeleteId(null)}
+                          style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setConfirmDeleteId(f.id)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}} title="Delete">🗑️</button>
+                    )}
                   </li>
                   );
                 })}

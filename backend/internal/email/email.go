@@ -119,6 +119,22 @@ func (s *Service) SendAppointmentConfirmation(to, leadName, appointmentDate, age
 	return s.Send(to, "Your Appointment is Confirmed", body)
 }
 
+// SendTeamInvite sends the email-link invite for a new team member. The
+// recipient clicks the link and sets their own password — the inviter never
+// sees or chooses the credential. Token TTL is enforced on the link target,
+// not the email.
+func (s *Service) SendTeamInvite(to, name, inviterName, orgName, link string, hours int) error {
+	body := renderTemplate(teamInviteTmpl, map[string]any{
+		"Name":        name,
+		"InviterName": inviterName,
+		"OrgName":     orgName,
+		"Link":        link,
+		"Hours":       hours,
+	})
+	subject := fmt.Sprintf("You're invited to join %s on Callified AI", orgName)
+	return s.Send(to, subject, body)
+}
+
 // SendCampaignSummary sends a campaign completion summary.
 func (s *Service) SendCampaignSummary(to, campaignName string, totalCalls, connected, appointments int) error {
 	body := renderTemplate(campaignSummaryTmpl, map[string]any{
@@ -180,6 +196,15 @@ const appointmentTmpl = `<!DOCTYPE html><html><body style="font-family:sans-seri
 <p>Hi {{.LeadName}}, your appointment has been scheduled.</p>
 <p><b>Date/Time:</b> {{.AppointmentDate}}</p>
 <p><b>With:</b> {{.AgentName}}</p>
+</body></html>`
+
+const teamInviteTmpl = `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;">
+<h2>You're invited to {{.OrgName}}</h2>
+<p>Hi {{.Name}},</p>
+<p>{{.InviterName}} has invited you to join <b>{{.OrgName}}</b> on Callified AI.</p>
+<p>Click the button below to set your password and activate your account.</p>
+<p><a href="{{.Link}}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">Accept Invite</a></p>
+<p style="color:#888;font-size:13px;margin-top:24px;">This invite expires in {{.Hours}} hours. If you weren't expecting this email you can safely ignore it.</p>
 </body></html>`
 
 const campaignSummaryTmpl = `<!DOCTYPE html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;">

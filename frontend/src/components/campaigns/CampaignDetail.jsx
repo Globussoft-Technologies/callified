@@ -141,6 +141,36 @@ export default function CampaignDetail({
   const [qaPhoneErr, setQaPhoneErr] = useState('');
   const [qaApiErr, setQaApiErr] = useState('');
 
+  // Lead IDs that came back as DND-blocked from the most recent Dial click.
+  // The badge surfaces only after the user actually attempts to dial — we
+  // don't pre-fetch the DND list on mount so admin and non-admin views look
+  // the same until a dial happens.
+  const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
+  const handleDialClick = async (lead) => {
+    onCampaignDial(lead, selectedCampaign.id);
+    try {
+      const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(lead.phone || '')}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.is_dnd) return;
+      // Flash the badge briefly so the user sees why the dial isn't going
+      // through, then auto-dismiss after 2s.
+      setDndBlockedLeadIds(prev => {
+        const next = new Set(prev);
+        next.add(lead.id);
+        return next;
+      });
+      setTimeout(() => {
+        setDndBlockedLeadIds(prev => {
+          if (!prev.has(lead.id)) return prev;
+          const next = new Set(prev);
+          next.delete(lead.id);
+          return next;
+        });
+      }, 2000);
+    } catch (e) { /* network/permission — silently skip badge */ }
+  };
+
   const fetchInsights = async () => {
     setInsightsLoading(true);
     setInsightsError('');
@@ -187,6 +217,7 @@ export default function CampaignDetail({
     };
     fetchBilling();
   }, []);
+
 
   const fetchRetries = async () => {
     setRetriesLoading(true);
@@ -856,7 +887,7 @@ export default function CampaignDetail({
                       ✏️ Edit
                     </button>
                     <button className="btn-call"
-                      onClick={() => onCampaignDial(lead, selectedCampaign.id)}
+                      onClick={() => handleDialClick(lead)}
                       disabled={dialingId === lead.id || webCallActive === lead.id}
                       style={{
                         fontSize: '0.75rem', padding: '4px 10px',
@@ -878,6 +909,15 @@ export default function CampaignDetail({
                       }}>
                       {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
                     </button>
+                    {dndBlockedLeadIds.has(lead.id) && (
+                      <span title="This number is on the DND list — outbound dials are blocked"
+                        style={{fontSize: '0.75rem', padding: '4px 10px', borderRadius: '6px',
+                          background: 'rgba(239,68,68,0.12)', color: '#fca5a5',
+                          border: '1px solid rgba(239,68,68,0.35)', fontWeight: 600,
+                          display: 'inline-flex', alignItems: 'center', gap: '4px'}}>
+                        🚫 DND — number blocked
+                      </span>
+                    )}
                     <button className="btn-call"
                       onClick={() => handleViewTranscripts(lead)}
                       style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
