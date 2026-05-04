@@ -1204,6 +1204,19 @@ def api_get_voice_settings(org_id: int, current_user: dict = Depends(get_current
 @api_router.put("/api/organizations/{org_id}/voice-settings")
 def api_save_voice_settings(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     save_org_voice_settings(org_id, payload.get("tts_provider", "elevenlabs"), payload.get("tts_voice_id", ""), payload.get("tts_language", "hi"))
+    # Clear per-lead voice cache for all leads in this org so next call uses the new settings
+    try:
+        import redis_store as _rs
+        from database import get_conn as _gc
+        _conn = _gc()
+        _cur = _conn.cursor()
+        _cur.execute("SELECT id FROM leads WHERE org_id = %s", (org_id,))
+        _lead_ids = [r["id"] for r in _cur.fetchall()]
+        _conn.close()
+        for _lid in _lead_ids:
+            _rs.delete_raw(f"lead_voice:{_lid}")
+    except Exception:
+        pass
     return {"status": "ok"}
 
 # --- Recordings ---

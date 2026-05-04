@@ -155,6 +155,12 @@ def set_raw(key: str, value: str, ex: int | None = None):
             r.set(key, value)
 
 
+def delete_raw(key: str):
+    r = _get_client()
+    if r:
+        r.delete(key)
+
+
 # ─── Campaign Dial Lock ──────────────────────────────────────────────────────
 # Prevents the retry worker from auto-dialing leads while a manual dial session
 # is active for a campaign, avoiding the "per-row Dial triggers dial-all" effect.
