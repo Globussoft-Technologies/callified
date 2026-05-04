@@ -320,10 +320,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/billing/invoices/{number}/download", adminAuth(s.downloadInvoice))
 	mux.HandleFunc("POST /api/billing/webhook", s.razorpayWebhook) // public, HMAC-verified
 
-	// ── WhatsApp config modal (single org config) ─────────────────────────────
-	mux.HandleFunc("GET /api/wa/config", auth(s.getWAConfig))
-	mux.HandleFunc("POST /api/wa/config", auth(s.saveWAConfig))
-
 	// ── WhatsApp Channels & Conversations (Phase 3C) ──────────────────────────
 	// WhatsApp tab is Admin-only in the nav; all of these manage org-wide
 	// channels, credentials, and outbound message sending.

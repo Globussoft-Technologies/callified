@@ -64,6 +64,13 @@ func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	s.logger.Info("exotelXML: Exotel fetched ExoML",
+		zap.String("lead_id", q.Get("lead_id")),
+		zap.String("campaign_id", q.Get("campaign_id")),
+		zap.String("phone", q.Get("phone")),
+		zap.String("remote_addr", r.RemoteAddr),
+		zap.String("user_agent", r.Header.Get("User-Agent")),
+	)
 	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = fmt.Sprintf("%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%s&campaign_id=%s&org_id=%s",
@@ -75,6 +82,7 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(q.Get("campaign_id")),
 		url.QueryEscape(q.Get("org_id")),
 	)
+	s.logger.Info("exotelXML: serving ExoML with stream URL", zap.String("ws_url", wsURL))
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>

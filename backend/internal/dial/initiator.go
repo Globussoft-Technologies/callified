@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 
 	"go.uber.org/zap"
 
@@ -109,21 +108,15 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
 		callSid, err = i.twilio.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
 	default: // exotel
-		// Point Exotel at our own ExoML endpoint with all per-call params so
-		// the WS handler greets the right person. Without this, Exotel hits
-		// the static dashboard app (no params) and every call ends up named
-		// after whichever lead was queued last.
-		exomlURL := fmt.Sprintf(
-			"%s/webhook/exotel?name=%s&interest=%s&phone=%s&lead_id=%d&campaign_id=%d&org_id=%d",
-			i.cfg.PublicServerURL,
-			url.QueryEscape(data.LeadName),
-			url.QueryEscape(data.Interest),
-			url.QueryEscape(data.LeadPhone),
-			data.LeadID, data.CampaignID, data.OrgID,
-		)
+		// Exotel ignores arbitrary ExoML URLs in the Url parameter — only
+		// http://my.exotel.com/exoml/start/{appID} works. The dashboard app
+		// at appID has a Passthru applet pointing to /webhook/exotel which
+		// returns the WebSocket-streaming ExoML when the lead answers.
+		// Per-call context (name, lead_id, phone) is hydrated from Redis by
+		// the WS handler, not from URL params.
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, exomlURL, statusURL)
+		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, "", statusURL)
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))

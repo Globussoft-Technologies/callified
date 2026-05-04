@@ -33,24 +33,28 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *Exot
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
-// exomlURL is the URL Exotel fetches to get instructions (ExoML XML); when
-// empty, falls back to the legacy Exotel-hosted app at http://my.exotel.com/exoml/start/{appID}.
-// Pointing exomlURL at our own /webhook/exotel lets us forward per-call
-// query params (lead name, phone, lead_id, …) into the WebSocket URL — without
-// it, every call lands on /media-stream with no name and the WS handler is
-// forced to guess from a racy Redis "latest" entry.
+// exomlURL is ignored — Exotel rejects arbitrary URLs in the Url field; only
+// the Exotel-hosted app URL (http://my.exotel.com/exoml/start/{appID}) works.
+// The dashboard app referenced by appID must have a Passthru applet pointing
+// at {PUBLIC_SERVER_URL}/webhook/exotel — that's what triggers our handler to
+// return the WebSocket-streaming ExoML when the lead answers.
 // callbackURL receives status events (answered, completed, etc.).
 //
-// Do NOT send "To" in app-based flow — Exotel rejects the combination of
-// Url + To with 400 Bad/missing parameters (code 34001).
+// Do NOT send "To" in this flow — Exotel rejects Url + To with 400
+// Bad/missing parameters (code 34001).
+// CallType=trans matches the working Python implementation; without it the
+// dashboard app's Passthru applet is never invoked and the call drops on answer.
 func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
 
-	if exomlURL == "" {
-		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
-	}
+	// Always use the Exotel-hosted app URL. Custom URLs (even on our own
+	// domain) are silently rejected — the call rings, the lead picks up,
+	// then drops because Exotel never fetched ExoML. Per-call context
+	// (lead_id, name, phone) is hydrated by wshandler from Redis instead
+	// of being passed through this URL.
+	exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
 
 	phone := ExotelPhone(toPhone)
 	form := url.Values{}
@@ -76,6 +80,9 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+
+	fmt.Printf("[exotel] InitiateCall request: From=%s CallerId=%s Url=%s CallType=trans\n", phone, e.callerID, exomlURL)
+	fmt.Printf("[exotel] InitiateCall response status=%d body=%s\n", resp.StatusCode, string(body))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("exotel: status %d: %s", resp.StatusCode, string(body))
