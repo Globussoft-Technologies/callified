@@ -61,6 +61,59 @@ func (d *DB) GetRetriesByCampaign(campaignID int64) ([]Retry, error) {
 	return scanRetries(rows)
 }
 
+// RetryWithLead enriches a Retry row with the lead's name and phone (joined
+// from leads) and exposes the row using the field names the Retries tab
+// renders — `attempt`, `retry_time`, `first_name`, `last_name`, `phone`.
+// Issue #77 — the tab fell back to "no retries" forever because there was
+// no enriched read endpoint at all (route was unregistered → 404).
+type RetryWithLead struct {
+	ID            int64  `json:"id"`
+	LeadID        int64  `json:"lead_id"`
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	Phone         string `json:"phone"`
+	CampaignID    int64  `json:"campaign_id"`
+	OrgID         int64  `json:"org_id"`
+	Attempt       int    `json:"attempt"`
+	MaxAttempts   int    `json:"max_attempts"`
+	Status        string `json:"status"`
+	RetryTime     string `json:"retry_time"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// GetRetriesByCampaignWithLead returns retries joined to leads so the UI can
+// render Lead Name + Phone without a second fetch. Drops the org filter
+// implicit (campaign_id alone scopes it because campaigns are org-scoped).
+func (d *DB) GetRetriesByCampaignWithLead(campaignID int64) ([]RetryWithLead, error) {
+	rows, err := d.pool.Query(`
+		SELECT r.id, r.lead_id,
+		       COALESCE(l.first_name,''), COALESCE(l.last_name,''), COALESCE(l.phone,''),
+		       COALESCE(r.campaign_id,0), COALESCE(r.org_id,0),
+		       COALESCE(r.attempts,0), COALESCE(r.max_attempts,3),
+		       COALESCE(r.status,'pending'),
+		       DATE_FORMAT(r.next_attempt_at,'%Y-%m-%d %H:%i:%s'),
+		       DATE_FORMAT(r.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_retries r
+		LEFT JOIN leads l ON l.id = r.lead_id
+		WHERE r.campaign_id=?
+		ORDER BY r.id DESC`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []RetryWithLead
+	for rows.Next() {
+		var v RetryWithLead
+		if err := rows.Scan(&v.ID, &v.LeadID, &v.FirstName, &v.LastName, &v.Phone,
+			&v.CampaignID, &v.OrgID, &v.Attempt, &v.MaxAttempts, &v.Status,
+			&v.RetryTime, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, v)
+	}
+	return list, rows.Err()
+}
+
 // UpdateRetryStatus updates status for a retry (completed/exhausted/cancelled).
 func (d *DB) UpdateRetryStatus(id int64, status string) error {
 	_, err := d.pool.Exec(

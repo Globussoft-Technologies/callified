@@ -293,7 +293,19 @@ func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.UpdateLeadNote(id, body.Note); err != nil {
+	// Reject empty/whitespace-only notes. The Quick Note form submitted blank
+	// notes silently before, which polluted the lead history with empty
+	// rows. Issue #70.
+	trimmed := strings.TrimSpace(body.Note)
+	if trimmed == "" {
+		writeError(w, http.StatusBadRequest, "note cannot be empty")
+		return
+	}
+	if len(trimmed) > 5000 {
+		writeError(w, http.StatusBadRequest, "note is too long (max 5000 characters)")
+		return
+	}
+	if err := s.db.UpdateLeadNote(id, trimmed); err != nil {
 		s.logger.Sugar().Errorw("updateLeadNote", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

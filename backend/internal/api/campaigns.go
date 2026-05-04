@@ -428,6 +428,26 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, emptyJSON(reviews))
 }
 
+// ── GET /api/campaigns/{id}/retries ───────────────────────────────────────────
+// Returns retries enriched with the lead's first_name/last_name/phone so the
+// Retries tab renders without a second fetch. The route was missing entirely
+// before — the tab silently fell back to its empty state. Issue #77.
+
+func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	retries, err := s.db.GetRetriesByCampaignWithLead(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(retries))
+}
+
 // ── GET /api/campaigns/{id}/call-insights ─────────────────────────────────────
 // Aggregates call_reviews rows for a campaign into the summary cards +
 // improvement/failure lists the Insights tab renders. Was missing entirely

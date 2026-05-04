@@ -179,6 +179,17 @@ func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
+	// Cap the system prompt length. The textarea is unbounded in the UI and
+	// the LLM's context window has a limit; longer prompts silently truncate
+	// or burn tokens on every call. 8000 chars is comfortably under any
+	// modern context window while leaving room for product knowledge,
+	// pronunciation, and the lead context that wraps it. Issue #62.
+	const maxPromptLen = 8000
+	if n := len(body.CustomPrompt); n > maxPromptLen {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("custom_prompt is %d characters; max is %d", n, maxPromptLen))
+		return
+	}
 	if err := s.db.SaveOrgSystemPrompt(id, body.CustomPrompt); err != nil {
 		s.logger.Sugar().Errorw("saveOrgSystemPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

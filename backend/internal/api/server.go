@@ -188,6 +188,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Campaign reviews ──────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", auth(s.getCampaignCallReviews))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-insights", auth(s.getCampaignCallInsights))
+	mux.HandleFunc("GET /api/campaigns/{id}/retries", auth(s.getCampaignRetries))
 
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))

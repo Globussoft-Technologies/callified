@@ -44,6 +44,14 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid scheduled_at — use RFC3339 or YYYY-MM-DD HH:MM:SS")
 		return
 	}
+	// Reject past dates. The frontend HTML5 input has min=now but the React
+	// submit handler used to fire anyway, so the backend would happily accept
+	// e.g. 1900-01-01 and persist a row that the worker never picks up. Issue #69.
+	// 1-minute slack absorbs clock skew between user/server.
+	if scheduledAt.Before(time.Now().Add(-1 * time.Minute)) {
+		writeError(w, http.StatusBadRequest, "scheduled_at must be in the future")
+		return
+	}
 
 	// DND guard: refuse to schedule a call to a number on the org's DND list.
 	// The dial-time worker also checks DND (dial/initiator.go), but blocking
