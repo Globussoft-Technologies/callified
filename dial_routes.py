@@ -24,6 +24,7 @@ EXOTEL_API_KEY = (os.getenv("EXOTEL_API_KEY") or "").strip()
 EXOTEL_API_TOKEN = (os.getenv("EXOTEL_API_TOKEN") or "").strip()
 EXOTEL_ACCOUNT_SID = (os.getenv("EXOTEL_ACCOUNT_SID") or "YOUR_EXOTEL_ACCOUNT_SID").strip()
 EXOTEL_CALLER_ID = (os.getenv("EXOTEL_CALLER_ID") or "YOUR_EXOTEL_NUMBER").strip()
+EXOTEL_APP_ID = (os.getenv("EXOTEL_APP_ID") or "").strip()
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
@@ -138,21 +139,16 @@ async def dial_exotel(lead: dict):
         phone_clean = "91" + phone_clean
     logger.info(f"Phone normalized: '{lead['phone_number']}' -> '{phone_clean}'")
 
-    # Build a dynamic ExoML URL on OUR server so language/voice params are
-    # forwarded into the WebSocket URL that Exotel ultimately connects to.
-    _exo_params = urllib.parse.urlencode({
-        "name": lead.get("name", "Customer"),
-        "interest": lead.get("interest", "our platform"),
-        "phone": phone_clean,
-        "tts_language": lead.get("tts_language", "hi"),
-        "tts_provider": lead.get("tts_provider", "elevenlabs"),
-        "voice": lead.get("tts_voice_id", ""),
-    })
-    exoml_url = f"{PUBLIC_URL}/webhook/exotel?{_exo_params}"
+    # Exotel silently ignores arbitrary URLs in the Url field — only the
+    # Exotel-hosted app URL works. Lead context is stored in Redis before
+    # dialing (see initiate_call) and hydrated by the WS handler on connect.
+    # The dashboard app (EXOTEL_APP_ID) must have a Passthru applet pointing
+    # at {PUBLIC_SERVER_URL}/webhook/exotel so our handler returns the ExoML.
+    exoml_url = f"http://my.exotel.com/exoml/start/{EXOTEL_APP_ID}"
 
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {"From": phone_clean, "CallerId": EXOTEL_CALLER_ID, "Url": exoml_url, "CallType": "trans", "StatusCallback": f"{PUBLIC_URL}/webhook/exotel/status"}
-    logger.info(f"[DIAL] Exotel attempt: From={phone_clean}, ExoML={exoml_url}")
+    logger.info(f"[DIAL] Exotel attempt: From={phone_clean}, AppUrl={exoml_url}")
     call_logger.call_event(phone_clean, "DIAL_INITIATED", f"From={phone_clean}, Url={exoml_url}")
     last_dial_result = {"timestamp": datetime.now().isoformat(), "phone": phone_clean, "url": url, "exoml": exoml_url, "status": "pending"}
     try:

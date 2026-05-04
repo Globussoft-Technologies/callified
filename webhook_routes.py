@@ -48,20 +48,48 @@ async def handle_crm_webhook(request: Request, background_tasks: BackgroundTasks
 @webhook_router.post("/webhook/{provider}")
 @webhook_router.get("/webhook/{provider}")
 async def dynamic_webhook(provider: str, request: Request):
+    import logging as _log
+    log = _log.getLogger("uvicorn.error")
     host = PUBLIC_URL.replace("https://", "").replace("http://", "")
     qp = request.query_params
-    name = urllib.parse.quote(qp.get("name", ""))
-    interest = urllib.parse.quote(qp.get("interest", ""))
-    phone = urllib.parse.quote(qp.get("phone", ""))
-    tts_language = urllib.parse.quote(qp.get("tts_language", ""))
-    tts_provider = urllib.parse.quote(qp.get("tts_provider", ""))
-    voice = urllib.parse.quote(qp.get("voice", ""))
+    name = qp.get("name", "")
+    interest = qp.get("interest", "")
+    phone = qp.get("phone", "")
+    tts_language = qp.get("tts_language", "")
+    tts_provider = qp.get("tts_provider", "")
+    voice = qp.get("voice", "")
+
+    # Exotel Passthru sends a POST with form data; "From" is the lead's phone.
+    # Read it and hydrate context from Redis so the WS URL carries full params.
+    if provider == "exotel" and not phone:
+        try:
+            form = await request.form()
+            raw_phone = str(form.get("From", "") or form.get("CallFrom", "") or "").strip().lstrip("+")
+            log.info(f"[EXOTEL-WEBHOOK] Passthru hit: From={raw_phone} form_keys={list(form.keys())}")
+            if raw_phone:
+                phone = raw_phone
+                pending = redis_store.get_pending_call(f"phone:{phone}")
+                if not pending and len(phone) > 10:
+                    pending = redis_store.get_pending_call(f"phone:{phone[-10:]}")
+                if not pending:
+                    pending = redis_store.get_pending_call("latest")
+                if pending:
+                    name = name or pending.get("name", "")
+                    interest = interest or pending.get("interest", "")
+                    tts_language = tts_language or pending.get("tts_language", "")
+                    tts_provider = tts_provider or pending.get("tts_provider", "")
+                    voice = voice or pending.get("tts_voice_id", "")
+                    log.info(f"[EXOTEL-WEBHOOK] Redis hydrated: name={name} lang={tts_language} provider={tts_provider}")
+        except Exception as _e:
+            log.warning(f"[EXOTEL-WEBHOOK] Failed to read form body: {_e}")
+
     ws_url = (
         f"wss://{host}/media-stream"
-        f"?name={name}&interest={interest}&phone={phone}"
-        f"&tts_language={tts_language}&tts_provider={tts_provider}&voice={voice}"
+        f"?name={urllib.parse.quote(name)}&interest={urllib.parse.quote(interest)}&phone={urllib.parse.quote(phone)}"
+        f"&tts_language={urllib.parse.quote(tts_language)}&tts_provider={urllib.parse.quote(tts_provider)}&voice={urllib.parse.quote(voice)}"
     )
-    return HTMLResponse(content=f'<Response><Connect><Stream url="{ws_url}" /></Connect></Response>', media_type="application/xml")
+    log.info(f"[{provider.upper()}-WEBHOOK] Serving ExoML/TwiML ws_url={ws_url}")
+    return HTMLResponse(content=f'<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="{ws_url}" /></Connect></Response>', media_type="application/xml")
 
 @webhook_router.post("/webhook/twilio/status")
 async def twilio_status_webhook(request: Request):
