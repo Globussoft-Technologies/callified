@@ -182,6 +182,59 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+# ─── Password policy ─────────────────────────────────────────────────────────
+
+_BLOCKED_PASSWORDS = {
+    'password','password1','password123','passw0rd','p@ssword','p@ssw0rd',
+    '12345678','123456789','1234567890','87654321','11111111','00000000','99999999',
+    'qwerty123','qwertyui','qwertyuiop','1q2w3e4r','1q2w3e4r5t','zxcvbnm',
+    'iloveyou','iloveyou1','letmein','trustno1','welcome1','welcome123',
+    'changeme','changeme1','admin123','admin1234','administrator',
+    'monkey123','dragon123','sunshine1','sunshine','baseball','football',
+    'basketball','soccer123','superman','batman123','spiderman',
+    'michael1','jennifer','charlie1','jessica','abc12345','abcdefgh','abcd1234',
+    'master123','shadow123','hello123','login123','default1',
+    'test1234','test123','pass1234','pass12345','secret123',
+}
+
+def _hibp_breach_count(password: str) -> int:
+    """k-anonymity HIBP check — only sends first 5 SHA-1 hex chars. Fails open."""
+    import hashlib
+    import httpx as _httpx
+    sha1 = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
+    prefix, suffix = sha1[:5], sha1[5:]
+    try:
+        resp = _httpx.get(
+            f"https://api.pwnedpasswords.com/range/{prefix}",
+            headers={"Add-Padding": "true"},
+            timeout=3.0,
+        )
+        if resp.status_code != 200:
+            return 0  # fail open
+        for line in resp.text.splitlines():
+            parts = line.split(':')
+            if len(parts) == 2 and parts[0].strip() == suffix:
+                return int(parts[1].strip())
+    except Exception:
+        pass  # fail open on timeout / network error
+    return 0
+
+def validate_password_policy(password: str):
+    """Raise HTTPException 400 if password fails the site policy.
+    Checks: min 8 chars → common-password blocklist → HIBP breach database.
+    """
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if password.lower() in _BLOCKED_PASSWORDS:
+        raise HTTPException(status_code=400, detail="This password is too common. Please choose a more unique password.")
+    count = _hibp_breach_count(password)
+    if count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This password has appeared in {count:,} known data breaches. Please choose a different password.",
+        )
+
+
 # ─── Router ──────────────────────────────────────────────────────────────────
 
 auth_router = APIRouter()
@@ -190,6 +243,7 @@ auth_router = APIRouter()
 def signup(data: OrgSignup, request: Request):
     """Create organization + admin user in one step."""
     check_rate_limit(request, limit=5, window=60)
+    validate_password_policy(data.password)
     existing = get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -270,8 +324,7 @@ def reset_password(data: ResetPasswordRequest, request: Request):
     token_row = get_valid_reset_token(data.token)
     if not token_row:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-    if len(data.new_password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    validate_password_policy(data.new_password)
     hashed = get_password_hash(data.new_password)
     update_user_password(token_row["user_id"], hashed)
     mark_token_used(token_row["id"])

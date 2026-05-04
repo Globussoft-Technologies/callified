@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useToast } from '../../contexts/ToastContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
@@ -12,6 +14,7 @@ export default function CampaignsTab({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
+  const { showToast } = useToast();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -31,10 +34,28 @@ export default function CampaignsTab({
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
+  const [voiceSaveStatus, setVoiceSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+
+  const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => { fetchCampaigns(); }, []);
+
+  // Auto-open a specific campaign when navigated from the CRM dashboard.
+  // After opening, clear the navigation state so that clicking "Back to Campaigns"
+  // shows the list without re-triggering this effect.
+  useEffect(() => {
+    const openId = location.state?.openCampaignId;
+    if (!openId || !campaigns?.length) return;
+    const target = campaigns.find(c => c.id === openId);
+    if (target) {
+      handleViewCampaign(target);
+      navigate('/campaigns', { replace: true, state: {} });
+    }
+  }, [location.state?.openCampaignId, campaigns]);
 
   const fetchCampaignLeads = async (campaignId) => {
     try {
@@ -63,11 +84,24 @@ export default function CampaignsTab({
   };
 
   const handleSaveCampVoice = async () => {
-    if (!selectedCampaign) return;
-    await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
-    });
+    if (!selectedCampaign || voiceSaveStatus === 'saving') return;
+    setVoiceSaveStatus('saving');
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
+      });
+      if (res.ok) {
+        setVoiceSaveStatus('saved');
+        setTimeout(() => setVoiceSaveStatus('idle'), 2000);
+      } else {
+        setVoiceSaveStatus('error');
+        setTimeout(() => setVoiceSaveStatus('idle'), 3000);
+      }
+    } catch {
+      setVoiceSaveStatus('error');
+      setTimeout(() => setVoiceSaveStatus('idle'), 3000);
+    }
   };
 
   const handleResetCampVoice = async () => {
@@ -104,7 +138,10 @@ export default function CampaignsTab({
     if (!token) return;
     const es = new EventSource(`${API_URL}/campaign-events?token=${token}&campaign_id=${campaignId}`);
     es.onmessage = (e) => setLiveEvents(prev => [...prev.slice(-49), e.data]);
-    es.onerror = () => es.close();
+    // Don't close on transient errors — EventSource auto-reconnects
+    es.onerror = (err) => {
+      if (es.readyState === EventSource.CLOSED) stopEventStream();
+    };
     eventSourceRef.current = es;
   };
 
@@ -176,9 +213,9 @@ export default function CampaignsTab({
   };
 
   const handleDeleteCampaign = async (campaignId) => {
-    if (!window.confirm('Delete this campaign and remove all lead associations?')) return;
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}`, { method: 'DELETE' });
+      setConfirmDeleteId(null);
       fetchCampaigns();
     } catch (e) { console.error(e); }
   };
@@ -232,7 +269,8 @@ export default function CampaignsTab({
           lead_source: editCampaignForm.lead_source || null
         }));
       }
-    } catch (e) { console.error(e); }
+      showToast('Campaign updated');
+    } catch (e) { console.error(e); showToast('Failed to update campaign', 'error'); }
     setLoading(false);
   };
 
@@ -275,7 +313,8 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch (e) { alert('Save failed'); }
+      showToast('Lead updated');
+    } catch (e) { showToast('Save failed', 'error'); }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -362,6 +401,7 @@ export default function CampaignsTab({
           setCampVoice={setCampVoice}
           handleSaveCampVoice={handleSaveCampVoice}
           handleResetCampVoice={handleResetCampVoice}
+          voiceSaveStatus={voiceSaveStatus}
           INDIAN_VOICES={INDIAN_VOICES}
           INDIAN_LANGUAGES={INDIAN_LANGUAGES}
           liveEvents={liveEvents}
@@ -450,21 +490,31 @@ export default function CampaignsTab({
                       {statusBadge(campaign.status || 'active')}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                      style={{
-                        background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-                        color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                      }}>
-                      Edit
-                    </button>
-                    <button onClick={() => handleDeleteCampaign(campaign.id)}
-                      style={{
-                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                        color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                      }}>
-                      Delete
-                    </button>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {confirmDeleteId === campaign.id ? (
+                      <>
+                        <span style={{ fontSize: '0.7rem', color: '#fca5a5' }}>Delete?</span>
+                        <button onClick={() => handleDeleteCampaign(campaign.id)}
+                          style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)', color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>
+                          Yes
+                        </button>
+                        <button onClick={() => setConfirmDeleteId(null)}
+                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                          No
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                          style={{ background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)', color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                          Edit
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(campaign.id); }}
+                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 

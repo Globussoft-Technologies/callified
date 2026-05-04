@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
   const [currentUser, setCurrentUser] = useState(null);
+  const [loading, setLoading] = useState(!!localStorage.getItem('authToken'));
 
   const apiFetch = useCallback(async (url, options = {}) => {
     return fetch(url, {
@@ -14,15 +15,22 @@ export function AuthProvider({ children }) {
     });
   }, [authToken]);
 
-  // Check token on mount
+  // Validate token once on mount only. Only clear on 401 — not on network errors
+  // (server restart, brief 502) so a temporary outage doesn't force logout.
   useEffect(() => {
-    if (authToken) {
-      fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
-        .then(r => r.ok ? r.json() : Promise.reject())
-        .then(u => setCurrentUser(u))
-        .catch(() => { setAuthToken(null); localStorage.removeItem('authToken'); });
-    }
-  }, [authToken]);
+    if (!authToken) { setLoading(false); return; }
+    fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+      .then(r => {
+        if (r.status === 401 || r.status === 403) {
+          setAuthToken(null);
+          localStorage.removeItem('authToken');
+        } else if (r.ok) {
+          r.json().then(u => setCurrentUser(u));
+        }
+      })
+      .catch(() => { /* network error — keep token, user stays logged in */ })
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = async (email, password) => {
     const res = await fetch(`${API_URL}/auth/login`, {
@@ -57,7 +65,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, login, signup, logout }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, login, signup, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

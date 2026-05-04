@@ -62,8 +62,8 @@ def _generate_invoice_number() -> str:
 
 # ─── DB Helpers ─────────────────────────────────────────────────────────────
 
-def create_invoice(org_id: int, payment_id: int, amount_paise: int) -> dict:
-    """Create an invoice record and return it."""
+def create_invoice(org_id: int, payment_id: Optional[int], amount_paise: int) -> dict:
+    """Create an invoice record and return it. payment_id may be None for plan-only invoices."""
     invoice_number = _generate_invoice_number()
 
     conn = get_conn()
@@ -87,7 +87,63 @@ def create_invoice(org_id: int, payment_id: int, amount_paise: int) -> dict:
 
 
 def get_invoices_by_org(org_id: int) -> List[Dict]:
-    """Get all invoices for an organization."""
+    """Get all invoices for an organisation.
+
+    Lazy-backfills any captured payments that never received an invoice row
+    (e.g. when create_invoice raised inside verify_razorpay_payment and the
+    exception was swallowed).  The backfill is idempotent — it only inserts
+    rows that are genuinely missing — so calling this on every page-load is safe.
+    """
+    conn = get_conn()
+    cursor = conn.cursor()
+
+    # Find captured payments that have no corresponding invoice row yet
+    cursor.execute("""
+        SELECT bp.id, bp.amount_paise
+        FROM billing_payments bp
+        LEFT JOIN invoices i ON i.payment_id = bp.id
+        WHERE bp.org_id = %s AND bp.status = 'captured' AND i.id IS NULL
+        ORDER BY bp.created_at ASC
+    """, (org_id,))
+    orphans = cursor.fetchall()
+    conn.close()
+
+    for pay in orphans:
+        try:
+            create_invoice(org_id, pay['id'], pay['amount_paise'])
+            logger.info(f"[INVOICE] Backfilled missing invoice for payment_id={pay['id']}, org={org_id}")
+        except Exception as e:
+            logger.error(f"[INVOICE] Backfill failed for payment_id={pay['id']}, org={org_id}: {e}")
+
+    # Fallback: if still no invoices, synthesize one from the active subscription (covers
+    # direct-activation path where no billing_payments row was ever created).
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as cnt FROM invoices WHERE org_id = %s", (org_id,))
+    if cursor.fetchone()['cnt'] == 0:
+        cursor.execute("""
+            SELECT s.id as sub_id, s.created_at as sub_created_at,
+                   p.price_paise, p.name as plan_name
+            FROM subscriptions s
+            JOIN billing_plans p ON s.plan_id = p.id
+            WHERE s.org_id = %s AND s.status IN ('active', 'trialing', 'past_due')
+            ORDER BY s.created_at DESC LIMIT 1
+        """, (org_id,))
+        sub = cursor.fetchone()
+        conn.close()
+        if sub:
+            try:
+                create_invoice(org_id, None, sub['price_paise'])
+                logger.info(
+                    f"[INVOICE] Synthesized invoice from subscription sub_id={sub['sub_id']} "
+                    f"plan='{sub['plan_name']}' org={org_id}"
+                )
+            except Exception as e:
+                logger.error(f"[INVOICE] Synthetic invoice failed for org={org_id}: {e}")
+    else:
+        conn.close()
+
+    # Return all invoices (including any just backfilled/synthesized)
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("""
@@ -108,11 +164,17 @@ def get_invoice(invoice_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT i.*, o.name as org_name,
-               bp.razorpay_payment_id, bp.description as payment_description
+               bp.razorpay_payment_id, bp.description as payment_description,
+               p.name as plan_name
         FROM invoices i
         JOIN organizations o ON i.org_id = o.id
         LEFT JOIN billing_payments bp ON i.payment_id = bp.id
+        LEFT JOIN subscriptions s ON s.org_id = i.org_id
+            AND s.status IN ('active','trialing','past_due')
+        LEFT JOIN billing_plans p ON p.id = s.plan_id
         WHERE i.id = %s
+        ORDER BY s.created_at DESC
+        LIMIT 1
     """, (invoice_id,))
     row = cursor.fetchone()
     conn.close()

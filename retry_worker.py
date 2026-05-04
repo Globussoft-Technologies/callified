@@ -12,6 +12,7 @@ from database import (
 )
 from call_guard import is_calling_allowed, get_org_timezone
 from worker_health import beat
+import redis_store
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -56,6 +57,16 @@ async def retry_worker_loop():
                 campaign_id = retry.get("campaign_id")
                 attempt = retry["attempt_number"]
                 max_attempts = retry["max_attempts"]
+
+                # Skip if a manual dial session is active for this campaign —
+                # prevents the retry worker from appearing to "trigger dial-all"
+                # when the user clicks per-row Dial (Issue #65).
+                if campaign_id and redis_store.is_campaign_dial_active(campaign_id):
+                    logger.info(
+                        f"[RETRY-WORKER] Deferring retry {retry_id} for campaign {campaign_id} "
+                        f"— manual dial active, will retry next cycle"
+                    )
+                    continue
 
                 # Skip DND numbers
                 org_id = retry.get("org_id")

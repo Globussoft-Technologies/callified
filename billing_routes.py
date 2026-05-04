@@ -162,8 +162,22 @@ def api_list_invoices(current_user: dict = Depends(get_current_user)):
 
 
 @billing_router.get("/api/billing/invoices/{invoice_id}/download")
-def api_download_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)):
-    org_id = current_user.get("org_id")
+def api_download_invoice(invoice_id: int, request: Request, token: Optional[str] = None):
+    # Accept token from Authorization header OR ?token= query param (needed for window.open)
+    import jwt as pyjwt
+    from auth import SECRET_KEY, ALGORITHM
+    auth_header = request.headers.get("Authorization", "")
+    raw_token = auth_header[7:] if auth_header.startswith("Bearer ") else token
+    if not raw_token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        payload = pyjwt.decode(raw_token, SECRET_KEY, algorithms=[ALGORITHM])
+        org_id = payload.get("org_id")
+        if not org_id:
+            raise HTTPException(401, "Invalid token")
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+
     inv = get_invoice(invoice_id)
     if not inv:
         raise HTTPException(404, "Invoice not found")
@@ -172,10 +186,11 @@ def api_download_invoice(invoice_id: int, current_user: dict = Depends(get_curre
 
     # Build display values
     org_name = inv.get('org_name', 'Customer')
-    razorpay_pid = inv.get('razorpay_payment_id', 'N/A')
-    plan_desc = inv.get('payment_description', 'Subscription')
-    # Extract plan name from description like "Plan: Growth"
-    plan_name = plan_desc.replace("Plan: ", "") if plan_desc else "Subscription"
+    razorpay_pid = inv.get('razorpay_payment_id') or 'N/A'
+    # Prefer payment description, fall back to joined plan name, then generic label
+    plan_desc = inv.get('payment_description') or ''
+    plan_name = (plan_desc.replace("Plan: ", "") if plan_desc
+                 else inv.get('plan_name') or 'Subscription')
     amount_inr = inv['amount_paise'] / 100
     payment_date = inv['created_at'].strftime("%d %b %Y") if inv.get('created_at') else "N/A"
 

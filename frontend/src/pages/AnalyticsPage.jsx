@@ -87,7 +87,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', padding: '0 24px', marginBottom: '2rem'}}>
         {/* Daily Calls Bar Chart */}
         <div className="glass-panel" style={{padding: '1.5rem'}}>
-          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Daily Calls (Last 7 Days)</h4>
+          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Daily Calls (This Week)</h4>
           <div style={{display: 'flex', alignItems: 'flex-end', gap: '8px', height: '160px'}}>
             {data.daily_calls.map((d, i) => {
               const pct = Math.max(4, (d.count / maxDaily) * 100);

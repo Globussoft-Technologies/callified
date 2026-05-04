@@ -34,20 +34,22 @@ twilio_websockets: dict[str, WebSocket] = {}
 
 # ─── Language Detection ───────────────────────────────────────────────────────
 def _detect_script_language(text: str):
-    """Detect spoken language from Unicode script ranges. Returns 'hi', 'bn', 'en', or None."""
-    bengali    = sum(1 for c in text if '\u0980' <= c <= '\u09FF')
-    devanagari = sum(1 for c in text if '\u0900' <= c <= '\u097F')
-    latin      = sum(1 for c in text if c.isascii() and c.isalpha())
-    total = bengali + devanagari + latin
-    if total < 3:
-        return None  # too short to detect reliably
-    if bengali > devanagari and bengali > latin:
-        return 'bn'
-    if devanagari > bengali and devanagari > latin:
-        return 'hi'
-    if latin > bengali and latin > devanagari:
-        return 'en'
-    return None
+    """Detect spoken language from Unicode script ranges."""
+    counts = {
+        'bn': sum(1 for c in text if '\u0980' <= c <= '\u09FF'),
+        'hi': sum(1 for c in text if '\u0900' <= c <= '\u097F'),
+        'en': sum(1 for c in text if c.isascii() and c.isalpha()),
+        'ta': sum(1 for c in text if '\u0B80' <= c <= '\u0BFF'),
+        'te': sum(1 for c in text if '\u0C00' <= c <= '\u0C7F'),
+        'kn': sum(1 for c in text if '\u0C80' <= c <= '\u0CFF'),
+        'ml': sum(1 for c in text if '\u0D00' <= c <= '\u0D7F'),
+        'gu': sum(1 for c in text if '\u0A80' <= c <= '\u0AFF'),
+        'pa': sum(1 for c in text if '\u0A00' <= c <= '\u0A7F'),
+    }
+    if sum(counts.values()) < 3:
+        return None
+    best = max(counts, key=counts.get)
+    return best if counts[best] > 0 else None
 
 # Words that appear across languages and should NOT trigger a language switch.
 # e.g. "হ্যালো" is just "hello" in Bengali script — not a Bengali sentence.
@@ -94,6 +96,12 @@ _LANG_INTENT_MAP: dict[str, list[str]] = {
     'bn': ['bengali', 'bangla', 'bangla te', 'bangla bolo'],
     'en': ['english', 'speak english', 'in english', 'english me', 'english mein'],
     'mr': ['marathi', 'marathi me', 'marathi mein'],
+    'ta': ['tamil', 'tamil la', 'tamil mein', 'tamizh'],
+    'te': ['telugu', 'telugu lo', 'telugu mein'],
+    'kn': ['kannada', 'kannada alli', 'kannada mein'],
+    'ml': ['malayalam', 'malayalam il', 'malayalam mein'],
+    'gu': ['gujarati', 'gujarati ma', 'gujarati mein'],
+    'pa': ['punjabi', 'punjabi mein', 'punjabi vich'],
 }
 
 def _detect_lang_intent(text: str):
@@ -109,9 +117,16 @@ def _detect_lang_intent(text: str):
                 return lang
     return None
 
-_LANG_LABEL = {'bn': 'Bengali', 'hi': 'Hindi', 'en': 'English', 'mr': 'Marathi'}
+_LANG_LABEL = {
+    'hi': 'Hindi', 'en': 'English', 'bn': 'Bengali', 'mr': 'Marathi',
+    'ta': 'Tamil', 'te': 'Telugu', 'kn': 'Kannada', 'ml': 'Malayalam',
+    'gu': 'Gujarati', 'pa': 'Punjabi',
+}
 
 # ─── Voicemail Detection ──────────────────────────────────────────────────────
+# Only phrases that appear in automated voicemail systems — NOT in human speech.
+# "call back later" / "try again later" removed: customers commonly say these
+# in normal conversation ("baad mein call karo") and trigger false positives.
 _VOICEMAIL_PHRASES = (
     "not available", "unavailable", "unable to take your call",
     "please leave a message", "leave a message", "leave your message",
@@ -120,14 +135,15 @@ _VOICEMAIL_PHRASES = (
     "you have reached", "you've reached",
     "the number you have dialed", "the person you are trying",
     "this mailbox", "voicemail", "voice mail",
-    "please press", "press 1", "press 0",
-    "call back later", "try again later",
     # Hindi voicemail phrases
     "abhi uplabdh nahi", "sandesh chhodein", "beep ke baad",
     "is samay upalabdh nahi",
 )
 
-def _is_voicemail(text: str) -> bool:
+def _is_voicemail(text: str, call_age_s: float = 0) -> bool:
+    # Ignore the first 8 seconds — early STT noise / echo can contain false phrases.
+    if call_age_s < 8:
+        return False
     lower = text.lower()
     return any(phrase in lower for phrase in _VOICEMAIL_PHRASES)
 
@@ -158,6 +174,7 @@ async def handle_media_stream(websocket: WebSocket):
     _tts_provider_override = websocket.query_params.get("tts_provider", None) or None
     _tts_voice_override = websocket.query_params.get("voice", None) or None
     _tts_language_override = websocket.query_params.get("tts_language", None) or None
+    _lang_explicitly_set = bool(_tts_language_override)
 
     # Check Redis lead-voice cache — ensures same agent voice for repeat calls to same lead
     _redis_voice_key = f"lead_voice:{_call_lead_id}" if _call_lead_id else None
@@ -172,15 +189,19 @@ async def handle_media_stream(websocket: WebSocket):
         except Exception:
             pass
 
-    # Check Redis pending call for campaign voice overrides (Exotel dial flow)
+    # Check Redis pending call for campaign voice overrides (Exotel dial flow).
+    # Always read pending call — campaign language must win over the lead-voice cache.
+    _pending_voice = redis_store.get_pending_call("latest")
     if not _tts_voice_override:
-        _pending_voice = redis_store.get_pending_call("latest")
         if _pending_voice.get("tts_provider"):
             _tts_provider_override = _pending_voice["tts_provider"]
         if _pending_voice.get("tts_voice_id"):
             _tts_voice_override = _pending_voice["tts_voice_id"]
-        if _pending_voice.get("tts_language"):
-            _tts_language_override = _pending_voice["tts_language"]
+    # Language from pending call wins over lead-voice cache but NOT over an explicit query param.
+    # Sandbox (and any direct WebSocket caller) sets tts_language via query param — preserve it.
+    if _pending_voice.get("tts_language") and not _lang_explicitly_set:
+        _tts_language_override = _pending_voice["tts_language"]
+        _lang_explicitly_set = True
 
     # If still no voice override, look up org voice settings from DB
     if not _tts_voice_override:
@@ -204,7 +225,11 @@ async def handle_media_stream(websocket: WebSocket):
                 if _vs.get('tts_voice_id'):
                     _tts_voice_override = _vs['tts_voice_id']
                     _tts_provider_override = _vs.get('tts_provider', 'elevenlabs')
-                _tts_language_override = _tts_language_override or _vs.get('tts_language', 'hi')
+                if not _tts_language_override and _vs.get('tts_language'):
+                    _tts_language_override = _vs['tts_language']
+                    _lang_explicitly_set = True
+                elif not _tts_language_override:
+                    _tts_language_override = 'hi'
         except Exception:
             pass
 
@@ -222,9 +247,9 @@ async def handle_media_stream(websocket: WebSocket):
 
     # Mutable active language — updated dynamically when customer switches language mid-call
     _active_lang = [_tts_language_override or 'hi']
-    # Once the user switches language for the first time, lock it.
-    # Prevents garbled STT or low-confidence transcripts from reverting mid-call.
-    _lang_locked = [False]
+    # Pre-lock language when explicitly configured (query param or campaign setting) so that
+    # first-utterance auto-detection cannot override the configured language.
+    _lang_locked = [_lang_explicitly_set]
 
     if not lead_name or lead_name == "Customer":
         # Try to look up by phone number first (supports concurrent dialing)
@@ -276,8 +301,8 @@ async def handle_media_stream(websocket: WebSocket):
     _MERGE_WINDOW_S = 0.30      # Wait up to 300ms for the other connection's result
     _voicemail_detected = [False]  # Set True on first voicemail phrase — blocks all further STT
 
-    # Load pronunciation guide
-    pronunciation_ctx = get_pronunciation_context()
+    # Load pronunciation guide (populated after org_id is known — see below)
+    pronunciation_ctx = ""
 
     # Check for campaign context (from query params or Redis pending call)
     _qp_campaign = websocket.query_params.get("campaign_id", "")
@@ -299,6 +324,10 @@ async def handle_media_stream(websocket: WebSocket):
         _user_row = _user_cursor.fetchone()
         _call_org_id = _user_row.get('org_id') if _user_row else 1
         _user_conn.close()
+
+        # Load pronunciation guide scoped to this org
+        if _call_org_id:
+            pronunciation_ctx = get_pronunciation_context(_call_org_id)
 
         if _campaign_id:
             # Campaign-specific: load ONLY that campaign's product + persona + call flow
@@ -399,6 +428,12 @@ async def handle_media_stream(websocket: WebSocket):
                     'bn': 'bn', 'bn-IN': 'bn',
                     'en': 'en', 'en-US': 'en', 'en-IN': 'en', 'en-AU': 'en', 'en-GB': 'en',
                     'mr': 'mr', 'mr-IN': 'mr',
+                    'ta': 'ta', 'ta-IN': 'ta',
+                    'te': 'te', 'te-IN': 'te',
+                    'kn': 'kn', 'kn-IN': 'kn',
+                    'ml': 'ml', 'ml-IN': 'ml',
+                    'gu': 'gu', 'gu-IN': 'gu',
+                    'pa': 'pa', 'pa-IN': 'pa',
                 }
                 _resolved = _lang_map.get(_dg_lang, None) if _dg_lang else None
                 if not _resolved:
@@ -422,7 +457,7 @@ async def handle_media_stream(websocket: WebSocket):
         conv_logger = logging.getLogger("uvicorn.error")
 
         # ── Voicemail detection — highest priority, before all other checks ──
-        if not _voicemail_detected[0] and _is_voicemail(sentence):
+        if not _voicemail_detected[0] and _is_voicemail(sentence, time.time() - _call_start_time):
             _voicemail_detected[0] = True
             _hangup_requested[0] = True
             conv_logger.info(f"[VOICEMAIL] Detected: '{sentence[:80]}' — leaving pitch and hanging up")
@@ -740,7 +775,6 @@ async def handle_media_stream(websocket: WebSocket):
     # Hindi speech that the multi-language model misidentifies as Spanish/other.
     _use_secondary_stt = _use_multi
     _secondary_stt_lang = "hi"
-
     dg_connection.start(
         LiveOptions(
             model="nova-2",
@@ -804,13 +838,23 @@ async def handle_media_stream(websocket: WebSocket):
     _tts_recording_buffers[stream_sid] = []
     ws_logger.info(f"[WS] Immediate stream init, sid={stream_sid}")
 
-    chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
-    ws_logger.info(f"[GREETING] Immediate greeting for {lead_name}, sid={stream_sid}")
-    call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
-    greeting_sent = True
-    active_tts_tasks[stream_sid] = asyncio.create_task(
-        synthesize_and_send_audio(greeting_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
-    )
+    # Only send greeting immediately for web simulator — Exotel's real stream SID
+    # isn't known yet (arrives in the "start" JSON event). Starting TTS with a fake
+    # SID means Exotel ignores every audio packet → silence → immediate disconnect.
+    if _is_web_sim:
+        chat_history.append({"role": "model", "parts": [{"text": greeting_text}]})
+        ws_logger.info(f"[GREETING] Immediate greeting for {lead_name}, sid={stream_sid}")
+        call_logger.call_event(stream_sid, "GREETING_SENT", f"to={lead_name}")
+        greeting_sent = True
+        try:
+            await websocket.send_json({"event": "llm_response", "text": greeting_text})
+        except Exception:
+            pass
+        active_tts_tasks[stream_sid] = asyncio.create_task(
+            synthesize_and_send_audio(greeting_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
+        )
+    else:
+        ws_logger.info(f"[GREETING] Exotel stream — deferring greeting until real stream SID arrives, sid={stream_sid}")
 
     try:
         while True:
@@ -848,10 +892,18 @@ async def handle_media_stream(websocket: WebSocket):
                         synthesize_and_send_audio(greeting_text, stream_sid, websocket, _tts_provider_override, _tts_voice_override, _tts_language_override)
                     )
 
-                # Forward raw audio to Deepgram (both connections in dual-STT mode)
-                dg_connection.send(audio_data)
+                # Forward audio to Deepgram — Exotel sends mulaw, Deepgram expects PCM linear16
+                if is_exotel_stream:
+                    import audioop as _ao_dg
+                    try:
+                        _dg_pcm = _ao_dg.ulaw2lin(audio_data, 2)
+                    except Exception:
+                        _dg_pcm = audio_data
+                else:
+                    _dg_pcm = audio_data
+                dg_connection.send(_dg_pcm)
                 if _use_secondary_stt:
-                    dg_connection_hi.send(audio_data)
+                    dg_connection_hi.send(_dg_pcm)
                 # Capture mic audio for recording
                 if is_exotel_stream:
                     import audioop as _ao
@@ -880,6 +932,7 @@ async def handle_media_stream(websocket: WebSocket):
                     ws_logger.info("Exotel WebSocket connected event received")
                     continue
                 elif data.get("event") == "start":
+                    _prev_stream_sid = stream_sid  # remember before reassignment
                     stream_sid = (
                         data.get("stream_sid")
                         or data.get("start", {}).get("streamSid")
@@ -892,7 +945,7 @@ async def handle_media_stream(websocket: WebSocket):
                         is_exotel_stream = True
                         ws_logger.info(f"[EXOTEL] Detected Exotel stream, sid={stream_sid}")
                     ws_logger.info(f"[DEBUG-REC] Stream started: sid={stream_sid}, exotel={is_exotel_stream}, start_data_keys={list(data.keys())}")
-                    
+
                     # [RACE CONDITION FIX] Map strict CallSid from Exotel payload
                     call_sid = data.get("start", {}).get("callSid") or data.get("call_sid") or data.get("CallSid")
                     info = redis_store.get_pending_call(call_sid) if call_sid else {}
@@ -909,7 +962,23 @@ async def handle_media_stream(websocket: WebSocket):
                     monitor_connections[stream_sid] = set()
                     redis_store.delete_whispers(stream_sid)
                     redis_store.set_takeover(stream_sid, False)
-                    _tts_recording_buffers[stream_sid] = []
+                    # Migrate recording buffer and active TTS task from old sid to new sid
+                    if _prev_stream_sid and _prev_stream_sid != stream_sid:
+                        existing_buf = _tts_recording_buffers.pop(_prev_stream_sid, [])
+                        _tts_recording_buffers[stream_sid] = existing_buf
+                        if _prev_stream_sid in active_tts_tasks:
+                            active_tts_tasks[stream_sid] = active_tts_tasks.pop(_prev_stream_sid)
+                        twilio_websockets.pop(_prev_stream_sid, None)
+                        monitor_connections.pop(_prev_stream_sid, None)
+                    else:
+                        _tts_recording_buffers[stream_sid] = []
+
+                    if _campaign_id:
+                        from live_logs import emit_campaign_event
+                        if not is_exotel_stream:
+                            # Web sim: no prior DIALING event from dial_routes, emit it now
+                            emit_campaign_event(_campaign_id, lead_name, lead_phone, "dialing", "via web-sim")
+                        emit_campaign_event(_campaign_id, lead_name, lead_phone, "connected", "audio stream opened")
 
                     if not greeting_sent:
                         greeting_sent = True
@@ -922,9 +991,17 @@ async def handle_media_stream(websocket: WebSocket):
                         )
                 elif data.get("event") == "media":
                     raw_audio = base64.b64decode(data["media"]["payload"])
-                    dg_connection.send(raw_audio)
+                    if is_exotel_stream:
+                        import audioop as _ao_dg2
+                        try:
+                            _dg_pcm2 = _ao_dg2.ulaw2lin(raw_audio, 2)
+                        except Exception:
+                            _dg_pcm2 = raw_audio
+                    else:
+                        _dg_pcm2 = raw_audio
+                    dg_connection.send(_dg_pcm2)
                     if _use_secondary_stt:
-                        dg_connection_hi.send(raw_audio)
+                        dg_connection_hi.send(_dg_pcm2)
                     if len(_recording_mic_chunks) % 100 == 0:
                         ws_logger.info(f"[DEBUG-REC] Media event: {len(raw_audio)} bytes, is_exotel={is_exotel_stream}, mic_chunks={len(_recording_mic_chunks)}")
                     if is_exotel_stream:
@@ -963,7 +1040,19 @@ async def handle_media_stream(websocket: WebSocket):
             call_logger.call_event(stream_sid, "WS_ERROR", str(e))
     finally:
         logging.getLogger("uvicorn.error").info(f"[WS CLOSED] sid={stream_sid}, turns={len(chat_history)}, exotel={is_exotel_stream}")
-        
+
+        if _campaign_id and stream_sid:
+            from live_logs import emit_campaign_event
+            duration_s = int(time.time() - _call_start_time)
+            via = "via web-sim" if not is_exotel_stream else "via exotel"
+            if greeting_sent:
+                evt = "completed"
+                detail = f"{duration_s}s call | {via}"
+            else:
+                evt = "hangup"
+                detail = f"no answer | {duration_s}s | {via}"
+            emit_campaign_event(_campaign_id, lead_name, lead_phone, evt, detail)
+
         # Cleanup any active TTS tasks to prevent dangling background processes
         if stream_sid in active_tts_tasks:
             t = active_tts_tasks[stream_sid]
@@ -989,6 +1078,7 @@ async def handle_media_stream(websocket: WebSocket):
                         EXOTEL_API_TOKEN=EXOTEL_API_TOKEN,
                         EXOTEL_ACCOUNT_SID=EXOTEL_ACCOUNT_SID,
                         _campaign_id=_campaign_id,
+                        call_source='sim_web_call' if not is_exotel_stream else 'exotel',
                     )
                 except Exception as _te:
                     import traceback
@@ -997,7 +1087,13 @@ async def handle_media_stream(websocket: WebSocket):
             # Record billing usage
             if _call_org_id and _call_start_time:
                 try:
-                    call_duration_s = time.time() - _call_start_time
+                    # For sim web calls use audio chunk timestamps for accuracy;
+                    # WS session includes setup/teardown time that isn't real call time.
+                    if not is_exotel_stream:
+                        _all_t = [t for t, _ in _recording_mic_chunks] + [t for t, _ in _tts_recording_buffers.get(stream_sid, [])]
+                        call_duration_s = (max(_all_t) - min(_all_t) + 0.5) if _all_t else (time.time() - _call_start_time)
+                    else:
+                        call_duration_s = time.time() - _call_start_time
                     call_minutes = round(call_duration_s / 60, 2)
                     record_usage(org_id=_call_org_id, minutes=call_minutes, call_id=_call_lead_id)
                     ws_logger.info(f"[BILLING] Recorded {call_minutes} min for org {_call_org_id}")

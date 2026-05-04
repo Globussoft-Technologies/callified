@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { validatePasswordFull, passwordStrength } from '../utils/passwordPolicy';
 
-export default function TeamPage({ apiFetch, API_URL }) {
+export default function TeamPage({ apiFetch, API_URL, currentUser }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
@@ -20,10 +21,14 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setLoading(false);
   };
 
+  const adminCount = members.filter(m => m.role === 'Admin').length;
+
   const handleInvite = async (e) => {
     e.preventDefault();
     setInviteError('');
     setInviteLoading(true);
+    const pwCheck = await validatePasswordFull(inviteForm.password);
+    if (!pwCheck.valid) { setInviteError(pwCheck.error); setInviteLoading(false); return; }
     try {
       const res = await apiFetch(`${API_URL}/team/invite`, {
         method: 'POST',
@@ -72,19 +77,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
     } catch (e) { alert('Network error'); }
   };
 
-  const roleBadge = (role) => {
-    const colors = {
-      Admin: { bg: 'rgba(99,102,241,0.2)', color: '#a5b4fc', border: 'rgba(99,102,241,0.4)' },
-      Agent: { bg: 'rgba(34,197,94,0.2)', color: '#4ade80', border: 'rgba(34,197,94,0.4)' },
-      Viewer: { bg: 'rgba(234,179,8,0.2)', color: '#fde047', border: 'rgba(234,179,8,0.4)' },
-    };
-    const c = colors[role] || colors.Agent;
-    return (
-      <span style={{
-        padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
-        background: c.bg, color: c.color, border: `1px solid ${c.border}`,
-      }}>{role}</span>
-    );
+  const isCurrentUser = (m) => currentUser && m.id === currentUser.id;
+  const isLastAdmin = (m) => m.role === 'Admin' && adminCount <= 1;
+  const canRemove = (m) => !isCurrentUser(m) && !isLastAdmin(m);
+  const removeTooltip = (m) => {
+    if (isCurrentUser(m)) return 'You cannot remove your own account';
+    if (isLastAdmin(m)) return 'Cannot remove the last admin of the organization';
+    return '';
   };
 
   const cardStyle = {
@@ -135,12 +134,28 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   <option value="Agent">Agent</option>
                   <option value="Viewer">Viewer</option>
                 </select>
-                <input
-                  placeholder="Password (min 6 chars)" type="password" required minLength={6}
-                  value={inviteForm.password}
-                  onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
-                  style={inputStyle}
-                />
+                <div>
+                  <input
+                    placeholder="Password (min 8 chars)" type="password" required minLength={8}
+                    value={inviteForm.password}
+                    onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
+                    style={inputStyle}
+                  />
+                  {inviteForm.password.length > 0 && (() => {
+                    const s = passwordStrength(inviteForm.password);
+                    return (
+                      <div style={{ marginTop: '6px' }}>
+                        <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
+                          {[1,2,3,4].map(i => (
+                            <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px',
+                              background: s.score >= i ? s.color : 'rgba(255,255,255,0.1)' }} />
+                          ))}
+                        </div>
+                        <span style={{ fontSize: '0.72rem', color: s.color }}>{s.label}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
                 {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                   <button type="button" onClick={() => setShowInvite(false)}
@@ -182,16 +197,23 @@ export default function TeamPage({ apiFetch, API_URL }) {
             <tbody>
               {members.map(m => (
                 <tr key={m.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                  <td style={tdStyle}>{m.full_name || '-'}</td>
+                  <td style={tdStyle}>
+                    {m.full_name || '-'}
+                    {isCurrentUser(m) && (
+                      <span style={{ marginLeft: '6px', fontSize: '0.7rem', color: '#a5b4fc', fontWeight: 600 }}>(you)</span>
+                    )}
+                  </td>
                   <td style={tdStyle}>{m.email}</td>
                   <td style={tdStyle}>
                     <select
                       value={m.role}
                       onChange={e => handleRoleChange(m.id, e.target.value)}
+                      disabled={isCurrentUser(m)}
                       style={{
                         background: 'rgba(30,41,59,0.9)', border: '1px solid rgba(148,163,184,0.2)',
                         borderRadius: '6px', color: '#e2e8f0', padding: '4px 8px', fontSize: '0.8rem',
-                        cursor: 'pointer',
+                        cursor: isCurrentUser(m) ? 'not-allowed' : 'pointer',
+                        opacity: isCurrentUser(m) ? 0.5 : 1,
                       }}
                     >
                       <option value="Admin">Admin</option>
@@ -203,29 +225,33 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {confirmDelete === m.id ? (
-                      <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Remove?</span>
-                        <button onClick={() => handleDelete(m.id)}
+                    {canRemove(m) ? (
+                      confirmDelete === m.id ? (
+                        <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Remove?</span>
+                          <button onClick={() => handleDelete(m.id)}
+                            style={{
+                              background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)',
+                              borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
+                              fontSize: '0.75rem', fontWeight: 600,
+                            }}>Yes</button>
+                          <button onClick={() => setConfirmDelete(null)}
+                            style={{
+                              background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)',
+                              borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer',
+                              fontSize: '0.75rem',
+                            }}>No</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmDelete(m.id)}
                           style={{
-                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)',
+                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
                             borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
-                            fontSize: '0.75rem', fontWeight: 600,
-                          }}>Yes</button>
-                        <button onClick={() => setConfirmDelete(null)}
-                          style={{
-                            background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)',
-                            borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer',
                             fontSize: '0.75rem',
-                          }}>No</button>
-                      </span>
+                          }}>Remove</button>
+                      )
                     ) : (
-                      <button onClick={() => setConfirmDelete(m.id)}
-                        style={{
-                          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                          borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
-                          fontSize: '0.75rem',
-                        }}>Remove</button>
+                      <span title={removeTooltip(m)} style={{ fontSize: '0.75rem', color: '#475569', cursor: 'default' }}>—</span>
                     )}
                   </td>
                 </tr>

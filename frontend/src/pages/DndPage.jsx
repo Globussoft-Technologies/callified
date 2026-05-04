@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
 
+// Accept 10-digit Indian mobile numbers, optionally prefixed with +91 or 91.
+// Strips spaces, dashes, and parentheses before checking.
+function validatePhone(value) {
+  if (!value.trim()) return 'Phone number is required.';
+  const digits = value.replace(/[\s\-\(\)\+]/g, '');
+  if (!/^\d+$/.test(digits)) return 'Only digits are allowed (e.g. 9876543210 or +91 98765 43210).';
+  const normalized = digits.startsWith('91') && digits.length === 12 ? digits.slice(2) : digits;
+  if (normalized.length !== 10) return 'Enter a valid 10-digit mobile number (e.g. 9876543210).';
+  return '';
+}
+
 export default function DndPage({ apiFetch, API_URL }) {
   const [numbers, setNumbers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -11,6 +22,9 @@ export default function DndPage({ apiFetch, API_URL }) {
   const [checkResult, setCheckResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
+  const [addError, setAddError] = useState('');
+  const [checkError, setCheckError] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState(null);
   const perPage = 50;
 
   const fetchNumbers = async (p = page) => {
@@ -27,36 +41,43 @@ export default function DndPage({ apiFetch, API_URL }) {
   useEffect(() => { fetchNumbers(page); }, [page]);
 
   const handleAdd = async () => {
-    const phone = addPhone.trim();
-    if (!phone) return;
+    const err = validatePhone(addPhone);
+    if (err) { setAddError(err); return; }
+    setAddError('');
     try {
-      const body = { phone };
+      const body = { phone: addPhone.trim() };
       if (addSource.trim()) body.source = addSource.trim();
-      await apiFetch(`${API_URL}/dnd`, {
+      const res = await apiFetch(`${API_URL}/dnd`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (!res.ok) {
+        const data = await res.json();
+        setAddError(data.detail || 'Failed to add number');
+        return;
+      }
       setAddPhone('');
       setAddSource('');
       fetchNumbers(1);
       setPage(1);
-    } catch (e) { alert('Failed to add number: ' + e.message); }
+    } catch (e) { setAddError('Failed to add number. Please try again.'); }
   };
 
   const handleRemove = async (phone) => {
-    if (!window.confirm(`Remove ${phone} from DND list?`)) return;
     try {
       await apiFetch(`${API_URL}/dnd/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+      setConfirmRemove(null);
       fetchNumbers(page);
-    } catch (e) { alert('Failed to remove: ' + e.message); }
+    } catch (e) { setConfirmRemove(null); }
   };
 
   const handleCheck = async () => {
-    const phone = checkPhone.trim();
-    if (!phone) return;
+    const err = validatePhone(checkPhone);
+    if (err) { setCheckError(err); setCheckResult(null); return; }
+    setCheckError('');
     try {
-      const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(phone)}`);
+      const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(checkPhone.trim())}`);
       const data = await res.json();
       setCheckResult(data);
     } catch (e) { setCheckResult({ error: 'Check failed' }); }
@@ -112,10 +133,15 @@ export default function DndPage({ apiFetch, API_URL }) {
             <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Add Number to DND</div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                type="text" placeholder="Phone number" value={addPhone}
-                onChange={e => setAddPhone(e.target.value)}
+                type="text" placeholder="e.g. 9876543210 or +91 98765 43210" value={addPhone}
+                onChange={e => { setAddPhone(e.target.value); if (addError) setAddError(''); }}
                 onKeyDown={e => e.key === 'Enter' && handleAdd()}
-                style={{ flex: 1, padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(148,163,184,0.2)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: '6px', fontSize: '0.85rem',
+                  background: 'rgba(15,23,42,0.6)', color: '#e2e8f0',
+                  border: addError ? '1px solid rgba(239,68,68,0.6)' : '1px solid rgba(148,163,184,0.2)',
+                  boxShadow: addError ? '0 0 0 3px rgba(239,68,68,0.12)' : 'none',
+                }}
               />
               <input
                 type="text" placeholder="Source (optional)" value={addSource}
@@ -124,6 +150,9 @@ export default function DndPage({ apiFetch, API_URL }) {
               />
               <button className="btn-primary" onClick={handleAdd} style={{ padding: '8px 16px', fontSize: '0.85rem', whiteSpace: 'nowrap' }}>Add</button>
             </div>
+            {addError && (
+              <div style={{ marginTop: '6px', fontSize: '0.78rem', color: '#fca5a5' }}>{addError}</div>
+            )}
           </div>
 
           {/* Import CSV */}
@@ -144,19 +173,27 @@ export default function DndPage({ apiFetch, API_URL }) {
             <div style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Check Number</div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input
-                type="text" placeholder="Phone number" value={checkPhone}
-                onChange={e => { setCheckPhone(e.target.value); setCheckResult(null); }}
+                type="text" placeholder="e.g. 9876543210" value={checkPhone}
+                onChange={e => { setCheckPhone(e.target.value); setCheckResult(null); if (checkError) setCheckError(''); }}
                 onKeyDown={e => e.key === 'Enter' && handleCheck()}
-                style={{ width: '160px', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(148,163,184,0.2)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: '0.85rem' }}
+                style={{
+                  width: '180px', padding: '8px 12px', borderRadius: '6px', fontSize: '0.85rem',
+                  background: 'rgba(15,23,42,0.6)', color: '#e2e8f0',
+                  border: checkError ? '1px solid rgba(239,68,68,0.6)' : '1px solid rgba(148,163,184,0.2)',
+                  boxShadow: checkError ? '0 0 0 3px rgba(239,68,68,0.12)' : 'none',
+                }}
               />
               <button onClick={handleCheck} style={{
                 padding: '8px 16px', borderRadius: '6px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
                 background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',
               }}>Check</button>
             </div>
+            {checkError && (
+              <div style={{ fontSize: '0.78rem', marginTop: '4px', color: '#fca5a5' }}>{checkError}</div>
+            )}
             {checkResult && (
               <div style={{ fontSize: '0.75rem', marginTop: '4px', fontWeight: 600, color: checkResult.is_dnd ? '#ef4444' : checkResult.error ? '#f59e0b' : '#22c55e' }}>
-                {checkResult.error ? checkResult.error : checkResult.is_dnd ? 'On DND list' : 'Not on DND list'}
+                {checkResult.error ? checkResult.error : checkResult.is_dnd ? '🚫 On DND list' : '✓ Not on DND list'}
               </div>
             )}
           </div>
@@ -194,10 +231,24 @@ export default function DndPage({ apiFetch, API_URL }) {
                       <td style={{ padding: '8px 4px' }}>{sourceBadge(n.source)}</td>
                       <td style={{ padding: '8px 4px', color: '#94a3b8' }}>{n.created_at ? new Date(n.created_at).toLocaleDateString() : '-'}</td>
                       <td style={{ padding: '8px 4px', textAlign: 'right' }}>
-                        <button onClick={() => handleRemove(n.phone)} style={{
-                          padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
-                          background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5',
-                        }}>Remove</button>
+                        {confirmRemove === n.phone ? (
+                          <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.72rem', color: '#fca5a5' }}>Remove?</span>
+                            <button onClick={() => handleRemove(n.phone)} style={{
+                              padding: '3px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                              background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5',
+                            }}>Yes</button>
+                            <button onClick={() => setConfirmRemove(null)} style={{
+                              padding: '3px 10px', borderRadius: '4px', fontSize: '0.7rem', cursor: 'pointer',
+                              background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', color: '#94a3b8',
+                            }}>No</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setConfirmRemove(n.phone)} style={{
+                            padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                            background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5',
+                          }}>Remove</button>
+                        )}
                       </td>
                     </tr>
                   ))}

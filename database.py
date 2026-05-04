@@ -5,7 +5,7 @@ import hashlib
 import secrets
 import string
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 import os
 
@@ -273,6 +273,11 @@ def init_db():
         cursor.execute("ALTER TABLE call_transcripts ADD COLUMN campaign_id INT DEFAULT NULL")
     except Exception:
         pass  # Column already exists
+    try:
+        cursor.execute("ALTER TABLE call_transcripts ADD COLUMN call_source VARCHAR(50) DEFAULT NULL")
+        conn.commit()
+    except Exception:
+        pass
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS call_reviews (
@@ -450,6 +455,21 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS invite_tokens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            org_id INT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            role VARCHAR(50) NOT NULL DEFAULT 'Agent',
+            token VARCHAR(255) NOT NULL UNIQUE,
+            expires_at DATETIME NOT NULL,
+            used BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE
+        )
+    ''')
+
     # --- Onboarding column migration ---
     try:
         cursor.execute("ALTER TABLE organizations ADD COLUMN onboarding_completed BOOLEAN DEFAULT FALSE")
@@ -473,6 +493,20 @@ def init_db():
         cursor.execute("ALTER TABLE campaigns MODIFY COLUMN product_id INT NULL")
     except Exception:
         pass  # Already nullable or campaigns table doesn't exist yet
+
+    # --- Add org_id to pronunciation_guide for per-org isolation ---
+    try:
+        cursor.execute("ALTER TABLE pronunciation_guide ADD COLUMN org_id INT DEFAULT NULL")
+    except Exception:
+        pass  # Column already exists
+    try:
+        cursor.execute("ALTER TABLE pronunciation_guide DROP INDEX word")
+    except Exception:
+        pass  # Index already dropped or doesn't exist
+    try:
+        cursor.execute("ALTER TABLE pronunciation_guide ADD UNIQUE KEY word_org (word, org_id)")
+    except Exception:
+        pass  # Index already exists
 
     conn.close()
 
@@ -1079,6 +1113,45 @@ def update_user_password(user_id: int, password_hash: str):
     cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (password_hash, user_id))
     conn.close()
 
+def create_invite_token(org_id: int, email: str, full_name: str, role: str, token: str, expires_at) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO invite_tokens (org_id, email, full_name, role, token, expires_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+    ''', (org_id, email, full_name, role, token, expires_at))
+    last_id = cursor.lastrowid
+    conn.close()
+    return last_id
+
+def get_valid_invite_token(token: str) -> Optional[Dict]:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM invite_tokens
+        WHERE token = %s AND used = FALSE AND expires_at > NOW()
+    ''', (token,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+def mark_invite_token_used(token_id: int):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE invite_tokens SET used = TRUE WHERE id = %s", (token_id,))
+    conn.close()
+
+def count_admins_in_org(org_id: int) -> int:
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) AS cnt FROM users WHERE org_id = %s AND role = 'Admin'",
+        (org_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["cnt"] if row else 0
+
 # --- CAMPAIGNS ---
 
 def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None):
@@ -1214,6 +1287,7 @@ def get_campaign_call_log(campaign_id: int) -> List[Dict]:
             l.status as lead_status,
             ct.call_duration_s,
             ct.recording_url,
+            ct.call_source,
             ct.created_at,
             CASE
                 WHEN ct.call_duration_s > 30 AND l.status IN ('Summarized', 'Closed') THEN 'Completed'
@@ -1225,10 +1299,9 @@ def get_campaign_call_log(campaign_id: int) -> List[Dict]:
             END as outcome
         FROM call_transcripts ct
         JOIN leads l ON ct.lead_id = l.id
-        JOIN campaign_leads cl ON l.id = cl.lead_id AND cl.campaign_id = %s
         WHERE ct.campaign_id = %s
         ORDER BY ct.created_at DESC
-    ''', (campaign_id, campaign_id))
+    ''', (campaign_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -1270,10 +1343,18 @@ def get_campaign_voice_settings(campaign_id: int, org_id: int = None) -> Dict:
     if not row:
         conn.close()
         return {}
-    # If campaign has its own settings, use them
+    # If campaign has its own settings, use them (fall back to org language if campaign has none)
     if row.get('tts_provider') and row.get('tts_voice_id'):
+        lang = row.get('tts_language')
+        if not lang:
+            _org_id = org_id or row.get('org_id')
+            if _org_id:
+                _org_vs = get_org_voice_settings(_org_id)
+                lang = _org_vs.get('tts_language', 'hi')
+            else:
+                lang = 'hi'
         conn.close()
-        return {"tts_provider": row['tts_provider'], "tts_voice_id": row['tts_voice_id'], "tts_language": row.get('tts_language', 'hi')}
+        return {"tts_provider": row['tts_provider'], "tts_voice_id": row['tts_voice_id'], "tts_language": lang}
     # Fall back to org settings
     _org = org_id or row.get('org_id')
     if _org:
@@ -1291,6 +1372,7 @@ def save_campaign_voice_settings(campaign_id: int, tts_provider: str, tts_voice_
         "UPDATE campaigns SET tts_provider = %s, tts_voice_id = %s, tts_language = %s WHERE id = %s",
         (tts_provider or None, tts_voice_id or None, tts_language or None, campaign_id)
     )
+    conn.commit()
     conn.close()
     return True
 
@@ -1328,52 +1410,75 @@ def get_product_context_for_campaign(campaign_id: int) -> dict:
 
 # --- PRONUNCIATION GUIDE ---
 
-def get_all_pronunciations() -> List[Dict]:
+def get_all_pronunciations(org_id: int) -> List[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM pronunciation_guide ORDER BY word")
+    cursor.execute("SELECT * FROM pronunciation_guide WHERE org_id = %s ORDER BY word", (org_id,))
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-def add_pronunciation(word: str, phonetic: str):
+def add_pronunciation(word: str, phonetic: str, org_id: int):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM pronunciation_guide WHERE word = %s", (word,))
+    cursor.execute(
+        "SELECT id FROM pronunciation_guide WHERE word = %s AND org_id = %s",
+        (word, org_id),
+    )
     existing = cursor.fetchone()
     if existing:
-        cursor.execute("UPDATE pronunciation_guide SET phonetic = %s WHERE word = %s", (phonetic, word))
+        cursor.execute(
+            "UPDATE pronunciation_guide SET phonetic = %s WHERE word = %s AND org_id = %s",
+            (phonetic, word, org_id),
+        )
     else:
-        cursor.execute("INSERT INTO pronunciation_guide (word, phonetic) VALUES (%s, %s)", (word, phonetic))
+        cursor.execute(
+            "INSERT INTO pronunciation_guide (word, phonetic, org_id) VALUES (%s, %s, %s)",
+            (word, phonetic, org_id),
+        )
     conn.close()
     return True
 
-def delete_pronunciation(pronunciation_id: int):
+def delete_pronunciation(pronunciation_id: int, org_id: int):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM pronunciation_guide WHERE id = %s", (pronunciation_id,))
+    cursor.execute(
+        "DELETE FROM pronunciation_guide WHERE id = %s AND org_id = %s",
+        (pronunciation_id, org_id),
+    )
     affected = cursor.rowcount
     conn.close()
     return affected > 0
 
-def get_pronunciation_context() -> str:
+def get_pronunciation_context(org_id: int) -> str:
     """Build a pronunciation guide string for injecting into LLM system prompt."""
-    rows = get_all_pronunciations()
+    rows = get_all_pronunciations(org_id)
     if not rows:
         return ""
-    lines = [f"'{r['word']}' ko '{r['phonetic']}' bolna hai" for r in rows]
-    return "\n[PRONUNCIATION GUIDE - in baat karo toh ye words aise bolo]: " + ", ".join(lines) + "."
+    import re as _re
+    # Remove any character outside the allowlist (letters, digits, spaces, hyphens, apostrophes, dots).
+    # This sanitises rows that pre-date the allowlist validation — URLs, HTML, slashes, etc. are stripped.
+    _strip = _re.compile(r"[^\w\s\-'\.]", _re.UNICODE)
+    safe_lines = []
+    for r in rows:
+        word = " ".join(_strip.sub('', r['word']).split())
+        phonetic = " ".join(_strip.sub('', r['phonetic']).split())
+        if word and phonetic:
+            safe_lines.append(f"'{word}' ko '{phonetic}' bolna hai")
+    if not safe_lines:
+        return ""
+    return "\n[PRONUNCIATION GUIDE - in baat karo toh ye words aise bolo]: " + ", ".join(safe_lines) + "."
 
 
 # ─── Call Transcripts ───
 
-def save_call_transcript(lead_id, transcript_json: str, recording_url: str = None, call_duration_s: float = 0, campaign_id: int = None):
+def save_call_transcript(lead_id, transcript_json: str, recording_url: str = None, call_duration_s: float = 0, campaign_id: int = None, call_source: str = None):
     """Save a complete call transcript for a lead."""
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO call_transcripts (lead_id, campaign_id, transcript, recording_url, call_duration_s) VALUES (%s, %s, %s, %s, %s)",
-        (lead_id, campaign_id, transcript_json, recording_url, call_duration_s)
+        "INSERT INTO call_transcripts (lead_id, campaign_id, transcript, recording_url, call_duration_s, call_source) VALUES (%s, %s, %s, %s, %s, %s)",
+        (lead_id, campaign_id, transcript_json, recording_url, call_duration_s, call_source)
     )
     conn.close()
     return cursor.lastrowid
@@ -1429,6 +1534,13 @@ def delete_organization(org_id: int):
 def create_product(org_id: int, name: str, website_url='', manual_notes=''):
     conn = get_conn()
     cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id FROM products WHERE org_id = %s AND LOWER(name) = LOWER(%s)",
+        (org_id, name.strip()),
+    )
+    if cursor.fetchone():
+        conn.close()
+        return None  # duplicate name — caller must raise a 409
     cursor.execute(
         "INSERT INTO products (org_id, name, website_url, manual_notes) VALUES (%s, %s, %s, %s)",
         (org_id, name, website_url, manual_notes)
@@ -1877,11 +1989,18 @@ def get_all_demo_requests() -> List[Dict]:
 # ─── Scheduled Calls ────────────────────────────────────────────────────────
 
 def create_scheduled_call(org_id: int, lead_id: int, scheduled_time: str, campaign_id: int = None) -> int:
+    # Frontend sends UTC ISO-8601 (e.g. "2026-04-30T06:13:00.000Z").
+    # Strip timezone suffix and fractional seconds → bare UTC DATETIME for MySQL.
+    try:
+        clean = scheduled_time.rstrip('Z').split('+')[0].split('.')[0]  # "2026-04-30T06:13:00"
+        normalised = clean.replace('T', ' ')                            # "2026-04-30 06:13:00"
+    except Exception:
+        normalised = scheduled_time.replace('T', ' ')[:19]
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO scheduled_calls (org_id, lead_id, scheduled_time, campaign_id) VALUES (%s, %s, %s, %s)",
-        (org_id, lead_id, scheduled_time, campaign_id)
+        (org_id, lead_id, normalised, campaign_id)
     )
     call_id = cursor.lastrowid
     conn.close()
@@ -1889,15 +2008,18 @@ def create_scheduled_call(org_id: int, lead_id: int, scheduled_time: str, campai
 
 
 def get_pending_scheduled_calls() -> List[Dict]:
+    # Use Python UTC time — stored times are UTC (frontend converts before POST),
+    # so this comparison is always correct regardless of MySQL server timezone.
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
         SELECT sc.*, l.first_name, l.phone, l.interest, l.source
         FROM scheduled_calls sc
         JOIN leads l ON sc.lead_id = l.id
-        WHERE sc.status = 'pending' AND sc.scheduled_time <= NOW()
+        WHERE sc.status = 'pending' AND sc.scheduled_time <= %s
         ORDER BY sc.scheduled_time ASC
-    ''')
+    ''', (now_utc,))
     rows = cursor.fetchall()
     conn.close()
     return rows
@@ -1908,6 +2030,24 @@ def update_scheduled_call_status(call_id: int, status: str):
     cursor = conn.cursor()
     cursor.execute("UPDATE scheduled_calls SET status = %s WHERE id = %s", (status, call_id))
     conn.close()
+
+
+def cleanup_stale_dialing_calls(max_age_minutes: int = 15) -> int:
+    """Mark scheduled calls stuck in 'dialing' for too long as 'failed'.
+    Uses Python UTC time to match the UTC-stored scheduled_time column.
+    Returns the number of rows updated."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=max_age_minutes)
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE scheduled_calls
+        SET status = 'failed'
+        WHERE status = 'dialing'
+          AND scheduled_time <= %s
+    """, (cutoff,))
+    updated = cursor.rowcount
+    conn.close()
+    return updated
 
 
 def get_scheduled_calls_by_org(org_id: int) -> List[Dict]:
@@ -1922,7 +2062,19 @@ def get_scheduled_calls_by_org(org_id: int) -> List[Dict]:
     ''', (org_id,))
     rows = cursor.fetchall()
     conn.close()
-    return rows
+    # scheduled_time is stored as UTC DATETIME — append 'Z' so the frontend
+    # dateFormat utility correctly converts it to IST for display.
+    result = []
+    for row in rows:
+        r = dict(row)
+        if r.get('scheduled_time'):
+            st = r['scheduled_time']
+            if hasattr(st, 'strftime'):
+                r['scheduled_time'] = st.strftime('%Y-%m-%d %H:%M:%S') + 'Z'
+            elif isinstance(st, str) and not st.endswith('Z'):
+                r['scheduled_time'] = st + 'Z'
+        result.append(r)
+    return result
 
 
 # ─── Call Retries ─────────────────────────────────────────────────────────────
@@ -1931,7 +2083,10 @@ def create_retry(org_id: int, lead_id: int, campaign_id: int = None, last_call_s
                  attempt_number: int = 1, max_attempts: int = 3, retry_delay_minutes: int = 120) -> int:
     conn = get_conn()
     cursor = conn.cursor()
-    retry_after = datetime.now() + timedelta(minutes=retry_delay_minutes)
+    # Add up to 20 min of jitter so batch retries (from Dial All) don't all
+    # expire at the same time and cause the retry worker to mass-dial (Issue #65).
+    jitter = random.randint(0, 20)
+    retry_after = datetime.now() + timedelta(minutes=retry_delay_minutes + jitter)
     cursor.execute(
         """INSERT INTO call_retries (org_id, campaign_id, lead_id, attempt_number, max_attempts,
            retry_after, status, last_call_status)

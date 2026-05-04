@@ -8,7 +8,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // Proxy all API, WebSocket and health calls to the FastAPI backend
-      '/api':          { target: 'http://app:8001', changeOrigin: true },
+      // SSE endpoints (/api/campaign-events, /api/live-logs) need selfHandleResponse:false
+      // so the proxy does not buffer the stream before forwarding it to the browser.
+      '/api':          { target: 'http://app:8001', changeOrigin: true, selfHandleResponse: false },
       '/ws':           { target: 'ws://app:8001',   changeOrigin: true, ws: true },
       '/media-stream': { target: 'ws://app:8001',   changeOrigin: true, ws: true },
       '/ping':         { target: 'http://app:8001', changeOrigin: true },

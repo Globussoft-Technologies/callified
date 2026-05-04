@@ -3,24 +3,35 @@ import React, { useState, useRef } from 'react';
 export default function CallMonitor({ apiUrl }) {
   const [streamSid, setStreamSid] = useState('');
   const [connected, setConnected] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [sidError, setSidError] = useState('');
   const [transcripts, setTranscripts] = useState([]);
   const [whisperText, setWhisperText] = useState('');
   const [takeoverActive, setTakeoverActive] = useState(false);
   const wsRef = useRef(null);
 
   const connectToCall = () => {
-    if (!streamSid) return;
-    const wsUrl = apiUrl.replace("http", "ws") + `/ws/monitor/${streamSid}`;
+    if (!streamSid.trim()) {
+      setSidError('Stream SID is required.');
+      return;
+    }
+    setSidError('');
+    setConnecting(true);
+    const wsUrl = apiUrl.replace("http", "ws") + `/ws/monitor/${streamSid.trim()}`;
     wsRef.current = new WebSocket(wsUrl);
-    
-    wsRef.current.onopen = () => setConnected(true);
+
+    wsRef.current.onopen = () => { setConnecting(false); setConnected(true); };
     wsRef.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'transcript') {
         setTranscripts(prev => [...prev, data]);
       }
     };
-    wsRef.current.onclose = () => setConnected(false);
+    wsRef.current.onerror = () => {
+      setConnecting(false);
+      setSidError('No active stream found for this SID. Check the ID and try again.');
+    };
+    wsRef.current.onclose = () => { setConnecting(false); setConnected(false); };
   };
 
   const sendWhisper = () => {
@@ -55,15 +66,26 @@ export default function CallMonitor({ apiUrl }) {
       <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Inject dynamic instructions into the AI's mind instantly, or take over the line if the client demands human interaction.</p>
       
       {!connected ? (
-        <div style={{display: 'flex', gap: '1rem', alignItems: 'center'}}>
-          <input 
-            className="form-input" 
-            placeholder="Enter active Stream SID routing ID..." 
-            value={streamSid} 
-            onChange={(e) => setStreamSid(e.target.value)}
-            style={{flex: 1, marginBottom: 0}}
-          />
-          <button className="btn-primary" onClick={connectToCall}>Connect Monitor</button>
+        <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
+          <div style={{display: 'flex', gap: '1rem', alignItems: 'center'}}>
+            <input
+              className="form-input"
+              placeholder="Enter active Stream SID routing ID..."
+              value={streamSid}
+              onChange={(e) => { setStreamSid(e.target.value); if (sidError) setSidError(''); }}
+              style={{flex: 1, marginBottom: 0, borderColor: sidError ? '#ef4444' : undefined}}
+              disabled={connecting}
+            />
+            <button className="btn-primary" onClick={connectToCall} disabled={connecting} style={{whiteSpace: 'nowrap', opacity: connecting ? 0.7 : 1}}>
+              {connecting ? '⏳ Connecting…' : 'Connect Monitor'}
+            </button>
+          </div>
+          {sidError && (
+            <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: '#fca5a5', fontSize: '0.82rem', paddingLeft: '2px'}}>
+              <span>⚠</span>
+              <span>{sidError}</span>
+            </div>
+          )}
         </div>
       ) : (
         <div style={{display: 'flex', flexDirection: 'column', gap: '1.5rem'}}>

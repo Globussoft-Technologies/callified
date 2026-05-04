@@ -45,6 +45,7 @@ def init_billing_tables():
             is_active BOOLEAN DEFAULT TRUE,
             sort_order INT DEFAULT 0,
             features JSON,
+            max_campaigns INT DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -101,6 +102,16 @@ def init_billing_tables():
 
     conn.close()
 
+    # --- Add max_campaigns to billing_plans if missing ---
+    try:
+        cursor.execute("ALTER TABLE billing_plans ADD COLUMN max_campaigns INT DEFAULT NULL")
+    except Exception:
+        pass  # Column already exists
+    # Back-fill limits for existing named plans that have none set
+    cursor.execute("UPDATE billing_plans SET max_campaigns = 1   WHERE name = 'Starter'    AND max_campaigns IS NULL")
+    cursor.execute("UPDATE billing_plans SET max_campaigns = 5   WHERE name = 'Growth'     AND max_campaigns IS NULL")
+    # Enterprise stays NULL (unlimited)
+
     # Create invoices table
     init_invoices_table()
 
@@ -115,16 +126,16 @@ def seed_default_plans():
     if cursor.fetchone()['cnt'] == 0:
         plans = [
             ("Starter", "1,000 minutes for small teams", 1000000, 1000, 1000, 'monthly', 0, 1,
-             '["AI Voice Agent","1 Campaign","Call recordings & transcripts","CSV lead import","Email support"]'),
+             '["AI Voice Agent","1 Active campaign","Call recordings & transcripts","CSV lead import","Email support"]', 1),
             ("Growth", "5,000 minutes for scaling teams", 4500000, 5000, 900, 'monthly', 7, 2,
-             '["Everything in Starter","5 Concurrent campaigns","CRM integration","Multi-language","Analytics dashboard","Priority support"]'),
+             '["Everything in Starter","Up to 5 concurrent campaigns","CRM integration","Multi-language","Analytics dashboard","Priority support"]', 5),
             ("Enterprise", "20,000 minutes for large teams", 16000000, 20000, 800, 'monthly', 0, 3,
-             '["Everything in Growth","Unlimited campaigns","Salesforce + custom CRM","Custom AI voice & persona","Dedicated account manager","SLA & onboarding"]'),
+             '["Everything in Growth","Unlimited campaigns","Salesforce + custom CRM","Custom AI voice & persona","Dedicated account manager","SLA & onboarding"]', None),
         ]
-        for name, desc, price, mins, extra, interval, trial, sort, features in plans:
+        for name, desc, price, mins, extra, interval, trial, sort, features, max_camp in plans:
             cursor.execute(
-                "INSERT INTO billing_plans (name, description, price_paise, minutes_included, extra_minute_paise, billing_interval, trial_days, sort_order, features) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (name, desc, price, mins, extra, interval, trial, sort, features)
+                "INSERT INTO billing_plans (name, description, price_paise, minutes_included, extra_minute_paise, billing_interval, trial_days, sort_order, features, max_campaigns) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (name, desc, price, mins, extra, interval, trial, sort, features, max_camp)
             )
     conn.close()
 
@@ -166,7 +177,7 @@ def get_org_subscription(org_id: int) -> Optional[Dict]:
     cursor = conn.cursor()
     cursor.execute("""
         SELECT s.*, p.name as plan_name, p.minutes_included, p.extra_minute_paise, p.price_paise,
-               p.features, p.billing_interval
+               p.features, p.billing_interval, p.max_campaigns
         FROM subscriptions s
         JOIN billing_plans p ON s.plan_id = p.id
         WHERE s.org_id = %s AND s.status IN ('active','trialing','past_due')
@@ -392,10 +403,11 @@ def verify_razorpay_payment(org_id: int, razorpay_order_id: str, razorpay_paymen
     else:
         sub_id = create_subscription(org_id, plan_id)
 
-    # Auto-create invoice for this payment
+    # Auto-create invoice for this payment.
+    # Failure here is non-fatal — get_invoices_by_org will backfill on the
+    # next billing page load — but we log at ERROR so it's never silent.
     try:
         from invoice_service import create_invoice
-        # Look up the payment record to get its DB id and amount
         conn = get_conn()
         cursor = conn.cursor()
         cursor.execute(
@@ -406,8 +418,18 @@ def verify_razorpay_payment(org_id: int, razorpay_order_id: str, razorpay_paymen
         conn.close()
         if pay_row:
             create_invoice(org_id, pay_row['id'], pay_row['amount_paise'])
+        else:
+            logger.error(
+                f"[BILLING] Invoice skipped — payment row not found for "
+                f"razorpay_payment_id={razorpay_payment_id}, org={org_id}. "
+                f"Will be backfilled on next billing page load."
+            )
     except Exception as e:
-        logger.error(f"[BILLING] Invoice creation failed: {e}")
+        logger.error(
+            f"[BILLING] Invoice creation failed for org={org_id}, "
+            f"payment={razorpay_payment_id}: {e}. "
+            f"Will be backfilled on next billing page load."
+        )
 
     logger.info(f"[BILLING] Payment verified: org={org_id}, plan={plan_id}, payment={razorpay_payment_id}")
     return {"status": "success", "subscription_id": sub_id}

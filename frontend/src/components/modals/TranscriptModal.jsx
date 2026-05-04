@@ -1,5 +1,45 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+
+function AuthAudio({ src, style }) {
+  const [blobUrl, setBlobUrl] = useState(null);
+  const [error, setError] = useState(false);
+  const audioRef = React.useRef(null);
+  const seekedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!src) return;
+    let objectUrl;
+    const token = localStorage.getItem('authToken');
+    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
+      .then(blob => { objectUrl = URL.createObjectURL(blob); setBlobUrl(objectUrl); })
+      .catch(() => setError(true));
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [src]);
+
+  const handleLoadedMetadata = () => {
+    const a = audioRef.current;
+    if (!a || seekedRef.current) return;
+    if (!isFinite(a.duration) || a.duration === 0) {
+      seekedRef.current = true;
+      a.currentTime = 1e101;
+    }
+  };
+  const handleSeeked = () => {
+    const a = audioRef.current;
+    if (!a || !seekedRef.current) return;
+    seekedRef.current = false;
+    a.currentTime = 0;
+  };
+
+  if (error) return <div style={{fontSize: '0.8rem', color: '#f87171', padding: '6px 0'}}>Recording unavailable</div>;
+  if (!blobUrl) return <div style={{fontSize: '0.8rem', color: '#64748b', padding: '6px 0'}}>Loading recording…</div>;
+  return (
+    <audio ref={audioRef} controls style={style} src={blobUrl}
+      onLoadedMetadata={handleLoadedMetadata} onSeeked={handleSeeked} />
+  );
+}
 
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
   if (!transcriptLead) return null;
@@ -48,9 +88,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                   return (
                     <div style={{marginBottom: '1rem', padding: '10px', background: bg, borderRadius: '8px', border: `1px solid ${border}`}}>
                       <div style={{fontSize: '0.8rem', color, marginBottom: '6px', fontWeight: 600}}>{sourceLabel}</div>
-                      <audio controls style={{width: '100%', height: '36px'}} src={t.recording_url}>
-                        Your browser does not support the audio element.
-                      </audio>
+                      <AuthAudio src={t.recording_url} style={{width: '100%', height: '36px'}} />
                     </div>
                   );
                 })()}

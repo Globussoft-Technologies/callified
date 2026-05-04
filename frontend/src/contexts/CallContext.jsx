@@ -192,7 +192,7 @@ export function CallProvider({ children }) {
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
   const handleCampaignDial = useCallback(async (lead, campaignId) => {
-    setDialingId('global');
+    setDialingId(lead.id);
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
     } catch(e) {}
@@ -336,8 +336,10 @@ export function CallProvider({ children }) {
               const formData = new FormData();
               formData.append('file', blob, `call_${lead.id}_${Date.now()}.webm`);
               formData.append('lead_id', String(lead.id));
+              formData.append('campaign_id', String(campaignId));
               try {
-                await apiFetch(`${API_URL}/upload-recording`, { method: 'POST', body: formData });
+                const res = await apiFetch(`${API_URL}/upload-recording`, { method: 'POST', body: formData });
+                if (!res.ok) console.error(`[RECORDING] Upload failed: HTTP ${res.status}`);
               } catch(e) { console.error('Recording upload failed:', e); }
             }
           };

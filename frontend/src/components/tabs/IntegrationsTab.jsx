@@ -2,15 +2,19 @@ import React from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 
 export default function IntegrationsTab({
-  handleCreateIntegration, intFormData, setIntFormData, CRM_SCHEMAS, loading, integrations, orgTimezone
+  handleCreateIntegration, intFormData, setIntFormData, CRM_SCHEMAS, loading, integrations, orgTimezone,
+  fieldErrors = {}, setFieldErrors = () => {}
 }) {
+  const schema = CRM_SCHEMAS[intFormData.provider] || [{ key: 'api_key', label: 'API Key / Token', type: 'password' }, { key: 'base_url', label: 'REST API Base URL', type: 'text' }];
+  const allFieldsFilled = schema.every(f => (intFormData.credentials[f.key] || '').trim().length > 0);
+
   return (
     <div className="integrations-container" style={{padding: '1rem'}}>
       <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
         <h3><span style={{color: '#38bdf8'}}>CRM</span> Integrations</h3>
         <p>Connect external CRM platforms to pull leads automatically and push call outcomes back.</p>
       </div>
-      
+
       <div style={{display: 'grid', gridTemplateColumns: 'minmax(300px, 400px) 1fr', gap: '2rem'}}>
         <div className="glass-panel" style={{height: 'fit-content'}}>
           <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>Add New Connection</h4>
@@ -123,19 +127,34 @@ export default function IntegrationsTab({
                 <option value="Podio">Podio</option>
               </select>
             </div>
-            {(CRM_SCHEMAS[intFormData.provider] || [{ key: 'api_key', label: 'API Key / Token', type: 'password' }, { key: 'base_url', label: 'REST API Base URL', type: 'text' }]).map(field => (
+            {schema.map(field => (
               <div className="form-group" key={field.key} style={{marginBottom: 0}}>
                 <label>{field.label}</label>
-                <input 
-                  type={field.type} 
-                  className="form-input" 
-                  value={intFormData.credentials[field.key] || ''} 
-                  onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})} 
-                  placeholder={field.label + "..."} 
+                <input
+                  type={field.type}
+                  className="form-input"
+                  value={intFormData.credentials[field.key] || ''}
+                  onChange={e => {
+                    setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}});
+                    if (fieldErrors[field.key]) setFieldErrors({...fieldErrors, [field.key]: ''});
+                  }}
+                  placeholder={field.label + "..."}
+                  style={fieldErrors[field.key] ? {
+                    border: '1px solid rgba(239,68,68,0.6)',
+                    boxShadow: '0 0 0 3px rgba(239,68,68,0.12)',
+                  } : {}}
                 />
+                {fieldErrors[field.key] && (
+                  <div style={{marginTop: '4px', fontSize: '0.78rem', color: '#fca5a5'}}>{fieldErrors[field.key]}</div>
+                )}
               </div>
             ))}
-            <button type="submit" className="btn-primary" disabled={loading} style={{marginTop: '0.5rem'}}>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={loading || !allFieldsFilled}
+              style={{marginTop: '0.5rem', opacity: (!allFieldsFilled || loading) ? 0.45 : 1, cursor: (!allFieldsFilled || loading) ? 'not-allowed' : 'pointer'}}
+            >
               {loading ? 'Connecting...' : '🔌 Save Connection'}
             </button>
           </form>
@@ -164,7 +183,13 @@ export default function IntegrationsTab({
                      ))}
                   </td>
                   <td>
-                    <span className="badge" style={{background: 'rgba(34, 197, 94, 0.1)', color: '#4ade80'}}>Active Sync</span>
+                    {!intg.is_active ? (
+                      <span className="badge" style={{background: 'rgba(239, 68, 68, 0.1)', color: '#f87171'}}>Disconnected</span>
+                    ) : intg.last_synced_at ? (
+                      <span className="badge" style={{background: 'rgba(34, 197, 94, 0.1)', color: '#4ade80'}}>Active Sync</span>
+                    ) : (
+                      <span className="badge" style={{background: 'rgba(234, 179, 8, 0.1)', color: '#facc15'}}>Connected</span>
+                    )}
                   </td>
                   <td style={{color: '#94a3b8', fontSize: '0.9rem'}}>{intg.last_synced_at ? formatDateTime(intg.last_synced_at, orgTimezone) : 'Never'}</td>
                 </tr>

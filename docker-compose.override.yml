@@ -23,6 +23,7 @@ services:
       --reload
       --reload-dir /app
       --log-level info
+      --timeout-graceful-shutdown 3
     restart: "no"
 
   # ── Frontend: Vite HMR dev server ────────────────────────────────────────────

@@ -4,6 +4,7 @@ export default function KnowledgeBase({ apiUrl }) {
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const fileInputRef = useRef(null);
 
   const fetchFiles = async () => {
@@ -57,14 +58,29 @@ export default function KnowledgeBase({ apiUrl }) {
     setUploading(false);
   };
 
-  const handleDelete = async (fileId, filename) => {
-    if (!window.confirm(`Delete ${filename} from the Knowledge Base?`)) return;
+  const handleView = async (fileId, filename) => {
     try {
       const authToken = localStorage.getItem('authToken');
-      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, { 
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` } 
+      const res = await fetch(`${apiUrl}/knowledge/${fileId}/file`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
       });
+      if (!res.ok) { alert('File not available for download.'); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    } catch (e) {
+      alert('Could not open file.');
+    }
+  };
+
+  const handleDelete = async (fileId, filename) => {
+    try {
+      const authToken = localStorage.getItem('authToken');
+      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      setConfirmDeleteId(null);
       fetchFiles();
     } catch(e) {}
   };
@@ -101,17 +117,32 @@ export default function KnowledgeBase({ apiUrl }) {
             ) : (
               <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px'}}>
                 {files.map((f, i) => (
-                  <li key={i} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                      <span style={{fontSize: '1.2rem'}}>📄</span>
-                      <div>
-                        <div style={{color: '#cbd5e1', fontWeight: 500}}>{f.filename}</div>
-                        <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>
-                          {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
+                  <li key={i} style={{borderRadius: '6px', overflow: 'hidden', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
+                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px'}}>
+                      <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                        <span style={{fontSize: '1.2rem'}}>📄</span>
+                        <div>
+                          <div
+                            onClick={() => handleView(f.id, f.filename)}
+                            title="Click to open PDF"
+                            style={{color: '#93c5fd', fontWeight: 500, cursor: 'pointer', textDecoration: 'underline'}}
+                          >{f.filename}</div>
+                          <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>
+                            {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
+                          </div>
                         </div>
                       </div>
+                      <button onClick={() => setConfirmDeleteId(confirmDeleteId === f.id ? null : f.id)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1.1rem'}}>🗑️</button>
                     </div>
-                    <button onClick={() => handleDelete(f.id, f.filename)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}}>🗑️</button>
+                    {confirmDeleteId === f.id && (
+                      <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(239,68,68,0.12)', borderTop: '1px solid rgba(239,68,68,0.25)', padding: '10px 14px', gap: '10px'}}>
+                        <span style={{color: '#fca5a5', fontSize: '0.85rem'}}>Delete <strong>{f.filename}</strong> from the Knowledge Base?</span>
+                        <div style={{display: 'flex', gap: '8px', flexShrink: 0}}>
+                          <button onClick={() => setConfirmDeleteId(null)} style={{padding: '4px 14px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#94a3b8', cursor: 'pointer', fontSize: '0.82rem'}}>Cancel</button>
+                          <button onClick={() => handleDelete(f.id, f.filename)} style={{padding: '4px 14px', borderRadius: '6px', border: 'none', background: '#ef4444', color: '#fff', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600}}>Delete</button>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

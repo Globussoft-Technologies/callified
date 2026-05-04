@@ -34,8 +34,8 @@ export function VoiceProvider({ children }) {
             const found = allV.find(v => v.id === vs.tts_voice_id);
             if (found) setSavedVoiceName(found.name);
           }
-          if (vs.tts_language) setActiveLanguage(vs.tts_language);
         }
+        if (vs.tts_language) setActiveLanguage(vs.tts_language);
       } catch (e) {}
     })();
   }, [currentUser, selectedOrg, apiFetch]);

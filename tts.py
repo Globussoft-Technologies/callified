@@ -19,7 +19,6 @@ async def synthesize_and_send_audio(
     tts_provider_override: str = None, tts_voice_override: str = None, tts_language_override: str = None
 ):
     import logging
-    import audioop
     tts_logger = logging.getLogger("uvicorn.error")
     tts_logger.info(f"TTS START: text='{text[:60]}...', sid={stream_sid}")
     is_browser_sim = stream_sid.startswith("web_sim_")
@@ -90,10 +89,16 @@ async def _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tt
                     pcm_bytes = base64.b64decode(audio_b64)
 
                     if needs_raw_pcm:
-                        b64_chunk = base64.b64encode(pcm_bytes).decode('utf-8')
+                        _sarvam_is_exotel = not stream_sid.startswith("web_sim_") and not stream_sid.startswith("SM")
+                        if _sarvam_is_exotel:
+                            import audioop
+                            send_bytes = audioop.lin2ulaw(pcm_bytes, 2)
+                        else:
+                            send_bytes = pcm_bytes
+                        b64_chunk = base64.b64encode(send_bytes).decode('utf-8')
                         await websocket.send_text(json.dumps({
                             "event": "media",
-                            "stream_sid": stream_sid,
+                            "streamSid": stream_sid,
                             "media": {"payload": b64_chunk}
                         }))
                         if stream_sid in _tts_recording_buffers:
@@ -124,7 +129,6 @@ async def _synthesize_sarvam(text, stream_sid, websocket, tts_voice_override, tt
 
 
 async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, tts_logger):
-    import audioop
     # SmallestAI language name map (lang code → API language name)
     _smallest_lang_map = {
         'hi': 'hindi', 'hi-IN': 'hindi',
@@ -160,12 +164,19 @@ async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, 
                 chunk_count = 0
                 async for chunk in response.aiter_bytes(chunk_size=1024):
                     if chunk:
+                        _sm_is_exotel = not stream_sid.startswith("web_sim_") and not stream_sid.startswith("SM")
                         if needs_raw_pcm:
-                            b64_chunk = base64.b64encode(chunk).decode('utf-8')
+                            if _sm_is_exotel:
+                                import audioop
+                                send_chunk = audioop.lin2ulaw(chunk, 2)
+                            else:
+                                send_chunk = chunk
+                            b64_chunk = base64.b64encode(send_chunk).decode('utf-8')
                         else:
+                            import audioop
                             ulaw_chunk = audioop.lin2ulaw(chunk, 2)
                             b64_chunk = base64.b64encode(ulaw_chunk).decode('utf-8')
-                        payload_key = "stream_sid" if needs_raw_pcm else "streamSid"
+                        payload_key = "streamSid"
                         await websocket.send_text(json.dumps({
                             "event": "media",
                             payload_key: stream_sid,
@@ -177,8 +188,16 @@ async def _synthesize_smallest(text, stream_sid, websocket, tts_voice_override, 
         tts_logger.error(f"TTS SmallestAI Exception: {e}")
 
 
+def _downsample_pcm_2x(data: bytes) -> bytes:
+    """Decimate 16-bit PCM by 2 (e.g. 16 kHz → 8 kHz) using no external libraries.
+    Takes every other 16-bit little-endian sample — exact for a 2:1 integer ratio."""
+    out = bytearray()
+    for i in range(0, len(data) - 1, 4):
+        out.extend(data[i:i + 2])
+    return bytes(out)
+
+
 async def _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override, tts_language_override, needs_raw_pcm, is_exotel, is_browser_sim, tts_logger):
-    import audioop
     if needs_raw_pcm:
         output_format = "pcm_16000"
     else:
@@ -186,13 +205,27 @@ async def _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override
 
     url = (
         f"https://api.elevenlabs.io/v1/text-to-speech/"
-        f"{tts_voice_override or os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}&optimize_streaming_latency=3"
+        f"{tts_voice_override or os.getenv('ELEVENLABS_VOICE_ID')}/stream?output_format={output_format}"
     )
+    # eleven_turbo_v2_5 only supports a limited set of language codes.
+    # For unsupported Indian languages (te, kn, ml, gu, pa, bn, mr) use
+    # eleven_multilingual_v2 without a language_code — it auto-detects from script.
+    _EL_TURBO_LANGS = {'en', 'hi', 'ta', 'de', 'pl', 'es', 'it', 'fr', 'pt', 'ar',
+                       'cs', 'ro', 'hu', 'el', 'ko', 'ms', 'id', 'ja', 'tr', 'zh',
+                       'nl', 'fi', 'uk', 'bg', 'hr', 'sk', 'da', 'sv', 'tl'}
+    _lang = tts_language_override or "hi"
+    if _lang in _EL_TURBO_LANGS:
+        _el_model = "eleven_turbo_v2_5"
+        _el_lang_param = {"language_code": _lang}
+    else:
+        _el_model = "eleven_multilingual_v2"
+        _el_lang_param = {}
+
     headers = {"xi-api-key": os.getenv("ELEVENLABS_API_KEY")}
     payload = {
         "text": text,
-        "model_id": "eleven_turbo_v2_5",
-        "language_code": tts_language_override or "hi",
+        "model_id": _el_model,
+        **_el_lang_param,
         "voice_settings": {
             "stability": 0.35,
             "similarity_boost": 0.85,
@@ -207,24 +240,76 @@ async def _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override
             async with client.stream("POST", url, json=payload, headers=headers) as response:
                 if response.status_code != 200:
                     body = await response.aread()
-                    tts_logger.error(f"TTS ElevenLabs error: {body[:200]}")
+                    tts_logger.error(f"TTS ElevenLabs HTTP {response.status_code} for voice={tts_voice_override}: {body[:300]}")
+                    if response.status_code == 402 and stream_sid.startswith("web_sim_"):
+                        # Library voice requires paid ElevenLabs plan — fall back to SmallestAI.
+                        # Map each ElevenLabs voice to a distinct SmallestAI voice (hindi, english).
+                        _EL_TO_SMALLEST = {
+                            # (lowercase el id): (hindi_voice, english_voice)
+                            'oh8ymzxjyezq5scgogn9': ('raj',     'arman'),    # Aakash
+                            'x4exprixdkrwchdtgysh': ('priya',   'jasmine'),  # Anjura (F)
+                            'sxukwbhkoioahklf6gt3': ('aravind', 'james'),    # Gaurav
+                            'n09nfwyjjg9vssgdlqbt': ('raj',     'arman'),    # Ishan
+                            'u9wnm2bnanqtbcawwlga': ('aravind', 'james'),    # Himanshu
+                            'h061kgyotplydxcoi8e3': ('aravind', 'james'),    # Ravi
+                            'ock0al5dbkvtudept4hm': ('raj',     'arman'),    # Viraj
+                            'nwj0s2lu9bdwrknd5yza': ('raj',     'arman'),    # Bunty
+                            'amiaxapsdoaihjqbsazj': ('priya',   'emily'),    # Priya (F)
+                            '6jsmtroalvewg1ga6jmw': ('mithali', 'emily'),    # Sia (F)
+                            '9vp6r7vvxnwgiglnpl17': ('mithali', 'jasmine'),  # Suhana (F)
+                            'ho2yz8lxm3axuxl8oekx': ('mithali', 'jasmine'),  # Mini (F)
+                            's0oisosj9raium7djnzw': ('raj',     'james'),    # Default
+                        }
+                        _el_lower = (tts_voice_override or "").lower()
+                        _lang = (tts_language_override or "hi").lower()
+                        _pair = _EL_TO_SMALLEST.get(_el_lower)
+                        if _pair:
+                            _fallback_voice = _pair[1] if _lang == "en" else _pair[0]
+                        else:
+                            _fallback_voice = "james" if _lang == "en" else "raj"
+                        tts_logger.warning(f"TTS ElevenLabs 402 → SmallestAI fallback voice={_fallback_voice} (lang={_lang})")
+                        try:
+                            await websocket.send_text(json.dumps({
+                                "event": "tts_warning",
+                                "message": "This ElevenLabs voice requires a paid subscription. Falling back to SmallestAI for audio playback.",
+                            }))
+                        except Exception:
+                            pass
+                        await _synthesize_smallest(text, stream_sid, websocket, _fallback_voice, tts_language_override, needs_raw_pcm, tts_logger)
+                        return
+                    if stream_sid.startswith("web_sim_"):
+                        try:
+                            err_text = body[:300].decode('utf-8', errors='replace')
+                            await websocket.send_text(json.dumps({
+                                "event": "tts_error",
+                                "provider": "elevenlabs",
+                                "code": response.status_code,
+                                "error": err_text,
+                            }))
+                        except Exception:
+                            pass
                     return
                 chunk_count = 0
                 pcm_buffer = b""
-                audio_state = None
-                async for chunk in response.aiter_bytes(chunk_size=640):
+
+                async for chunk in response.aiter_bytes(chunk_size=1280):
                     if chunk:
                         if needs_raw_pcm:
                             pcm_buffer += chunk
-                            usable = len(pcm_buffer) - (len(pcm_buffer) % 4)
-                            if usable >= 1280:
-                                raw = pcm_buffer[:usable]
-                                pcm_buffer = pcm_buffer[usable:]
-                                downsampled, audio_state = audioop.ratecv(raw, 2, 1, 16000, 8000, audio_state)
-                                b64_chunk = base64.b64encode(downsampled).decode('utf-8')
+                            # Send in 1280-byte aligned blocks (16kHz→8kHz via 2:1 decimation)
+                            while len(pcm_buffer) >= 1280:
+                                raw = pcm_buffer[:1280]
+                                pcm_buffer = pcm_buffer[1280:]
+                                downsampled = _downsample_pcm_2x(raw)
+                                if is_exotel:
+                                    import audioop
+                                    send_bytes = audioop.lin2ulaw(downsampled, 2)
+                                else:
+                                    send_bytes = downsampled
+                                b64_chunk = base64.b64encode(send_bytes).decode('utf-8')
                                 await websocket.send_text(json.dumps({
                                     "event": "media",
-                                    "stream_sid": stream_sid,
+                                    "streamSid": stream_sid,
                                     "media": {"payload": b64_chunk}
                                 }))
                                 if stream_sid in _tts_recording_buffers:
@@ -240,8 +325,37 @@ async def _synthesize_elevenlabs(text, stream_sid, websocket, tts_voice_override
                             }))
                             await asyncio.sleep(0.070)
                             chunk_count += 1
+
+                # Flush remaining bytes so the end of the phrase is never silently dropped
+                if needs_raw_pcm and len(pcm_buffer) >= 4:
+                    usable = len(pcm_buffer) - (len(pcm_buffer) % 4)
+                    if usable:
+                        downsampled = _downsample_pcm_2x(pcm_buffer[:usable])
+                        if is_exotel:
+                            import audioop
+                            send_bytes = audioop.lin2ulaw(downsampled, 2)
+                        else:
+                            send_bytes = downsampled
+                        b64_chunk = base64.b64encode(send_bytes).decode('utf-8')
+                        await websocket.send_text(json.dumps({
+                            "event": "media",
+                            "streamSid": stream_sid,
+                            "media": {"payload": b64_chunk}
+                        }))
+                        chunk_count += 1
+
                 tts_logger.info(f"TTS ElevenLabs END: sent {chunk_count} chunks.")
     except asyncio.CancelledError:
         tts_logger.info("TTS ElevenLabs cancelled (barge-in)")
     except Exception as e:
-        tts_logger.error(f"TTS ElevenLabs Exception: {e}")
+        tts_logger.error(f"TTS ElevenLabs Exception: {e}", exc_info=True)
+        if stream_sid.startswith("web_sim_"):
+            try:
+                await websocket.send_text(json.dumps({
+                    "event": "tts_error",
+                    "provider": "elevenlabs",
+                    "code": 0,
+                    "error": str(e),
+                }))
+            except Exception:
+                pass

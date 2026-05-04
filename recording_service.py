@@ -26,6 +26,7 @@ async def save_call_recording_and_transcript(
     EXOTEL_API_TOKEN,
     EXOTEL_ACCOUNT_SID,
     _campaign_id=None,
+    call_source: str = None,
 ):
     """
     Save the call transcript to the DB, fetch the Exotel recording (with retries),
@@ -72,7 +73,7 @@ async def save_call_recording_and_transcript(
                     _rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
                     os.makedirs(_rec_dir, exist_ok=True)
                     ext = "wav" if "wav" in content_type else ("ogg" if "ogg" in content_type else "mp3")
-                    _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time)}.{ext}"
+                    _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time * 1000)}.{ext}"
                     _rec_path = os.path.join(_rec_dir, _rec_fname)
                     with open(_rec_path, "wb") as f:
                         f.write(rec_resp.content)
@@ -102,7 +103,7 @@ async def save_call_recording_and_transcript(
                         _rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
                         os.makedirs(_rec_dir, exist_ok=True)
                         ext = "wav" if "wav" in audio_resp.headers.get("content-type", "") else "mp3"
-                        _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time)}.{ext}"
+                        _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time * 1000)}.{ext}"
                         _rec_path = os.path.join(_rec_dir, _rec_fname)
                         with open(_rec_path, "wb") as f:
                             f.write(audio_resp.content)
@@ -164,7 +165,7 @@ async def save_call_recording_and_transcript(
 
                     _rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
                     os.makedirs(_rec_dir, exist_ok=True)
-                    _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time)}.wav"
+                    _rec_fname = f"call_{_call_lead_id}_{int(_call_start_time * 1000)}.wav"
                     _rec_path = os.path.join(_rec_dir, _rec_fname)
 
                     with wave.open(_rec_path, 'wb') as wf:
@@ -179,7 +180,18 @@ async def save_call_recording_and_transcript(
             ws_logger.error(f"[RECORDING] Server-side WAV error: {_wav_err}")
 
     # --- Save transcript to DB ---
-    call_duration = round(time.time() - _call_start_time, 1)
+    # For sim web calls, derive duration from actual audio chunk timestamps so we
+    # don't count WebSocket setup / greeting-generation time as "call duration".
+    mic_chunks_all = _recording_mic_chunks
+    tts_chunks_all = _tts_recording_buffers.get(stream_sid, [])
+    if call_source == 'sim_web_call' and (mic_chunks_all or tts_chunks_all):
+        all_times = [t for t, _ in mic_chunks_all] + [t for t, _ in tts_chunks_all]
+        if all_times:
+            call_duration = round(max(all_times) - min(all_times) + 0.5, 1)
+        else:
+            call_duration = round(time.time() - _call_start_time, 1)
+    else:
+        call_duration = round(time.time() - _call_start_time, 1)
     if transcript_turns:
         transcript_id = save_call_transcript(
             lead_id=_call_lead_id,
@@ -187,6 +199,7 @@ async def save_call_recording_and_transcript(
             recording_url=recording_url,
             call_duration_s=call_duration,
             campaign_id=_campaign_id,
+            call_source=call_source,
         )
 
         # --- Dispatch call.completed webhook ---

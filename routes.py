@@ -12,8 +12,11 @@ import base64
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
-from pydantic import BaseModel
+import re
+from pydantic import BaseModel, field_validator
 from typing import List, Dict, Any, Optional
+
+_CAMPAIGN_NAME_RE = re.compile(r"^[a-zA-Z0-9 \-_'.,()#&!@]{1,100}$")
 import logging
 logger = logging.getLogger("uvicorn.error")
 import string
@@ -110,11 +113,33 @@ class CampaignCreate(BaseModel):
     product_id: Optional[int] = None
     lead_source: Optional[str] = None
 
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError('Campaign name is required')
+        if not _CAMPAIGN_NAME_RE.match(v):
+            raise ValueError("Campaign name may only contain letters, numbers, spaces and - _ ' . , ( ) # & ! @")
+        return v
+
 class CampaignUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
     lead_source: Optional[str] = None
     product_id: Optional[int] = None
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError('Campaign name is required')
+        if not _CAMPAIGN_NAME_RE.match(v):
+            raise ValueError("Campaign name may only contain letters, numbers, spaces and - _ ' . , ( ) # & ! @")
+        return v
 
 class CampaignLeadsAssign(BaseModel):
     lead_ids: List[int]
@@ -390,46 +415,51 @@ def api_get_analytics_dashboard(current_user: dict = Depends(get_current_user_or
     conn = get_conn()
     cursor = conn.cursor()
     try:
-        # Total calls (via leads belonging to this org)
+        # Total calls — source of truth is call_transcripts scoped via campaigns
         cursor.execute("""
-            SELECT COUNT(*) as cnt FROM calls c
-            JOIN leads l ON c.lead_id = l.id
-            WHERE l.org_id = %s
+            SELECT COUNT(*) as cnt
+            FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s
         """, (org_id,))
         total_calls = cursor.fetchone()['cnt'] or 0
 
         # Calls today
         cursor.execute("""
-            SELECT COUNT(*) as cnt FROM calls c
-            JOIN leads l ON c.lead_id = l.id
-            WHERE l.org_id = %s AND DATE(c.created_at) = CURDATE()
+            SELECT COUNT(*) as cnt
+            FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND DATE(ct.created_at) = CURDATE()
         """, (org_id,))
         calls_today = cursor.fetchone()['cnt'] or 0
 
-        # Calls this week
+        # Calls this week (Mon–today of current week)
         cursor.execute("""
-            SELECT COUNT(*) as cnt FROM calls c
-            JOIN leads l ON c.lead_id = l.id
-            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+            SELECT COUNT(*) as cnt
+            FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s
+              AND ct.created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
         """, (org_id,))
         calls_this_week = cursor.fetchone()['cnt'] or 0
 
-        # Avg call duration from call_transcripts
+        # Avg call duration
         cursor.execute("""
             SELECT COALESCE(AVG(ct.call_duration_s), 0) as avg_dur
             FROM call_transcripts ct
-            JOIN leads l ON ct.lead_id = l.id
-            WHERE l.org_id = %s AND ct.call_duration_s > 0
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND ct.call_duration_s > 0
         """, (org_id,))
         avg_call_duration_sec = round(cursor.fetchone()['avg_dur'] or 0, 1)
 
-        # Pickup rate: calls with status != 'no-answer' / total
+        # Pickup rate: call_duration_s > 0 means the call was answered
         pickup_rate = 0
         if total_calls > 0:
             cursor.execute("""
-                SELECT COUNT(*) as cnt FROM calls c
-                JOIN leads l ON c.lead_id = l.id
-                WHERE l.org_id = %s AND c.status != 'no-answer'
+                SELECT COUNT(*) as cnt
+                FROM call_transcripts ct
+                JOIN campaigns camp ON ct.campaign_id = camp.id
+                WHERE camp.org_id = %s AND ct.call_duration_s > 0
             """, (org_id,))
             picked_up = cursor.fetchone()['cnt'] or 0
             pickup_rate = round(picked_up / total_calls, 2)
@@ -473,20 +503,22 @@ def api_get_analytics_dashboard(current_user: dict = Depends(get_current_user_or
         """, (org_id,))
         top_failure_reasons = [{"reason": r['reason'], "count": r['cnt']} for r in cursor.fetchall()]
 
-        # Daily calls for last 7 days
+        # Daily calls — Mon through Sun of current week, future days show 0
+        today = datetime.now().date()
+        monday = today - timedelta(days=today.weekday())  # weekday() 0=Mon
         cursor.execute("""
-            SELECT DATE(c.created_at) as call_date, COUNT(*) as cnt
-            FROM calls c
-            JOIN leads l ON c.lead_id = l.id
-            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-            GROUP BY DATE(c.created_at)
+            SELECT DATE(ct.created_at) as call_date, COUNT(*) as cnt
+            FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND DATE(ct.created_at) >= %s
+            GROUP BY DATE(ct.created_at)
             ORDER BY call_date
-        """, (org_id,))
+        """, (org_id, monday.strftime('%Y-%m-%d')))
         daily_map = {str(r['call_date']): r['cnt'] for r in cursor.fetchall()}
         daily_calls = []
-        for i in range(6, -1, -1):
-            d = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_calls.append({"date": d, "count": daily_map.get(d, 0)})
+        for i in range(7):
+            d = monday + timedelta(days=i)
+            daily_calls.append({"date": d.strftime('%Y-%m-%d'), "count": daily_map.get(d.strftime('%Y-%m-%d'), 0)})
 
         # Campaign performance
         cursor.execute("""
@@ -590,19 +622,34 @@ def api_export_analytics_report(current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     cursor = conn.cursor()
     try:
-        # --- Gather all analytics data ---
-        cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s", (org_id,))
+        # --- Gather all analytics data (call_transcripts is the source of truth) ---
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id WHERE camp.org_id = %s
+        """, (org_id,))
         total_calls = cursor.fetchone()['cnt'] or 0
 
-        cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s AND DATE(c.created_at) = CURDATE()", (org_id,))
+        cursor.execute("""
+            SELECT COUNT(*) as cnt FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND DATE(ct.created_at) = CURDATE()
+        """, (org_id,))
         calls_today = cursor.fetchone()['cnt'] or 0
 
-        cursor.execute("SELECT COALESCE(AVG(ct.call_duration_s), 0) as avg_dur FROM call_transcripts ct JOIN leads l ON ct.lead_id = l.id WHERE l.org_id = %s AND ct.call_duration_s > 0", (org_id,))
+        cursor.execute("""
+            SELECT COALESCE(AVG(ct.call_duration_s), 0) as avg_dur FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND ct.call_duration_s > 0
+        """, (org_id,))
         avg_duration = round(cursor.fetchone()['avg_dur'] or 0, 1)
 
         pickup_rate = 0
         if total_calls > 0:
-            cursor.execute("SELECT COUNT(*) as cnt FROM calls c JOIN leads l ON c.lead_id = l.id WHERE l.org_id = %s AND c.status != 'no-answer'", (org_id,))
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM call_transcripts ct
+                JOIN campaigns camp ON ct.campaign_id = camp.id
+                WHERE camp.org_id = %s AND ct.call_duration_s > 0
+            """, (org_id,))
             pickup_rate = round((cursor.fetchone()['cnt'] or 0) / total_calls * 100)
 
         cursor.execute("""
@@ -625,18 +672,21 @@ def api_export_analytics_report(current_user: dict = Depends(get_current_user)):
             if s in sentiment:
                 sentiment[s] = row['cnt']
 
-        # Daily calls
+        # Daily calls — Mon–Sun of current week (matches dashboard)
+        today_d = datetime.now().date()
+        monday_d = today_d - timedelta(days=today_d.weekday())
         cursor.execute("""
-            SELECT DATE(c.created_at) as call_date, COUNT(*) as cnt
-            FROM calls c JOIN leads l ON c.lead_id = l.id
-            WHERE l.org_id = %s AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-            GROUP BY DATE(c.created_at) ORDER BY call_date
-        """, (org_id,))
+            SELECT DATE(ct.created_at) as call_date, COUNT(*) as cnt
+            FROM call_transcripts ct
+            JOIN campaigns camp ON ct.campaign_id = camp.id
+            WHERE camp.org_id = %s AND DATE(ct.created_at) >= %s
+            GROUP BY DATE(ct.created_at) ORDER BY call_date
+        """, (org_id, monday_d.strftime('%Y-%m-%d')))
         daily_map = {str(r['call_date']): r['cnt'] for r in cursor.fetchall()}
         daily_calls = []
-        for i in range(6, -1, -1):
-            d = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_calls.append({"date": d, "count": daily_map.get(d, 0)})
+        for i in range(7):
+            d = monday_d + timedelta(days=i)
+            daily_calls.append({"date": d.strftime('%Y-%m-%d'), "count": daily_map.get(d.strftime('%Y-%m-%d'), 0)})
 
         # Campaign performance
         cursor.execute("""
@@ -659,7 +709,7 @@ def api_export_analytics_report(current_user: dict = Depends(get_current_user)):
 
         now = datetime.now()
         generated_at = now.strftime('%B %d, %Y at %I:%M %p')
-        date_range = f"{(now - timedelta(days=6)).strftime('%b %d')} - {now.strftime('%b %d, %Y')}"
+        date_range = f"{monday_d.strftime('%b %d')} - {monday_d + timedelta(days=6):%b %d, %Y} (This Week)"
         max_daily = max((d['count'] for d in daily_calls), default=1) or 1
         sent_total = sum(sentiment.values()) or 1
 
@@ -877,7 +927,12 @@ def api_get_products(org_id: int, current_user: dict = Depends(get_current_user)
 
 @api_router.post("/api/organizations/{org_id}/products")
 def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
-    pid = create_product(org_id, payload.get("name", ""), payload.get("website_url", ""), payload.get("manual_notes", ""))
+    name = payload.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Product name is required.")
+    pid = create_product(org_id, name, payload.get("website_url", ""), payload.get("manual_notes", ""))
+    if pid is None:
+        raise HTTPException(status_code=409, detail=f'A product named "{name}" already exists. Please use a unique name.')
     return {"status": "ok", "id": pid}
 
 @api_router.put("/api/products/{product_id}")
@@ -1154,49 +1209,76 @@ def api_save_voice_settings(org_id: int, payload: dict, current_user: dict = Dep
 # --- Recordings ---
 
 @api_router.post("/api/upload-recording")
-async def api_upload_recording(current_user: dict = Depends(get_current_user), file: UploadFile = File(...), lead_id: str = Form("")):
-    import logging
-    _ul = logging.getLogger("uvicorn.error")
-    rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
-    os.makedirs(rec_dir, exist_ok=True)
-    fname = file.filename or f"call_{lead_id}_{int(__import__('time').time())}.webm"
-    fpath = os.path.join(rec_dir, fname)
-    contents = await file.read()
-    with open(fpath, "wb") as f:
-        f.write(contents)
-    _ul.info(f"[RECORDING] Client upload saved: {fpath} ({len(contents)} bytes)")
-    if lead_id and lead_id.isdigit():
-        import asyncio
+async def api_upload_recording(
+    current_user: dict = Depends(get_current_user),
+    file: UploadFile = File(...),
+    lead_id: str = Form(""),
+    campaign_id: str = Form(""),
+):
+    import logging as _lg
+    _ul = _lg.getLogger("uvicorn.error")
+    rec_url = None
+    try:
+        rec_dir = os.path.join(os.path.dirname(__file__), "recordings")
+        os.makedirs(rec_dir, exist_ok=True)
+        fname = os.path.basename(file.filename or f"call_{lead_id}_{int(__import__('time').time())}.webm")
+        fpath = os.path.join(rec_dir, fname)
+        contents = await file.read()
+        with open(fpath, "wb") as f:
+            f.write(contents)
+        _ul.info(f"[RECORDING] Client upload saved: {fpath} ({len(contents)} bytes)")
         rec_url = f"/api/recordings/{fname}"
+    except Exception as _fe:
+        _ul.error(f"[RECORDING] File save failed: {_fe}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": f"Failed to save recording: {_fe}"})
+
+    if lead_id and lead_id.isdigit():
+        import asyncio as _aio
+        cam_id = int(campaign_id) if campaign_id and campaign_id.isdigit() else None
         try:
             from database import get_conn
-            # Poll up to 3 seconds for the transcript to be created by the ws_handler
-            for _ in range(6):
+            # Poll up to 10s for the transcript created by this call session.
+            # The 5-minute window prevents attaching the recording to a transcript
+            # from a previous call for the same lead (which caused "merging" of recordings).
+            for _ in range(20):
                 conn = get_conn()
                 cur = conn.cursor()
-                cur.execute("SELECT id, recording_url FROM call_transcripts WHERE lead_id = %s ORDER BY id DESC LIMIT 1", (int(lead_id),))
+                if cam_id:
+                    cur.execute(
+                        "SELECT id FROM call_transcripts "
+                        "WHERE lead_id = %s AND campaign_id = %s "
+                        "AND created_at >= NOW() - INTERVAL 5 MINUTE "
+                        "ORDER BY id DESC LIMIT 1",
+                        (int(lead_id), cam_id)
+                    )
+                else:
+                    cur.execute(
+                        "SELECT id FROM call_transcripts "
+                        "WHERE lead_id = %s "
+                        "AND created_at >= NOW() - INTERVAL 5 MINUTE "
+                        "ORDER BY id DESC LIMIT 1",
+                        (int(lead_id),)
+                    )
                 row = cur.fetchone()
-                
-                # Check if the latest transcript is missing a recording URL (meaning it's the new one)
-                is_missing = False
-                if row:
-                    if isinstance(row, dict) and not row.get('recording_url'):
-                        is_missing = True
-                    elif isinstance(row, tuple) and not row[1]:
-                        is_missing = True
-                        row = {'id': row[0]}
-                        
-                if is_missing:
-                    cur.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (rec_url, row['id']))
-                    conn.commit()
-                    conn.close()
-                    _ul.info(f"[RECORDING] Updated transcript {row['id']} with URL: {rec_url}")
-                    break
                 conn.close()
-                await asyncio.sleep(0.5)
-        except Exception as e:
-            _ul.error(f"[RECORDING] DB update error: {e}")
-    return {"status": "ok", "url": f"/api/recordings/{fname}"}
+                if row:
+                    tid = row['id'] if isinstance(row, dict) else row[0]
+                    conn2 = get_conn()
+                    cur2 = conn2.cursor()
+                    # Always overwrite: browser webm has accurate duration metadata;
+                    # server-side WAV (if already set) used seconds-precision timestamps.
+                    cur2.execute("UPDATE call_transcripts SET recording_url = %s WHERE id = %s", (rec_url, tid))
+                    conn2.commit()
+                    conn2.close()
+                    _ul.info(f"[RECORDING] Linked recording to transcript {tid}: {rec_url}")
+                    break
+                await _aio.sleep(0.5)
+            else:
+                _ul.warning(f"[RECORDING] No recent transcript found for lead {lead_id} — recording saved but not linked")
+        except Exception as _de:
+            _ul.error(f"[RECORDING] DB update error: {_de}", exc_info=True)
+
+    return {"status": "ok", "url": rec_url}
 
 @api_router.get("/api/recordings/{filename}")
 async def serve_recording(filename: str, current_user: dict = Depends(get_current_user)):
@@ -1248,39 +1330,49 @@ def process_uploaded_pdf(filepath: str, org_id: int, filename: str, file_id: int
     except Exception as e:
         _log.error(f"RAG INGESTION FAILED: {filename} - {e}")
         update_knowledge_file_status(file_id, "Failed", 0)
-    finally:
-        if os.path.exists(filepath):
-            os.remove(filepath)
 
 @api_router.post("/api/knowledge/upload")
 async def upload_knowledge(
-    background_tasks: BackgroundTasks, 
-    file: UploadFile = File(...), 
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user)
 ):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDFs are supported.")
-        
+
     org_id = current_user.get("org_id")
     if not org_id:
         raise HTTPException(status_code=400, detail="No organization linked")
 
-    # Save temp file
-    temp_dir = os.path.join(os.path.dirname(__file__), "temp_uploads")
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_path = os.path.join(temp_dir, f"{org_id}_{file.filename}")
-    
+    # Save permanently so the file can be served later
+    perm_dir = os.path.join(os.path.dirname(__file__), "knowledge_uploads", str(org_id))
+    os.makedirs(perm_dir, exist_ok=True)
+    perm_path = os.path.join(perm_dir, file.filename)
+
     contents = await file.read()
-    with open(temp_path, "wb") as f:
+    with open(perm_path, "wb") as f:
         f.write(contents)
-        
+
     # Log to DB instantly
     file_id = log_knowledge_file(org_id, file.filename, "Processing", 0)
-    
+
     # Process purely in background using FAISS/ML arrays
-    background_tasks.add_task(process_uploaded_pdf, temp_path, org_id, file.filename, file_id)
-    
+    background_tasks.add_task(process_uploaded_pdf, perm_path, org_id, file.filename, file_id)
+
     return {"status": "success", "message": "File is being processed automatically in the background.", "file_id": file_id}
+
+@api_router.get("/api/knowledge/{file_id}/file")
+async def download_knowledge_file(file_id: int, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    files = get_knowledge_files(org_id)
+    f = next((x for x in files if x["id"] == file_id), None)
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    perm_dir = os.path.join(os.path.dirname(__file__), "knowledge_uploads", str(org_id))
+    file_path = os.path.join(perm_dir, f["filename"])
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not available for download")
+    return FileResponse(file_path, media_type="application/pdf", filename=f["filename"])
 
 @api_router.get("/api/knowledge")
 def api_get_knowledge(current_user: dict = Depends(get_current_user)):
@@ -1299,21 +1391,43 @@ def api_delete_knowledge(file_id: int, filename: str, current_user: dict = Depen
 
 @api_router.get("/api/pronunciation")
 def get_pronunciations(current_user: dict = Depends(get_current_user)):
-    return get_all_pronunciations()
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization associated with this account")
+    return get_all_pronunciations(org_id)
+
+# Allowlist: Unicode letters, digits, spaces, hyphens, apostrophes, dots only.
+# Everything else (HTML, URLs, backticks, braces, slashes, colons…) is rejected.
+_PRON_SAFE = re.compile(r"^[\w\s\-'\.]+$", re.UNICODE)
 
 @api_router.post("/api/pronunciation")
 async def create_pronunciation_endpoint(request: Request, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization associated with this account")
     data = await request.json()
-    word = data.get("word", "").strip()
-    phonetic = data.get("phonetic", "").strip()
+    # Collapse all whitespace (tabs, newlines) to single spaces — prevents prompt injection via line breaks
+    word = " ".join(data.get("word", "").split())
+    phonetic = " ".join(data.get("phonetic", "").split())
     if not word or not phonetic:
         return {"error": "word and phonetic are required"}
-    add_pronunciation(word, phonetic)
+    if len(word) > 100:
+        raise HTTPException(status_code=400, detail="Written word must be 100 characters or fewer.")
+    if len(phonetic) > 200:
+        raise HTTPException(status_code=400, detail="Phonetic spelling must be 200 characters or fewer.")
+    if not _PRON_SAFE.match(word) or not _PRON_SAFE.match(phonetic):
+        raise HTTPException(status_code=400, detail="Only letters, digits, spaces, hyphens, apostrophes, and dots are allowed.")
+    if word.lower() == phonetic.lower():
+        raise HTTPException(status_code=400, detail="Phonetic spelling must differ from the written word")
+    add_pronunciation(word, phonetic, org_id)
     return {"status": "ok", "word": word, "phonetic": phonetic}
 
 @api_router.delete("/api/pronunciation/{pronunciation_id}")
 def remove_pronunciation(pronunciation_id: int, current_user: dict = Depends(get_current_user)):
-    ok = delete_pronunciation(pronunciation_id)
+    org_id = current_user.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization associated with this account")
+    ok = delete_pronunciation(pronunciation_id, org_id)
     return {"status": "ok" if ok else "not_found"}
 
 # --- Campaigns ---
@@ -1329,6 +1443,22 @@ def api_get_campaigns(current_user: dict = Depends(get_current_user_or_api_key))
 @api_router.post("/api/campaigns")
 def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("org_id")
+    # Enforce per-plan campaign limit
+    from billing import get_org_subscription
+    sub = get_org_subscription(org_id)
+    if sub and sub.get("max_campaigns") is not None:
+        active_count = sum(
+            1 for c in get_campaigns_by_org(org_id)
+            if (c.get("status") or "active") == "active"
+        )
+        limit = sub["max_campaigns"]
+        if active_count >= limit:
+            plan_name = sub.get("plan_name", "current")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Your {plan_name} plan allows up to {limit} active campaign{'s' if limit != 1 else ''}. "
+                       f"Upgrade your plan to create more.",
+            )
     campaign_id = create_campaign(org_id, data.product_id, data.name, data.lead_source)
     return {"status": "success", "id": campaign_id}
 
@@ -1693,8 +1823,8 @@ def api_invite_team_member(data: TeamInvite, current_user: dict = Depends(get_cu
     org_id = current_user.get("org_id")
     if data.role not in ("Admin", "Agent", "Viewer"):
         raise HTTPException(status_code=400, detail="Role must be Admin, Agent, or Viewer")
-    if len(data.password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    from auth import validate_password_policy
+    validate_password_policy(data.password)
     from database import get_user_by_email
     existing = get_user_by_email(data.email)
     if existing:
@@ -1720,10 +1850,14 @@ def api_update_team_role(user_id: int, data: RoleUpdate, current_user: dict = De
 def api_delete_team_member(user_id: int, current_user: dict = Depends(get_current_user)):
     _require_admin(current_user)
     if user_id == current_user["id"]:
-        raise HTTPException(status_code=400, detail="Cannot remove yourself")
+        raise HTTPException(status_code=400, detail="You cannot remove your own account")
     target = get_user_by_id(user_id)
     if not target or target.get("org_id") != current_user.get("org_id"):
         raise HTTPException(status_code=404, detail="User not found in your organization")
+    if target.get("role") == "Admin":
+        from database import count_admins_in_org
+        if count_admins_in_org(current_user.get("org_id")) <= 1:
+            raise HTTPException(status_code=400, detail="Cannot remove the last admin of the organization")
     delete_user(user_id)
     return {"status": "success", "message": "User removed from team"}
 

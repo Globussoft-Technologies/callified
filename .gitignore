@@ -47,6 +47,8 @@ frontend/node_modules/
 # Environment files
 .env
 .env.docker
+.env.main
+.env.go-backend
 
 # Python
 __pycache__/
@@ -78,3 +80,9 @@ deploy.tar.gz
 # Local docs (not for repo)
 DEPLOYMENT.md
 server-missing-files.md
+
+# User-uploaded knowledge PDFs (served at runtime, not stored in repo)
+knowledge_uploads/
+
+# Go backend env
+backend/.env

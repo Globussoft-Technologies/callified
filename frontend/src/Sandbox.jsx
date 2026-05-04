@@ -34,11 +34,25 @@ const VOICE_OPTIONS = {
   }
 };
 
+const SANDBOX_LANGUAGES = [
+  { code: 'hi', name: 'Hindi' },
+  { code: 'en', name: 'English' },
+  { code: 'bn', name: 'Bengali' },
+  { code: 'mr', name: 'Marathi' },
+  { code: 'ta', name: 'Tamil' },
+  { code: 'te', name: 'Telugu' },
+  { code: 'kn', name: 'Kannada' },
+  { code: 'ml', name: 'Malayalam' },
+  { code: 'gu', name: 'Gujarati' },
+  { code: 'pa', name: 'Punjabi' },
+];
+
 export default function Sandbox({ apiUrl }) {
   const [recording, setRecording] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [provider, setProvider] = useState('elevenlabs');
   const [voiceId, setVoiceId] = useState('oH8YmZXJYEZq5ScgoGn9');
+  const [language, setLanguage] = useState('hi');
   const wsRef = useRef(null);
   const audioContextRef = useRef(null);
   const sourceRef = useRef(null);
@@ -50,9 +64,13 @@ export default function Sandbox({ apiUrl }) {
   };
 
   const startSandbox = async () => {
+    setTranscripts([]);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      // 8kHz matches Deepgram STT config (sample_rate=8000) and TTS output format.
+      // Browser mic captures at this rate so no resampling is needed on either path.
+      const MIC_RATE = 8000;
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: MIC_RATE });
       audioContextRef.current = audioContext;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -63,6 +81,7 @@ export default function Sandbox({ apiUrl }) {
         lead_id: '0',
         tts_provider: provider,
         voice: voiceId,
+        tts_language: language,
       }).toString();
 
       let wsUrl;
@@ -90,6 +109,8 @@ export default function Sandbox({ apiUrl }) {
 
         let micMuted = true;
         let unmuteTimer = null;
+        // Failsafe: if greeting TTS doesn't fire media events (API failure), unmute after 5s
+        const failsafeUnmute = setTimeout(() => { micMuted = false; }, 5000);
 
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN || micMuted) return;
@@ -99,20 +120,21 @@ export default function Sandbox({ apiUrl }) {
             let s = Math.max(-1, Math.min(1, float32Array[i]));
             int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
-          let binary = '';
           const bytes = new Uint8Array(int16Buffer.buffer);
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
-          ws.send(JSON.stringify({ event: 'media', media: { payload: window.btoa(binary) } }));
+          let binary = '';
+          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+          ws.send(JSON.stringify({ event: 'media', media: { payload: btoa(binary) } }));
         };
 
         let nextPlayTime = audioContext.currentTime;
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.event === 'media') {
+            clearTimeout(failsafeUnmute);
             micMuted = true;
             if (unmuteTimer) clearTimeout(unmuteTimer);
+            // Resume AudioContext if browser suspended it (required in some browsers)
+            if (audioContext.state === 'suspended') audioContext.resume();
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) audioBytes[i] = audioStr.charCodeAt(i);
@@ -129,6 +151,13 @@ export default function Sandbox({ apiUrl }) {
             bufferSource.start(startAt);
             nextPlayTime = startAt + audioBuffer.duration;
             unmuteTimer = setTimeout(() => { micMuted = false; }, (nextPlayTime - now) * 1000 + 200);
+          } else if (data.event === 'tts_warning') {
+            setTranscripts(prev => [...prev, { role: 'warning', text: data.message }]);
+          } else if (data.event === 'tts_error') {
+            // TTS provider returned an error — show it and unmute mic
+            clearTimeout(failsafeUnmute);
+            micMuted = false;
+            setTranscripts(prev => [...prev, { role: 'error', text: `TTS Error (${data.code || 'unknown'}): ${data.error}` }]);
           } else if (data.event === 'transcript' || data.event === 'user_speech') {
             setTranscripts(prev => [...prev, { role: 'user', text: data.text }]);
           } else if (data.event === 'llm_response') {
@@ -184,12 +213,23 @@ export default function Sandbox({ apiUrl }) {
           </div>
 
           {/* Voice Selector */}
-          <div style={{marginBottom: '1.5rem'}}>
+          <div style={{marginBottom: '1rem'}}>
             <label style={{display: 'block', fontSize: '0.8rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Voice</label>
             <select className="form-input" value={voiceId} onChange={e => setVoiceId(e.target.value)} disabled={recording}
               style={{width: '100%', fontSize: '0.9rem', padding: '10px 12px', opacity: recording ? 0.5 : 1}}>
               {currentVoices.map(v => (
                 <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Language Selector */}
+          <div style={{marginBottom: '1.5rem'}}>
+            <label style={{display: 'block', fontSize: '0.8rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Language</label>
+            <select className="form-input" value={language} onChange={e => setLanguage(e.target.value)} disabled={recording}
+              style={{width: '100%', fontSize: '0.9rem', padding: '10px 12px', opacity: recording ? 0.5 : 1}}>
+              {SANDBOX_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
               ))}
             </select>
           </div>
@@ -232,20 +272,25 @@ export default function Sandbox({ apiUrl }) {
           <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Live Transcripts</h3>
           <div style={{background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '1.5rem', minHeight: '350px', maxHeight: '450px', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto'}}>
             {transcripts.length === 0 && <p style={{color: '#64748b', textAlign: 'center', marginTop: '5rem'}}>Click "Start Simulation" and speak...</p>}
-            {transcripts.map((t, idx) => (
-              <div key={idx} style={{
-                alignSelf: t.role === 'user' ? 'flex-start' : 'flex-end',
-                background: t.role === 'user' ? 'rgba(56, 189, 248, 0.1)' : 'rgba(168, 85, 247, 0.1)',
-                padding: '10px 16px', borderRadius: '12px',
-                color: t.role === 'user' ? '#e0f2fe' : '#f3e8ff',
-                maxWidth: '80%', border: `1px solid ${t.role === 'user' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(168, 85, 247, 0.2)'}`
-              }}>
-                <strong style={{display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', marginBottom: '4px', opacity: 0.6}}>
-                  {t.role === 'user' ? '👤 You' : '🤖 AI Agent'}
-                </strong>
-                {t.text}
-              </div>
-            ))}
+            {transcripts.map((t, idx) => {
+              const isSystem = t.role === 'error' || t.role === 'warning';
+              const bg = t.role === 'error' ? 'rgba(239,68,68,0.12)' : t.role === 'warning' ? 'rgba(234,179,8,0.1)' : t.role === 'user' ? 'rgba(56,189,248,0.1)' : 'rgba(168,85,247,0.1)';
+              const color = t.role === 'error' ? '#fca5a5' : t.role === 'warning' ? '#fde047' : t.role === 'user' ? '#e0f2fe' : '#f3e8ff';
+              const border = t.role === 'error' ? 'rgba(239,68,68,0.3)' : t.role === 'warning' ? 'rgba(234,179,8,0.3)' : t.role === 'user' ? 'rgba(56,189,248,0.2)' : 'rgba(168,85,247,0.2)';
+              const label = t.role === 'error' ? '⚠️ TTS Error' : t.role === 'warning' ? '⚡ Notice' : t.role === 'user' ? '👤 You' : '🤖 AI Agent';
+              return (
+                <div key={idx} style={{
+                  alignSelf: isSystem ? 'center' : t.role === 'user' ? 'flex-start' : 'flex-end',
+                  background: bg, padding: '10px 16px', borderRadius: '12px',
+                  color, maxWidth: '90%', border: `1px solid ${border}`
+                }}>
+                  <strong style={{display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', marginBottom: '4px', opacity: 0.6}}>
+                    {label}
+                  </strong>
+                  {t.text}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

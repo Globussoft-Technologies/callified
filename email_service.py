@@ -8,6 +8,7 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import html
 import logging
 
 logger = logging.getLogger("uvicorn.error")
@@ -181,9 +182,10 @@ def send_appointment_confirmation(to_email: str, lead_name: str, appointment_tim
 def send_campaign_summary(to_email: str, campaign_name: str, total_calls: int, appointments: int, avg_score: float):
     """Daily campaign summary."""
     try:
+        safe_name = html.escape(campaign_name)
         body = f"""\
             <h2 style="color:#a5b4fc;margin-top:0;">Campaign Summary</h2>
-            <p>Here's the summary for <strong>{campaign_name}</strong>.</p>
+            <p>Here's the summary for <strong>{safe_name}</strong>.</p>
             <table style="width:100%;background:#334155;border-radius:6px;padding:16px;margin:16px 0;"
                    cellpadding="8" cellspacing="0">
               <tr>
@@ -206,7 +208,7 @@ def send_campaign_summary(to_email: str, campaign_name: str, total_calls: int, a
               </a>
             </p>"""
 
-        html = _wrap_html("Campaign Summary", body)
-        send_email(to_email, f"Campaign Summary - {campaign_name}", html)
+        html_body = _wrap_html("Campaign Summary", body)
+        send_email(to_email, f"Campaign Summary - {safe_name}", html_body)
     except Exception as e:
         logger.error(f"[EMAIL] Campaign summary failed for {to_email}: {e}")

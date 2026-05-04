@@ -23,8 +23,20 @@ export default function CampaignModals({
   handleSaveEditCampaign,
 }) {
   const [nameTouched, setNameTouched] = useState(false);
+  const [editNameTouched, setEditNameTouched] = useState(false);
+  const [addLeadsError, setAddLeadsError] = useState('');
+
+  // Allowed: letters, digits, spaces and safe punctuation. Blocks URLs, HTML, scripts.
+  const CAMPAIGN_NAME_RE = /^[a-zA-Z ]{1,100}$/;
+  const isValidCampaignName = (v) => CAMPAIGN_NAME_RE.test(v.trim());
+
   const nameEmpty = !createForm.name.trim();
-  const showNameError = nameTouched && nameEmpty;
+  const nameInvalid = !nameEmpty && !isValidCampaignName(createForm.name);
+  const showNameEmptyError = nameTouched && nameEmpty;
+  const showNameInvalidError = nameTouched && nameInvalid;
+
+  const editNameEmpty = !editCampaignForm.name.trim();
+  const editNameInvalid = !editNameEmpty && !isValidCampaignName(editCampaignForm.name);
 
   const handleClose = () => {
     setNameTouched(false);
@@ -92,7 +104,7 @@ export default function CampaignModals({
             </div>
 
             <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
-              <form onSubmit={e => { setNameTouched(true); handleCreateCampaign(e); }}>
+              <form onSubmit={e => { setNameTouched(true); if (nameEmpty || nameInvalid) { e.preventDefault(); return; } handleCreateCampaign(e); }}>
                 <div style={{marginBottom: '1rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                     Campaign Name <span style={{color: '#ef4444'}}>*</span>
@@ -101,33 +113,53 @@ export default function CampaignModals({
                     className="form-input"
                     placeholder="e.g. AdsGPT March Campaign"
                     value={createForm.name}
-                    onChange={e => { setNameTouched(true); setCreateForm({...createForm, name: e.target.value}); }}
+                    maxLength={100}
+                    onChange={e => { setNameTouched(true); setCreateForm({...createForm, name: e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 100)}); }}
                     onBlur={() => setNameTouched(true)}
                     style={{
                       width: '100%',
-                      borderColor: showNameError ? 'rgba(239,68,68,0.6)' : undefined,
-                      boxShadow: showNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                      borderColor: (showNameEmptyError || showNameInvalidError) ? 'rgba(239,68,68,0.6)' : undefined,
+                      boxShadow: (showNameEmptyError || showNameInvalidError) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
                     }}
                   />
-                  {showNameError && (
+                  {showNameEmptyError && (
                     <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
                       Campaign name is required.
+                    </p>
+                  )}
+                  {showNameInvalidError && (
+                    <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
+                      Only letters, numbers, spaces and - _ ' . , ( ) # &amp; ! @ are allowed.
                     </p>
                   )}
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Product {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}>(required to apply prompt template)</span>}
+                    Product{' '}
+                    {selectedTemplate
+                      ? <span style={{color: '#60a5fa', fontSize: '0.75rem'}}>(required to apply prompt template)</span>
+                      : <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>}
                   </label>
                   <select className="form-input" value={createForm.product_id}
                     onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
                     style={{width: '100%'}}>
                     <option value="">-- Select Product --</option>
-                    {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {(() => {
+                      const counts = {};
+                      orgProducts.forEach(p => { counts[p.name] = (counts[p.name] || 0) + 1; });
+                      return orgProducts.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {counts[p.name] > 1 ? `${p.name} (id ${p.id})` : p.name}
+                        </option>
+                      ));
+                    })()}
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source (where did these leads come from?)</label>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Lead Source{' '}
+                    <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                  </label>
                   <select className="form-input" value={createForm.lead_source}
                     onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
                     style={{width: '100%'}}>
@@ -153,7 +185,7 @@ export default function CampaignModals({
                     style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={loading}>
+                  <button type="submit" className="btn-primary" disabled={loading || nameEmpty || nameInvalid}>
                     {loading ? 'Creating...' : selectedTemplate ? 'Create from Template' : 'Create'}
                   </button>
                 </div>
@@ -176,19 +208,23 @@ export default function CampaignModals({
                 {availableLeads.map(lead => (
                   <label key={lead.id} style={{display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                     <input type="checkbox" checked={selectedLeadIds.includes(lead.id)}
-                      onChange={() => toggleLeadSelection(lead.id)} />
+                      onChange={() => { toggleLeadSelection(lead.id); setAddLeadsError(''); }} />
                     <span style={{color: '#e2e8f0', fontWeight: 500}}>{lead.first_name} {lead.last_name}</span>
                     <span style={{color: '#64748b', fontSize: '0.8rem'}}>{lead.phone}</span>
                   </label>
                 ))}
               </div>
             )}
+            {addLeadsError && (
+              <p style={{margin: '0 0 10px', fontSize: '0.82rem', color: '#f87171'}}>⚠ {addLeadsError}</p>
+            )}
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-              <button onClick={() => setShowAddLeadsModal(false)}
+              <button onClick={() => { setShowAddLeadsModal(false); setAddLeadsError(''); }}
                 style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleAddLeads} disabled={loading || selectedLeadIds.length === 0}>
+              <button className="btn-primary" disabled={loading}
+                onClick={() => { if (selectedLeadIds.length === 0) { setAddLeadsError('Please select at least one lead.'); return; } setAddLeadsError(''); handleAddLeads(); }}>
                 {loading ? 'Adding...' : `Add Selected (${selectedLeadIds.length})`}
               </button>
             </div>
@@ -226,24 +262,55 @@ export default function CampaignModals({
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
-            <form onSubmit={handleSaveEditCampaign}>
+            <form onSubmit={e => { setEditNameTouched(true); if (editNameEmpty || editNameInvalid) { e.preventDefault(); return; } handleSaveEditCampaign(e); }}>
               <div style={{marginBottom: '1rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Campaign Name</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Campaign Name <span style={{color: '#ef4444'}}>*</span>
+                </label>
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
-                  value={editCampaignForm.name} onChange={e => setEditCampaignForm({...editCampaignForm, name: e.target.value})}
-                  style={{width: '100%'}} />
+                  value={editCampaignForm.name}
+                  maxLength={100}
+                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 100)}); }}
+                  onBlur={() => setEditNameTouched(true)}
+                  style={{
+                    width: '100%',
+                    borderColor: (editNameTouched && (editNameEmpty || editNameInvalid)) ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: (editNameTouched && (editNameEmpty || editNameInvalid)) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                  }} />
+                {editNameTouched && editNameEmpty && (
+                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>Campaign name is required.</p>
+                )}
+                {editNameTouched && editNameInvalid && (
+                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
+                    Only letters, numbers, spaces and - _ ' . , ( ) # &amp; ! @ are allowed.
+                  </p>
+                )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Product{' '}
+                  <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                </label>
                 <select className="form-input" value={editCampaignForm.product_id}
                   onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
                   style={{width: '100%'}}>
                   <option value="">-- Select Product --</option>
-                  {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {(() => {
+                    const counts = {};
+                    orgProducts.forEach(p => { counts[p.name] = (counts[p.name] || 0) + 1; });
+                    return orgProducts.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {counts[p.name] > 1 ? `${p.name} (id ${p.id})` : p.name}
+                      </option>
+                    ));
+                  })()}
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Lead Source{' '}
+                  <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                </label>
                 <select className="form-input" value={editCampaignForm.lead_source}
                   onChange={e => setEditCampaignForm({...editCampaignForm, lead_source: e.target.value})}
                   style={{width: '100%'}}>
@@ -262,7 +329,7 @@ export default function CampaignModals({
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" disabled={loading || !editCampaignForm.name.trim()}>
+                <button type="submit" className="btn-primary" disabled={loading || editNameEmpty || editNameInvalid}>
                   {loading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>

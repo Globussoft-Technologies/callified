@@ -155,6 +155,38 @@ def set_raw(key: str, value: str, ex: int | None = None):
             r.set(key, value)
 
 
+# ─── Campaign Dial Lock ──────────────────────────────────────────────────────
+# Prevents the retry worker from auto-dialing leads while a manual dial session
+# is active for a campaign, avoiding the "per-row Dial triggers dial-all" effect.
+
+_mem_dial_lock: dict[int, bool] = {}
+
+
+def set_campaign_dial_active(campaign_id: int, ttl_seconds: int = 300):
+    """Mark that a manual dial is active for this campaign."""
+    r = _get_client()
+    if r:
+        r.setex(f"{KEY_PREFIX}manual_dial:{campaign_id}", ttl_seconds, "1")
+    else:
+        _mem_dial_lock[campaign_id] = True
+
+
+def is_campaign_dial_active(campaign_id: int) -> bool:
+    """Return True if a manual dial is still active for this campaign."""
+    r = _get_client()
+    if r:
+        return r.exists(f"{KEY_PREFIX}manual_dial:{campaign_id}") > 0
+    return _mem_dial_lock.get(campaign_id, False)
+
+
+def clear_campaign_dial_active(campaign_id: int):
+    r = _get_client()
+    if r:
+        r.delete(f"{KEY_PREFIX}manual_dial:{campaign_id}")
+    else:
+        _mem_dial_lock.pop(campaign_id, None)
+
+
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 
 def cleanup_call(stream_sid: str):

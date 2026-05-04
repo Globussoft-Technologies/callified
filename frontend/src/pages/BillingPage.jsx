@@ -7,6 +7,10 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const [payments, setPayments] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelTyped, setCancelTyped] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState('');
 
   useEffect(() => { fetchAll(); }, []);
 
@@ -90,14 +94,26 @@ export default function BillingPage({ apiFetch, API_URL }) {
   };
 
   const handleCancel = async () => {
-    if (!confirm('Are you sure you want to cancel your subscription?')) return;
+    setCancelling(true);
+    setCancelError('');
     try {
-      await apiFetch(`${API_URL}/billing/cancel`, {
+      const res = await apiFetch(`${API_URL}/billing/cancel`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ reason: 'User cancelled' }),
       });
+      if (!res.ok) {
+        const d = await res.json();
+        setCancelError(d.detail || 'Failed to cancel subscription. Please try again.');
+        setCancelling(false);
+        return;
+      }
+      setShowCancelConfirm(false);
+      setCancelTyped('');
       fetchAll();
-    } catch(e) { alert('Failed to cancel'); }
+    } catch(e) {
+      setCancelError('Failed to cancel subscription. Please try again.');
+    }
+    setCancelling(false);
   };
 
   if (loading) return <div className="page-container"><div className="glass-panel" style={{padding: '2rem', textAlign: 'center'}}>Loading billing...</div></div>;
@@ -126,9 +142,77 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   Renews: {new Date(usage.period_end).toLocaleDateString()}
                 </div>
               )}
+              {subscription.max_campaigns != null && (
+                <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '4px'}}>
+                  Campaign limit: <span style={{color: '#e2e8f0', fontWeight: 600}}>{subscription.max_campaigns} active</span>
+                </div>
+              )}
             </div>
-            <button className="btn-danger" onClick={handleCancel} style={{fontSize: '0.75rem', padding: '6px 14px'}}>Cancel Plan</button>
+            {!showCancelConfirm && (
+              <button
+                onClick={() => { setShowCancelConfirm(true); setCancelTyped(''); setCancelError(''); }}
+                style={{
+                  padding: '6px 14px', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', borderRadius: '6px',
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5',
+                }}>
+                Cancel Plan
+              </button>
+            )}
           </div>
+
+          {/* Inline cancellation confirmation */}
+          {showCancelConfirm && (
+            <div style={{
+              marginTop: '1.25rem', padding: '1.25rem', borderRadius: '10px',
+              background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+            }}>
+              <div style={{fontWeight: 700, color: '#fca5a5', marginBottom: '8px', fontSize: '0.95rem'}}>
+                Cancel your {usage.plan_name} plan?
+              </div>
+              <ul style={{margin: '0 0 12px', paddingLeft: '18px', color: '#94a3b8', fontSize: '0.82rem', lineHeight: 1.7}}>
+                <li>Your plan stays active until the end of the current billing period (<strong style={{color: '#e2e8f0'}}>{usage.period_end ? new Date(usage.period_end).toLocaleDateString() : 'current period end'}</strong>).</li>
+                <li>After that, your account reverts to the free tier and AI calling will be paused.</li>
+                <li>Your data, leads, and campaigns are preserved — you can resubscribe at any time.</li>
+              </ul>
+              <label style={{display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '14px', userSelect: 'none'}}>
+                <input
+                  type="checkbox"
+                  checked={cancelTyped === 'confirmed'}
+                  onChange={e => { setCancelTyped(e.target.checked ? 'confirmed' : ''); setCancelError(''); }}
+                  style={{width: '16px', height: '16px', accentColor: '#ef4444', cursor: 'pointer'}}
+                />
+                <span style={{fontSize: '0.82rem', color: '#e2e8f0'}}>
+                  I understand my plan will be cancelled at the end of the billing period.
+                </span>
+              </label>
+              <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelTyped !== 'confirmed' || cancelling}
+                  style={{
+                    padding: '7px 18px', borderRadius: '6px', fontSize: '0.82rem', fontWeight: 700,
+                    cursor: cancelTyped !== 'confirmed' ? 'not-allowed' : 'pointer',
+                    background: cancelTyped === 'confirmed' ? 'rgba(239,68,68,0.8)' : 'rgba(239,68,68,0.2)',
+                    border: '1px solid rgba(239,68,68,0.4)', color: '#fca5a5',
+                    opacity: cancelling ? 0.6 : 1,
+                  }}>
+                  {cancelling ? 'Cancelling…' : 'Confirm Cancellation'}
+                </button>
+                <button
+                  onClick={() => { setShowCancelConfirm(false); setCancelTyped(''); setCancelError(''); }}
+                  disabled={cancelling}
+                  style={{
+                    padding: '7px 16px', borderRadius: '6px', fontSize: '0.82rem', cursor: 'pointer',
+                    background: 'rgba(148,163,184,0.1)', border: '1px solid rgba(148,163,184,0.2)', color: '#94a3b8',
+                  }}>
+                  Keep Plan
+                </button>
+              </div>
+              {cancelError && (
+                <div style={{marginTop: '8px', fontSize: '0.78rem', color: '#fca5a5'}}>{cancelError}</div>
+              )}
+            </div>
+          )}
 
           {/* Usage bar */}
           <div style={{marginTop: '1.5rem'}}>
@@ -181,6 +265,9 @@ export default function BillingPage({ apiFetch, API_URL }) {
                 <div style={{fontSize: '1.8rem', fontWeight: 900, marginTop: '8px'}}>{formatINR(plan.price_paise)}<span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 400}}>/{plan.billing_interval}</span></div>
                 <div style={{fontSize: '0.85rem', color: '#22d3ee', fontWeight: 600, marginTop: '4px'}}>{plan.minutes_included.toLocaleString()} minutes included</div>
                 <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>Extra: {formatINR(plan.extra_minute_paise)}/min</div>
+                <div style={{fontSize: '0.75rem', color: '#64748b', marginTop: '2px'}}>
+                  Campaigns: <span style={{color: '#e2e8f0', fontWeight: 600}}>{plan.max_campaigns != null ? `Up to ${plan.max_campaigns}` : 'Unlimited'}</span>
+                </div>
                 {plan.trial_days > 0 && (
                   <div style={{fontSize: '0.75rem', color: '#f59e0b', marginTop: '4px', fontWeight: 600}}>{plan.trial_days}-day free trial</div>
                 )}
@@ -240,7 +327,20 @@ export default function BillingPage({ apiFetch, API_URL }) {
       <div className="glass-panel" style={{padding: '1.5rem'}}>
         <h3 style={{fontSize: '1rem', marginBottom: '1rem', color: '#94a3b8'}}>Invoices</h3>
         {invoices.length === 0 ? (
-          <div style={{textAlign: 'center', padding: '1.5rem', color: '#64748b', fontSize: '0.85rem'}}>No invoices yet</div>
+          <div style={{textAlign: 'center', padding: '1.5rem', fontSize: '0.85rem'}}>
+            {subscription && subscription.status === 'active' ? (
+              <span style={{color: '#f59e0b'}}>
+                ⚠ Your subscription is active but no invoice was found.{' '}
+                <button onClick={fetchAll}
+                  style={{background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit', padding: 0}}>
+                  Refresh
+                </button>
+                {' '}— if the issue persists, contact support.
+              </span>
+            ) : (
+              <span style={{color: '#64748b'}}>No invoices yet</span>
+            )}
+          </div>
         ) : (
           <table style={{width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse'}}>
             <thead>
@@ -267,7 +367,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   </td>
                   <td style={{padding: '8px 4px', textAlign: 'right'}}>
                     <button onClick={() => {
-                      const token = localStorage.getItem('token');
+                      const token = localStorage.getItem('authToken');
                       window.open(`${API_URL}/billing/invoices/${inv.id}/download?token=${encodeURIComponent(token)}`, '_blank');
                     }} style={{
                       padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',

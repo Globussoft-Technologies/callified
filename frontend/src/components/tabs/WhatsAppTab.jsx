@@ -42,9 +42,12 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
   const [autoReply, setAutoReply] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [revealed, setRevealed] = useState({});
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     if (!show || !selectedOrg) return;
+    setSaveError('');
     apiFetch(`${API_URL}/wa/config`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -60,15 +63,37 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
   }, [show, selectedOrg]);
 
   const handleSave = async () => {
+    // Client-side validation: all fields for the selected provider must be filled
+    const fields = PROVIDER_FIELDS[provider] || [];
+    const missing = fields.filter(f => !(creds[f.key] || '').trim()).map(f => f.label);
+    if (missing.length > 0) {
+      setSaveError(`Please fill in: ${missing.join(', ')}`);
+      return;
+    }
     setSaving(true);
+    setSaveError('');
     try {
-      await apiFetch(`${API_URL}/wa/config`, {
+      const res = await apiFetch(`${API_URL}/wa/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, credentials: creds, default_product_id: defaultProduct || null, auto_reply: autoReply }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // FastAPI validation errors return detail as an array of objects — normalise to a string
+        const detail = data.detail;
+        const msg = Array.isArray(detail)
+          ? detail.map(e => e.msg || JSON.stringify(e)).join(', ')
+          : (typeof detail === 'string' ? detail : 'Failed to save configuration.');
+        setSaveError(msg);
+        setSaving(false);
+        return;
+      }
       onClose();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setSaveError('Failed to save configuration. Please try again.');
+    }
     setSaving(false);
   };
 
@@ -86,15 +111,55 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
         </div>
 
         <label style={labelStyle}>Provider</label>
-        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); }} style={selectStyle}>
+        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); setRevealed({}); }} style={selectStyle}>
           {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
 
         {fields.map(f => (
           <div key={f.key}>
             <label style={labelStyle}>{f.label}</label>
-            <input type={f.type} value={creds[f.key] || ''} onChange={e => setCreds({ ...creds, [f.key]: e.target.value })}
-              style={inputStyle} placeholder={f.label} />
+            {f.type === 'password' ? (
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={revealed[f.key] ? 'text' : 'password'}
+                  value={creds[f.key] || ''}
+                  onChange={e => { setCreds({ ...creds, [f.key]: e.target.value }); setSaveError(''); }}
+                  style={{ ...inputStyle, paddingRight: '38px' }}
+                  placeholder="Password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setRevealed(r => ({ ...r, [f.key]: !r[f.key] }))}
+                  title={revealed[f.key] ? 'Hide' : 'Show'}
+                  style={{
+                    position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer', padding: '2px',
+                    color: revealed[f.key] ? '#94a3b8' : '#64748b', lineHeight: 0,
+                  }}
+                >
+                  {revealed[f.key] ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                      <line x1="1" y1="1" x2="23" y2="23"/>
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={creds[f.key] || ''}
+                onChange={e => { setCreds({ ...creds, [f.key]: e.target.value }); setSaveError(''); }}
+                style={inputStyle}
+                placeholder={f.label}
+              />
+            )}
           </div>
         ))}
 
@@ -122,6 +187,13 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
             </button>
           </div>
         </div>
+
+        {saveError && (
+          <div style={{
+            marginBottom: '0.75rem', padding: '10px 14px', borderRadius: '6px', fontSize: '0.82rem',
+            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5',
+          }}>{saveError}</div>
+        )}
 
         <button onClick={handleSave} disabled={saving}
           style={{ ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700, opacity: saving ? 0.6 : 1 }}>

@@ -1,16 +1,36 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-export default function TopHeader({
-  userRole,
-  currentUser,
-  handleLogout
-}) {
+const PRIMARY_TABS = [
+  { id: 'crm',          label: '📊 CRM',          path: '/crm',          adminOnly: false },
+  { id: 'campaigns',    label: '📢 Campaigns',     path: '/campaigns',    adminOnly: true  },
+  { id: 'analytics',    label: '📈 Analytics',     path: '/analytics',    adminOnly: true  },
+  { id: 'monitor',      label: '🎙️ Monitor',       path: '/monitor',      adminOnly: true  },
+  { id: 'integrations', label: '🔌 Integrations',  path: '/integrations', adminOnly: true  },
+  { id: 'settings',     label: '⚙️ Settings',      path: '/settings',     adminOnly: true  },
+];
+
+const MORE_TABS = [
+  { id: 'ops',       label: '📋 Ops & Tasks',      path: '/ops'       },
+  { id: 'whatsapp',  label: '💬 WhatsApp Comms',   path: '/whatsapp'  },
+  { id: 'knowledge', label: '🧠 RAG Knowledge',    path: '/knowledge' },
+  { id: 'sandbox',   label: '🎯 AI Sandbox',       path: '/sandbox'   },
+  { id: 'scheduled', label: '📅 Scheduled',        path: '/scheduled' },
+  { id: 'billing',   label: '💳 Billing',          path: '/billing'   },
+  { id: 'dnd',       label: '🚫 DND',              path: '/dnd'       },
+  { id: 'logs',      label: '📋 Live Logs',        path: '/logs'      },
+  { id: 'team',      label: '👥 Team',             path: '/team'      },
+];
+
+export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
 
   const [callingStatus, setCallingStatus] = useState(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef(null);
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -26,29 +46,82 @@ export default function TopHeader({
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handleOutside = (e) => {
+      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [moreOpen]);
+
+  const activeInMore = MORE_TABS.some(t => t.id === activeTab);
+  const activeMoreLabel = MORE_TABS.find(t => t.id === activeTab)?.label;
+
   return (
     <header className="header">
-      <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+      <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0}}>
         <img src="/logo.png" alt="Globussoft Logo" style={{width: '32px', height: '32px', borderRadius: '8px', objectFit: 'contain'}} />
-        Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', ml: 2}}>LIVE</span>
+        Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80'}}>LIVE</span>
       </div>
 
-      <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
-        <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
-        {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => navigate('/campaigns')}>📢 Campaigns</button>}
-        {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => navigate('/ops')}>📋 Ops & Tasks</button>}
-        {userRole === 'Admin' && <button data-testid="tab-analytics" className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('/analytics')}>📈 Analytics</button>}
-        {userRole === 'Admin' && <button data-testid="tab-whatsapp" className={`tab-btn ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => navigate('/whatsapp')}>💬 WhatsApp Comms</button>}
-        {userRole === 'Admin' && <button data-testid="tab-integrations" className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => navigate('/integrations')}>🔌 Integrations</button>}
-        {userRole === 'Admin' && <button data-testid="tab-monitor" className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`} onClick={() => navigate('/monitor')}>🎙️ Monitor AI Calls</button>}
-        {userRole === 'Admin' && <button data-testid="tab-rag" className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => navigate('/knowledge')}>🧠 RAG Knowledge</button>}
-        {userRole === 'Admin' && <button data-testid="tab-sandbox" className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => navigate('/sandbox')}>🎯 AI Sandbox</button>}
-        {userRole === 'Admin' && <button data-testid="tab-scheduled" className={`tab-btn ${activeTab === 'scheduled' ? 'active' : ''}`} onClick={() => navigate('/scheduled')}>📅 Scheduled</button>}
-        {userRole === 'Admin' && <button data-testid="tab-billing" className={`tab-btn ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => navigate('/billing')}>💳 Billing</button>}
-        {userRole === 'Admin' && <button data-testid="tab-dnd" className={`tab-btn ${activeTab === 'dnd' ? 'active' : ''}`} onClick={() => navigate('/dnd')}>🚫 DND</button>}
-        {userRole === 'Admin' && <button data-testid="tab-settings" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>⚙️ Settings</button>}
-        {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
-        {userRole === 'Admin' && <button data-testid="tab-team" className={`tab-btn ${activeTab === 'team' ? 'active' : ''}`} onClick={() => navigate('/team')}>👥 Team</button>}
+      <div className="tab-bar" style={{display: 'flex', gap: '6px', alignItems: 'center', flex: 1, flexWrap: 'nowrap', overflow: 'visible', minWidth: 0}}>
+        {PRIMARY_TABS.map(tab => {
+          if (tab.adminOnly && userRole !== 'Admin') return null;
+          return (
+            <button
+              key={tab.id}
+              data-testid={`tab-${tab.id}`}
+              className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+              onClick={() => navigate(tab.path)}
+              style={{flexShrink: 0}}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+
+        {userRole === 'Admin' && (
+          <div ref={moreRef} style={{position: 'relative', flexShrink: 0}}>
+            <button
+              data-testid="tab-more"
+              className={`tab-btn ${activeInMore ? 'active' : ''}`}
+              onClick={() => setMoreOpen(o => !o)}
+            >
+              {activeInMore ? activeMoreLabel : 'More'} ▾
+            </button>
+
+            {moreOpen && (
+              <div style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                background: '#1e293b',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '10px',
+                padding: '6px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+                minWidth: '200px',
+                zIndex: 1000,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              }}>
+                {MORE_TABS.map(tab => (
+                  <button
+                    key={tab.id}
+                    data-testid={`tab-${tab.id}`}
+                    className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`}
+                    onClick={() => { navigate(tab.path); setMoreOpen(false); }}
+                    style={{textAlign: 'left', width: '100%', justifyContent: 'flex-start'}}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
           {callingStatus && (
@@ -92,24 +165,29 @@ export default function TopHeader({
               👤 {currentUser.full_name || currentUser.email}{currentUser.org_name ? ` (${currentUser.org_name})` : ''}
             </span>
           )}
-          <button data-testid="logout-btn" onClick={handleLogout}
-            style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '0 14px',
-              background: 'rgba(239,68,68,0.15)',
-              border: '1px solid rgba(239,68,68,0.3)',
-              borderRadius: '8px',
-              color: '#fca5a5',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '0.82rem',
-              whiteSpace: 'nowrap',
-            }}>
-            🚪 Logout
-          </button>
+          {confirmLogout ? (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '0 10px', height: '38px' }}>
+              <span style={{ fontSize: '0.78rem', color: '#fca5a5', whiteSpace: 'nowrap' }}>Log out?</span>
+              <button onClick={handleLogout}
+                style={{ height: '26px', padding: '0 10px', background: 'rgba(239,68,68,0.25)', border: '1px solid rgba(239,68,68,0.5)', borderRadius: '6px', color: '#fca5a5', cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem' }}>
+                Yes
+              </button>
+              <button onClick={() => setConfirmLogout(false)}
+                style={{ height: '26px', padding: '0 10px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#94a3b8', cursor: 'pointer', fontSize: '0.78rem' }}>
+                No
+              </button>
+            </div>
+          ) : (
+            <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
+              style={{
+                height: '38px', display: 'inline-flex', alignItems: 'center', gap: '5px',
+                padding: '0 14px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: '8px', color: '#fca5a5', cursor: 'pointer', fontWeight: 600,
+                fontSize: '0.82rem', whiteSpace: 'nowrap',
+              }}>
+              🚪 Logout
+            </button>
+          )}
         </div>
       </div>
     </header>

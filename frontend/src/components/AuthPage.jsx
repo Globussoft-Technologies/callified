@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
+import { validatePasswordFull } from '../utils/passwordPolicy';
 
-export default function AuthPage() {
+export default function AuthPage({ redirectTo = '/crm' }) {
   const { login, signup } = useAuth();
+  const navigate = useNavigate();
 
   const [authPage, setAuthPage] = useState('login');
   const [authError, setAuthError] = useState('');
@@ -17,16 +20,19 @@ export default function AuthPage() {
     setAuthError(''); setAuthLoading(true);
     try {
       await login(authForm.email, authForm.password);
+      navigate(redirectTo === '/' ? '/crm' : redirectTo, { replace: true });
     } catch (err) { setAuthError(err.message); }
     setAuthLoading(false);
   };
 
-
   const handleSignup = async (e) => {
     e.preventDefault();
     setAuthError(''); setAuthLoading(true);
+    const pwCheck = await validatePasswordFull(authForm.password);
+    if (!pwCheck.valid) { setAuthError(pwCheck.error); setAuthLoading(false); return; }
     try {
       await signup(authForm.org_name, authForm.full_name, authForm.email, authForm.password);
+      navigate('/crm', { replace: true });
     } catch (err) { setAuthError(err.message); }
     setAuthLoading(false);
   };
@@ -141,7 +147,7 @@ export default function AuthPage() {
                 </div>
                 <div className="form-group">
                   <label>Password</label>
-                  <input data-testid="auth-password" className="form-input" type="password" placeholder="••••••••" required minLength={6}
+                  <input data-testid="auth-password" className="form-input" type="password" placeholder="••••••••" required minLength={8}
                     value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })} />
                 </div>
                 <button data-testid="auth-submit" type="submit" className="btn-primary" disabled={authLoading}

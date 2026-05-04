@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { API_URL } from '../constants/api';
+import { validatePasswordFull } from '../utils/passwordPolicy';
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
@@ -17,16 +18,14 @@ export default function ResetPasswordPage() {
     e.preventDefault();
     setError(''); setSuccess('');
 
-    if (newPassword.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+    setLoading(true);
+    const pwCheck = await validatePasswordFull(newPassword);
+    if (!pwCheck.valid) { setError(pwCheck.error); setLoading(false); return; }
     if (newPassword !== confirmPassword) {
       setError('Passwords do not match');
+      setLoading(false);
       return;
     }
-
-    setLoading(true);
     try {
       const res = await fetch(`${API_URL}/auth/reset-password`, {
         method: 'POST',
@@ -83,12 +82,12 @@ export default function ResetPasswordPage() {
               <form onSubmit={handleSubmit}>
                 <div className="form-group">
                   <label>New Password</label>
-                  <input className="form-input" type="password" placeholder="Enter new password" required minLength={6}
+                  <input className="form-input" type="password" placeholder="Enter new password (min 8 chars)" required minLength={8}
                     value={newPassword} onChange={e => setNewPassword(e.target.value)} />
                 </div>
                 <div className="form-group">
                   <label>Confirm Password</label>
-                  <input className="form-input" type="password" placeholder="Confirm new password" required minLength={6}
+                  <input className="form-input" type="password" placeholder="Confirm new password" required minLength={8}
                     value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} />
                 </div>
                 <button type="submit" className="btn-primary" disabled={loading}

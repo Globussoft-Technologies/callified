@@ -49,10 +49,18 @@ async def handle_crm_webhook(request: Request, background_tasks: BackgroundTasks
 @webhook_router.get("/webhook/{provider}")
 async def dynamic_webhook(provider: str, request: Request):
     host = PUBLIC_URL.replace("https://", "").replace("http://", "")
-    name = urllib.parse.quote(request.query_params.get("name", ""))
-    interest = urllib.parse.quote(request.query_params.get("interest", ""))
-    phone = urllib.parse.quote(request.query_params.get("phone", ""))
-    ws_url = f"wss://{host}/media-stream?name={name}&interest={interest}&phone={phone}"
+    qp = request.query_params
+    name = urllib.parse.quote(qp.get("name", ""))
+    interest = urllib.parse.quote(qp.get("interest", ""))
+    phone = urllib.parse.quote(qp.get("phone", ""))
+    tts_language = urllib.parse.quote(qp.get("tts_language", ""))
+    tts_provider = urllib.parse.quote(qp.get("tts_provider", ""))
+    voice = urllib.parse.quote(qp.get("voice", ""))
+    ws_url = (
+        f"wss://{host}/media-stream"
+        f"?name={name}&interest={interest}&phone={phone}"
+        f"&tts_language={tts_language}&tts_provider={tts_provider}&voice={voice}"
+    )
     return HTMLResponse(content=f'<Response><Connect><Stream url="{ws_url}" /></Connect></Response>', media_type="application/xml")
 
 @webhook_router.post("/webhook/twilio/status")
@@ -77,35 +85,88 @@ async def exotel_status_webhook(request: Request, background_tasks: BackgroundTa
         except Exception:
             form = {}
 
-    log.info(f"[EXOTEL STATUS] {form}")
+    # Log full payload so we can see exact Exotel field names in production logs
+    log.info(f"[EXOTEL STATUS] keys={list(form.keys())} payload={dict(form)}")
     status = form.get("Status", form.get("CallStatus", ""))
     detailed_status = form.get("DetailedStatus", "")
-    phone = form.get("To", "")
+    # Exotel connect.json outbound: "From"=lead phone, "To"=Exotel caller ID.
+    # Try every known variation to be safe across Exotel API versions.
+    phone = (form.get("From") or form.get("CallFrom") or
+             form.get("To") or form.get("CallTo") or "")
     call_sid = form.get("CallSid", form.get("call_sid", ""))
     recording_url = form.get("RecordingUrl", form.get("recording_url", ""))
+
+    def _resolve_pending(phone_raw: str, sid: str) -> dict:
+        """Look up pending call — try every phone variant then call_sid key."""
+        digits = "".join(filter(str.isdigit, str(phone_raw)))
+        # Try last-10, full digits, and the call_sid as a phone: key
+        for key in filter(None, (digits[-10:] if len(digits) >= 10 else None,
+                                  digits[-10:], digits, sid)):
+            pending = redis_store.get_pending_call(f"phone:{key}") or {}
+            if pending:
+                log.info(f"[EXOTEL STATUS] resolved pending via phone:{key}")
+                return pending
+        # Last resort: call_sid stored directly (set by dial_exotel after SID arrives)
+        if sid:
+            pending = redis_store.get_pending_call(sid) or {}
+            if pending:
+                log.info(f"[EXOTEL STATUS] resolved pending via sid:{sid}")
+                return pending
+        # Ultimate fallback: "latest" key always has the most recent call
+        pending = redis_store.get_pending_call("latest") or {}
+        if pending:
+            log.info(f"[EXOTEL STATUS] resolved pending via latest key")
+        return pending
 
     terminal_error = None
     if detailed_status.lower() in ['busy', 'no-answer', 'failed', 'canceled', 'dnd']:
         terminal_error = detailed_status
     elif status.lower() in ['failed', 'busy', 'no-answer', 'canceled']:
         terminal_error = status
+    _pending = _resolve_pending(phone, call_sid)
+    _evt_campaign = _pending.get("campaign_id", 0)
+    _evt_name = _pending.get("name") or phone or call_sid
+    _evt_phone = _pending.get("phone") or phone
+    _sched_id = _pending.get("scheduled_call_id")
+
+    # DB fallback: if Redis expired, find the most-recent dialing scheduled call for this phone
+    if not _sched_id and phone:
+        try:
+            from database import get_conn
+            conn = get_conn()
+            cur = conn.cursor()
+            digits = "".join(filter(str.isdigit, str(phone)))
+            phone10 = digits[-10:] if len(digits) >= 10 else digits
+            cur.execute("""
+                SELECT sc.id FROM scheduled_calls sc
+                JOIN leads l ON sc.lead_id = l.id
+                WHERE sc.status = 'dialing' AND RIGHT(REPLACE(REPLACE(l.phone,'+',''),' ',''), 10) = %s
+                ORDER BY sc.scheduled_time DESC LIMIT 1
+            """, (phone10,))
+            row = cur.fetchone()
+            conn.close()
+            if row:
+                _sched_id = row["id"]
+                log.info(f"[EXOTEL STATUS] Resolved scheduled_call_id={_sched_id} from DB for phone {phone10}")
+        except Exception as _dbe:
+            log.warning(f"[EXOTEL STATUS] DB fallback failed: {_dbe}")
+
     if terminal_error:
         from database import log_call_status
         log_call_status(phone, terminal_error, "Exotel Call Error")
-        # Emit user-friendly event — look up campaign_id and lead name from Redis
         from live_logs import emit_campaign_event
-        phone_clean = "".join(filter(str.isdigit, str(phone)))[-10:]
-        _pending = redis_store.get_pending_call(f"phone:{phone_clean}")
-        _evt_campaign = _pending.get("campaign_id", 0) if _pending else 0
-        _evt_name = _pending.get("name", phone_clean) if _pending else phone_clean
-        emit_campaign_event(_evt_campaign, _evt_name, phone, terminal_error.lower(), f"Exotel: {terminal_error}")
+        emit_campaign_event(_evt_campaign, _evt_name, _evt_phone, terminal_error.lower(), f"via exotel | {terminal_error.lower()}")
+        if _sched_id:
+            from database import update_scheduled_call_status
+            update_scheduled_call_status(_sched_id, "failed")
+            log.info(f"[EXOTEL STATUS] Scheduled call {_sched_id} → failed ({terminal_error})")
     elif status.lower() == "completed":
         from live_logs import emit_campaign_event
-        phone_clean = "".join(filter(str.isdigit, str(phone)))[-10:]
-        _pending = redis_store.get_pending_call(f"phone:{phone_clean}")
-        _evt_campaign = _pending.get("campaign_id", 0) if _pending else 0
-        _evt_name = _pending.get("name", phone_clean) if _pending else phone_clean
-        emit_campaign_event(_evt_campaign, _evt_name, phone, "completed", "Call completed")
+        emit_campaign_event(_evt_campaign, _evt_name, _evt_phone, "completed", "via exotel | completed")
+        if _sched_id:
+            from database import update_scheduled_call_status
+            update_scheduled_call_status(_sched_id, "completed")
+            log.info(f"[EXOTEL STATUS] Scheduled call {_sched_id} → completed")
 
     if recording_url and call_sid:
         log.error(f"[EXOTEL-WEBHOOK] Status payload contained a RecordingUrl for {call_sid}!")

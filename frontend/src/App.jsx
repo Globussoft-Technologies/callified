@@ -29,7 +29,7 @@ import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
 
 export default function App() {
-  const { authToken, currentUser, apiFetch, logout } = useAuth();
+  const { authToken, currentUser, apiFetch, logout, loading } = useAuth();
   const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
@@ -64,8 +64,20 @@ export default function App() {
   }
 
   // ─── AUTH PAGES (after all hooks) ───
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+          <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTop: '3px solid #a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Loading...</span>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
   if (!authToken || !currentUser) {
-    return <AuthPage />;
+    return <AuthPage redirectTo={location.pathname !== '/reset-password' ? location.pathname : '/crm'} />;
   }
 
   return (
@@ -134,8 +146,8 @@ export default function App() {
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/billing" element={<BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/dnd" element={<DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
+        <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>
       </main>

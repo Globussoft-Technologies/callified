@@ -56,6 +56,8 @@ async def initiate_call(lead: dict):
         pending["tts_voice_id"] = lead["tts_voice_id"]
     if lead.get("tts_language"):
         pending["tts_language"] = lead["tts_language"]
+    if lead.get("scheduled_call_id"):
+        pending["scheduled_call_id"] = lead["scheduled_call_id"]
     redis_store.set_pending_call("latest", pending)
     # Also store by phone number for concurrent dial support
     redis_store.set_pending_call(f"phone:{phone_clean}", pending)
@@ -71,26 +73,83 @@ async def dial_twilio(lead: dict):
     if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
         return
     from twilio.rest import Client
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
     twiml_url = f"{PUBLIC_URL}/webhook/twilio?name={urllib.parse.quote(lead['name'])}&interest={urllib.parse.quote(lead['interest'])}&phone={urllib.parse.quote(lead['phone_number'])}"
+    def _create_call():
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        return client.calls.create(
+            url=twiml_url, to=lead["phone_number"], from_=TWILIO_PHONE_NUMBER,
+            status_callback=f"{PUBLIC_URL}/webhook/twilio/status",
+            status_callback_event=['completed', 'no-answer', 'busy', 'failed', 'canceled']
+        )
     try:
-        call = client.calls.create(url=twiml_url, to=lead["phone_number"], from_=TWILIO_PHONE_NUMBER,
-                                   status_callback=f"{PUBLIC_URL}/webhook/twilio/status",
-                                   status_callback_event=['completed', 'no-answer', 'busy', 'failed', 'canceled'])
+        call = await asyncio.get_event_loop().run_in_executor(None, _create_call)
         print(f"Twilio Call Triggered. SID: {call.sid}")
     except Exception as e:
         print(f"Failed to trigger Twilio call: {e}")
+
+async def _poll_exotel_call_status(call_sid: str, lead: dict, phone_clean: str, auth_b64: str):
+    """Poll Exotel every 3s for a terminal call status. Stops as soon as one is found."""
+    import asyncio as _asyncio, logging as _logging
+    log = _logging.getLogger("uvicorn.error")
+    campaign_id = lead.get("campaign_id", 0)
+    lead_name = lead.get("name", phone_clean)
+    lead_phone = lead.get("phone_number", phone_clean)
+    terminal_map = {
+        "no-answer": ("no-answer", "No Answer"),
+        "busy":      ("busy",      "Line Busy"),
+        "failed":    ("failed",    "Call Failed"),
+        "canceled":  ("failed",    "Canceled"),
+    }
+    url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/{call_sid}.json"
+    await _asyncio.sleep(2)          # brief wait for Exotel to record the call
+    ringing_emitted = False
+    for attempt in range(40):        # poll up to 40×3s = 2 min max
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                resp = await client.get(url, headers={"Authorization": f"Basic {auth_b64}"})
+            if resp.status_code == 200:
+                status = resp.json().get("Call", {}).get("Status", "").lower()
+                log.info(f"[POLL] {call_sid} #{attempt+1}: {status}")
+                if status in terminal_map:
+                    if campaign_id:
+                        from live_logs import emit_campaign_event
+                        evt, detail = terminal_map[status]
+                        emit_campaign_event(campaign_id, lead_name, lead_phone, evt, f"via exotel | {detail}")
+                    return
+                if status == "completed":
+                    return   # ws_handler already emitted completed
+                # First time we see in-progress → phone is ringing, show it
+                if status == "in-progress" and not ringing_emitted and campaign_id:
+                    from live_logs import emit_campaign_event
+                    emit_campaign_event(campaign_id, lead_name, lead_phone, "ringing", "via exotel | phone ringing")
+                    ringing_emitted = True
+            else:
+                log.warning(f"[POLL] {call_sid} #{attempt+1}: HTTP {resp.status_code}")
+        except Exception as e:
+            log.warning(f"[POLL] {call_sid} #{attempt+1} error: {e!r} — retrying")
+        await _asyncio.sleep(3)
 
 async def dial_exotel(lead: dict):
     import logging
     global last_dial_result
     logger = logging.getLogger("uvicorn.error")
-    exotel_app_id = os.getenv("EXOTEL_APP_ID", "1210468")
-    exoml_url = f"http://my.exotel.com/exoml/start/{exotel_app_id}"
     phone_clean = lead["phone_number"].strip().lstrip("+")
     if len(phone_clean) == 10 and not phone_clean.startswith("0"):
         phone_clean = "91" + phone_clean
     logger.info(f"Phone normalized: '{lead['phone_number']}' -> '{phone_clean}'")
+
+    # Build a dynamic ExoML URL on OUR server so language/voice params are
+    # forwarded into the WebSocket URL that Exotel ultimately connects to.
+    _exo_params = urllib.parse.urlencode({
+        "name": lead.get("name", "Customer"),
+        "interest": lead.get("interest", "our platform"),
+        "phone": phone_clean,
+        "tts_language": lead.get("tts_language", "hi"),
+        "tts_provider": lead.get("tts_provider", "elevenlabs"),
+        "voice": lead.get("tts_voice_id", ""),
+    })
+    exoml_url = f"{PUBLIC_URL}/webhook/exotel?{_exo_params}"
+
     url = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls/connect.json"
     data = {"From": phone_clean, "CallerId": EXOTEL_CALLER_ID, "Url": exoml_url, "CallType": "trans", "StatusCallback": f"{PUBLIC_URL}/webhook/exotel/status"}
     logger.info(f"[DIAL] Exotel attempt: From={phone_clean}, ExoML={exoml_url}")
@@ -136,6 +195,11 @@ async def dial_exotel(lead: dict):
                 if len(phone_clean) > 10:
                     redis_store.set_pending_call(f"phone:{phone_clean[-10:]}", latest)
                 logger.info(f"[DIAL] Stored Exotel Call SID mapped: {exotel_sid}")
+                # Poll Exotel for final call status (catches no-answer/busy/failed
+                # when the WebSocket never opens and StatusCallback doesn't fire)
+                asyncio.ensure_future(_poll_exotel_call_status(
+                    exotel_sid, lead, phone_clean, auth_b64
+                ))
         except Exception:
             pass
     except Exception as e:
@@ -168,11 +232,21 @@ async def api_dial_lead(lead_id: int, background_tasks: BackgroundTasks):
                 return {"status": "error", "message": "No minutes remaining. Please upgrade your plan."}
         except Exception:
             pass  # Don't block calls if billing check fails
-    background_tasks.add_task(initiate_call, {
+    from database import get_org_voice_settings
+    call_data = {
         "name": lead["first_name"], "phone_number": lead["phone"],
         "interest": lead.get("interest") or lead["source"],
-        "provider": DEFAULT_PROVIDER, "lead_id": lead_id
-    })
+        "provider": DEFAULT_PROVIDER, "lead_id": lead_id,
+    }
+    if org_id:
+        voice = get_org_voice_settings(org_id)
+        if voice.get("tts_provider"):
+            call_data["tts_provider"] = voice["tts_provider"]
+        if voice.get("tts_voice_id"):
+            call_data["tts_voice_id"] = voice["tts_voice_id"]
+        if voice.get("tts_language"):
+            call_data["tts_language"] = voice["tts_language"]
+    background_tasks.add_task(initiate_call, call_data)
     return {"status": "success", "message": f"Dialing {lead['first_name']}..."}
 
 @dial_router.post("/api/campaigns/{campaign_id}/dial/{lead_id}")
@@ -233,7 +307,12 @@ async def api_campaign_dial_lead(campaign_id: int, lead_id: int, background_task
         call_data["tts_voice_id"] = voice["tts_voice_id"]
     if voice.get("tts_language"):
         call_data["tts_language"] = voice["tts_language"]
+    # Prevent retry worker from batch-dialing other campaign leads within 5 min
+    redis_store.set_campaign_dial_active(campaign_id, ttl_seconds=300)
     background_tasks.add_task(initiate_call, call_data)
+    from live_logs import emit_campaign_event
+    emit_campaign_event(campaign_id, lead["first_name"], lead["phone"], "dialing",
+                        f"via {DEFAULT_PROVIDER}")
     return {"status": "success", "message": f"Dialing {lead['first_name']} for campaign '{campaign['name']}'..."}
 
 @dial_router.post("/api/campaigns/{campaign_id}/redial-failed")
@@ -271,7 +350,8 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
 
     async def _redial_queue():
         from live_logs import emit_campaign_event
-        emit_campaign_event(campaign_id, "Campaign", "", "started", f"Redialing {len(failed_leads)} failed leads")
+        camp_name = campaign.get("name", "")
+        emit_campaign_event(campaign_id, "Campaign", camp_name, "started", f"Redialing {len(failed_leads)} failed leads")
         for i, lead in enumerate(failed_leads):
             if i > 0:
                 await asyncio.sleep(30)
@@ -281,7 +361,7 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
                 emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dnd_skipped", "DND list")
                 continue
             log.info(f"[REDIAL] {i+1}/{len(failed_leads)}: Dialing {lead['first_name']} ({lead['phone']})")
-            emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dialing", f"{i+1}/{len(failed_leads)}")
+            emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dialing", f"via {DEFAULT_PROVIDER} | redial {i+1}/{len(failed_leads)}")
             call_data = {
                 "name": lead["first_name"], "phone_number": lead["phone"],
                 "interest": campaign.get("product_name", lead.get("interest", "our platform")),
@@ -299,8 +379,10 @@ async def api_campaign_redial_failed(campaign_id: int, background_tasks: Backgro
             except Exception as e:
                 log.error(f"[REDIAL] Failed for {lead['phone']}: {e}")
                 emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "error", str(e)[:50])
-        emit_campaign_event(campaign_id, "Campaign", "", "finished", f"Redial complete: {len(failed_leads)} leads")
+        emit_campaign_event(campaign_id, "Campaign", camp_name, "finished", f"Redial complete: {len(failed_leads)} leads")
 
+    # Hold the dial lock for the full expected duration of the queue
+    redis_store.set_campaign_dial_active(campaign_id, ttl_seconds=len(failed_leads) * 35 + 60)
     background_tasks.add_task(_redial_queue)
     return {"status": "success", "message": f"Redialing {len(failed_leads)} failed leads (30s gap between calls)"}
 
@@ -342,7 +424,8 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
 
     async def _dial_all_queue():
         from live_logs import emit_campaign_event
-        emit_campaign_event(campaign_id, "Campaign", "", "started", f"Dialing {len(dialable)} new leads")
+        camp_name = campaign.get("name", "")
+        emit_campaign_event(campaign_id, "Campaign", camp_name, "started", f"Dialing {len(dialable)} new leads")
         for i, lead in enumerate(dialable):
             if i > 0:
                 await asyncio.sleep(30)
@@ -352,7 +435,7 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
                 emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dnd_skipped", "DND list")
                 continue
             log.info(f"[DIAL-ALL] {i+1}/{len(dialable)}: Dialing {lead['first_name']} ({lead['phone']})")
-            emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dialing", f"{i+1}/{len(dialable)}")
+            emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "dialing", f"via {DEFAULT_PROVIDER} | {i+1}/{len(dialable)}")
             call_data = {
                 "name": lead["first_name"], "phone_number": lead["phone"],
                 "interest": campaign.get("product_name", lead.get("interest", "our platform")),
@@ -370,8 +453,9 @@ async def api_campaign_dial_all(campaign_id: int, background_tasks: BackgroundTa
             except Exception as e:
                 log.error(f"[DIAL-ALL] Failed for {lead['phone']}: {e}")
                 emit_campaign_event(campaign_id, lead['first_name'], lead['phone'], "error", str(e)[:50])
-        emit_campaign_event(campaign_id, "Campaign", "", "finished", f"Dial complete: {len(dialable)} leads")
+        emit_campaign_event(campaign_id, "Campaign", camp_name, "finished", f"Dial complete: {len(dialable)} leads")
         log.info(f"[DIAL-ALL] Campaign {campaign_id} dial-all complete: {len(dialable)} leads")
 
+    redis_store.set_campaign_dial_active(campaign_id, ttl_seconds=len(dialable) * 35 + 60)
     background_tasks.add_task(_dial_all_queue)
     return {"status": "success", "message": f"Dialing {len(dialable)} new leads (30s gap between calls)"}

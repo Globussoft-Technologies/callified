@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useToast } from '../contexts/ToastContext';
 import CrmTab from '../components/tabs/CrmTab';
 import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
@@ -19,6 +20,7 @@ export default function CrmPage({
   userRole, authToken
 }) {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   // Lead State
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -34,6 +36,8 @@ export default function CrmPage({
   // Note State
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState('');
 
   // Document Vault State
   const [activeLeadDocs, setActiveLeadDocs] = useState(null);
@@ -130,8 +134,9 @@ export default function CrmPage({
       setEditModalOpen(false);
       setEditingLead(null);
       fetchLeads();
+      showToast('Lead updated successfully');
     } catch (e) {
-      alert(e.message);
+      showToast(e.message || 'Error updating lead', 'error');
       console.error('Error updating lead', e);
     }
     setLoading(false);
@@ -171,21 +176,32 @@ export default function CrmPage({
   const handleNote = (lead) => {
     setNoteLead(lead);
     setNoteText(lead.follow_up_note || '');
+    setNoteError('');
   };
 
   const handleSaveNote = async () => {
     if (!noteLead) return;
+    if (!noteText.trim()) { setNoteError('Note cannot be empty.'); return; }
+    setNoteSaving(true);
+    setNoteError('');
     try {
-      await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
+      const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: noteText })
+        body: JSON.stringify({ note: noteText.trim() })
       });
-      fetchLeads();
-      setNoteLead(null);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.detail || `Save failed (${res.status})`, 'error');
+      } else {
+        fetchLeads();
+        setNoteLead(null);
+        showToast('Note saved');
+      }
     } catch(e) {
-      console.error("Error saving note", e);
+      showToast('Network error — note not saved', 'error');
     }
+    setNoteSaving(false);
   };
 
   const handleDraftEmail = async (lead) => {
@@ -225,7 +241,7 @@ export default function CrmPage({
         handleDraftEmail={handleDraftEmail} dialingId={dialingId}
         webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
         campaigns={campaigns}
-        onCampaignClick={() => navigate('/campaigns')}
+        onCampaignClick={(campaign) => navigate('/campaigns', { state: { openCampaignId: campaign.id } })}
       />
 
       <LeadModals
@@ -258,16 +274,22 @@ export default function CrmPage({
               {noteLead.first_name} {noteLead.last_name} — {noteLead.phone}
             </p>
             <textarea className="form-input" rows={5} value={noteText}
-              onChange={e => setNoteText(e.target.value)}
+              onChange={e => { setNoteText(e.target.value); if (noteError) setNoteError(''); }}
               placeholder="Type your follow-up note here..."
-              style={{width: '100%', minHeight: '120px', resize: 'vertical', fontSize: '0.9rem', lineHeight: 1.5}} />
+              style={{width: '100%', minHeight: '120px', resize: 'vertical', fontSize: '0.9rem', lineHeight: 1.5,
+                borderColor: noteError ? 'rgba(239,68,68,0.5)' : undefined}} />
+            {noteError && (
+              <p style={{color: '#f87171', fontSize: '0.8rem', margin: '6px 0 0'}}>⚠ {noteError}</p>
+            )}
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setNoteLead(null)}
                 style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>
-              <button className="btn-primary" onClick={handleSaveNote}>
-                Save Note
+              <button className="btn-primary" onClick={handleSaveNote}
+                disabled={noteSaving || !noteText.trim()}
+                style={{opacity: (noteSaving || !noteText.trim()) ? 0.5 : 1, cursor: (noteSaving || !noteText.trim()) ? 'not-allowed' : 'pointer'}}>
+                {noteSaving ? 'Saving…' : 'Save Note'}
               </button>
             </div>
           </div>
