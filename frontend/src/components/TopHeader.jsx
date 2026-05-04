@@ -2,24 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const PRIMARY_TABS = [
-  { id: 'crm',          label: '📊 CRM',          path: '/crm',          adminOnly: false },
-  { id: 'campaigns',    label: '📢 Campaigns',     path: '/campaigns',    adminOnly: true  },
-  { id: 'analytics',    label: '📈 Analytics',     path: '/analytics',    adminOnly: true  },
-  { id: 'monitor',      label: '🎙️ Monitor',       path: '/monitor',      adminOnly: true  },
-  { id: 'integrations', label: '🔌 Integrations',  path: '/integrations', adminOnly: true  },
-  { id: 'settings',     label: '⚙️ Settings',      path: '/settings',     adminOnly: true  },
+  { id: 'crm',       label: '📊 CRM',            path: '/crm',       adminOnly: false },
+  { id: 'products',  label: '📦 Products',        path: '/products',  adminOnly: true  },
+  { id: 'campaigns', label: '📢 Campaigns',       path: '/campaigns', adminOnly: true  },
+  { id: 'ops',       label: '📋 Ops & Tasks',     path: '/ops',       adminOnly: true  },
+  { id: 'analytics', label: '📈 Analytics',       path: '/analytics', adminOnly: true  },
+  { id: 'whatsapp',  label: '💬 WhatsApp Comms',  path: '/whatsapp',  adminOnly: true  },
 ];
 
 const MORE_TABS = [
-  { id: 'ops',       label: '📋 Ops & Tasks',      path: '/ops'       },
-  { id: 'whatsapp',  label: '💬 WhatsApp Comms',   path: '/whatsapp'  },
-  { id: 'knowledge', label: '🧠 RAG Knowledge',    path: '/knowledge' },
-  { id: 'sandbox',   label: '🎯 AI Sandbox',       path: '/sandbox'   },
-  { id: 'scheduled', label: '📅 Scheduled',        path: '/scheduled' },
-  { id: 'billing',   label: '💳 Billing',          path: '/billing'   },
-  { id: 'dnd',       label: '🚫 DND',              path: '/dnd'       },
-  { id: 'logs',      label: '📋 Live Logs',        path: '/logs'      },
-  { id: 'team',      label: '👥 Team',             path: '/team'      },
+  { id: 'integrations', label: '🔌 Integrations',     path: '/integrations' },
+  { id: 'monitor',      label: '🎙️ Monitor AI Calls', path: '/monitor'      },
+  { id: 'knowledge',    label: '🧠 RAG Knowledge',    path: '/knowledge'    },
+  { id: 'sandbox',      label: '🎯 AI Sandbox',       path: '/sandbox'      },
+  { id: 'scheduled',    label: '📅 Scheduled',        path: '/scheduled'    },
+  { id: 'billing',      label: '💳 Billing',          path: '/billing'      },
+  { id: 'dnd',          label: '🚫 DND',              path: '/dnd'          },
+  { id: 'settings',     label: '⚙️ Settings',         path: '/settings'     },
+  { id: 'logs',         label: '📋 Live Logs',        path: '/logs'         },
+  { id: 'team',         label: '👥 Team',             path: '/team'         },
 ];
 
 export default function TopHeader({ userRole, currentUser, handleLogout }) {

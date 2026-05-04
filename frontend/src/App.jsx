@@ -13,6 +13,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import WhatsAppPage from './pages/WhatsAppPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsPage from './pages/SettingsPage';
+import ProductsPage from './pages/ProductsPage';
 import LogsPage from './pages/LogsPage';
 import CheckInPage from './pages/CheckInPage';
 import BillingPage from './pages/BillingPage';
@@ -134,12 +135,17 @@ export default function App() {
         <Route path="/monitor" element={<MonitorPage API_URL={API_URL} />} />
         <Route path="/knowledge" element={<KnowledgePage API_URL={API_URL} />} />
         <Route path="/sandbox" element={<SandboxPage API_URL={API_URL} />} />
+        <Route path="/products" element={
+          <ProductsPage
+            apiFetch={apiFetch} API_URL={API_URL}
+            selectedOrg={selectedOrg} orgs={orgs}
+            orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
+          />
+        } />
         <Route path="/settings" element={
           <SettingsPage
             apiFetch={apiFetch} API_URL={API_URL}
-            selectedOrg={selectedOrg} orgs={orgs}
-            orgProducts={orgProducts} orgTimezone={orgTimezone}
-            fetchOrgProducts={fetchOrgProducts}
+            selectedOrg={selectedOrg} orgTimezone={orgTimezone}
           />
         } />
         <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} />} />

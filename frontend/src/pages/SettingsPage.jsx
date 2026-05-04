@@ -1,28 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import SettingsTab from '../components/tabs/SettingsTab';
 import { useVoice } from '../contexts/VoiceContext';
-import { useToast } from '../contexts/ToastContext';
 
-export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, orgProducts, orgTimezone, fetchOrgProducts }) {
+export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, setSavedVoiceName } = useVoice();
-  const { showToast } = useToast();
+
   // Pronunciation State
   const [pronunciations, setPronunciations] = useState([]);
   const [pronFormData, setPronFormData] = useState({ word: '', phonetic: '' });
   const [pronError, setPronError] = useState({ word: '', phonetic: '', api: '' });
-
-  // Product Input State
-  const [newProductName, setNewProductName] = useState('');
-  const [showProductInput, setShowProductInput] = useState(false);
-  const [productError, setProductError] = useState('');
-  const [scraping, setScraping] = useState(null);
 
   // System Prompt State
   const [systemPromptAuto, setSystemPromptAuto] = useState('');
   const [systemPromptCustom, setSystemPromptCustom] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
-  const [promptSaveStatus, setPromptSaveStatus] = useState(null); // 'saved' | 'error' | null
+  const [promptSaveStatus, setPromptSaveStatus] = useState(null);
 
   useEffect(() => {
     fetchPronunciations();
@@ -48,7 +41,6 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
     const word = pronFormData.word.trim().replace(/\s+/g, ' ');
     const phonetic = pronFormData.phonetic.trim().replace(/\s+/g, ' ');
     const errors = { word: '', phonetic: '', api: '' };
-    // Allowlist mirrors the backend: Unicode letters, digits, spaces, hyphens, apostrophes, dots.
     const PRON_SAFE = /^[\w\s\-'.]+$/u;
     if (!word) errors.word = 'Written word is required.';
     if (!phonetic) errors.phonetic = 'Phonetic spelling is required.';
@@ -83,55 +75,6 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       await apiFetch(`${API_URL}/pronunciation/${id}`, { method: 'DELETE' });
       fetchPronunciations();
     } catch(e) { console.error(e); }
-  };
-
-  const handleAddProduct = async () => {
-    if (!selectedOrg || !newProductName.trim()) return;
-    setProductError('');
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/products`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name: newProductName.trim() })
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setProductError(data.detail || 'Failed to add product.');
-        return;
-      }
-      setNewProductName(''); setShowProductInput(false);
-      fetchOrgProducts(selectedOrg.id);
-    } catch {
-      setProductError('Network error. Please try again.');
-    }
-  };
-
-  const handleScrapeProduct = async (productId) => {
-    setScraping(productId);
-    try {
-      const res = await apiFetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      await res.json();
-      fetchOrgProducts(selectedOrg.id);
-      showToast('Website scraped. Knowledge updated.', 'success');
-    } catch (e) {
-      console.error(e);
-      showToast('Could not scrape website. Please check the URL.', 'error');
-    }
-    setScraping(null);
-  };
-
-  const handleSaveProduct = async (productId, updates) => {
-    await apiFetch(`${API_URL}/products/${productId}`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(updates)
-    });
-    fetchOrgProducts(selectedOrg.id);
-    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
-  };
-
-  const handleDeleteProduct = async (productId) => {
-    await apiFetch(`${API_URL}/products/${productId}`, { method: 'DELETE' });
-    fetchOrgProducts(selectedOrg.id);
   };
 
   const [voiceSaving, setVoiceSaving] = useState(false);
@@ -183,18 +126,11 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       setPronFormData={setPronFormData} pronunciations={pronunciations}
       pronError={pronError} setPronError={setPronError}
       handleDeletePronunciation={handleDeletePronunciation} selectedOrg={selectedOrg}
-      orgs={orgs} showProductInput={showProductInput} setShowProductInput={setShowProductInput}
-      newProductName={newProductName} setNewProductName={setNewProductName}
-      productError={productError} setProductError={setProductError}
-      handleAddProduct={handleAddProduct} orgProducts={orgProducts}
-      handleDeleteProduct={handleDeleteProduct} handleSaveProduct={handleSaveProduct}
-      scraping={scraping} handleScrapeProduct={handleScrapeProduct}
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
       promptSaving={promptSaving} promptSaveStatus={promptSaveStatus}
       systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
       setPromptDirty={setPromptDirty}
-      apiFetch={apiFetch} API_URL={API_URL}
       activeVoiceProvider={activeVoiceProvider}
       activeVoiceId={activeVoiceId}
       activeLanguage={activeLanguage}

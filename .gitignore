@@ -69,6 +69,9 @@ recordings/
 *.webm
 *.mp3
 
+# Frontend build output (generated — deploy via rsync, not git)
+frontend/dist/
+
 # Deploy artifacts
 deploy.zip
 deploy.tar.gz
@@ -83,6 +86,15 @@ server-missing-files.md
 
 # User-uploaded knowledge PDFs (served at runtime, not stored in repo)
 knowledge_uploads/
+
+# Local SQLite databases
+*.db
+
+# Logs
+*.log
+
+# Compiled Go binaries (built locally, not source)
+backend/bin/
 
 # Go backend env
 backend/.env
