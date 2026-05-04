@@ -19,7 +19,11 @@ export function formatDateTime(dateStr, timezone, opts = {}) {
   // Ensure the string is treated as UTC
   const normalized = dateStr.endsWith('Z') ? dateStr : dateStr.replace(' ', 'T') + 'Z';
   const date = new Date(normalized);
-  if (isNaN(date.getTime())) return dateStr;
+  if (isNaN(date.getTime())) return 'Invalid date';
+  // Year < 2000 means a corrupt MySQL row (zero-date stored as 1899-12-31 or
+  // similar Unix-epoch underflow) — rendering it as "Dec 31, 1899" is more
+  // misleading than helpful. Issue #78.
+  if (date.getUTCFullYear() < 2000) return 'Invalid date';
 
   const options = {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -38,7 +42,8 @@ export function formatDate(dateStr, timezone) {
   if (!dateStr) return '—';
   const normalized = dateStr.endsWith('Z') ? dateStr : dateStr.replace(' ', 'T') + 'Z';
   const date = new Date(normalized);
-  if (isNaN(date.getTime())) return dateStr;
+  if (isNaN(date.getTime())) return 'Invalid date';
+  if (date.getUTCFullYear() < 2000) return 'Invalid date';
 
   const options = {
     year: 'numeric', month: 'short', day: 'numeric',
@@ -54,7 +59,8 @@ export function formatTime(dateStr, timezone) {
   if (!dateStr) return '—';
   const normalized = dateStr.endsWith('Z') ? dateStr : dateStr.replace(' ', 'T') + 'Z';
   const date = new Date(normalized);
-  if (isNaN(date.getTime())) return dateStr;
+  if (isNaN(date.getTime())) return 'Invalid date';
+  if (date.getUTCFullYear() < 2000) return 'Invalid date';
 
   const options = {
     hour: '2-digit', minute: '2-digit', hour12: true,
