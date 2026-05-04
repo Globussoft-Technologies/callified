@@ -37,6 +37,7 @@ type Server struct {
 	waAgent     *wa.Agent
 	waSender    waSenderIface
 	llmProvider *llm.Provider // Phase 4: Gemini-powered generation endpoints
+	wsHandler   activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
 }
 
 // waSenderIface allows the WA sender to be nil-safe.
@@ -376,6 +377,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
 	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
+
+	// ── Active calls (debug / ops) ────────────────────────────────────────────
+	// Lists every currently-active WS call session with its stream_sid +
+	// monitor URL. Admin-gated because the response includes lead PII (name,
+	// phone). Useful for grabbing a live SID without tailing backend logs.
+	mux.HandleFunc("GET /api/active-calls", adminAuth(s.activeCalls))
 
 	// ── Test Email (Phase 3B) ─────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/test-email", adminAuth(s.testEmail))

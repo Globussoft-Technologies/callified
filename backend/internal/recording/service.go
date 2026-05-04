@@ -110,6 +110,8 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.Sentiment = a.Sentiment
 			review.AppointmentBooked = a.AppointmentBooked
 			review.FailureReason = a.FailureReason
+			review.WhatWentWell = a.WhatWentWell
+			review.WhatWentWrong = a.WhatWentWrong
 			review.Summary = a.Summary
 			review.Insights = a.Insights
 		}
@@ -179,6 +181,8 @@ type analysis struct {
 	Sentiment         string  `json:"sentiment"`
 	AppointmentBooked bool    `json:"appointment_booked"`
 	FailureReason     string  `json:"failure_reason"`
+	WhatWentWell      string  `json:"what_went_well"`
+	WhatWentWrong     string  `json:"what_went_wrong"`
 	Summary           string  `json:"summary"`
 	Insights          string  `json:"insights"`
 }
@@ -188,15 +192,22 @@ const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the 
 - "sentiment": "positive", "neutral", or "negative" (customer sentiment at end)
 - "appointment_booked": true or false
 - "failure_reason": string (why the call didn't convert, empty string if it did)
+- "what_went_well": string (1 sentence on what the agent did well)
+- "what_went_wrong": string (1 sentence on what the agent could improve)
 - "summary": string (1-2 sentence call summary)
 - "insights": string (key coaching insight for the agent)
-Return ONLY valid JSON. No markdown, no explanation.`
+Return ONLY valid JSON. No markdown, no explanation. Keep each string under 200 chars.`
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)
 	userMsg := llm.ChatMessage{Role: "user", Text: "Analyze this call transcript:\n\n" + transcript}
 
-	raw, err := s.llm.GenerateResponse(ctx, analysisSystemPrompt, []llm.ChatMessage{userMsg}, 512)
+	// 1500 tokens is enough for the 8-key JSON object including 200-char
+	// strings each. The previous 512 cap truncated mid-key, causing every
+	// post-call analysis to fail JSON parsing → all reviews saved with
+	// quality_score=0, sentiment="neutral" defaults. Issue: empty insight
+	// columns in the Call Insights tab.
+	raw, err := s.llm.GenerateResponse(ctx, analysisSystemPrompt, []llm.ChatMessage{userMsg}, 1500)
 	if err != nil {
 		return nil, err
 	}

@@ -422,7 +422,7 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 		return VoiceSettings{
 			TTSProvider: provider.String,
 			TTSVoiceID:  voiceID.String,
-			TTSLanguage: coalesceStr(lang.String, "hi"),
+			TTSLanguage: coalesceStr(lang.String, DefaultTTSLanguage),
 		}, nil
 	}
 	return d.GetOrganizationVoiceSettings(orgID)

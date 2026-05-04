@@ -96,6 +96,7 @@ func main() {
 		apiServer = api.New(database, cfg, store, initiator, llmProvider, logger)
 		waAgent := wa.NewAgent(database, llmProvider, ragClient, logger)
 		apiServer.SetWAAgent(waAgent)
+		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")
 	}

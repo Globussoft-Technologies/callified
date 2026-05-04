@@ -38,7 +38,10 @@ func (p *SarvamProvider) Synthesize(ctx context.Context, text, language, voiceID
 
 	langCode := sarvamLangCode[language]
 	if langCode == "" {
-		langCode = "hi-IN"
+		// Default to English when the caller didn't propagate a language.
+		// Was hi-IN, which silently turned every misconfigured org/campaign
+		// into a Hindi call regardless of the saved setting.
+		langCode = "en-IN"
 	}
 	if voiceID == "" {
 		voiceID = "aditya"

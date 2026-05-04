@@ -37,6 +37,7 @@ export default function TopHeader({
 
   const [callingStatus, setCallingStatus] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
 
   useEffect(() => {
@@ -163,24 +164,51 @@ export default function TopHeader({
               👤 {currentUser.full_name || currentUser.email}{currentUser.org_name ? ` (${currentUser.org_name})` : ''}
             </span>
           )}
-          <button data-testid="logout-btn" onClick={handleLogout}
-            style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '0 14px',
-              background: 'rgba(239,68,68,0.15)',
-              border: '1px solid rgba(239,68,68,0.3)',
-              borderRadius: '8px',
-              color: '#fca5a5',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '0.82rem',
-              whiteSpace: 'nowrap',
+          {confirmLogout ? (
+            <div style={{
+              height: '38px', display: 'inline-flex', alignItems: 'center', gap: '6px',
+              padding: '0 10px', background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px',
             }}>
-            🚪 Logout
-          </button>
+              <span style={{color: '#fbbf24', fontSize: '0.78rem', whiteSpace: 'nowrap'}}>Log out?</span>
+              <button data-testid="logout-confirm-btn"
+                onClick={() => { setConfirmLogout(false); handleLogout(); }}
+                style={{
+                  background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)',
+                  color: '#ef4444', borderRadius: '6px', padding: '4px 10px',
+                  cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap',
+                }}>
+                Confirm
+              </button>
+              <button onClick={() => setConfirmLogout(false)}
+                style={{
+                  background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
+                  color: '#94a3b8', borderRadius: '6px', padding: '4px 10px',
+                  cursor: 'pointer', fontSize: '0.75rem', whiteSpace: 'nowrap',
+                }}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '0 14px',
+                background: 'rgba(239,68,68,0.15)',
+                border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: '8px',
+                color: '#fca5a5',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.82rem',
+                whiteSpace: 'nowrap',
+              }}>
+              🚪 Logout
+            </button>
+          )}
         </div>
       </div>
     </header>

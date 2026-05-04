@@ -14,6 +14,8 @@ type CallReview struct {
 	Sentiment         string  `json:"sentiment"`
 	AppointmentBooked bool    `json:"appointment_booked"`
 	FailureReason     string  `json:"failure_reason"`
+	WhatWentWell      string  `json:"what_went_well"`
+	WhatWentWrong     string  `json:"what_went_wrong"`
 	Summary           string  `json:"summary"`
 	Insights          string  `json:"insights"`
 	CreatedAt         string  `json:"created_at"`
@@ -217,14 +219,17 @@ func (d *DB) SaveCallReview(r *CallReview) error {
 	}
 	_, err := d.pool.Exec(`
 		INSERT INTO call_reviews
-		(transcript_id, org_id, quality_score, sentiment, appointment_booked, failure_reason, summary, insights)
-		VALUES (?,?,?,?,?,?,?,?)
+		(transcript_id, org_id, quality_score, sentiment, appointment_booked,
+		 failure_reason, what_went_well, what_went_wrong, summary, insights)
+		VALUES (?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
 		quality_score=VALUES(quality_score), sentiment=VALUES(sentiment),
 		appointment_booked=VALUES(appointment_booked), failure_reason=VALUES(failure_reason),
+		what_went_well=VALUES(what_went_well), what_went_wrong=VALUES(what_went_wrong),
 		summary=VALUES(summary), insights=VALUES(insights)`,
 		r.TranscriptID, r.OrgID, r.QualityScore, r.Sentiment, apptBooked,
-		nullString(r.FailureReason), nullString(r.Summary), nullString(r.Insights))
+		nullString(r.FailureReason), nullString(r.WhatWentWell), nullString(r.WhatWentWrong),
+		nullString(r.Summary), nullString(r.Insights))
 	return err
 }
 
