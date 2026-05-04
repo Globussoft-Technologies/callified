@@ -6,6 +6,44 @@ const FALLBACK_FIELDS = [
   { key: 'base_url', label: 'REST API Base URL', type: 'text' },
 ];
 
+// SecretField masks credential inputs by default with an explicit show/hide
+// toggle, and opts out of browser/password-manager autofill. The CRM
+// integration form previously used a bare <input type=password> which
+// rendered correctly but didn't disable autofill — Chrome would silently
+// suggest the user's saved logins into a third-party API-key field. Mirrors
+// the pattern already used in WhatsAppTab for parity (issue #46).
+function SecretField({ value, onChange, placeholder, ariaInvalid }) {
+  const [reveal, setReveal] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        type={reveal ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+        data-1p-ignore
+        data-lpignore="true"
+        aria-invalid={ariaInvalid}
+        className="form-input"
+        style={{ paddingRight: '52px', borderColor: ariaInvalid ? '#ef4444' : undefined }}
+      />
+      <button
+        type="button"
+        onClick={() => setReveal(!reveal)}
+        aria-label={reveal ? 'Hide value' : 'Show value'}
+        style={{
+          position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
+          background: 'none', border: 'none', color: '#94a3b8',
+          cursor: 'pointer', fontSize: '0.75rem', padding: '4px 8px',
+        }}>
+        {reveal ? 'Hide' : 'Show'}
+      </button>
+    </div>
+  );
+}
+
 // connectionStatus maps the backend's (is_active, last_synced_at) into a single
 // badge so we never show "Active Sync" for a connection that has never synced
 // (issue #73). Auth errors land here too once the backend exposes a
@@ -166,16 +204,26 @@ export default function IntegrationsTab({
               return (
                 <div className="form-group" key={field.key} style={{marginBottom: 0}}>
                   <label>{field.label} <span style={{color: '#f87171'}}>*</span></label>
-                  <input
-                    type={field.type}
-                    className="form-input"
-                    value={value}
-                    required
-                    aria-invalid={showError}
-                    onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})}
-                    placeholder={field.label + "..."}
-                    style={showError ? {borderColor: '#ef4444'} : undefined}
-                  />
+                  {field.type === 'password' ? (
+                    <SecretField
+                      value={value}
+                      ariaInvalid={showError}
+                      onChange={(v) => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: v}})}
+                      placeholder={field.label + "..."}
+                    />
+                  ) : (
+                    <input
+                      type={field.type}
+                      className="form-input"
+                      value={value}
+                      required
+                      autoComplete="off"
+                      aria-invalid={showError}
+                      onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})}
+                      placeholder={field.label + "..."}
+                      style={showError ? {borderColor: '#ef4444'} : undefined}
+                    />
+                  )}
                   {showError && (
                     <div style={{marginTop: '4px', color: '#fca5a5', fontSize: '0.8rem'}}>
                       {field.label} is required

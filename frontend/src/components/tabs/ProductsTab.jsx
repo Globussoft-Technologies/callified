@@ -7,6 +7,7 @@ export default function ProductsTab({
   apiFetch, API_URL
 }) {
   const [productPrompts, setProductPrompts] = React.useState({});
+  const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
 
   React.useEffect(() => {
@@ -177,8 +178,18 @@ export default function ProductsTab({
                         </>
                       )}
                     </div>
-                    <button style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem'}}
-                      onClick={() => handleDeleteProduct(p.id)}>🗑️ Remove</button>
+                    {confirmDeleteId === p.id ? (
+                      <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                        <span style={{color: '#fbbf24', fontSize: '0.8rem'}}>Delete this product?</span>
+                        <button style={{background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', padding: '4px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600}}
+                          onClick={() => { setConfirmDeleteId(null); handleDeleteProduct(p.id); }}>Confirm</button>
+                        <button style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', padding: '4px 12px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem'}}
+                          onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.85rem'}}
+                        onClick={() => setConfirmDeleteId(p.id)}>🗑️ Remove</button>
+                    )}
                   </div>
 
                   <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', alignItems: 'flex-end'}}>

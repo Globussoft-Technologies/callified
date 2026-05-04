@@ -46,7 +46,11 @@ body {
 }
 .header {
   display: flex;
-  flex-wrap: wrap;
+  /* Was `wrap`, which forced the tab-bar onto a second row on most desktop
+     widths because logo + long brand text + many tabs + user info ≈ 1600px.
+     Mobile media query at the bottom of this file overrides back to column
+     stacking, so keeping nowrap here is safe. */
+  flex-wrap: nowrap;
   align-items: center;
   gap: 1rem;
   padding: 12px 24px;
@@ -60,6 +64,16 @@ body {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: 0;
+  min-width: 0; /* allow flex children to shrink past content size */
+}
+/* Brand block: shrink its content rather than push tabs to a second row.
+   The tab-bar to its right takes priority for the available space. */
+.logo {
+  flex-shrink: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .title {
   background: linear-gradient(to right, #818cf8, #d8b4fe);

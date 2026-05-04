@@ -1,5 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+
+// Tabs that stay visible in the top nav. Everything else collapses into the
+// More ▾ dropdown so the bar doesn't overflow into a horizontal scroll the
+// way the all-flat layout did. Issue #36.
+const PRIMARY_ADMIN_TABS = [
+  { id: 'products',  label: '📦 Products',       path: '/products',  testid: 'tab-products' },
+  { id: 'campaigns', label: '📢 Campaigns',      path: '/campaigns', testid: 'tab-campaigns' },
+  { id: 'ops',       label: '📋 Ops & Tasks',    path: '/ops',       testid: 'tab-ops' },
+  { id: 'analytics', label: '📈 Analytics',      path: '/analytics', testid: 'tab-analytics' },
+  { id: 'whatsapp',  label: '💬 WhatsApp Comms', path: '/whatsapp',  testid: 'tab-whatsapp' },
+];
+
+// Lower-priority / less-frequently-used admin tabs that move under "More ▾".
+const MORE_ADMIN_TABS = [
+  { id: 'integrations', label: '🔌 Integrations',     path: '/integrations', testid: 'tab-integrations' },
+  { id: 'monitor',      label: '🎙️ Monitor AI Calls', path: '/monitor',      testid: 'tab-monitor' },
+  { id: 'knowledge',    label: '🧠 RAG Knowledge',    path: '/knowledge',    testid: 'tab-rag' },
+  { id: 'sandbox',      label: '🎯 AI Sandbox',       path: '/sandbox',      testid: 'tab-sandbox' },
+  { id: 'scheduled',    label: '📅 Scheduled',        path: '/scheduled',    testid: 'tab-scheduled' },
+  { id: 'billing',      label: '💳 Billing',          path: '/billing',      testid: 'tab-billing' },
+  { id: 'dnd',          label: '🚫 DND',              path: '/dnd',          testid: 'tab-dnd' },
+  { id: 'settings',     label: '⚙️ Settings',         path: '/settings',     testid: 'tab-settings' },
+  { id: 'logs',         label: '📋 Live Logs',        path: '/logs',         testid: 'tab-logs' },
+  { id: 'team',         label: '👥 Team',             path: '/team',         testid: 'tab-team' },
+];
 
 export default function TopHeader({
   userRole,
@@ -11,6 +36,8 @@ export default function TopHeader({
   const activeTab = location.pathname.replace('/', '') || 'crm';
 
   const [callingStatus, setCallingStatus] = useState(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef(null);
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -26,6 +53,22 @@ export default function TopHeader({
     return () => clearInterval(interval);
   }, []);
 
+  // Close the More dropdown when the user clicks anywhere outside it.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDocClick = (e) => {
+      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [moreOpen]);
+
+  // Auto-close on route change so the menu doesn't linger after navigating.
+  useEffect(() => { setMoreOpen(false); }, [location.pathname]);
+
+  const moreActive = MORE_ADMIN_TABS.some(t => t.id === activeTab);
+  const goTo = (path) => { setMoreOpen(false); navigate(path); };
+
   return (
     <header className="header">
       <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
@@ -35,21 +78,48 @@ export default function TopHeader({
 
       <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
         <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
-        {userRole === 'Admin' && <button data-testid="tab-products" className={`tab-btn ${activeTab === 'products' ? 'active' : ''}`} onClick={() => navigate('/products')}>📦 Products</button>}
-        {userRole === 'Admin' && <button data-testid="tab-campaigns" className={`tab-btn ${activeTab === 'campaigns' ? 'active' : ''}`} onClick={() => navigate('/campaigns')}>📢 Campaigns</button>}
-        {userRole === 'Admin' && <button data-testid="tab-ops" className={`tab-btn ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => navigate('/ops')}>📋 Ops & Tasks</button>}
-        {userRole === 'Admin' && <button data-testid="tab-analytics" className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`} onClick={() => navigate('/analytics')}>📈 Analytics</button>}
-        {userRole === 'Admin' && <button data-testid="tab-whatsapp" className={`tab-btn ${activeTab === 'whatsapp' ? 'active' : ''}`} onClick={() => navigate('/whatsapp')}>💬 WhatsApp Comms</button>}
-        {userRole === 'Admin' && <button data-testid="tab-integrations" className={`tab-btn ${activeTab === 'integrations' ? 'active' : ''}`} onClick={() => navigate('/integrations')}>🔌 Integrations</button>}
-        {userRole === 'Admin' && <button data-testid="tab-monitor" className={`tab-btn ${activeTab === 'monitor' ? 'active' : ''}`} onClick={() => navigate('/monitor')}>🎙️ Monitor AI Calls</button>}
-        {userRole === 'Admin' && <button data-testid="tab-rag" className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`} onClick={() => navigate('/knowledge')}>🧠 RAG Knowledge</button>}
-        {userRole === 'Admin' && <button data-testid="tab-sandbox" className={`tab-btn ${activeTab === 'sandbox' ? 'active' : ''}`} onClick={() => navigate('/sandbox')}>🎯 AI Sandbox</button>}
-        {userRole === 'Admin' && <button data-testid="tab-scheduled" className={`tab-btn ${activeTab === 'scheduled' ? 'active' : ''}`} onClick={() => navigate('/scheduled')}>📅 Scheduled</button>}
-        {userRole === 'Admin' && <button data-testid="tab-billing" className={`tab-btn ${activeTab === 'billing' ? 'active' : ''}`} onClick={() => navigate('/billing')}>💳 Billing</button>}
-        {userRole === 'Admin' && <button data-testid="tab-dnd" className={`tab-btn ${activeTab === 'dnd' ? 'active' : ''}`} onClick={() => navigate('/dnd')}>🚫 DND</button>}
-        {userRole === 'Admin' && <button data-testid="tab-settings" className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => navigate('/settings')}>⚙️ Settings</button>}
-        {userRole === 'Admin' && <button data-testid="tab-logs" className={`tab-btn ${activeTab === 'logs' ? 'active' : ''}`} onClick={() => navigate('/logs')}>📋 Live Logs</button>}
-        {userRole === 'Admin' && <button data-testid="tab-team" className={`tab-btn ${activeTab === 'team' ? 'active' : ''}`} onClick={() => navigate('/team')}>👥 Team</button>}
+        {userRole === 'Admin' && PRIMARY_ADMIN_TABS.map(t => (
+          <button key={t.id} data-testid={t.testid}
+            className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
+            onClick={() => navigate(t.path)}>
+            {t.label}
+          </button>
+        ))}
+        {userRole === 'Admin' && (
+          <div ref={moreRef} style={{position: 'relative'}}>
+            <button data-testid="tab-more"
+              className={`tab-btn ${moreActive ? 'active' : ''}`}
+              onClick={() => setMoreOpen(o => !o)}
+              aria-haspopup="true"
+              aria-expanded={moreOpen}>
+              More <span style={{fontSize: '0.7em', marginLeft: '4px'}}>▾</span>
+            </button>
+            {moreOpen && (
+              <div role="menu" style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '220px',
+                background: 'rgba(15,23,42,0.98)', border: '1px solid rgba(255,255,255,0.08)',
+                borderRadius: '10px', padding: '6px',
+                boxShadow: '0 12px 32px rgba(0,0,0,0.45)', zIndex: 1000,
+                display: 'flex', flexDirection: 'column', gap: '2px',
+              }}>
+                {MORE_ADMIN_TABS.map(t => (
+                  <button key={t.id} data-testid={t.testid} role="menuitem"
+                    onClick={() => goTo(t.path)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
+                      background: activeTab === t.id ? 'rgba(99,102,241,0.18)' : 'transparent',
+                      border: 'none', borderRadius: '6px',
+                      color: activeTab === t.id ? '#a5b4fc' : '#cbd5e1',
+                      fontSize: '0.85rem', fontWeight: activeTab === t.id ? 700 : 500,
+                    }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
           {callingStatus && (

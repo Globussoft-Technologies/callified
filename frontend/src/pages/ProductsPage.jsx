@@ -35,7 +35,6 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   };
 
   const handleDeleteProduct = async (productId) => {
-    if (!confirm('Delete this product?')) return;
     await apiFetch(`${API_URL}/products/${productId}`, { method: 'DELETE' });
     fetchOrgProducts(selectedOrg.id);
   };

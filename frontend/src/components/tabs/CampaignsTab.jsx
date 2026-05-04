@@ -158,9 +158,26 @@ export default function CampaignsTab({
           if (!Number.isNaN(parsed)) ts = parsed;
         }
       } catch (_) { /* plain-text legacy event */ }
+      // Drop replayed events older than the user's last Clear timestamp for
+      // this campaign — the backend replays the last 20 events from Redis on
+      // every SSE connect, so without this filter a page reload would
+      // resurrect everything the user just cleared.
+      const clearedAt = parseInt(localStorage.getItem(`liveEventsClearedAt:${campaignId}`) || '0', 10);
+      if (clearedAt > 0 && ts <= clearedAt) return;
       setLiveEvents(prev => [...prev.slice(-49), { ts, label: display }]);
     };
-    es.onerror = () => es.close();
+    // Don't call es.close() here — that prevents EventSource's built-in
+    // auto-reconnect. Cloudflare/nginx idle-timeout the SSE stream after
+    // ~30s of silence; we want the browser to transparently re-open so new
+    // call events still appear in the panel after the user clicks Clear or
+    // simply waits idle for a while.
+    es.onerror = (e) => {
+      // Native EventSource will set readyState to CLOSED only when the
+      // server explicitly returns a non-200; CONNECTING means a retry is
+      // already in flight. Just log so we can see it in DevTools.
+      // eslint-disable-next-line no-console
+      console.warn('campaign-events SSE error; readyState=', es.readyState, e);
+    };
     eventSourceRef.current = es;
   };
 

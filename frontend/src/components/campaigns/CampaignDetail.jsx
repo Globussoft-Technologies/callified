@@ -364,20 +364,36 @@ export default function CampaignDetail({
         </div>
       )}
 
-      {/* Live Dial Events Feed */}
-      {liveEvents.length > 0 && (
-        <div className="glass-panel" style={{marginBottom: '1rem', padding: '12px', maxHeight: '200px', overflowY: 'auto'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-            <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px'}}>📡 Live Campaign Activity</span>
-            <button onClick={() => setLiveEvents([])} style={{background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.7rem'}}>Clear</button>
+      {/* Live Dial Events Feed — always visible while the SSE stream is open
+          so the user knows we're listening even right after they click Clear. */}
+      <div className="glass-panel" style={{marginBottom: '1rem', padding: '12px', maxHeight: '200px', overflowY: 'auto'}}>
+        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
+          <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px'}}>📡 Live Campaign Activity</span>
+          {liveEvents.length > 0 && (
+            <button onClick={() => {
+              setLiveEvents([]);
+              // Persist the clear timestamp so a page reload doesn't replay
+              // the events we just dismissed (backend SSE replays last 20 on
+              // every connect). New events strictly newer than this stamp
+              // will continue to flow in.
+              try {
+                localStorage.setItem(`liveEventsClearedAt:${selectedCampaign.id}`, String(Date.now()));
+              } catch (_) { /* private mode / quota — non-fatal */ }
+            }} style={{background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.7rem'}}>Clear</button>
+          )}
+        </div>
+        {liveEvents.length === 0 ? (
+          <div style={{fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic', padding: '4px 0'}}>
+            Listening for new events… start a dial to see activity here.
           </div>
-          {liveEvents.map((ev, i) => (
+        ) : (
+          liveEvents.map((ev, i) => (
             <div key={i} style={{fontSize: '0.8rem', color: '#e2e8f0', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'SFMono-Regular, Consolas, monospace'}}>
               {withDate(ev.label, ev.ts)}
             </div>
-          ))}
-        </div>
-      )}
+          ))
+        )}
+      </div>
 
       {/* Quick Add Lead Form */}
       <div className="glass-panel" style={{padding: '12px', marginBottom: '1rem', display: 'flex', gap: '8px', alignItems: 'flex-start', flexWrap: 'wrap'}}>

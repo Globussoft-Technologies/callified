@@ -128,10 +128,55 @@ func (s *Server) twilioStatus(w http.ResponseWriter, r *http.Request) {
 				"lead_id":    cl.LeadID,
 				"campaign_id": cl.CampaignID,
 			})
+			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 		}
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// enqueueRetryIfFailed inserts a row into call_retries when a call ends in a
+// transient-failure status that's worth re-attempting. The retry_worker
+// drains pending rows every 2 minutes and re-dials. Issue #77 — the table
+// existed and the worker was already running, but no caller ever populated
+// the queue, so the Retries tab stayed empty after every failed call.
+//
+// Skips:
+//   - non-failure statuses (completed / connected / answered)
+//   - leads that already have an active retry chain in this campaign
+//     (avoids duplicate or runaway retry loops)
+//
+// Defaults: 3 max attempts, first retry 30 minutes after the failure to
+// give transient telco issues time to clear. The worker's own backoff
+// (30m → 1h → 2h) takes over from there.
+func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status string) {
+	switch status {
+	case "failed", "no-answer", "busy", "no_answer", "cancelled":
+		// retryable — fall through
+	default:
+		return
+	}
+	if leadID == 0 {
+		return
+	}
+	already, err := s.db.HasPendingOrExhaustedRetry(leadID, campaignID)
+	if err != nil {
+		s.logger.Warn("enqueueRetryIfFailed: HasPendingOrExhaustedRetry",
+			zap.Int64("lead_id", leadID), zap.Error(err))
+		return
+	}
+	if already {
+		return
+	}
+	nextAttempt := time.Now().Add(30 * time.Minute)
+	if _, err := s.db.CreateRetry(leadID, campaignID, orgID, 3, nextAttempt); err != nil {
+		s.logger.Warn("enqueueRetryIfFailed: CreateRetry",
+			zap.Int64("lead_id", leadID), zap.String("status", status), zap.Error(err))
+		return
+	}
+	s.logger.Info("enqueueRetryIfFailed: queued",
+		zap.Int64("lead_id", leadID), zap.Int64("campaign_id", campaignID),
+		zap.String("reason", status))
 }
 
 // ── POST /webhook/exotel/status ───────────────────────────────────────────────
@@ -186,6 +231,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 				"lead_id":     cl.LeadID,
 				"campaign_id": cl.CampaignID,
 			})
+			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 		}
 	}
 

@@ -4,6 +4,7 @@ import { formatDateTime } from '../utils/dateFormat';
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [confirmCancelId, setConfirmCancelId] = useState(null);
 
   const fetchScheduledCalls = async () => {
     setLoading(true);
@@ -17,7 +18,6 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   useEffect(() => { fetchScheduledCalls(); }, []);
 
   const handleCancel = async (id) => {
-    if (!window.confirm('Cancel this scheduled call?')) return;
     try {
       await apiFetch(`${API_URL}/scheduled-calls/${id}`, { method: 'DELETE' });
       fetchScheduledCalls();
@@ -62,7 +62,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
                 <th>Lead Name</th>
                 <th>Phone</th>
                 <th>Status</th>
-                <th>Action</th>
+                <th style={{width: '260px', minWidth: '260px'}}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -85,16 +85,30 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
                         {call.status}
                       </span>
                     </td>
-                    <td>
+                    <td style={{width: '260px', minWidth: '260px'}}>
                       {(call.status === 'pending') && (
-                        <button onClick={() => handleCancel(call.id)}
-                          style={{
-                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                            color: '#fca5a5', borderRadius: '6px', padding: '4px 12px',
-                            cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
-                          }}>
-                          Cancel
-                        </button>
+                        confirmCancelId === call.id ? (
+                          <div style={{display: 'inline-flex', alignItems: 'center', gap: '6px'}}>
+                            <span style={{color: '#fbbf24', fontSize: '0.75rem'}}>Cancel call?</span>
+                            <button onClick={() => { setConfirmCancelId(null); handleCancel(call.id); }}
+                              style={{background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
+                              Confirm
+                            </button>
+                            <button onClick={() => setConfirmCancelId(null)}
+                              style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
+                              Keep
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setConfirmCancelId(call.id)}
+                            style={{
+                              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                              color: '#fca5a5', borderRadius: '6px', padding: '4px 12px',
+                              cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
+                            }}>
+                            Cancel
+                          </button>
+                        )
                       )}
                     </td>
                   </tr>
