@@ -204,10 +204,22 @@ func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	return p, err
 }
 
-// GetProductsByOrg returns all products for an org ordered by id DESC.
+// GetProductsByOrg returns one row per unique (org_id, lower(name)) — when
+// duplicate names exist (legacy data from before the createProduct dup-check
+// landed), the LOWEST id wins. The campaign Product dropdown was rendering
+// indistinguishable rows ("EmpMonitor" with two ids) and the user couldn't
+// tell which one to pick. Issue #71 — frontend already deduped on render,
+// but doing it server-side is the right place so every consumer benefits.
 func (d *DB) GetProductsByOrg(orgID int64) ([]Product, error) {
 	rows, err := d.pool.Query(
-		`SELECT `+productCols+` FROM products WHERE org_id=? ORDER BY id DESC`, orgID)
+		`SELECT `+productCols+` FROM products
+		 WHERE org_id=?
+		   AND id IN (
+		     SELECT MIN(id) FROM products
+		     WHERE org_id=?
+		     GROUP BY LOWER(TRIM(name))
+		   )
+		 ORDER BY id DESC`, orgID, orgID)
 	if err != nil {
 		return nil, err
 	}

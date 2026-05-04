@@ -362,12 +362,18 @@ type CallLogEntry struct {
 // Sim Web Call and the quick-dial paths produce a transcript without
 // inserting a campaign_leads row, and the prior INNER JOIN dropped those
 // rows on the floor (call counted in Live Activity / Analytics but
-// invisible in Call Log — see issue #65 ["Call Log only shows 1 row …"]).
+// invisible in Call Log).
+//
+// LEFT JOIN to leads, not INNER. Sim Web Call and ad-hoc dials commonly
+// produce transcripts with lead_id=NULL (no enrolled lead row), and the
+// previous INNER JOIN silently dropped them — exact symptom in issue #72.
+// Empty first_name/phone fallback keeps the response shape unchanged.
 func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 	rows, err := d.pool.Query(`
 		SELECT
 			ct.id,
-			l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.source,''),
+			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
+			COALESCE(l.phone,''), COALESCE(l.source,''),
 			COALESCE(l.status,''), COALESCE(ct.call_duration_s,0), COALESCE(ct.recording_url,''),
 			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
 			CASE
@@ -379,7 +385,7 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 				ELSE 'No Answer'
 			END AS outcome
 		FROM call_transcripts ct
-		JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN leads l ON ct.lead_id=l.id
 		WHERE ct.campaign_id=?
 		ORDER BY ct.created_at DESC`, campaignID)
 	if err != nil {

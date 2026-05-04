@@ -146,7 +146,8 @@ export default function CampaignModals({
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Product {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}>(required to apply prompt template)</span>}
+                    Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                    {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}> — required to apply prompt template</span>}
                   </label>
                   <select className="form-input" value={createForm.product_id}
                     onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
@@ -156,7 +157,9 @@ export default function CampaignModals({
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source (where did these leads come from?)</label>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — where did these leads come from?)</span>
+                  </label>
                   <select className="form-input" value={createForm.lead_source}
                     onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
                     style={{width: '100%'}}>
@@ -288,7 +291,9 @@ export default function CampaignModals({
                 )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Product</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                </label>
                 <select className="form-input" value={editCampaignForm.product_id}
                   onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
                   style={{width: '100%'}}>
@@ -297,7 +302,9 @@ export default function CampaignModals({
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Lead Source</label>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                </label>
                 <select className="form-input" value={editCampaignForm.lead_source}
                   onChange={e => setEditCampaignForm({...editCampaignForm, lead_source: e.target.value})}
                   style={{width: '100%'}}>

@@ -8,6 +8,17 @@ import (
 )
 
 // CRMIntegration mirrors the crm_integrations table.
+//
+// SyncStatus is a derived value that lets the UI show an honest health badge
+// without recomputing the rule per consumer. Issue #73 — the page rendered
+// "Active Sync" (green) for a row whose Last Synced was "Never", because the
+// only field exposed was is_active. The new value distinguishes:
+//   - "pending"   — connected, no sync has ever run yet
+//   - "active"    — synced within the last 24 hours
+//   - "stale"     — last_synced_at is older than 24 hours
+//   - "disabled"  — is_active=false (kept for completeness; the listing
+//                   currently filters those out, so the value is mostly
+//                   informational for the single-record paths.)
 type CRMIntegration struct {
 	ID           int64             `json:"id"`
 	OrgID        int64             `json:"org_id"`
@@ -15,6 +26,7 @@ type CRMIntegration struct {
 	Credentials  map[string]string `json:"credentials"`
 	IsActive     bool              `json:"is_active"`
 	LastSyncedAt string            `json:"last_synced_at"`
+	SyncStatus   string            `json:"sync_status"`
 	CreatedAt    string            `json:"created_at"`
 }
 
@@ -40,10 +52,31 @@ func (d *DB) GetActiveCRMIntegrations() ([]CRMIntegration, error) {
 			return nil, err
 		}
 		ci.IsActive = active == 1
+		ci.SyncStatus = computeSyncStatus(ci.IsActive, ci.LastSyncedAt)
 		json.Unmarshal([]byte(credsJSON), &ci.Credentials) //nolint:errcheck
 		list = append(list, ci)
 	}
 	return list, rows.Err()
+}
+
+// computeSyncStatus derives the badge state from is_active + last_synced_at.
+// "active" requires a sync within the last 24h — anything older is "stale".
+func computeSyncStatus(isActive bool, lastSyncedAt string) string {
+	if !isActive {
+		return "disabled"
+	}
+	if lastSyncedAt == "" {
+		return "pending"
+	}
+	t, err := time.Parse("2006-01-02 15:04:05", lastSyncedAt)
+	if err != nil {
+		// Unparseable timestamp — be conservative.
+		return "stale"
+	}
+	if time.Since(t) > 24*time.Hour {
+		return "stale"
+	}
+	return "active"
 }
 
 // SaveCRMIntegration upserts a CRM integration for an org+provider pair.
