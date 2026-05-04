@@ -386,11 +386,39 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				if info.CampaignID != 0 {
 					sess.CampaignID = info.CampaignID
 				}
+				if info.OrgID != 0 {
+					sess.OrgID = info.OrgID
+				}
 				if info.TTSProvider != "" {
 					sess.TTSProvider = info.TTSProvider
 				}
 				if info.TTSVoiceID != "" {
 					sess.TTSVoiceID = info.TTSVoiceID
+				}
+				if info.TTSLanguage != "" {
+					sess.TTSLanguage = info.TTSLanguage
+					sess.Language = info.TTSLanguage
+				}
+				// Rebuild SystemPrompt and GreetingText now that we know the
+				// real campaign/org/lead. The initial initializeCall ran
+				// before the start event with all-zero IDs (Exotel's Passthru
+				// applet doesn't forward our query params), so it produced a
+				// generic prompt with no language directive — Sarvam's Indian
+				// voices then default to Hindi, and the LLM follows suit even
+				// when the campaign is set to English.
+				if h.promptBuilder != nil {
+					_ = h.initializeCall(ctx, sess)
+				}
+				// Re-create the TTS provider in case the original startup picked
+				// the wrong one (Exotel calls hit tts.New("") which falls back
+				// to ElevenLabs — wrong if the campaign uses sarvam/smallest).
+				// The TTS worker reads sess.TTSInstance() on every sentence, so
+				// swapping it here makes subsequent synthesis use the correct
+				// provider without restarting the goroutine.
+				if sess.TTSProvider != "" {
+					if newProv, err := tts.New(sess.TTSProvider, h.ttsKeys); err == nil && newProv != nil {
+						sess.SetTTSInstance(newProv)
+					}
 				}
 			}
 		}
