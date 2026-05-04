@@ -190,8 +190,15 @@ async def handle_media_stream(websocket: WebSocket):
             pass
 
     # Check Redis pending call for campaign voice overrides (Exotel dial flow).
-    # Always read pending call — campaign language must win over the lead-voice cache.
-    _pending_voice = redis_store.get_pending_call("latest")
+    # Prefer phone-keyed lookup over "latest" to avoid stale data from concurrent calls.
+    _pending_voice = {}
+    if lead_phone:
+        _ph = lead_phone.lstrip("+").strip()
+        _pending_voice = redis_store.get_pending_call(f"phone:{_ph}")
+        if not _pending_voice and len(_ph) > 10:
+            _pending_voice = redis_store.get_pending_call(f"phone:{_ph[-10:]}")
+    if not _pending_voice:
+        _pending_voice = redis_store.get_pending_call("latest")
     if not _tts_voice_override:
         if _pending_voice.get("tts_provider"):
             _tts_provider_override = _pending_voice["tts_provider"]

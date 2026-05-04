@@ -60,44 +60,62 @@ async def dynamic_webhook(provider: str, request: Request):
     tts_provider = qp.get("tts_provider", "")
     voice = qp.get("voice", "")
 
-    # Exotel Passthru sends a POST with form data when the lead answers.
-    # Field naming varies — log everything, find lead phone by filtering out
-    # our caller ID, then hydrate name/language/voice from Redis pending call.
+    # Exotel Passthru hits this endpoint (GET or POST) when the lead answers.
+    # Merge query string + POST body so we handle both request types.
     _lead_id_param = ""
     if provider == "exotel":
         try:
-            if not phone:
-                form = dict(await request.form())
-                log.info(f"[EXOTEL-WEBHOOK] Passthru POST fields: {form}")
-                # Our caller ID last-10 digits (to detect and skip it)
+            _all_params = dict(request.query_params)
+            if request.method == "POST":
+                try:
+                    _all_params.update(dict(await request.form()))
+                except Exception:
+                    pass
+            log.info(f"[EXOTEL-WEBHOOK] Passthru {request.method} params: {_all_params}")
+
+            _pending = {}
+
+            # Strategy 1: CallSid lookup — most reliable.
+            # dial_exotel() stores the SID in Redis before Exotel even starts ringing.
+            _call_sid = _all_params.get("CallSid", "") or _all_params.get("Sid", "")
+            if _call_sid:
+                _pending = redis_store.get_pending_call(_call_sid)
+                if _pending:
+                    log.info(f"[EXOTEL-WEBHOOK] ✓ Resolved via CallSid={_call_sid}")
+
+            # Strategy 2: phone-field extraction, filtering out our caller ID
+            if not _pending:
                 _our_id_digits = "".join(filter(str.isdigit, EXOTEL_CALLER_ID))[-10:]
                 for _field in ("To", "CallTo", "From", "CallFrom"):
-                    _val = "".join(filter(str.isdigit, str(form.get(_field, "") or "")))
+                    _val = "".join(filter(str.isdigit, str(_all_params.get(_field, "") or "")))
                     if _val and len(_val) >= 10 and _val[-10:] != _our_id_digits:
-                        phone = _val
-                        log.info(f"[EXOTEL-WEBHOOK] Lead phone from '{_field}': {phone}")
-                        break
-                if not phone:
-                    log.warning("[EXOTEL-WEBHOOK] Could not identify lead phone; falling back to Redis latest")
+                        _p = redis_store.get_pending_call(f"phone:{_val}")
+                        if not _p and len(_val) > 10:
+                            _p = redis_store.get_pending_call(f"phone:{_val[-10:]}")
+                        if _p:
+                            _pending = _p
+                            log.info(f"[EXOTEL-WEBHOOK] ✓ Resolved via {_field}={_val}")
+                            break
 
-            # Hydrate lead context from Redis pending call
-            _pending = {}
-            if phone:
-                _pending = redis_store.get_pending_call(f"phone:{phone}")
-                if not _pending and len(phone) > 10:
-                    _pending = redis_store.get_pending_call(f"phone:{phone[-10:]}")
+            # Strategy 3: "latest" key — least reliable but always present
             if not _pending:
                 _pending = redis_store.get_pending_call("latest")
+                if _pending:
+                    log.warning("[EXOTEL-WEBHOOK] Falling back to Redis 'latest' key")
+                else:
+                    log.warning("[EXOTEL-WEBHOOK] No pending call found anywhere in Redis")
+
             if _pending:
                 name = name or _pending.get("name", "")
                 interest = interest or _pending.get("interest", "")
+                phone = phone or _pending.get("phone", "")
                 tts_language = tts_language or _pending.get("tts_language", "")
                 tts_provider = tts_provider or _pending.get("tts_provider", "")
                 voice = voice or _pending.get("tts_voice_id", "")
                 _lead_id_param = str(_pending.get("lead_id", "") or "")
                 log.info(f"[EXOTEL-WEBHOOK] Hydrated: name={name} phone={phone} lang={tts_language} lead_id={_lead_id_param}")
         except Exception as _e:
-            log.warning(f"[EXOTEL-WEBHOOK] Error in Passthru hydration: {_e}")
+            log.warning(f"[EXOTEL-WEBHOOK] Passthru hydration error: {_e}")
 
     ws_url = (
         f"wss://{host}/media-stream"
