@@ -65,6 +65,10 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   const [page, setPage] = useState(1);
   const [campaigns, setCampaigns] = useState([]);
   const [confirmClear, setConfirmClear] = useState(false);
+  // streamStatus distinguishes "connected but no recent activity" from
+  // "stream broken" — the empty-state message used to be the same in both
+  // cases (issue #79), making silent failures look identical to a quiet feed.
+  const [streamStatus, setStreamStatus] = useState('connecting');
   const verboseRef = useRef(null);
   const activityEsRef = useRef(null);
   const verboseEsRef = useRef(null);
@@ -85,20 +89,26 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   // correctly without needing campaign_id in the payload.
   useEffect(() => {
     if (activityEsRef.current) activityEsRef.current.close();
-    const cid = campaignFilter || '0';
+    // Use the "all" sentinel for the firehose instead of the legacy "0"
+    // (issue #79). Backend accepts both; "all" is self-explanatory in
+    // network logs / browser DevTools.
+    const cid = campaignFilter || 'all';
     setActivityLogs([]); // discard previous campaign's buffer on switch
+    setStreamStatus('connecting');
     let cancelled = false;
     let es = null;
     fetchSseTicket().then(ticket => {
       if (cancelled) return;
       es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${cid}`);
+      es.onopen = () => { if (!cancelled) setStreamStatus('connected'); };
+      es.onerror = () => { if (!cancelled) setStreamStatus('error'); };
       es.onmessage = (ev) => {
         if (!paused) {
           setActivityLogs(prev => [...prev.slice(-ACTIVITY_BUFFER), { arrivedAt: Date.now(), line: ev.data }]);
         }
       };
       activityEsRef.current = es;
-    }).catch(() => { /* surface via console only — UI shows empty stream */ });
+    }).catch(() => { if (!cancelled) setStreamStatus('error'); });
     return () => { cancelled = true; if (es) es.close(); };
   }, [paused, campaignFilter, API_URL, fetchSseTicket]);
 
@@ -285,6 +295,24 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
           <span style={{fontSize: '0.75rem', color: '#64748b'}}>
             {filteredLogs.length} of {activityLogs.length} events
           </span>
+          {(() => {
+            const map = {
+              connecting: { color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', dot: '#fbbf24', label: 'Connecting' },
+              connected:  { color: '#22c55e', bg: 'rgba(34,197,94,0.1)',   dot: '#22c55e', label: 'Live' },
+              error:      { color: '#f87171', bg: 'rgba(239,68,68,0.1)',   dot: '#ef4444', label: 'Disconnected' },
+            };
+            const s = map[streamStatus] || map.connecting;
+            return (
+              <span title={`SSE stream status: ${streamStatus}`} style={{
+                display: 'inline-flex', alignItems: 'center', gap: '6px',
+                padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem',
+                color: s.color, background: s.bg, border: `1px solid ${s.color}40`, fontWeight: 600,
+              }}>
+                <span style={{width: '6px', height: '6px', borderRadius: '50%', background: s.dot}} />
+                {s.label}
+              </span>
+            );
+          })()}
         </div>
       )}
 
@@ -307,9 +335,25 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
             {pageLogs.length === 0 ? (
               <div style={{textAlign: 'center', color: '#64748b', padding: '3rem'}}>
                 <div style={{fontSize: '2rem', marginBottom: '12px'}}>📡</div>
-                <div>{activityLogs.length === 0 ? 'Waiting for campaign activity...' : 'No events match the current filters.'}</div>
-                {activityLogs.length === 0 && (
-                  <div style={{fontSize: '0.8rem', marginTop: '8px'}}>Start a campaign dial to see live events here.</div>
+                {activityLogs.length === 0 ? (
+                  streamStatus === 'error' ? (
+                    <>
+                      <div style={{color: '#f87171'}}>Stream disconnected.</div>
+                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>The browser will retry automatically; check your network if this persists.</div>
+                    </>
+                  ) : streamStatus === 'connected' ? (
+                    <>
+                      <div>Connected — no recent campaign activity.</div>
+                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>The last 7 days of events are replayed on connect; new events appear here in real time.</div>
+                    </>
+                  ) : (
+                    <>
+                      <div>Connecting to event stream…</div>
+                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>Once connected, recent events replay and new dials stream in live.</div>
+                    </>
+                  )
+                ) : (
+                  <div>No events match the current filters.</div>
                 )}
               </div>
             ) : (
