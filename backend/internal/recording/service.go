@@ -184,7 +184,7 @@ type analysis struct {
 }
 
 const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the provided transcript and return ONLY a JSON object with these exact keys:
-- "quality_score": float 0-10 (overall agent quality)
+- "quality_score": float 0-5 (overall agent quality, where 5 is excellent)
 - "sentiment": "positive", "neutral", or "negative" (customer sentiment at end)
 - "appointment_booked": true or false
 - "failure_reason": string (why the call didn't convert, empty string if it did)
@@ -212,12 +212,12 @@ func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*
 	if err := json.Unmarshal([]byte(raw), &a); err != nil {
 		return nil, fmt.Errorf("analysis JSON parse: %w (raw: %s)", err, raw[:min(len(raw), 200)])
 	}
-	// Clamp quality_score
+	// Clamp quality_score to the 0-5 scale the UI expects.
 	if a.QualityScore < 0 {
 		a.QualityScore = 0
 	}
-	if a.QualityScore > 10 {
-		a.QualityScore = 10
+	if a.QualityScore > 5 {
+		a.QualityScore = 5
 	}
 	if a.Sentiment == "" {
 		a.Sentiment = "neutral"
