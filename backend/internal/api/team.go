@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -123,6 +124,7 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 	// row to exist so the admin can copy the link from logs / a future
 	// resend endpoint. Never leak the token in the API response itself —
 	// that would defeat the email-only delivery model.
+	link := fmt.Sprintf("%s/accept-invite?token=%s", s.cfg.AppURL, token)
 	if s.emailSvc != nil {
 		orgName, _ := s.db.GetOrgName(ac.OrgID)
 		if orgName == "" {
@@ -132,7 +134,15 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 		if inviterName == "" {
 			inviterName = caller.Email
 		}
-		link := fmt.Sprintf("%s/accept-invite?token=%s", s.cfg.AppURL, token)
+		// When SMTP isn't actually configured, emailSvc.Send short-circuits to
+		// nil — so the admin would never see the link. Log it here at INFO so
+		// it shows up in `docker logs callified-go-audio` for local dev.
+		// Production envs (SMTP_USER + SMTP_PASSWORD set) keep the link out
+		// of stdout — the invitee gets it via email, never via logs.
+		if s.cfg.SMTPUser == "" || s.cfg.SMTPPassword == "" {
+			s.logger.Sugar().Infow("[INVITE] SMTP not configured — copy this link manually",
+				"email", body.Email, "invite_link", link)
+		}
 		if err := s.emailSvc.SendTeamInvite(body.Email, body.FullName, inviterName, orgName, link, int(inviteTokenTTL/time.Hour)); err != nil {
 			s.logger.Sugar().Warnw("inviteTeamMember: email send failed", "err", err, "email", body.Email)
 		}
@@ -198,7 +208,7 @@ func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if msg := validatePassword(body.Password); msg != "" {
+	if msg := s.validatePasswordStrong(r.Context(), body.Password); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -267,6 +277,35 @@ func (s *Server) listPendingInvites(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(invites))
 }
 
+// ── GET /api/team/invites/{id}/link ───────────────────────────────────────────
+// Admin-only. Returns the accept-invite URL for a pending invite so the
+// inviter can copy/share it out-of-band — useful when SMTP is misconfigured,
+// the invitee never received the email, or the admin wants to drop the link
+// into Slack/WhatsApp instead. The token itself is what authorizes the
+// invitee; making it visible to the inviter does NOT compromise the security
+// model (issue #55) since the invitee still picks their own password.
+
+func (s *Server) getInviteLink(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	token, err := s.db.GetTeamInviteToken(id, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getInviteLink", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if token == "" {
+		writeError(w, http.StatusGone, "Invite is invalid, expired, or already accepted.")
+		return
+	}
+	link := fmt.Sprintf("%s/accept-invite?token=%s", s.cfg.AppURL, token)
+	writeJSON(w, http.StatusOK, map[string]string{"invite_link": link})
+}
+
 // ── DELETE /api/team/invites/{id} ─────────────────────────────────────────────
 // Admin-only. Cancels a pending invite — the existing token becomes invalid
 // at the next GetValidTeamInvite check (row simply isn't there).
@@ -295,12 +334,16 @@ func (s *Server) cancelInvite(w http.ResponseWriter, r *http.Request) {
 //     user type a passphrase up to 128 and bcrypt's silent truncation is
 //     fine for practical purposes — we just guard against absurdly long
 //     inputs that could DoS the bcrypt cost)
-//   - Not in the small in-memory blocklist of trivially-common passwords
+//   - Not in the in-memory blocklist of trivially-common passwords
 //
 // We deliberately do NOT require character classes (NIST 800-63B explicitly
 // recommends against the "must have one uppercase, one digit, one symbol"
 // nonsense — it pushes users toward predictable patterns like "Password1!").
 // Length + breach awareness is the right baseline.
+//
+// HIBP breach check is layered on top via validatePasswordStrong (below).
+// The bare validatePassword is kept for spots that need a fast, no-network
+// gate (e.g. invariant checks far from request scope).
 func validatePassword(p string) string {
 	if len(p) < 8 {
 		return "Password must be at least 8 characters."
@@ -315,17 +358,46 @@ func validatePassword(p string) string {
 	return ""
 }
 
+// validatePasswordStrong is the version request handlers should call. Runs
+// the local rules first, then the HIBP k-anonymity check (3s timeout, fails
+// open on network errors so an HIBP outage can't block signups). Returns ""
+// when the password passes, or a user-facing reason when it doesn't.
+//
+// `logger` is used to record HIBP errors without surfacing them to the
+// caller — pass nil to skip logging.
+func (s *Server) validatePasswordStrong(ctx context.Context, p string) string {
+	if msg := validatePassword(p); msg != "" {
+		return msg
+	}
+	pwned, err := isPwnedPassword(ctx, p)
+	if err != nil && s != nil && s.logger != nil {
+		s.logger.Sugar().Warnw("hibp: breach check failed (failing open)", "err", err)
+	}
+	if pwned {
+		return "This password has appeared in a known data breach. Please choose a different one."
+	}
+	return ""
+}
+
 // commonPasswords is a tiny, hard-coded blocklist of the top trivial
 // passwords. Keeping it in-process avoids a dependency on an external
 // breach-list service for a basic gate; the real defense is bcrypt + the
 // 8-char minimum above. Update list in lockstep with whatever the auth
 // signup endpoint enforces (so the policy is consistent across surfaces).
 var commonPasswords = map[string]struct{}{
-	"password": {}, "password1": {}, "password123": {}, "passw0rd": {},
-	"12345678": {}, "123456789": {}, "1234567890": {},
-	"qwerty": {}, "qwerty123": {}, "qwertyuiop": {},
-	"abc12345": {}, "iloveyou": {}, "admin123": {}, "welcome1": {},
-	"letmein1": {}, "monkey123": {}, "football": {},
+	// Top trivial matches — instant reject without an HIBP round-trip.
+	// HIBP catches the long tail; this list only needs the obvious ones.
+	"password": {}, "password1": {}, "password123": {}, "password!": {}, "passw0rd": {},
+	"12345678": {}, "123456789": {}, "1234567890": {}, "11111111": {}, "00000000": {},
+	"qwerty": {}, "qwerty123": {}, "qwertyuiop": {}, "qwerty12": {},
+	"abc12345": {}, "abcd1234": {}, "iloveyou": {}, "iloveu1": {},
+	"admin": {}, "admin123": {}, "admin1234": {}, "administrator": {},
+	"welcome": {}, "welcome1": {}, "welcome123": {},
+	"letmein": {}, "letmein1": {}, "monkey": {}, "monkey123": {},
+	"football": {}, "baseball": {}, "dragon": {}, "master": {}, "shadow": {},
+	"sunshine": {}, "princess": {}, "trustno1": {},
+	// India-specific common picks reported in regional credential dumps.
+	"india123": {}, "india@123": {}, "callified": {}, "callified1": {},
 }
 
 // ── PUT /api/team/{id}/role ───────────────────────────────────────────────────

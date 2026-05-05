@@ -94,6 +94,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// these tabs for non-Admins, but without a server-side check a low-privileged
 	// user could call the API directly (OWASP A01: broken access control).
 	adminAuth := s.requireRole("Admin")
+	// adminOrAgent allows Admin and Agent but excludes Viewer. Used for
+	// campaign read endpoints — Agents need to see + dial campaign leads,
+	// Viewers should only have CRM.
+	adminOrAgent := s.requireRole("Admin", "Agent")
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/auth/signup", s.signup)
@@ -137,17 +141,22 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// now get 403 there and the existing graceful "expected array" handler
 	// falls back to []. LogsTab also fetches it for the campaign filter,
 	// which only Admins can reach today anyway.
-	mux.HandleFunc("GET /api/campaigns", adminAuth(s.listCampaigns))
+	// Read endpoints are open to Admin + Agent so Agents can see campaigns +
+	// dial leads. Viewers are locked out — their only tab is CRM. Write
+	// endpoints (create/edit/delete/import, remove-lead, voice-settings save)
+	// stay Admin-only — Agents shouldn't be able to mutate shared campaign
+	// config.
+	mux.HandleFunc("GET /api/campaigns", adminOrAgent(s.listCampaigns))
 	mux.HandleFunc("POST /api/campaigns", adminAuth(s.createCampaign))
-	mux.HandleFunc("GET /api/campaigns/{id}", adminAuth(s.getCampaign))
+	mux.HandleFunc("GET /api/campaigns/{id}", adminOrAgent(s.getCampaign))
 	mux.HandleFunc("PUT /api/campaigns/{id}", adminAuth(s.updateCampaign))
 	mux.HandleFunc("DELETE /api/campaigns/{id}", adminAuth(s.deleteCampaign))
-	mux.HandleFunc("GET /api/campaigns/{id}/leads", adminAuth(s.listCampaignLeads))
+	mux.HandleFunc("GET /api/campaigns/{id}/leads", adminOrAgent(s.listCampaignLeads))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads", adminAuth(s.addCampaignLeads))
 	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
-	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminAuth(s.getCampaignStats))
-	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminAuth(s.getCampaignCallLog))
-	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminAuth(s.getCampaignVoiceSettings))
+	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminOrAgent(s.getCampaignStats))
+	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminOrAgent(s.getCampaignCallLog))
+	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminOrAgent(s.getCampaignVoiceSettings))
 	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 
@@ -187,9 +196,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/organizations/{id}/system-prompt", adminAuth(s.saveOrgSystemPrompt))
 
 	// ── Campaign reviews ──────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", auth(s.getCampaignCallReviews))
-	mux.HandleFunc("GET /api/campaigns/{id}/call-insights", auth(s.getCampaignCallInsights))
-	mux.HandleFunc("GET /api/campaigns/{id}/retries", auth(s.getCampaignRetries))
+	// Same role gate as the campaign reads — Viewers can't open campaigns at
+	// all, so per-campaign reviews/insights/retries should be unreachable to
+	// them too.
+	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", adminOrAgent(s.getCampaignCallReviews))
+	mux.HandleFunc("GET /api/campaigns/{id}/call-insights", adminOrAgent(s.getCampaignCallInsights))
+	mux.HandleFunc("GET /api/campaigns/{id}/retries", adminOrAgent(s.getCampaignRetries))
 
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
@@ -227,6 +239,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/team", adminAuth(s.listTeam))
 	mux.HandleFunc("POST /api/team/invite", adminAuth(s.inviteTeamMember))
 	mux.HandleFunc("GET /api/team/invites", adminAuth(s.listPendingInvites))
+	mux.HandleFunc("GET /api/team/invites/{id}/link", adminAuth(s.getInviteLink))
 	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
@@ -286,7 +299,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// manual-call endpoint are Admin-only — they can fan out calls to many
 	// numbers and have direct billing/reputation impact.
 	mux.HandleFunc("POST /api/dial/{lead_id}", auth(s.dialLead))
-	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", auth(s.campaignDialLead))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", adminOrAgent(s.campaignDialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
 	mux.HandleFunc("POST /api/manual-call", adminAuth(s.manualCall))

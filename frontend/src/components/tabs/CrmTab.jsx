@@ -19,6 +19,10 @@ export default function CrmTab({
   const totalQualified = dashSummary?.qualified ?? campaigns.reduce((sum, c) => sum + (c.stats?.qualified || 0), 0);
   const totalAppointments = dashSummary?.appointments ?? campaigns.reduce((sum, c) => sum + (c.stats?.appointments || 0), 0);
   const isAdmin = userRole === 'Admin';
+  // Agent has read+dial access to campaigns (server.go:140-156), so the
+  // active campaign cards are useful clicks for them too. Viewer stays
+  // metrics-only since they can't open campaign pages.
+  const canSeeCampaigns = userRole === 'Admin' || userRole === 'Agent';
 
   return (
     <div className="crm-container">
@@ -48,10 +52,11 @@ export default function CrmTab({
         </div>
       </div>
 
-      {/* Campaign Cards — Admin only. Non-Admins can't open a campaign
-          page (RequireRole) so the cards would be dead clicks; the dashboard
-          numbers above stay visible to all roles. */}
-      {isAdmin && activeCampaigns.length > 0 ? (
+      {/* Active campaign cards — visible to Admin AND Agent. Both roles can
+          open the campaign detail page (Agent has read + dial-one access).
+          Viewer stays metrics-only since the campaign detail page would 403
+          for them. */}
+      {canSeeCampaigns && activeCampaigns.length > 0 ? (
         <div style={{marginBottom: '2rem'}}>
           <h3 style={{color: '#94a3b8', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600, marginBottom: '12px'}}>ACTIVE CAMPAIGNS</h3>
           <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem'}}>
@@ -98,9 +103,11 @@ export default function CrmTab({
             ))}
           </div>
         </div>
-      ) : isAdmin ? (
+      ) : canSeeCampaigns ? (
         <div className="glass-panel" style={{textAlign: 'center', padding: '3rem', color: '#64748b', marginBottom: '2rem'}}>
-          No active campaigns. Go to the Campaigns tab to create one!
+          {isAdmin
+            ? 'No active campaigns. Go to the Campaigns tab to create one!'
+            : 'No active campaigns yet. Ask an admin to set one up.'}
         </div>
       ) : null}
 

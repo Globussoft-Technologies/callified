@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -250,6 +251,18 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 
 	tPreTTS := time.Now()
 	firstChunk := true
+
+	// Debug trace so we can confirm what language each utterance was
+	// synthesized in. If the user reports "AI spoke Hindi but I saved Telugu"
+	// this log line shows whether sess.TTSLanguage was actually carried
+	// through, vs. being lost / overridden somewhere upstream. Cheap to keep
+	// in production — fires once per agent utterance, not per audio chunk.
+	sess.Log.Info("tts: synthesize",
+		zap.String("language", sess.TTSLanguage),
+		zap.String("voice_id", sess.TTSVoiceID),
+		zap.String("provider_kind", fmt.Sprintf("%T", provider)),
+		zap.Int("text_len", len(sentence)),
+	)
 
 	err := provider.Synthesize(ttsCtx, sentence, sess.TTSLanguage, sess.TTSVoiceID,
 		func(pcm8k []byte) {

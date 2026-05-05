@@ -59,7 +59,16 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    fetchCampaigns();
+    // Viewer can't read /api/campaigns (403) — skip the fetch so the
+    // dashboard doesn't surface a misleading "expected array" warning.
+    // For Admin + Agent re-fetch whenever the role changes (e.g. Admin
+    // promoted/demoted this user mid-session) so a freshly-allowed user
+    // doesn't see an empty campaigns list left over from a Viewer phase.
+    if (userRole === 'Admin' || userRole === 'Agent') {
+      fetchCampaigns();
+    } else {
+      setCampaigns([]);
+    }
     // Check onboarding status
     (async () => {
       try {
@@ -68,7 +77,7 @@ export default function App() {
         if (!data.completed) setShowOnboarding(true);
       } catch (e) {}
     })();
-  }, [currentUser]);
+  }, [currentUser, userRole]);
 
   // ─── PUBLIC ROUTES (no auth required) ───
   const location = useLocation();

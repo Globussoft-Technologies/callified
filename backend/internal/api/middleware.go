@@ -83,8 +83,15 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 			ac := getAuth(r)
+			// Always resolve the role from DB instead of trusting the JWT
+			// claim. Role changes by an Admin (e.g. promoting an Agent to
+			// Admin or demoting to Viewer) must take effect immediately for
+			// the affected user without forcing a re-login. Trusting the
+			// claim cached the old role for the JWT's full TTL — users
+			// reported "I changed my role but campaigns are still empty"
+			// because their JWT still said Viewer.
 			role := ac.Role
-			if role == "" && s.db != nil && ac.Email != "" {
+			if s.db != nil && ac.Email != "" {
 				if u, err := s.db.GetUserByEmail(ac.Email); err == nil && u != nil {
 					role = u.Role
 				}

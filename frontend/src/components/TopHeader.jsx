@@ -4,6 +4,16 @@ import { useNavigate, useLocation } from 'react-router-dom';
 // Tabs that stay visible in the top nav. Everything else collapses into the
 // More ▾ dropdown so the bar doesn't overflow into a horizontal scroll the
 // way the all-flat layout did. Issue #36.
+//
+// AGENT_TABS = the subset Agents are allowed to see alongside CRM. The full
+// PRIMARY_ADMIN_TABS list is for Admin only. Anything an Agent shouldn't be
+// able to mutate (org-wide config, billing, integrations, team mgmt) stays
+// admin-only via PRIMARY_ADMIN_TABS / MORE_ADMIN_TABS below — backend
+// enforces the same split via adminAuth on the write endpoints.
+const AGENT_TABS = [
+  { id: 'campaigns', label: '📢 Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
+];
+
 const PRIMARY_ADMIN_TABS = [
   { id: 'products',  label: '📦 Products',       path: '/products',  testid: 'tab-products' },
   { id: 'campaigns', label: '📢 Campaigns',      path: '/campaigns', testid: 'tab-campaigns' },
@@ -79,6 +89,13 @@ export default function TopHeader({
 
       <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
         <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
+        {userRole === 'Agent' && AGENT_TABS.map(t => (
+          <button key={t.id} data-testid={t.testid}
+            className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
+            onClick={() => navigate(t.path)}>
+            {t.label}
+          </button>
+        ))}
         {userRole === 'Admin' && PRIMARY_ADMIN_TABS.map(t => (
           <button key={t.id} data-testid={t.testid}
             className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}

@@ -115,6 +115,22 @@ func (d *DB) ListPendingInvites(orgID int64) ([]PendingInvite, error) {
 	return out, rows.Err()
 }
 
+// GetTeamInviteToken returns the raw token for a pending invite ID, scoped to
+// org so an admin can never resolve another tenant's invite. Used by the
+// "Copy invite link" action so the inviter can hand the link off out-of-band
+// when SMTP is misconfigured or the invitee never received the email.
+func (d *DB) GetTeamInviteToken(id, orgID int64) (string, error) {
+	var token string
+	err := d.pool.QueryRow(
+		`SELECT token FROM team_invites
+		 WHERE id=? AND org_id=? AND accepted_at IS NULL AND expires_at > NOW()
+		 LIMIT 1`, id, orgID).Scan(&token)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return token, err
+}
+
 // DeleteTeamInvite removes a pending invite (Admin cancels before acceptance).
 // Scoped to org so an admin in one org can't cancel another org's invite.
 func (d *DB) DeleteTeamInvite(id, orgID int64) error {

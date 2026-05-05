@@ -29,7 +29,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Email is required.")
 		return
 	}
-	if msg := validatePassword(req.Password); msg != "" {
+	if msg := s.validatePasswordStrong(r.Context(), req.Password); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -308,7 +308,7 @@ func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "token and new_password required")
 		return
 	}
-	if msg := validatePassword(req.NewPassword); msg != "" {
+	if msg := s.validatePasswordStrong(r.Context(), req.NewPassword); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}

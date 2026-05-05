@@ -13,6 +13,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmCancelInvite, setConfirmCancelInvite] = useState(null);
+  const [copiedInviteId, setCopiedInviteId] = useState(null);
 
   useEffect(() => { fetchTeam(); }, []);
 
@@ -59,6 +60,27 @@ export default function TeamPage({ apiFetch, API_URL }) {
       setInviteError('Network error');
     }
     setInviteLoading(false);
+  };
+
+  const handleCopyInviteLink = async (inviteId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/team/invites/${inviteId}/link`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.error || data.detail || 'Failed to fetch invite link');
+        return;
+      }
+      // navigator.clipboard requires a secure context (https / localhost),
+      // which both dev and prod satisfy. Fall back to a prompt() if it
+      // throws (e.g. permission denied / non-secure origin).
+      try {
+        await navigator.clipboard.writeText(data.invite_link);
+        setCopiedInviteId(inviteId);
+        setTimeout(() => setCopiedInviteId(prev => prev === inviteId ? null : prev), 2000);
+      } catch (_) {
+        prompt('Copy this invite link:', data.invite_link);
+      }
+    } catch (e) { alert('Network error'); }
   };
 
   const handleCancelInvite = async (inviteId) => {
@@ -229,10 +251,17 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>No</button>
                       </span>
                     ) : (
-                      <button onClick={() => setConfirmCancelInvite(inv.id)}
-                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
-                        Cancel Invite
-                      </button>
+                      <span style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => handleCopyInviteLink(inv.id)}
+                          title="Copy invite link to clipboard — useful when SMTP isn't configured or to resend out-of-band"
+                          style={{ background: copiedInviteId === inv.id ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.1)', border: `1px solid ${copiedInviteId === inv.id ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.25)'}`, borderRadius: '4px', color: copiedInviteId === inv.id ? '#86efac' : '#a5b4fc', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                        </button>
+                        <button onClick={() => setConfirmCancelInvite(inv.id)}
+                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
+                          Cancel Invite
+                        </button>
+                      </span>
                     )}
                   </td>
                 </tr>
