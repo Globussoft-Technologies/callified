@@ -34,6 +34,7 @@ const MORE_ADMIN_TABS = [
   { id: 'settings',     label: '⚙️ Settings',         path: '/settings',     testid: 'tab-settings' },
   { id: 'logs',         label: '📋 Live Logs',        path: '/logs',         testid: 'tab-logs' },
   { id: 'team',         label: '👥 Team',             path: '/team',         testid: 'tab-team' },
+  { id: 'receptionist', label: '🩺 Receptionist',     path: '/receptionist', testid: 'tab-receptionist' },
 ];
 
 export default function TopHeader({
