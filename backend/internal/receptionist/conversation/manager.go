@@ -8,6 +8,7 @@
 package conversation
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -26,16 +27,59 @@ import (
 
 // Manager wires the dependencies and exposes the per-turn handler.
 type Manager struct {
-	store    *session.Store
-	apptSvc  *appointment.Service
-	ambSvc   *ambulance.Service
-	llmAgent *llm.Agent
+	store          *session.Store
+	apptSvc        *appointment.Service
+	ambSvc         *ambulance.Service
+	llmAgent       *llm.Agent
+	geminiFallback *llm.GeminiFallback // non-nil when GEMINI_API_KEY is set; used only when the rule-based FSM has no good answer
 }
 
 // New constructs a Manager.
 func New(store *session.Store, apptSvc *appointment.Service,
 	ambSvc *ambulance.Service, llmAgent *llm.Agent) *Manager {
-	return &Manager{store: store, apptSvc: apptSvc, ambSvc: ambSvc, llmAgent: llmAgent}
+	return &Manager{
+		store: store, apptSvc: apptSvc, ambSvc: ambSvc, llmAgent: llmAgent,
+		// Built unconditionally — Reply() returns "" if GEMINI_API_KEY is
+		// unset, so the call site can keep its existing canned fallback.
+		geminiFallback: llm.NewGeminiFallback(apptSvc),
+	}
+}
+
+// thanksRE matches a bare "thank you" / "thanks" / "thx" — but NOT
+// when paired with "bye" / "goodbye" (those are already IntentGoodbye
+// and would double-trigger the multi-thanks shutoff).
+var thanksRE = regexp.MustCompile(`(?i)\bthan(?:k\s*you|ks|x|k\s*u)\b`)
+var goodbyeRE = regexp.MustCompile(`(?i)\b(?:bye|goodbye)\b`)
+
+func isThankYou(text string) bool {
+	return thanksRE.MatchString(text) && !goodbyeRE.MatchString(text)
+}
+
+// lastUserText returns the most recent caller utterance from the session
+// transcript — used by handlers that don't get text passed in directly.
+func lastUserText(sess *session.Session) string {
+	for i := len(sess.Transcript) - 1; i >= 0; i-- {
+		if sess.Transcript[i].Role == "user" {
+			return sess.Transcript[i].Text
+		}
+	}
+	return ""
+}
+
+// llmFallbackOr returns the Gemini-generated conversational reply for the
+// current turn when available, otherwise returns the provided canned
+// string. Used at every "I don't know what they meant" branch in the
+// rule-based FSM so generic questions ("do you do x-rays?", "how much
+// does a visit cost?") get a real receptionist-style answer instead of
+// "I can help with booking, rescheduling…".
+func (m *Manager) llmFallbackOr(sess *session.Session, userText, canned string) string {
+	if m.geminiFallback == nil {
+		return canned
+	}
+	if reply := m.geminiFallback.Reply(context.Background(), sess, userText); reply != "" {
+		return reply
+	}
+	return canned
 }
 
 // TurnResult is one assistant reply.
@@ -107,6 +151,22 @@ func (m *Manager) handleTurnInner(sessionID, text string) *TurnResult {
 	// 1. Emergency keyword guardrail — runs first, every state.
 	if det := emergency.Detect(text); det.IsEmergency {
 		return m.handleEmergency(sess, text, det)
+	}
+
+	// 1b. Post-booking thanks → end the call. Once an appointment has
+	// been confirmed, a "thank you" / "thanks" is the caller signalling
+	// they're done. Wrap up cleanly instead of looping back to "anything
+	// else?". Outside of the post-booking window, thanks flows through
+	// normally so callers can chat without being hung up on.
+	if booked, _ := sess.Slots["booking_confirmed"].(bool); booked && isThankYou(text) {
+		sess.State = models.StateEnded
+		msg := fmt.Sprintf("You're welcome. Thank you for calling %s. Goodbye.",
+			config.Get().ClinicName)
+		sess.Append("assistant", msg)
+		return &TurnResult{
+			Message: msg, State: models.StateEnded,
+			Intent: models.IntentGoodbye, Metadata: map[string]any{},
+		}
 	}
 
 	// 2. Emergency follow-up state — caller giving address. Stays
@@ -321,8 +381,21 @@ func (m *Manager) handleAwaitingName(sess *session.Session, text string) (string
 		return reply + " By the way, may I have your name for the record?", meta
 	}
 
-	return "I didn't quite catch your name. Could you please tell me your full name?",
-		map[string]any{}
+	// No name, no structured request — could be a free-form question
+	// ("do you take Aetna?", "where do I park?"). Let the LLM fallback
+	// answer it conversationally. If the LLM is unavailable, fall back
+	// to the canned reprompt.
+	//
+	// After the LLM answers, transition to StateAwaitingFollowup so the
+	// next turn doesn't try to extract a name from arbitrary text — the
+	// caller has clearly chosen to ask questions before naming themselves.
+	canned := "I didn't quite catch your name. Could you please tell me your full name?"
+	reply := m.llmFallbackOr(sess, text, canned)
+	if reply != canned {
+		// LLM fallback fired — caller is in question mode now.
+		sess.State = models.StateAwaitingFollowup
+	}
+	return reply, map[string]any{}
 }
 
 func (m *Manager) routePurpose(sess *session.Session, text string, in intent.Match) (string, map[string]any) {
@@ -358,9 +431,9 @@ func (m *Manager) routePurpose(sess *session.Session, text string, in intent.Mat
 		return fmt.Sprintf("Thank you for calling %s. Goodbye.", config.Get().ClinicName),
 			map[string]any{}
 	}
-	return "I can help with booking, rescheduling, or cancelling an appointment, " +
-			"or with general questions about our clinic. Which would you like to do?",
-		map[string]any{}
+	canned := "I can help with booking, rescheduling, or cancelling an appointment, " +
+		"or with general questions about our clinic. Which would you like to do?"
+	return m.llmFallbackOr(sess, text, canned), map[string]any{}
 }
 
 // --- Booking ---------------------------------------------------------
@@ -395,10 +468,11 @@ func (m *Manager) handleBookDoctor(sess *session.Session, text string, in intent
 	} else {
 		cand := strings.TrimSpace(text)
 		if len(strings.Fields(cand)) > 3 {
-			return fmt.Sprintf(
+			canned := fmt.Sprintf(
 				"I didn't catch which doctor. We have %s. Could you tell me just the doctor's name?",
 				m.formatRoster(),
-			), map[string]any{}
+			)
+			return m.llmFallbackOr(sess, text, canned), map[string]any{}
 		}
 		sess.Slots["pending_doctor"] = cand
 	}
@@ -424,7 +498,7 @@ func (m *Manager) askForTimeOrFinalize(sess *session.Session, booking bool) (str
 		} else {
 			sess.State = models.StateAppointmentRescheduleTime
 		}
-		return "Sure. What day and time would work for you? For example, 'tomorrow at 10 AM' or 'Friday at 2 PM'.",
+		return "Sure. What day and time would work for you? ",
 			map[string]any{}
 	}
 	return m.finalizeBooking(sess)
@@ -443,11 +517,15 @@ func (m *Manager) finalizeBooking(sess *session.Session) (string, map[string]any
 	if err != nil {
 		switch {
 		case errIs(err, appointment.ErrUnknownDoctor):
+			// Don't surface "we don't have Dr. X" — just keep the
+			// conversation flowing by listing who IS available and
+			// inviting the caller to pick. Less awkward and avoids
+			// the bot lecturing the caller about the roster.
 			sess.State = models.StateAppointmentBookDoctor
 			delete(sess.Slots, "pending_doctor")
 			return fmt.Sprintf(
-				"I'm sorry — %v. We have %s. Which one would you like to see?",
-				err, m.formatRoster(),
+				"We have %s. Which one would you like to see?",
+				m.formatRoster(),
 			), map[string]any{}
 		case errIs(err, appointment.ErrSlotUnavailable):
 			sess.State = models.StateAppointmentBookTime
@@ -468,6 +546,9 @@ func (m *Manager) finalizeBooking(sess *session.Session) (string, map[string]any
 	delete(sess.Slots, "pending_date")
 	delete(sess.Slots, "pending_time")
 	sess.State = models.StateAwaitingFollowup
+	// Mark the session as post-booking so the next "thank you" ends the
+	// call cleanly (see the 1b shutoff in handleTurnInner).
+	sess.Slots["booking_confirmed"] = true
 	when := appt.ScheduledFor.Format("Monday, January 2 at 3:04 PM")
 	return fmt.Sprintf(
 			"You're booked with %s on %s. Your confirmation number is %s. Is there anything else I can help with?",
@@ -503,8 +584,8 @@ func (m *Manager) handleRescheduleID(sess *session.Session, in intent.Match) (st
 		sess.Slots["pending_appt_id"] = v
 		return m.askForRescheduleTime(sess)
 	}
-	return "I didn't catch a valid confirmation number. It should look like 'APT-' followed by six letters or digits.",
-		map[string]any{}
+	canned := "I didn't catch a valid confirmation number. It should look like 'APT-' followed by six letters or digits."
+	return m.llmFallbackOr(sess, lastUserText(sess), canned), map[string]any{}
 }
 
 func (m *Manager) askForRescheduleTime(sess *session.Session) (string, map[string]any) {
@@ -604,10 +685,26 @@ func (m *Manager) finalizeCancel(sess *session.Session, id string) (string, map[
 // --- Followup --------------------------------------------------------
 
 func (m *Manager) handleFollowup(sess *session.Session, text string, in intent.Match) (string, map[string]any) {
-	if in.Intent == models.IntentGoodbye || in.Intent == models.IntentDeny {
+	clinicName := config.Get().ClinicName
+	// Explicit goodbye — caller is done, end the call cleanly.
+	if in.Intent == models.IntentGoodbye {
 		sess.State = models.StateEnded
-		return fmt.Sprintf("Thank you for calling %s. Goodbye.", config.Get().ClinicName),
+		return fmt.Sprintf("Thank you for calling %s. Goodbye.", clinicName),
 			map[string]any{}
+	}
+	// Plain "no" / "not really" — don't hang up immediately; let the LLM
+	// soften with an offer to help with anything else, since the caller
+	// declined the LAST suggestion, not the whole call. If the LLM is
+	// unavailable, fall back to the legacy behavior (end the call).
+	if in.Intent == models.IntentDeny {
+		canned := fmt.Sprintf("Thank you for calling %s. Goodbye.", clinicName)
+		reply := m.llmFallbackOr(sess, text, canned)
+		if reply == canned {
+			sess.State = models.StateEnded
+		}
+		// If the LLM produced something else, keep state at follow-up so
+		// the caller can keep talking — don't end mid-thought.
+		return reply, map[string]any{}
 	}
 	sess.State = models.StateAwaitingPurpose
 	return m.routePurpose(sess, text, in)

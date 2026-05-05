@@ -37,7 +37,7 @@ func TestFullBookingFlow(t *testing.T) {
 	turns := []string{
 		"Hi, my name is Alice Walker",
 		"I'd like to book an appointment",
-		"Dr. Patel",
+		"Dr. John",
 		"Tomorrow at 10am",
 	}
 	var last *TurnResult
@@ -141,7 +141,7 @@ func TestCancelFlow(t *testing.T) {
 	m := newTestManager()
 	sess, _ := m.StartCall("+15555550104", "", "")
 	m.HandleTurn(sess.ID, "I'm Dave")
-	booking := m.HandleTurn(sess.ID, "Book me with Dr. Garcia tomorrow at 2pm")
+	booking := m.HandleTurn(sess.ID, "Book me with Dr. Elina tomorrow at 2pm")
 	id, _ := booking.Metadata["appointment_id"].(string)
 	if id == "" {
 		t.Fatalf("booking did not return an appointment id; message=%q", booking.Message)

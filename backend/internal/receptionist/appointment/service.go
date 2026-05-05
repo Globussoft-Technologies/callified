@@ -26,10 +26,10 @@ type DoctorEntry struct {
 // Roster is the mock doctor list. Replace with a directory-service call
 // in production.
 var Roster = []DoctorEntry{
-	{Name: "Dr. Patel", Specialty: "General Practice"},
-	{Name: "Dr. Nguyen", Specialty: "Pediatrics"},
-	{Name: "Dr. Johnson", Specialty: "Cardiology"},
-	{Name: "Dr. Garcia", Specialty: "Dermatology"},
+	{Name: "Dr. John", Specialty: "General Practice"},
+	{Name: "Dr. Mike", Specialty: "Pediatrics"},
+	{Name: "Dr. Emma", Specialty: "Cardiology"},
+	{Name: "Dr. Elina", Specialty: "Dermatology"},
 }
 
 // Record is one booked appointment.
@@ -91,15 +91,15 @@ func (s *Service) resolveDoctor(query string) (string, error) {
 	}
 
 	aliases := map[string]string{
-		"pediatrician":         "Dr. Nguyen",
-		"kids doctor":          "Dr. Nguyen",
-		"cardiologist":         "Dr. Johnson",
-		"heart doctor":         "Dr. Johnson",
-		"dermatologist":        "Dr. Garcia",
-		"skin doctor":          "Dr. Garcia",
-		"gp":                   "Dr. Patel",
-		"general practitioner": "Dr. Patel",
-		"family doctor":        "Dr. Patel",
+		"pediatrician":         "Dr. Mike",
+		"kids doctor":          "Dr. Mike",
+		"cardiologist":         "Dr. Emma",
+		"heart doctor":         "Dr. Emma",
+		"dermatologist":        "Dr. Elina",
+		"skin doctor":          "Dr. Elina",
+		"gp":                   "Dr. John",
+		"general practitioner": "Dr. John",
+		"family doctor":        "Dr. John",
 	}
 	if name, ok := aliases[q]; ok {
 		return name, nil

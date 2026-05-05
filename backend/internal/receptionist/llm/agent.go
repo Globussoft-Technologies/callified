@@ -113,7 +113,7 @@ func (a *Agent) buildTools() []anthropic.ToolUnionParam {
 					},
 					"doctor": map[string]any{
 						"type":        "string",
-						"description": "Doctor's last name (e.g. 'Patel') or specialty (e.g. 'pediatrician').",
+						"description": "Doctor's first name (e.g. 'John') or specialty (e.g. 'pediatrician').",
 					},
 					"date": map[string]any{
 						"type":        "string",
