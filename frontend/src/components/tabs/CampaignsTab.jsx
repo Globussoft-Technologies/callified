@@ -136,17 +136,39 @@ export default function CampaignsTab({
     stopEventStream();
     const token = localStorage.getItem('authToken');
     if (!token) return;
-    const es = new EventSource(`${API_URL}/campaign-events?token=${token}&campaign_id=${campaignId}`);
-    es.onmessage = (e) => setLiveEvents(prev => [...prev.slice(-49), e.data]);
-    // Don't close on transient errors — EventSource auto-reconnects
-    es.onerror = (err) => {
-      if (es.readyState === EventSource.CLOSED) stopEventStream();
-    };
-    eventSourceRef.current = es;
+    const ctrl = new AbortController();
+    eventSourceRef.current = ctrl;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/campaign-events?campaign_id=${campaignId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: ctrl.signal,
+        });
+        if (!res.ok) return;
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            setLiveEvents(prev => [...prev.slice(-49), line.slice(6)]);
+          }
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError' && eventSourceRef.current === ctrl) {
+          setTimeout(() => startEventStream(campaignId), 3000);
+        }
+      }
+    })();
   };
 
   const stopEventStream = () => {
-    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
+    if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null; }
   };
 
   const handleCreateCampaign = async (e) => {

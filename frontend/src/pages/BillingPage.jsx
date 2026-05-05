@@ -366,9 +366,18 @@ export default function BillingPage({ apiFetch, API_URL }) {
                     }}>{inv.status}</span>
                   </td>
                   <td style={{padding: '8px 4px', textAlign: 'right'}}>
-                    <button onClick={() => {
+                    <button onClick={async () => {
                       const token = localStorage.getItem('authToken');
-                      window.open(`${API_URL}/billing/invoices/${inv.id}/download?token=${encodeURIComponent(token)}`, '_blank');
+                      try {
+                        const res = await fetch(`${API_URL}/billing/invoices/${inv.id}/download`, {
+                          headers: { Authorization: `Bearer ${token}` },
+                        });
+                        if (!res.ok) return;
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        window.open(url, '_blank');
+                        setTimeout(() => URL.revokeObjectURL(url), 60000);
+                      } catch (e) { console.error('Invoice download failed:', e); }
                     }} style={{
                       padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
                       background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',

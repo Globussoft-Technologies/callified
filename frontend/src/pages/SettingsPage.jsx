@@ -79,6 +79,49 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
 
   const [voiceSaving, setVoiceSaving] = useState(false);
 
+  // SMTP Settings State
+  const [smtpSettings, setSmtpSettings] = useState({ smtp_host: '', smtp_port: 587, smtp_user: '', smtp_password: '', smtp_from_name: 'Callified AI', app_url: '' });
+  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [smtpSaveStatus, setSmtpSaveStatus] = useState(null);
+  const [smtpTesting, setSmtpTesting] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState(null);
+
+  useEffect(() => {
+    if (selectedOrg) fetchSmtpSettings(selectedOrg.id);
+  }, [selectedOrg]);
+
+  const fetchSmtpSettings = async (orgId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${orgId}/smtp-settings`);
+      if (res.ok) setSmtpSettings(await res.json());
+    } catch(e) {}
+  };
+
+  const handleSaveSmtp = async () => {
+    if (!selectedOrg) return;
+    setSmtpSaving(true); setSmtpSaveStatus(null);
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/smtp-settings`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(smtpSettings),
+      });
+      setSmtpSaveStatus(res.ok ? 'saved' : 'error');
+      if (res.ok) setTimeout(() => setSmtpSaveStatus(null), 4000);
+    } catch(e) { setSmtpSaveStatus('error'); }
+    setSmtpSaving(false);
+  };
+
+  const handleTestSmtp = async () => {
+    if (!selectedOrg) return;
+    setSmtpTesting(true); setSmtpTestResult(null);
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/smtp-test`, { method: 'POST' });
+      const data = await res.json();
+      setSmtpTestResult({ ok: data.status === 'ok', message: data.message });
+    } catch(e) { setSmtpTestResult({ ok: false, message: 'Network error' }); }
+    setSmtpTesting(false);
+  };
+
   const handleSaveOrgVoice = async ({ provider, voiceId, language, voiceName }) => {
     if (!selectedOrg) return;
     setVoiceSaving(true);
@@ -136,6 +179,10 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       activeLanguage={activeLanguage}
       handleSaveOrgVoice={handleSaveOrgVoice}
       voiceSaving={voiceSaving}
+      smtpSettings={smtpSettings} setSmtpSettings={setSmtpSettings}
+      smtpSaving={smtpSaving} smtpSaveStatus={smtpSaveStatus}
+      smtpTesting={smtpTesting} smtpTestResult={smtpTestResult}
+      handleSaveSmtp={handleSaveSmtp} handleTestSmtp={handleTestSmtp}
     />
   );
 }

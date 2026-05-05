@@ -7,7 +7,7 @@ import logging
 import asyncio
 import datetime
 import jwt
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from starlette.responses import StreamingResponse
 from fastapi.responses import JSONResponse
 
@@ -118,15 +118,20 @@ async def api_clear_live_logs():
     return {"status": "ok"}
 
 @live_logs_router.get("/api/live-logs")
-async def api_live_logs(token: str = ""):
+async def api_live_logs(request: Request, token: str = ""):
     """SSE endpoint streaming server logs to the dashboard."""
     from auth import SECRET_KEY
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
     if not token:
         return JSONResponse(status_code=401, content={"detail": "Token required"})
     try:
-        jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     except Exception:
         return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+    if payload.get("role") != "Admin":
+        return JSONResponse(status_code=403, content={"detail": "Admin access required"})
 
     async def _gen():
         import time as _time
@@ -151,15 +156,20 @@ async def api_live_logs(token: str = ""):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @live_logs_router.get("/api/campaign-events")
-async def api_campaign_events(token: str = "", campaign_id: int = 0):
+async def api_campaign_events(request: Request, token: str = "", campaign_id: int = 0):
     """SSE endpoint for user-friendly campaign dial progress."""
     from auth import SECRET_KEY
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
     if not token:
         return JSONResponse(status_code=401, content={"detail": "Token required"})
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
     except Exception:
         return JSONResponse(status_code=401, content={"detail": "Invalid token"})
+    if payload.get("role") != "Admin":
+        return JSONResponse(status_code=403, content={"detail": "Admin access required"})
 
     # Scope all events to the authenticated user's org — prevents cross-tenant leaks.
     caller_org_id = int(payload.get("org_id") or 0)

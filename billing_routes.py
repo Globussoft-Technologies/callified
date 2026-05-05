@@ -25,6 +25,11 @@ logger = logging.getLogger("uvicorn.error")
 billing_router = APIRouter()
 
 
+def _require_admin(user: dict):
+    if user.get("role") != "Admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
 
 class SubscriptionCreate(BaseModel):
@@ -66,6 +71,7 @@ def api_get_subscription(current_user: dict = Depends(get_current_user)):
 
 @billing_router.post("/api/billing/subscribe")
 def api_create_subscription(data: SubscriptionCreate, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     existing = get_org_subscription(org_id)
     if existing and existing['status'] in ('active', 'trialing'):
@@ -76,6 +82,7 @@ def api_create_subscription(data: SubscriptionCreate, current_user: dict = Depen
 
 @billing_router.post("/api/billing/cancel")
 def api_cancel_subscription(data: SubscriptionCancel, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     sub = get_org_subscription(org_id)
     if not sub:
@@ -96,6 +103,7 @@ def api_get_usage(current_user: dict = Depends(get_current_user)):
 
 @billing_router.post("/api/billing/create-order")
 def api_create_order(data: SubscriptionCreate, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     try:
         order = create_razorpay_order(org_id, data.plan_id)
@@ -107,6 +115,7 @@ def api_create_order(data: SubscriptionCreate, current_user: dict = Depends(get_
 
 @billing_router.post("/api/billing/verify-payment")
 def api_verify_payment(data: PaymentVerify, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     try:
         result = verify_razorpay_payment(

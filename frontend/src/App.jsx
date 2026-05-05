@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import AcceptInvitePage from './pages/AcceptInvitePage';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -38,6 +39,9 @@ export default function App() {
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
 
+  const AdminOnly = ({ children }) =>
+    userRole === 'Admin' ? children : <Navigate to="/crm" replace />;
+
   const [campaigns, setCampaigns] = useState([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -62,6 +66,9 @@ export default function App() {
   const location = useLocation();
   if (location.pathname === '/reset-password') {
     return <ResetPasswordPage />;
+  }
+  if (location.pathname === '/accept-invite') {
+    return <AcceptInvitePage />;
   }
 
   // ─── AUTH PAGES (after all hooks) ───
@@ -117,43 +124,49 @@ export default function App() {
           />
         } />
         <Route path="/campaigns" element={
-          <CampaignsPage
-            apiFetch={apiFetch} API_URL={API_URL}
-            selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
-            dialingId={dialingId} webCallActive={webCallActive}
-            handleCampaignDial={handleCampaignDial} handleCampaignWebCall={handleCampaignWebCall}
-            activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
-            activeLanguage={activeLanguage}
-            INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
-            campaigns={campaigns} fetchCampaigns={fetchCampaigns}
-          />
+          <AdminOnly>
+            <CampaignsPage
+              apiFetch={apiFetch} API_URL={API_URL}
+              selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
+              dialingId={dialingId} webCallActive={webCallActive}
+              handleCampaignDial={handleCampaignDial} handleCampaignWebCall={handleCampaignWebCall}
+              activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
+              activeLanguage={activeLanguage}
+              INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
+              campaigns={campaigns} fetchCampaigns={fetchCampaigns}
+            />
+          </AdminOnly>
         } />
-        <Route path="/ops" element={<OpsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/analytics" element={<AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/whatsapp" element={<WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />} />
-        <Route path="/integrations" element={<IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/monitor" element={<MonitorPage API_URL={API_URL} />} />
-        <Route path="/knowledge" element={<KnowledgePage API_URL={API_URL} />} />
-        <Route path="/sandbox" element={<SandboxPage API_URL={API_URL} />} />
+        <Route path="/ops" element={<AdminOnly><OpsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/analytics" element={<AdminOnly><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/whatsapp" element={<AdminOnly><WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} /></AdminOnly>} />
+        <Route path="/integrations" element={<AdminOnly><IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} /></AdminOnly>} />
+        <Route path="/monitor" element={<AdminOnly><MonitorPage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/knowledge" element={<AdminOnly><KnowledgePage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/sandbox" element={<AdminOnly><SandboxPage API_URL={API_URL} /></AdminOnly>} />
         <Route path="/products" element={
-          <ProductsPage
-            apiFetch={apiFetch} API_URL={API_URL}
-            selectedOrg={selectedOrg} orgs={orgs}
-            orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
-          />
+          <AdminOnly>
+            <ProductsPage
+              apiFetch={apiFetch} API_URL={API_URL}
+              selectedOrg={selectedOrg} orgs={orgs}
+              orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
+            />
+          </AdminOnly>
         } />
         <Route path="/settings" element={
-          <SettingsPage
-            apiFetch={apiFetch} API_URL={API_URL}
-            selectedOrg={selectedOrg} orgTimezone={orgTimezone}
-          />
+          <AdminOnly>
+            <SettingsPage
+              apiFetch={apiFetch} API_URL={API_URL}
+              selectedOrg={selectedOrg} orgTimezone={orgTimezone}
+            />
+          </AdminOnly>
         } />
-        <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} />} />
+        <Route path="/logs" element={<AdminOnly><LogsPage API_URL={API_URL} authToken={authToken} /></AdminOnly>} />
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/billing" element={<BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/dnd" element={<DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} />} />
+        <Route path="/billing" element={<AdminOnly><BillingPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/dnd" element={<AdminOnly><DndPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/scheduled" element={<AdminOnly><ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} /></AdminOnly>} />
+        <Route path="/team" element={<AdminOnly><TeamPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} /></AdminOnly>} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>
       </main>

@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { validatePasswordFull, passwordStrength } from '../utils/passwordPolicy';
 
 export default function TeamPage({ apiFetch, API_URL, currentUser }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: '', full_name: '', role: 'Agent', password: '' });
+  const [inviteForm, setInviteForm] = useState({ email: '', full_name: '', role: 'Agent' });
   const [inviteError, setInviteError] = useState('');
+  const [inviteResult, setInviteResult] = useState(null); // { email_sent, invite_link }
   const [inviteLoading, setInviteLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   useEffect(() => { fetchTeam(); }, []);
@@ -26,9 +27,9 @@ export default function TeamPage({ apiFetch, API_URL, currentUser }) {
   const handleInvite = async (e) => {
     e.preventDefault();
     setInviteError('');
+    setInviteResult(null);
+    setCopied(false);
     setInviteLoading(true);
-    const pwCheck = await validatePasswordFull(inviteForm.password);
-    if (!pwCheck.valid) { setInviteError(pwCheck.error); setInviteLoading(false); return; }
     try {
       const res = await apiFetch(`${API_URL}/team/invite`, {
         method: 'POST',
@@ -37,8 +38,8 @@ export default function TeamPage({ apiFetch, API_URL, currentUser }) {
       });
       const data = await res.json();
       if (res.ok) {
-        setShowInvite(false);
-        setInviteForm({ email: '', full_name: '', role: 'Agent', password: '' });
+        setInviteResult({ email_sent: data.email_sent, invite_link: data.invite_link, email: inviteForm.email });
+        setInviteForm({ email: '', full_name: '', role: 'Agent' });
         fetchTeam();
       } else {
         setInviteError(data.detail || 'Failed to invite user');
@@ -47,6 +48,10 @@ export default function TeamPage({ apiFetch, API_URL, currentUser }) {
       setInviteError('Network error');
     }
     setInviteLoading(false);
+  };
+
+  const handleCopyLink = (link) => {
+    navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   };
 
   const handleRoleChange = async (userId, newRole) => {
@@ -110,69 +115,93 @@ export default function TeamPage({ apiFetch, API_URL, currentUser }) {
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }} onClick={() => setShowInvite(false)}>
-          <div style={{ ...cardStyle, width: '420px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
+        }} onClick={() => { setShowInvite(false); setInviteResult(null); setInviteError(''); }}>
+          <div style={{ ...cardStyle, width: '460px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 16px', color: '#f1f5f9' }}>Invite Team Member</h3>
-            <form onSubmit={handleInvite}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <input
-                  placeholder="Full Name" required value={inviteForm.full_name}
-                  onChange={e => setInviteForm({ ...inviteForm, full_name: e.target.value })}
-                  style={inputStyle}
-                />
-                <input
-                  placeholder="Email" type="email" required value={inviteForm.email}
-                  onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
-                  style={inputStyle}
-                />
-                <select
-                  value={inviteForm.role}
-                  onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })}
-                  style={inputStyle}
-                >
-                  <option value="Admin">Admin</option>
-                  <option value="Agent">Agent</option>
-                  <option value="Viewer">Viewer</option>
-                </select>
+
+            {inviteResult ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {inviteResult.email_sent ? (
+                  <div style={{ background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', padding: '12px 14px', color: '#86efac', fontSize: '0.875rem' }}>
+                    Invite email sent to <strong>{inviteResult.email}</strong>.
+                  </div>
+                ) : (
+                  <div style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)', borderRadius: '8px', padding: '12px 14px', color: '#fde047', fontSize: '0.875rem' }}>
+                    Email could not be delivered (SMTP not configured). Share the invite link below manually.
+                  </div>
+                )}
                 <div>
-                  <input
-                    placeholder="Password (min 8 chars)" type="password" required minLength={8}
-                    value={inviteForm.password}
-                    onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
-                    style={inputStyle}
-                  />
-                  {inviteForm.password.length > 0 && (() => {
-                    const s = passwordStrength(inviteForm.password);
-                    return (
-                      <div style={{ marginTop: '6px' }}>
-                        <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
-                          {[1,2,3,4].map(i => (
-                            <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px',
-                              background: s.score >= i ? s.color : 'rgba(255,255,255,0.1)' }} />
-                          ))}
-                        </div>
-                        <span style={{ fontSize: '0.72rem', color: s.color }}>{s.label}</span>
-                      </div>
-                    );
-                  })()}
+                  <p style={{ margin: '0 0 6px', fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Invite Link</p>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      readOnly value={inviteResult.invite_link}
+                      style={{ ...inputStyle, fontSize: '0.78rem', color: '#a5b4fc', flex: 1 }}
+                      onFocus={e => e.target.select()}
+                    />
+                    <button
+                      onClick={() => handleCopyLink(inviteResult.invite_link)}
+                      style={{
+                        background: copied ? 'rgba(34,197,94,0.2)' : 'rgba(99,102,241,0.2)',
+                        border: `1px solid ${copied ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.4)'}`,
+                        borderRadius: '6px', color: copied ? '#86efac' : '#a5b4fc',
+                        padding: '8px 12px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                  <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: '#64748b' }}>Link expires in 48 hours.</p>
                 </div>
-                {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={() => setShowInvite(false)}
-                    style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={inviteLoading}
-                    style={{
-                      background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-                      borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600,
-                      opacity: inviteLoading ? 0.6 : 1,
-                    }}>
-                    {inviteLoading ? 'Inviting...' : 'Send Invite'}
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button onClick={() => { setShowInvite(false); setInviteResult(null); }}
+                    style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600 }}>
+                    Done
                   </button>
                 </div>
               </div>
-            </form>
+            ) : (
+              <form onSubmit={handleInvite}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <input
+                    placeholder="Full Name" required value={inviteForm.full_name}
+                    onChange={e => setInviteForm({ ...inviteForm, full_name: e.target.value })}
+                    style={inputStyle}
+                  />
+                  <input
+                    placeholder="Email" type="email" required value={inviteForm.email}
+                    onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
+                    style={inputStyle}
+                  />
+                  <select
+                    value={inviteForm.role}
+                    onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="Admin">Admin</option>
+                    <option value="Agent">Agent</option>
+                    <option value="Viewer">Viewer</option>
+                  </select>
+                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
+                    An invite link will be generated. If email is configured, it will also be sent automatically.
+                  </p>
+                  {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
+                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={() => { setShowInvite(false); setInviteError(''); }}
+                      style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={inviteLoading}
+                      style={{
+                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                        borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600,
+                        opacity: inviteLoading ? 0.6 : 1,
+                      }}>
+                      {inviteLoading ? 'Generating...' : 'Generate Invite'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -60,29 +60,55 @@ def _wrap_html(title: str, body_content: str) -> str:
 
 # ─── Core send function ────────────────────────────────────────────────────
 
-def send_email(to_email: str, subject: str, html_body: str) -> bool:
-    """Send an HTML email. Returns True on success."""
-    if not SMTP_USER or not SMTP_PASSWORD:
-        logger.warning("[EMAIL] SMTP_USER or SMTP_PASSWORD not configured, skipping email")
+def send_email(to_email: str, subject: str, html_body: str, settings: dict = None) -> bool:
+    """Send an HTML email. Accepts optional settings dict to override env vars. Returns True on success."""
+    s = settings or {}
+    host     = s.get("smtp_host")      or SMTP_HOST
+    port     = int(s.get("smtp_port")  or SMTP_PORT)
+    user     = s.get("smtp_user")      or SMTP_USER
+    password = s.get("smtp_password")  or SMTP_PASSWORD
+    from_name = s.get("smtp_from_name") or SMTP_FROM_NAME
+
+    if not user or not password:
+        logger.warning("[EMAIL] SMTP credentials not configured, skipping email")
         return False
 
     try:
         msg = MIMEMultipart("alternative")
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+        msg["From"] = f"{from_name} <{user}>"
         msg["To"] = to_email
         msg["Subject"] = subject
         msg.attach(MIMEText(html_body, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(host, port) as server:
+            server.ehlo()
             server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
+            server.ehlo()
+            server.login(user, password)
+            server.sendmail(user, to_email, msg.as_string())
 
         logger.info(f"[EMAIL] Sent '{subject}' to {to_email}")
         return True
     except Exception as e:
         logger.error(f"[EMAIL] Failed to send '{subject}' to {to_email}: {e}")
         return False
+
+
+def get_org_smtp_settings(org_id: int) -> dict:
+    """Load SMTP settings for org from DB, fall back to env vars."""
+    if not org_id:
+        return {}
+    try:
+        from database import get_org_smtp_settings as _db_get
+        return _db_get(org_id) or {}
+    except Exception:
+        return {}
+
+
+def send_email_for_org(org_id: int, to_email: str, subject: str, html_body: str) -> bool:
+    """Send email using org-specific SMTP settings (falls back to env vars)."""
+    settings = get_org_smtp_settings(org_id)
+    return send_email(to_email, subject, html_body, settings=settings)
 
 
 # ─── Template functions ─────────────────────────────────────────────────────
@@ -177,6 +203,36 @@ def send_appointment_confirmation(to_email: str, lead_name: str, appointment_tim
         send_email(to_email, f"Appointment Booked - {lead_name}", html)
     except Exception as e:
         logger.error(f"[EMAIL] Appointment confirmation failed for {to_email}: {e}")
+
+
+def send_team_invite_email(to_email: str, full_name: str, inviter_name: str, role: str, token: str, org_id: int = 0) -> bool:
+    """Send a team invite link so the invitee can set their own password. Returns True if sent."""
+    try:
+        smtp_settings = get_org_smtp_settings(org_id)
+        base_url = smtp_settings.get("app_url") or APP_URL
+        accept_link = f"{base_url}/accept-invite?token={token}"
+        safe_name = html.escape(full_name)
+        safe_inviter = html.escape(inviter_name)
+        safe_role = html.escape(role)
+        body = f"""\
+            <h2 style="color:#a5b4fc;margin-top:0;">You've been invited to Callified AI</h2>
+            <p>Hi {safe_name},</p>
+            <p><strong>{safe_inviter}</strong> has invited you to join their team on Callified AI as a <strong>{safe_role}</strong>.</p>
+            <p>Click the button below to accept the invitation and set your password. This link expires in 48 hours.</p>
+            <p style="margin:24px 0;">
+              <a href="{accept_link}" style="display:inline-block;background:#6366f1;color:#f8fafc;
+                 padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:bold;">
+                Accept Invitation
+              </a>
+            </p>
+            <p style="color:#94a3b8;font-size:13px;">
+              If you weren't expecting this invitation, you can safely ignore this email.
+            </p>"""
+        html_body = _wrap_html("Team Invitation — Callified AI", body)
+        return send_email(to_email, "You've been invited to Callified AI", html_body, settings=smtp_settings)
+    except Exception as e:
+        logger.error(f"[EMAIL] Team invite email failed for {to_email}: {e}")
+        return False
 
 
 def send_campaign_summary(to_email: str, campaign_name: str, total_calls: int, appointments: int, avg_score: float):

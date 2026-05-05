@@ -79,68 +79,105 @@ export default function LogsTab({ API_URL, authToken }) {
     let cancelled = false;
     const connect = () => {
       if (cancelled) return;
-      if (activityEsRef.current) activityEsRef.current.close();
-      const es = new EventSource(`${API_URL}/campaign-events?token=${authToken}&campaign_id=${campaignId}`);
-      es.onmessage = (ev) => {
-        if (pausedRef.current) return;
-        setActivityLogs(prev => [...prev.slice(-500), { text: ev.data, ts: new Date() }]);
-      };
-      es.onerror = () => {
-        es.close();
+      if (activityEsRef.current) activityEsRef.current.abort();
+      const ctrl = new AbortController();
+      activityEsRef.current = ctrl;
+      (async () => {
+        try {
+          const res = await fetch(`${API_URL}/campaign-events?campaign_id=${campaignId}`, {
+            headers: { Authorization: `Bearer ${authToken}` },
+            signal: ctrl.signal,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop();
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              if (pausedRef.current) continue;
+              setActivityLogs(prev => [...prev.slice(-500), { text: line.slice(6), ts: new Date() }]);
+            }
+          }
+        } catch (e) {
+          if (e.name === 'AbortError') return;
+        }
         if (!cancelled) setTimeout(connect, 3000);
-      };
-      activityEsRef.current = es;
+      })();
     };
     connect();
     return () => {
       cancelled = true;
-      if (activityEsRef.current) { activityEsRef.current.close(); activityEsRef.current = null; }
+      if (activityEsRef.current) { activityEsRef.current.abort(); activityEsRef.current = null; }
     };
   }, [actCampaign, clearKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Verbose feed — reconnect only when switching TO verbose mode ──────────
   useEffect(() => {
     if (mode !== 'verbose') {
-      if (verboseEsRef.current) { verboseEsRef.current.close(); verboseEsRef.current = null; }
+      if (verboseEsRef.current) { verboseEsRef.current.abort(); verboseEsRef.current = null; }
       return;
     }
     // Wait one tick for the ref div to be in the DOM
     const tid = setTimeout(() => {
       const el = verboseRef.current;
       if (!el) return;
-      if (verboseEsRef.current) verboseEsRef.current.close();
+      if (verboseEsRef.current) verboseEsRef.current.abort();
       el.innerHTML = '';
 
-      const es = new EventSource(`${API_URL}/live-logs?token=${authToken}`);
-      es.onmessage = (ev) => {
-        if (pausedRef.current) return;
-        if (verboseFilterRef.current &&
-            !ev.data.toLowerCase().includes(verboseFilterRef.current.toLowerCase())) return;
-        const line = document.createElement('div');
-        line.textContent = ev.data;
-        line.style.cssText = 'padding:3px 12px;font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.75rem;border-bottom:1px solid rgba(255,255,255,0.03);line-height:1.4;';
-        const d = ev.data;
-        if      (d.includes('ERROR'))                         { line.style.color = '#f87171'; line.style.background = 'rgba(239,68,68,0.06)'; }
-        else if (d.includes('WARNING'))                       { line.style.color = '#fbbf24'; }
-        else if (d.includes('[STT]'))                         { line.style.color = '#4ade80'; }
-        else if (d.includes('[LLM]'))                         { line.style.color = '#67e8f9'; }
-        else if (d.includes('TTS'))                           { line.style.color = '#a78bfa'; }
-        else if (d.includes('GREETING')||d.includes('RECORDING')) { line.style.color = '#f59e0b'; }
-        else if (d.includes('DIAL')||d.includes('EXOTEL'))   { line.style.color = '#60a5fa'; }
-        else if (d.includes('HANGUP')||d.includes('CLOSED')) { line.style.color = '#fb923c'; }
-        else if (d.includes('DEBUG-REC'))                    { line.style.color = '#22d3ee'; }
-        else                                                  { line.style.color = '#64748b'; }
-        el.appendChild(line);
-        if (el.children.length > 500) el.removeChild(el.firstChild);
-        el.scrollTop = el.scrollHeight;
-      };
-      es.onerror = () => { es.close(); };
-      verboseEsRef.current = es;
+      const ctrl = new AbortController();
+      verboseEsRef.current = ctrl;
+      (async () => {
+        try {
+          const res = await fetch(`${API_URL}/live-logs`, {
+            headers: { Authorization: `Bearer ${authToken}` },
+            signal: ctrl.signal,
+          });
+          if (!res.ok) return;
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop();
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              const d = line.slice(6);
+              if (pausedRef.current) continue;
+              if (verboseFilterRef.current && !d.toLowerCase().includes(verboseFilterRef.current.toLowerCase())) continue;
+              const row = document.createElement('div');
+              row.textContent = d;
+              row.style.cssText = 'padding:3px 12px;font-family:"JetBrains Mono","Fira Code",monospace;font-size:0.75rem;border-bottom:1px solid rgba(255,255,255,0.03);line-height:1.4;';
+              if      (d.includes('ERROR'))                         { row.style.color = '#f87171'; row.style.background = 'rgba(239,68,68,0.06)'; }
+              else if (d.includes('WARNING'))                       { row.style.color = '#fbbf24'; }
+              else if (d.includes('[STT]'))                         { row.style.color = '#4ade80'; }
+              else if (d.includes('[LLM]'))                         { row.style.color = '#67e8f9'; }
+              else if (d.includes('TTS'))                           { row.style.color = '#a78bfa'; }
+              else if (d.includes('GREETING')||d.includes('RECORDING')) { row.style.color = '#f59e0b'; }
+              else if (d.includes('DIAL')||d.includes('EXOTEL'))   { row.style.color = '#60a5fa'; }
+              else if (d.includes('HANGUP')||d.includes('CLOSED')) { row.style.color = '#fb923c'; }
+              else if (d.includes('DEBUG-REC'))                    { row.style.color = '#22d3ee'; }
+              else                                                  { row.style.color = '#64748b'; }
+              el.appendChild(row);
+              if (el.children.length > 500) el.removeChild(el.firstChild);
+              el.scrollTop = el.scrollHeight;
+            }
+          }
+        } catch (e) { /* AbortError = intentional close */ }
+      })();
     }, 0);
 
     return () => {
       clearTimeout(tid);
-      if (verboseEsRef.current) { verboseEsRef.current.close(); verboseEsRef.current = null; }
+      if (verboseEsRef.current) { verboseEsRef.current.abort(); verboseEsRef.current = null; }
     };
   }, [mode]); // only reconnect when mode changes
 

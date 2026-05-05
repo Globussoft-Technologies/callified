@@ -476,6 +476,20 @@ def init_db():
     except Exception:
         pass  # Column already exists
 
+    # --- SMTP / email settings column migrations (organizations) ---
+    for col, definition in [
+        ("smtp_host",      "VARCHAR(255) DEFAULT NULL"),
+        ("smtp_port",      "INT DEFAULT NULL"),
+        ("smtp_user",      "VARCHAR(255) DEFAULT NULL"),
+        ("smtp_password",  "TEXT DEFAULT NULL"),
+        ("smtp_from_name", "VARCHAR(255) DEFAULT NULL"),
+        ("app_url",        "VARCHAR(255) DEFAULT NULL"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE organizations ADD COLUMN {col} {definition}")
+        except Exception:
+            pass  # Column already exists
+
     # --- Voice settings + custom prompt column migrations (organizations) ---
     for col, definition in [
         ("tts_provider",        "VARCHAR(50) DEFAULT NULL"),
@@ -1669,6 +1683,41 @@ def save_org_voice_settings(org_id: int, tts_provider: str, tts_voice_id: str, t
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("UPDATE organizations SET tts_provider = %s, tts_voice_id = %s, tts_language = %s WHERE id = %s", (tts_provider, tts_voice_id, tts_language, org_id))
+    conn.close()
+    return True
+
+def get_org_smtp_settings(org_id: int) -> dict:
+    """Return SMTP settings stored for an org (password is raw — mask before returning to clients)."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT smtp_host, smtp_port, smtp_user, smtp_password, smtp_from_name, app_url FROM organizations WHERE id = %s",
+        (org_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {}
+    return {
+        "smtp_host":      row.get("smtp_host") or "",
+        "smtp_port":      row.get("smtp_port") or 587,
+        "smtp_user":      row.get("smtp_user") or "",
+        "smtp_password":  row.get("smtp_password") or "",
+        "smtp_from_name": row.get("smtp_from_name") or "",
+        "app_url":        row.get("app_url") or "",
+    }
+
+def save_org_smtp_settings(org_id: int, smtp_host: str, smtp_port: int, smtp_user: str,
+                            smtp_password: str, smtp_from_name: str, app_url: str):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        """UPDATE organizations
+           SET smtp_host=%s, smtp_port=%s, smtp_user=%s, smtp_password=%s,
+               smtp_from_name=%s, app_url=%s
+           WHERE id=%s""",
+        (smtp_host, smtp_port, smtp_user, smtp_password, smtp_from_name, app_url, org_id)
+    )
     conn.close()
     return True
 

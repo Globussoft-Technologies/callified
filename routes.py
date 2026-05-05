@@ -53,9 +53,11 @@ from database import (
     is_onboarding_completed, mark_onboarding_completed,
     get_team_members, get_user_by_id, update_user_role, delete_user, create_user,
     create_api_key, get_api_keys_by_org, delete_api_key,
+    create_invite_token, get_valid_invite_token, mark_invite_token_used,
+    get_org_smtp_settings, save_org_smtp_settings,
 )
 import rag
-from email_service import send_email, _wrap_html
+from email_service import send_email, _wrap_html, send_team_invite_email
 
 # ─── Ownership Guard Helpers ────────────────────────────────────────────────
 
@@ -153,7 +155,11 @@ class TeamInvite(BaseModel):
     email: str
     full_name: str
     role: str = "Agent"
+
+class AcceptInvite(BaseModel):
+    token: str
     password: str
+    full_name: str = ""
 
 class RoleUpdate(BaseModel):
     role: str
@@ -913,6 +919,7 @@ def api_delete_organization(org_id: int, current_user: dict = Depends(get_curren
 
 @api_router.put("/api/organizations/{org_id}/timezone")
 def api_update_org_timezone(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     tz = payload.get("timezone", "Asia/Kolkata")
     from database import get_conn
     conn = get_conn()
@@ -927,6 +934,7 @@ def api_get_products(org_id: int, current_user: dict = Depends(get_current_user)
 
 @api_router.post("/api/organizations/{org_id}/products")
 def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     name = payload.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Product name is required.")
@@ -937,6 +945,7 @@ def api_create_product(org_id: int, payload: dict, current_user: dict = Depends(
 
 @api_router.put("/api/products/{product_id}")
 def api_update_product(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     _get_product_or_403(product_id, org_id)
     fields = {k: v for k, v in payload.items() if k in ('name', 'website_url', 'scraped_info', 'manual_notes')}
@@ -946,6 +955,7 @@ def api_update_product(product_id: int, payload: dict, current_user: dict = Depe
 
 @api_router.delete("/api/products/{product_id}")
 def api_delete_product_endpoint(product_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     _get_product_or_403(product_id, org_id)
     delete_product(product_id, org_id)
@@ -953,6 +963,7 @@ def api_delete_product_endpoint(product_id: int, current_user: dict = Depends(ge
 
 @api_router.post("/api/products/{product_id}/scrape")
 async def api_scrape_product_website(product_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     import logging
     logger = logging.getLogger("uvicorn.error")
     product = _get_product_or_403(product_id, current_user.get("org_id"))
@@ -1003,6 +1014,7 @@ def api_get_product_prompt(product_id: int, current_user: dict = Depends(get_cur
 
 @api_router.put("/api/products/{product_id}/prompt")
 def api_save_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     _get_product_or_403(product_id, current_user.get("org_id"))
     persona = payload.get("agent_persona", "")
     flow = payload.get("call_flow_instructions", "")
@@ -1013,6 +1025,7 @@ def api_save_product_prompt(product_id: int, payload: dict, current_user: dict =
 @api_router.post("/api/products/{product_id}/generate-prompt")
 async def api_generate_product_prompt(product_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     """Use AI to generate a system prompt from a specific product's knowledge + persona + call flow."""
+    _require_admin(current_user)
     from database import get_products_by_org
     import os
     from google import genai
@@ -1146,12 +1159,14 @@ def api_get_system_prompt(org_id: int, current_user: dict = Depends(get_current_
 
 @api_router.put("/api/organizations/{org_id}/system-prompt")
 def api_save_system_prompt(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     save_org_custom_prompt(org_id, payload.get("custom_prompt", ""))
     return {"status": "ok"}
 
 @api_router.post("/api/organizations/{org_id}/generate-prompt")
 async def api_generate_prompt(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
     """Use AI to generate a system prompt from product knowledge + call flow instructions."""
+    _require_admin(current_user)
     import httpx
     product_info = get_product_knowledge_context(org_id=org_id)
     agent_persona = payload.get("agent_persona", "")
@@ -1203,6 +1218,7 @@ def api_get_voice_settings(org_id: int, current_user: dict = Depends(get_current
 
 @api_router.put("/api/organizations/{org_id}/voice-settings")
 def api_save_voice_settings(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     save_org_voice_settings(org_id, payload.get("tts_provider", "elevenlabs"), payload.get("tts_voice_id", ""), payload.get("tts_language", "hi"))
     # Clear per-lead voice cache for all leads in this org so next call uses the new settings
     try:
@@ -1218,6 +1234,53 @@ def api_save_voice_settings(org_id: int, payload: dict, current_user: dict = Dep
     except Exception:
         pass
     return {"status": "ok"}
+
+# --- SMTP / Email Settings ---
+
+@api_router.get("/api/organizations/{org_id}/smtp-settings")
+def api_get_smtp_settings(org_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    s = get_org_smtp_settings(org_id)
+    # Mask password before returning
+    if s.get("smtp_password"):
+        s["smtp_password"] = "••••••••"
+    return s
+
+@api_router.put("/api/organizations/{org_id}/smtp-settings")
+def api_save_smtp_settings(org_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    # If client sends the masked placeholder, keep the existing password
+    new_password = payload.get("smtp_password", "")
+    if new_password == "••••••••" or new_password == "":
+        existing = get_org_smtp_settings(org_id)
+        new_password = existing.get("smtp_password", "")
+    save_org_smtp_settings(
+        org_id,
+        smtp_host=payload.get("smtp_host", ""),
+        smtp_port=int(payload.get("smtp_port") or 587),
+        smtp_user=payload.get("smtp_user", ""),
+        smtp_password=new_password,
+        smtp_from_name=payload.get("smtp_from_name", ""),
+        app_url=payload.get("app_url", ""),
+    )
+    return {"status": "ok"}
+
+@api_router.post("/api/organizations/{org_id}/smtp-test")
+def api_test_smtp(org_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
+    from database import get_org_smtp_settings as _db_get
+    s = _db_get(org_id)
+    to_email = current_user.get("email", "")
+    if not to_email:
+        from fastapi import HTTPException as _HE
+        raise _HE(status_code=400, detail="No email on your account to send test to")
+    from email_service import _wrap_html as _wh, send_email as _se
+    body = "<h2 style='color:#a5b4fc'>SMTP Test</h2><p>Your Callified AI email settings are working correctly.</p>"
+    html_body = _wh("SMTP Test", body)
+    ok = _se(to_email, "Callified AI — SMTP Test", html_body, settings=s)
+    if ok:
+        return {"status": "ok", "message": f"Test email sent to {to_email}"}
+    return {"status": "error", "message": "Failed to send — check your SMTP credentials and host settings"}
 
 # --- Recordings ---
 
@@ -1321,6 +1384,7 @@ def api_get_integrations(current_user: dict = Depends(get_current_user)):
 
 @api_router.post("/api/integrations")
 async def create_integration(data: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     provider = data.get("provider")
     credentials = data.get("credentials")
     if not provider or not credentials:
@@ -1455,6 +1519,7 @@ def api_get_campaigns(current_user: dict = Depends(get_current_user_or_api_key))
 
 @api_router.post("/api/campaigns")
 def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     # Enforce per-plan campaign limit
     from billing import get_org_subscription
@@ -1485,6 +1550,7 @@ def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_
 
 @api_router.put("/api/campaigns/{campaign_id}")
 def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     _get_campaign_or_403(campaign_id, org_id)
     update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id, org_id=org_id)
@@ -1492,6 +1558,7 @@ def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: di
 
 @api_router.delete("/api/campaigns/{campaign_id}")
 def api_delete_campaign(campaign_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     org_id = current_user.get("org_id")
     _get_campaign_or_403(campaign_id, org_id)
     ok = delete_campaign(campaign_id, org_id)
@@ -1504,12 +1571,14 @@ def api_get_campaign_leads(campaign_id: int, current_user: dict = Depends(get_cu
 
 @api_router.post("/api/campaigns/{campaign_id}/leads")
 def api_add_campaign_leads(campaign_id: int, data: CampaignLeadsAssign, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     added = add_leads_to_campaign(campaign_id, data.lead_ids)
     return {"status": "success", "added": added}
 
 @api_router.delete("/api/campaigns/{campaign_id}/leads/{lead_id}")
 def api_remove_campaign_lead(campaign_id: int, lead_id: int, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     _get_campaign_or_403(campaign_id, current_user.get("org_id"))
     ok = remove_lead_from_campaign(campaign_id, lead_id)
     return {"status": "ok" if ok else "not_found"}
@@ -1599,12 +1668,14 @@ def api_get_campaign_voice(campaign_id: int, current_user: dict = Depends(get_cu
 
 @api_router.put("/api/campaigns/{campaign_id}/voice-settings")
 def api_save_campaign_voice(campaign_id: int, payload: dict, current_user: dict = Depends(get_current_user)):
+    _require_admin(current_user)
     save_campaign_voice_settings(campaign_id, payload.get("tts_provider"), payload.get("tts_voice_id"), payload.get("tts_language"))
     return {"status": "ok"}
 
 @api_router.post("/api/campaigns/{campaign_id}/import-csv")
 async def api_campaign_import_csv(campaign_id: int, current_user: dict = Depends(get_current_user), file: UploadFile = File(...)):
     """Import leads from CSV and add them directly to a campaign."""
+    _require_admin(current_user)
     import logging
     _il = logging.getLogger("uvicorn.error")
     org_id = current_user.get("org_id")
@@ -1836,15 +1907,68 @@ def api_invite_team_member(data: TeamInvite, current_user: dict = Depends(get_cu
     org_id = current_user.get("org_id")
     if data.role not in ("Admin", "Agent", "Viewer"):
         raise HTTPException(status_code=400, detail="Role must be Admin, Agent, or Viewer")
-    from auth import validate_password_policy
-    validate_password_policy(data.password)
     from database import get_user_by_email
     existing = get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    import secrets as _sec, datetime as _dt
+    from email_service import APP_URL
+    token = _sec.token_urlsafe(32)
+    expires_at = _dt.datetime.utcnow() + _dt.timedelta(hours=48)
+    create_invite_token(org_id, data.email, data.full_name, data.role, token, expires_at)
+    invite_link = f"{APP_URL}/accept-invite?token={token}"
+    inviter_name = current_user.get("full_name") or current_user.get("email", "Your admin")
+    email_sent = send_team_invite_email(data.email, data.full_name, inviter_name, data.role, token, org_id=org_id)
+    import logging as _log
+    _log.getLogger("uvicorn.error").info(f"[INVITE] link for {data.email}: {invite_link}")
+    return {
+        "status": "success",
+        "email_sent": email_sent,
+        "invite_link": invite_link,
+        "message": f"Invite link created for {data.email}",
+    }
+
+@api_router.get("/api/team/invite-info")
+def api_get_invite_info(token: str):
+    """Return invite context (org name, role, email, name) without consuming the token."""
+    invite = get_valid_invite_token(token)
+    if not invite:
+        raise HTTPException(status_code=400, detail="Invalid or expired invite link")
+    # Look up org name
+    org_name = ""
+    try:
+        from database import get_conn as _gc
+        _conn = _gc()
+        _cur = _conn.cursor()
+        _cur.execute("SELECT name FROM organizations WHERE id = %s", (invite["org_id"],))
+        row = _cur.fetchone()
+        _conn.close()
+        if row:
+            org_name = row.get("name", "")
+    except Exception:
+        pass
+    return {
+        "email":     invite["email"],
+        "full_name": invite["full_name"],
+        "role":      invite["role"],
+        "org_name":  org_name,
+    }
+
+@api_router.post("/api/team/accept-invite")
+def api_accept_invite(data: AcceptInvite):
+    invite = get_valid_invite_token(data.token)
+    if not invite:
+        raise HTTPException(status_code=400, detail="Invalid or expired invite link")
+    from database import get_user_by_email
+    if get_user_by_email(invite["email"]):
+        raise HTTPException(status_code=400, detail="An account with this email already exists")
+    from auth import validate_password_policy
+    validate_password_policy(data.password)
     hashed = get_password_hash(data.password)
-    user_id = create_user(data.email, hashed, data.full_name, role=data.role, org_id=org_id)
-    return {"status": "success", "user_id": user_id, "message": f"Invited {data.email} as {data.role}"}
+    full_name = (data.full_name or "").strip() or invite["full_name"]
+    create_user(invite["email"], hashed, full_name, role=invite["role"], org_id=invite["org_id"])
+    mark_invite_token_used(invite["id"])
+    return {"status": "success", "message": "Account created. You can now log in."}
 
 @api_router.put("/api/team/{user_id}/role")
 def api_update_team_role(user_id: int, data: RoleUpdate, current_user: dict = Depends(get_current_user)):

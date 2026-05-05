@@ -14,7 +14,11 @@ export default function SettingsTab({
   setSystemPromptCustom, setPromptDirty,
   orgTimezone,
   activeVoiceProvider, activeVoiceId, activeLanguage,
-  handleSaveOrgVoice, voiceSaving
+  handleSaveOrgVoice, voiceSaving,
+  smtpSettings, setSmtpSettings,
+  smtpSaving, smtpSaveStatus,
+  smtpTesting, smtpTestResult,
+  handleSaveSmtp, handleTestSmtp,
 }) {
   const { showToast } = useToast();
   const [localProvider, setLocalProvider] = React.useState(activeVoiceProvider || 'elevenlabs');
@@ -219,6 +223,82 @@ export default function SettingsTab({
       </div>
 
 
+
+      {/* SMTP / Email Settings */}
+      {selectedOrg && smtpSettings !== undefined && (
+        <div className="glass-panel" style={{marginBottom: '2rem'}}>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
+            <div>
+              <h4 style={{marginTop: 0, marginBottom: '4px', fontSize: '1.1rem', fontWeight: 600}}>✉️ Email / SMTP Settings</h4>
+              <p style={{margin: 0, color: '#94a3b8', fontSize: '0.83rem'}}>Used for team invites, password resets, and notifications.</p>
+            </div>
+            <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+              {smtpSaveStatus === 'saved' && <span style={{fontSize: '0.8rem', color: '#22c55e', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', padding: '4px 10px', borderRadius: '6px'}}>✓ Saved</span>}
+              {smtpSaveStatus === 'error' && <span style={{fontSize: '0.8rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 10px', borderRadius: '6px'}}>⚠ Save failed</span>}
+            </div>
+          </div>
+
+          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px'}}>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>SMTP Host</label>
+              <input className="form-input" placeholder="smtp.gmail.com"
+                value={smtpSettings.smtp_host || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_host: e.target.value}))} />
+            </div>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>SMTP Port</label>
+              <input className="form-input" type="number" placeholder="587"
+                value={smtpSettings.smtp_port || 587} onChange={e => setSmtpSettings(s => ({...s, smtp_port: e.target.value}))} />
+            </div>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>SMTP Username (Email)</label>
+              <input className="form-input" placeholder="you@gmail.com"
+                value={smtpSettings.smtp_user || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_user: e.target.value}))} />
+            </div>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>SMTP Password / App Password</label>
+              <input className="form-input" type="password" placeholder="••••••••"
+                value={smtpSettings.smtp_password || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_password: e.target.value}))} />
+            </div>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>From Name</label>
+              <input className="form-input" placeholder="Callified AI"
+                value={smtpSettings.smtp_from_name || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_from_name: e.target.value}))} />
+            </div>
+            <div className="form-group" style={{marginBottom: 0}}>
+              <label>App URL (used in email links)</label>
+              <input className="form-input" placeholder="https://test.callified.ai"
+                value={smtpSettings.app_url || ''} onChange={e => setSmtpSettings(s => ({...s, app_url: e.target.value}))} />
+            </div>
+          </div>
+
+          {smtpTestResult && (
+            <div style={{
+              marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', fontSize: '0.85rem',
+              background: smtpTestResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+              border: `1px solid ${smtpTestResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
+              color: smtpTestResult.ok ? '#86efac' : '#fca5a5',
+            }}>
+              {smtpTestResult.ok ? '✓' : '✗'} {smtpTestResult.message}
+            </div>
+          )}
+
+          <div style={{display: 'flex', gap: '10px', marginTop: '4px'}}>
+            <button className="btn-primary"
+              style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.9rem', padding: '10px 24px'}}
+              onClick={handleSaveSmtp} disabled={smtpSaving}>
+              {smtpSaving ? '⏳ Saving...' : '💾 Save SMTP Settings'}
+            </button>
+            <button className="btn-primary"
+              style={{background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', fontSize: '0.9rem', padding: '10px 20px'}}
+              onClick={handleTestSmtp} disabled={smtpTesting}>
+              {smtpTesting ? '⏳ Sending...' : '🧪 Send Test Email'}
+            </button>
+          </div>
+          <p style={{margin: '10px 0 0', fontSize: '0.75rem', color: '#64748b'}}>
+            For Gmail: enable 2FA, then create an <strong style={{color: '#94a3b8'}}>App Password</strong> at myaccount.google.com/apppasswords and use it here.
+          </p>
+        </div>
+      )}
 
       {/* System Prompt Preview & Edit */}
       {selectedOrg && (
