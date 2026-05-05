@@ -122,6 +122,25 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		s.log.Error("recording: SaveCallReview failed", zap.Error(err))
 	}
 
+	// 5b. Deduct call duration from the org's prepaid credit balance.
+	// Skipped automatically for web-sim calls (CallSid == "") so only real
+	// telephony calls are billed. Idempotent on the call_sid — if the
+	// recording pipeline runs twice for the same call (race between Exotel's
+	// "completed" callback and the WS-side finalize), the second call is a
+	// no-op.
+	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 {
+		if charge, balance, err := s.database.DeductCallCredits(req.OrgID, req.CallSid, float64(req.DurationS)); err != nil {
+			s.log.Warn("recording: DeductCallCredits failed",
+				zap.String("call_sid", req.CallSid), zap.Error(err))
+		} else if charge > 0 {
+			s.log.Info("recording: credits deducted",
+				zap.String("call_sid", req.CallSid),
+				zap.Int64("charge_paise", charge),
+				zap.Int64("balance_after_paise", balance),
+				zap.Float32("duration_s", req.DurationS))
+		}
+	}
+
 	// 6. Auto-DND if clearly negative + "do not call" intent.
 	if review.Sentiment == "negative" && req.LeadPhone != "" && containsDNC(req.ChatHistory) {
 		if err := s.database.AddDNDNumber(req.OrgID, req.LeadPhone, "auto: negative sentiment + DNC intent"); err != nil {

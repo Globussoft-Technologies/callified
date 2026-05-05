@@ -341,6 +341,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/billing/invoices/{number}/download", adminAuth(s.downloadInvoice))
 	mux.HandleFunc("POST /api/billing/webhook", s.razorpayWebhook) // public, HMAC-verified
 
+	// ── Prepaid credit balance (₹5/min default) ──────────────────────────────
+	// Sits alongside the subscription endpoints — orgs without a plan can buy
+	// credits and pay per call. Admin-only because it exposes financial state
+	// and triggers Razorpay charges.
+	mux.HandleFunc("GET /api/billing/credits", adminAuth(s.getOrgCredits))
+	mux.HandleFunc("POST /api/billing/credits/topup", adminAuth(s.createCreditOrder))
+	mux.HandleFunc("POST /api/billing/credits/verify", adminAuth(s.verifyCreditTopup))
+	mux.HandleFunc("GET /api/billing/credits/transactions", adminAuth(s.listCreditTransactions))
+
 	// ── WhatsApp Channels & Conversations (Phase 3C) ──────────────────────────
 	// WhatsApp tab is Admin-only in the nav; all of these manage org-wide
 	// channels, credentials, and outbound message sending.
