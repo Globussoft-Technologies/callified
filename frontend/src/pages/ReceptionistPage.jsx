@@ -6,9 +6,10 @@ import React from 'react';
 // iframe directly from its own origin keeps its absolute fetch paths working
 // without needing a path-rewriting proxy.
 //
-// Dev: http://localhost:8000 (the go-receptionist binary running on the host).
-// Prod: configure RECEPTIONIST_URL via Vite env (VITE_RECEPTIONIST_URL).
-const RECEPTIONIST_URL = import.meta.env.VITE_RECEPTIONIST_URL || 'http://localhost:8000';
+// The receptionist is embedded in audiod, served at /api/receptionist/*.
+// Same-origin in every environment — no localhost or sidecar process needed.
+// Override only if you ever externalize it again (VITE_RECEPTIONIST_URL).
+const RECEPTIONIST_URL = import.meta.env.VITE_RECEPTIONIST_URL || '/api/receptionist/';
 
 export default function ReceptionistPage() {
   return (
