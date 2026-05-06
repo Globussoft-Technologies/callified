@@ -13,6 +13,11 @@ export function CallProvider({ children }) {
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
+  // rechargePrompt holds the backend's "insufficient credits" message when
+  // a 402 comes back from the dial endpoints. Rendered as a themed modal
+  // (matches the app's dark glass-panel UI) instead of the native browser
+  // confirm() dialog, which used the OS theme and looked out of place.
+  const [rechargePrompt, setRechargePrompt] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
 
@@ -24,9 +29,7 @@ export function CallProvider({ children }) {
       if (!res.ok) {
         const msg = data.error || `Dial failed (HTTP ${res.status})`;
         if (res.status === 402) {
-          if (window.confirm(`${msg}\n\nOpen Billing to recharge now?`)) {
-            window.location.assign('/billing');
-          }
+          setRechargePrompt(msg);
         } else {
           alert(msg);
         }
@@ -212,11 +215,9 @@ export function CallProvider({ children }) {
         const body = await res.json().catch(() => ({}));
         const msg = body.error || `Dial failed (HTTP ${res.status})`;
         if (res.status === 402) {
-          // Insufficient credits — point the user at the Billing page so
-          // they can recharge instead of just getting a generic alert.
-          if (window.confirm(`${msg}\n\nOpen Billing to recharge now?`)) {
-            window.location.assign('/billing');
-          }
+          // Insufficient credits — show the themed recharge modal instead
+          // of native confirm() (which renders in the OS theme and clashes).
+          setRechargePrompt(msg);
         } else {
           alert(msg);
         }
@@ -396,6 +397,60 @@ export function CallProvider({ children }) {
       handleCampaignDial, handleCampaignWebCall
     }}>
       {children}
+      {rechargePrompt && (
+        <div onClick={() => setRechargePrompt(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 10000, padding: '1rem'
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            maxWidth: '440px', width: '100%', padding: '1.75rem',
+            background: '#0f172a',
+            border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '12px',
+            boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset',
+            color: '#e2e8f0',
+          }}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px'}}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%',
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.2rem',
+              }}>⚠️</div>
+              <div>
+                <h3 style={{margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fca5a5'}}>Recharge Required</h3>
+                <div style={{fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px'}}>Outbound calls are paused</div>
+              </div>
+            </div>
+            <p style={{
+              margin: '0 0 18px 0', fontSize: '0.9rem', lineHeight: 1.55,
+              color: '#cbd5e1',
+            }}>
+              {rechargePrompt}
+            </p>
+            <p style={{
+              margin: '0 0 20px 0', fontSize: '0.85rem', color: '#94a3b8',
+            }}>
+              Open <strong style={{color: '#a5b4fc'}}>Billing</strong> to add call credits and continue dialing.
+            </p>
+            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+              <button onClick={() => setRechargePrompt(null)} style={{
+                padding: '8px 16px', borderRadius: '8px', cursor: 'pointer',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(148,163,184,0.2)',
+                color: '#cbd5e1', fontSize: '0.85rem', fontWeight: 600,
+              }}>Cancel</button>
+              <button onClick={() => { setRechargePrompt(null); window.location.assign('/billing'); }} style={{
+                padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
+                background: 'linear-gradient(135deg, #6366f1, #22d3ee)',
+                border: 'none', color: '#fff', fontSize: '0.85rem', fontWeight: 700,
+                boxShadow: '0 6px 16px rgba(99,102,241,0.35)',
+              }}>Open Billing →</button>
+            </div>
+          </div>
+        </div>
+      )}
     </CallContext.Provider>
   );
 }
