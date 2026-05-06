@@ -159,6 +159,17 @@ func (s *Service) VerifyAndAddCredits(ctx context.Context, orgID int64, orderID,
 	if _, err := s.db.AddCredits(orgID, payment.AmountPaise, "purchase", paymentID, notes); err != nil {
 		return 0, fmt.Errorf("AddCredits: %w", err)
 	}
+	// Generate the invoice the same way the subscription flow does — without
+	// it the Billing page's Invoices section stayed empty after a successful
+	// credit purchase, even though Payment History showed the captured row.
+	// Embedding the paymentID prefix in the invoice number makes the row
+	// effectively idempotent: a retried verify call on the same payment is
+	// already short-circuited above by the captured-status guard, so we
+	// won't double-insert here.
+	invoiceNumber := fmt.Sprintf("INV-%d-%s", time.Now().Unix(), paymentID[:min(len(paymentID), 8)])
+	if _, err := s.db.CreateInvoice(orgID, invoiceNumber, paymentID, "INR", float64(payment.AmountPaise)/100); err != nil {
+		s.log.Warn("billing: CreateInvoice (credits) failed", zap.Error(err))
+	}
 	oc, _ := s.db.GetOrgCredit(orgID)
 	if oc == nil {
 		return 0, nil
