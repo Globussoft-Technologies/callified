@@ -83,7 +83,7 @@ const invoiceTmpl = `<!DOCTYPE html>
     <div class="tagline">AI-Powered Sales Dialer</div>
     <div class="company-info">
       Globussoft Technologies Pvt. Ltd.<br>
-      support@callified.ai
+      <!--email_off-->support@callified.ai<!--/email_off-->
     </div>
   </div>
   <div class="meta">
@@ -138,7 +138,7 @@ const invoiceTmpl = `<!DOCTYPE html>
 <div class="footer">
   {{if .PaymentID}}Payment Reference: {{.PaymentID}}<br>{{end}}
   This is a computer-generated invoice and does not require a signature.<br>
-  For any billing queries, contact support@callified.ai.
+  For any billing queries, contact <!--email_off-->support@callified.ai<!--/email_off-->.
 </div>
 </body>
 </html>`
