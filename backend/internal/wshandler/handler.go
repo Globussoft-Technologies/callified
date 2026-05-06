@@ -126,6 +126,72 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sess.TTSVoiceID = v
 	}
 
+	// Hydrate any missing fields from Redis SYNCHRONOUSLY here — the same way
+	// the working Python ws_handler.py:71-79 did before the Go port. Without
+	// this, real Exotel calls (URL has no campaign context) reached STT init
+	// with sess.Language="" and the greeting was synthesised at the wrong
+	// language because the existing handleStartEvent hydration only runs
+	// after the first "start" event arrives — by then STT is locked.
+	//
+	// Try in priority order: callSid (if URL had stream_sid that became a
+	// callSid), then phone (matches Python's phone-keyed entry from the
+	// dial path), then "latest" (last-resort fallback).
+	if h.store != nil {
+		var info rstore.PendingCallInfo
+		var ok bool
+		if sess.CallSid != "" {
+			info, ok = h.store.GetPendingCall(r.Context(), sess.CallSid)
+		}
+		if !ok && sess.LeadPhone != "" {
+			info, ok = h.store.GetPendingCall(r.Context(), "phone:"+sess.LeadPhone)
+			if !ok && len(sess.LeadPhone) > 10 {
+				info, ok = h.store.GetPendingCall(r.Context(), "phone:"+sess.LeadPhone[len(sess.LeadPhone)-10:])
+			}
+		}
+		if !ok {
+			info, ok = h.store.GetPendingCall(r.Context(), "latest")
+		}
+		if ok {
+			// Fill in only the empty fields — URL values win when both exist
+			// (Sandbox passes voice/language explicitly to override org default).
+			if sess.LeadName == "" && info.Name != "" {
+				sess.LeadName = info.Name
+			}
+			if sess.LeadPhone == "" && info.Phone != "" {
+				sess.LeadPhone = info.Phone
+			}
+			if sess.LeadID == 0 && info.LeadID != 0 {
+				sess.LeadID = info.LeadID
+			}
+			if sess.Interest == "" && info.Interest != "" {
+				sess.Interest = info.Interest
+			}
+			if sess.CampaignID == 0 && info.CampaignID != 0 {
+				sess.CampaignID = info.CampaignID
+			}
+			if sess.OrgID == 0 && info.OrgID != 0 {
+				sess.OrgID = info.OrgID
+			}
+			if sess.TTSProvider == "" && info.TTSProvider != "" {
+				sess.TTSProvider = info.TTSProvider
+			}
+			if sess.TTSVoiceID == "" && info.TTSVoiceID != "" {
+				sess.TTSVoiceID = info.TTSVoiceID
+			}
+			if sess.TTSLanguage == "" && info.TTSLanguage != "" {
+				sess.TTSLanguage = info.TTSLanguage
+				sess.Language = info.TTSLanguage
+			}
+			h.log.Info("ws connect: hydrated session from redis pending-call",
+				zap.String("stream_sid", sess.StreamSid),
+				zap.String("language", sess.Language),
+				zap.String("tts_provider", sess.TTSProvider),
+				zap.String("tts_voice_id", sess.TTSVoiceID),
+				zap.Int64("campaign_id", sess.CampaignID),
+				zap.Int64("org_id", sess.OrgID))
+		}
+	}
+
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 

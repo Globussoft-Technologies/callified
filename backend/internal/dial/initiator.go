@@ -151,13 +151,29 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		return "", fmt.Errorf("dial %s: %w", provider, err)
 	}
 
-	// 5. Persist pending call under the call SID for webhook lookup
+	// 5. Persist pending call under multiple keys so the WS handler can
+	// resolve the campaign context whichever field Exotel happens to pass.
+	// Mirrors the working Python initiate_call (dial_routes.py:46-58):
+	//   - <call_sid>            primary key the WS handler hits when start
+	//                           event fires
+	//   - latest                fallback for the very first connect
+	//   - phone:<phone>         supports concurrent dials — multiple calls
+	//                           to different numbers can be in flight at
+	//                           once and each WS finds its own context
+	//   - phone:<last10>        Exotel sometimes passes phone with country
+	//                           code, sometimes without; the last-10 key
+	//                           absorbs that mismatch
 	pending.ExotelCallSid = callSid
 	if storeErr := i.store.SetPendingCall(ctx, callSid, pending); storeErr != nil {
 		i.log.Warn("dial: SetPendingCall failed", zap.Error(storeErr))
 	}
-	// Also store under "latest" for fallback in wshandler
 	_ = i.store.SetPendingCall(ctx, "latest", pending)
+	if data.LeadPhone != "" {
+		_ = i.store.SetPendingCall(ctx, "phone:"+data.LeadPhone, pending)
+		if len(data.LeadPhone) > 10 {
+			_ = i.store.SetPendingCall(ctx, "phone:"+data.LeadPhone[len(data.LeadPhone)-10:], pending)
+		}
+	}
 
 	// 6. Log dial attempt in DB
 	if _, dbErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID,
