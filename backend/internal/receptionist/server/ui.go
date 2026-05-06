@@ -78,6 +78,48 @@ const demoHTML = `<!doctype html>
   .gate button { padding:14px 32px; border:none; border-radius:12px;
                  background:var(--ok); color:#fff; font-size:16px;
                  font-weight:600; cursor:pointer; }
+  /* Past Conversations panel — sits below the call widget. Each row
+     shows a timestamp, a one-line transcript preview, an inline audio
+     player, and a delete button. The whole panel collapses if there
+     are no recordings. */
+  .past { border-top:1px solid #334155; padding:12px 16px;
+          max-height:280px; overflow-y:auto; }
+  .past-head { display:flex; align-items:center; gap:8px;
+               margin-bottom:8px; }
+  .past-head h2 { margin:0; font-size:13px; font-weight:600;
+                  color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.5px; flex:1; }
+  .past-head button { padding:6px 10px; font-size:11px;
+                      background:#7f1d1d; color:#fee2e2; border:none;
+                      border-radius:6px; cursor:pointer; }
+  .past-head button:disabled { opacity:.4; cursor:default; }
+  .past-empty { font-size:12px; color:var(--muted); padding:8px 0; }
+  .rec { background:#0f172a; border-radius:10px; padding:10px 12px;
+         margin-bottom:8px; }
+  .rec-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .rec-ts { font-size:12px; color:var(--muted); flex:1; min-width:120px; }
+  .rec audio { height:30px; max-width:220px; }
+  .rec-del { padding:5px 9px; font-size:11px; background:#7f1d1d;
+             color:#fee2e2; border:none; border-radius:6px;
+             cursor:pointer; }
+  .rec-confirm { display:flex; gap:6px; align-items:center;
+                 font-size:11px; color:var(--muted); }
+  .rec-confirm button { padding:5px 9px; font-size:11px; border:none;
+                        border-radius:6px; cursor:pointer; }
+  .rec-confirm .yes { background:#dc2626; color:#fff; }
+  .rec-confirm .no  { background:#475569; color:var(--ink); }
+  .rec-preview { font-size:12px; color:var(--ink); margin-top:6px;
+                 line-height:1.4; max-height:54px; overflow:hidden;
+                 text-overflow:ellipsis; }
+  .rec details { margin-top:6px; }
+  .rec details summary { font-size:11px; color:var(--muted);
+                         cursor:pointer; user-select:none; }
+  .rec-line { font-size:12px; padding:4px 0; line-height:1.4; }
+  .rec-line.user { color:#93c5fd; }
+  .rec-line.assistant { color:#e2e8f0; }
+  .rec-line .role { display:inline-block; width:54px; font-weight:600;
+                    text-transform:uppercase; font-size:10px;
+                    color:var(--muted); }
 </style>
 </head>
 <body>
@@ -124,6 +166,18 @@ const demoHTML = `<!doctype html>
     <input id="text" type="text" autocomplete="off" placeholder="Type a message and press Enter…">
     <button type="submit">Send</button>
   </form>
+  <div class="past" id="past">
+    <div class="past-head">
+      <h2>Past conversations</h2>
+      <button id="pastClear" disabled>Delete all</button>
+      <div id="pastClearConfirm" class="rec-confirm" style="display:none;">
+        <span id="pastClearPrompt">Delete all? This cannot be undone.</span>
+        <button class="yes" id="pastClearYes">Confirm</button>
+        <button class="no"  id="pastClearNo">Cancel</button>
+      </div>
+    </div>
+    <div id="pastList"></div>
+  </div>
 </div>
 <script>
 const log=document.getElementById('log'),stateBadge=document.getElementById('state');
@@ -205,6 +259,288 @@ voiceSel.style.maxWidth='200px';      // keep it tidy in the header bar
 rebuildVoiceList();
 genderSel.addEventListener('change',rebuildVoiceList);
 function pickedVoiceId(){return voiceSel.value||'';}
+// pickSystemVoice: choose a SpeechSynthesis voice whose name hints at the
+// requested gender. Browsers don't expose a gender field, so we match against
+// known male/female system voice names (macOS, Windows, Chrome OS). Used only
+// for the speechSynthesis fallback when /tts errors — without this the OS
+// picks an arbitrary default that often disagrees with the user's selection.
+const SYS_MALE_HINTS=['male','daniel','alex','fred','aaron','tom','david','mark','george','oliver','arthur','rishi','google uk english male','google us english male'];
+const SYS_FEMALE_HINTS=['female','samantha','victoria','karen','tessa','moira','fiona','susan','allison','ava','serena','zira','google uk english female','google us english female'];
+function pickSystemVoice(gender){
+  if(!window.speechSynthesis)return null;
+  const voices=window.speechSynthesis.getVoices()||[];
+  if(!voices.length)return null;
+  const wantMale=String(gender).toLowerCase()==='male';
+  const hints=wantMale?SYS_MALE_HINTS:SYS_FEMALE_HINTS;
+  const enVoices=voices.filter(v=>/^en[-_]/i.test(v.lang||''));
+  const pool=enVoices.length?enVoices:voices;
+  // Try gender-hinted match first, then any English voice as last resort.
+  for(const h of hints){const m=pool.find(v=>(v.name||'').toLowerCase().includes(h));if(m)return m;}
+  return pool[0]||null;
+}
+// Some browsers populate getVoices() asynchronously — trigger a load so the
+// list is ready by the time the fallback path runs.
+if(window.speechSynthesis){try{window.speechSynthesis.getVoices();window.speechSynthesis.onvoiceschanged=()=>{};}catch{}}
+
+// ─── Past Conversations: recording machinery ──────────────────────────────
+// Mixes the user's mic and the bot's TTS into a single MediaStream and
+// records it with MediaRecorder for the duration of a call. On call end
+// the blob + transcript get uploaded to /recordings, then re-rendered in
+// the panel below the chat. recorderID is per-browser (localStorage) so
+// each device sees only its own recordings.
+function ensureRecorderID(){
+  let id=null;try{id=localStorage.getItem('rec_id');}catch{}
+  if(!id||!/^[A-Za-z0-9_-]{1,64}$/.test(id)){
+    const a=new Uint8Array(12);crypto.getRandomValues(a);
+    id=Array.from(a,b=>b.toString(16).padStart(2,'0')).join('');
+    try{localStorage.setItem('rec_id',id);}catch{}
+  }
+  return id;
+}
+const RECORDER_ID=ensureRecorderID();
+let recCtx=null;          // shared AudioContext for the recording graph
+let recMixDest=null;      // MediaStreamAudioDestinationNode receiving mic+bot
+let recMicNode=null;      // mic source node connected to recMixDest
+let mediaRecorder=null;   // active MediaRecorder for the current call
+let recChunks=[];         // collected blob chunks for the current call
+let recStartTS=0;         // performance.now() when recording began
+let recTranscript=[];     // [{role,text,ts}] collected per turn
+
+// ensureRecCtx lazily creates an AudioContext + MediaStreamDestination
+// so the very first speak() call (which happens before any mic gesture
+// in chat mode) doesn't break — recording only kicks in once a call
+// starts in 'call' mode and ensureMicAccess succeeded.
+function ensureRecCtx(){
+  if(!recCtx){
+    try{recCtx=new (window.AudioContext||window.webkitAudioContext)();}catch{return null;}
+  }
+  if(!recMixDest){
+    try{recMixDest=recCtx.createMediaStreamDestination();}catch{return null;}
+  }
+  return recCtx;
+}
+
+// pipeMicToRecorder: route the existing audioStream (created by
+// ensureMicAccess) into the recording mix. Re-runnable; safe to call
+// every call start because we disconnect any prior node first.
+function pipeMicToRecorder(){
+  if(!audioStream)return;
+  const ctx=ensureRecCtx();if(!ctx)return;
+  if(recMicNode){try{recMicNode.disconnect();}catch{}recMicNode=null;}
+  try{
+    recMicNode=ctx.createMediaStreamSource(audioStream);
+    recMicNode.connect(recMixDest);
+  }catch(e){console.warn('mic pipe failed',e);}
+}
+
+// tapBotAudio: route an <audio> element through the recording graph so
+// the bot's TTS plays through the speakers AND lands in the saved file.
+// Must be called BEFORE audioEl.play() — once the element has its own
+// playback wired up, the browser won't let WebAudio steal it.
+//
+// createMediaElementSource detaches default playback, so we MUST connect
+// to ctx.destination too or the user hears silence. Browsers also
+// require an active (resumed) AudioContext — if it's suspended (no user
+// gesture yet), play() succeeds but produces no sound. We resume here.
+function tapBotAudio(audioEl){
+  const ctx=ensureRecCtx();if(!ctx)return false;
+  // Resume the context if it was suspended waiting for a gesture. The
+  // mic-permission dialog already provided one, so this almost always
+  // succeeds in call mode. Awaited via a noop chain — fire-and-forget
+  // is fine because the very next line only needs the *node* graph,
+  // and audio output starts asynchronously inside play().
+  if(ctx.state==='suspended'){ctx.resume().catch(()=>{});}
+  try{
+    const src=ctx.createMediaElementSource(audioEl);
+    src.connect(ctx.destination);
+    if(recMixDest)src.connect(recMixDest);
+    return true;
+  }catch(e){
+    // If createMediaElementSource fails (rare — only happens if the
+    // element was already tapped), fall back: play through default
+    // output (caller hears it) but recording loses this utterance.
+    console.warn('bot audio tap failed',e);return false;
+  }
+}
+
+function startRecorder(){
+  const ctx=ensureRecCtx();if(!ctx||!recMixDest)return;
+  if(mediaRecorder&&mediaRecorder.state!=='inactive'){
+    try{mediaRecorder.stop();}catch{}
+  }
+  recChunks=[];recTranscript=[];recStartTS=performance.now();
+  // Some browsers don't expose .isTypeSupported (Safari 14-) — try the
+  // type and fall back to default if it errors.
+  let opts={};
+  try{
+    if(MediaRecorder.isTypeSupported&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus')){
+      opts={mimeType:'audio/webm;codecs=opus'};
+    }
+  }catch{}
+  try{
+    mediaRecorder=new MediaRecorder(recMixDest.stream,opts);
+  }catch(e){
+    console.warn('MediaRecorder unavailable',e);mediaRecorder=null;return;
+  }
+  mediaRecorder.ondataavailable=ev=>{if(ev.data&&ev.data.size>0)recChunks.push(ev.data);};
+  // Capture chunks every 1s so a crash mid-call still yields a partial
+  // recording when we eventually flush.
+  mediaRecorder.start(1000);
+}
+
+async function stopRecorderAndUpload(sessionIdAtEnd){
+  if(!mediaRecorder)return;
+  const mime=(mediaRecorder.mimeType||'audio/webm').split(';')[0];
+  // Wait for the final chunk before upload — onstop fires once the
+  // remaining data is flushed via ondataavailable.
+  await new Promise(res=>{
+    mediaRecorder.onstop=()=>res();
+    try{mediaRecorder.stop();}catch{res();}
+  });
+  const blob=new Blob(recChunks,{type:mime});
+  const transcript=recTranscript.slice();
+  const duration=Math.round(performance.now()-recStartTS);
+  // Skip uploads with no audio at all (e.g. chat-mode session, or call
+  // ended before any speech). Avoids littering disk with 0-byte files.
+  if(blob.size<2048||transcript.length===0){
+    mediaRecorder=null;recChunks=[];recTranscript=[];return;
+  }
+  const fd=new FormData();
+  fd.append('recorder_id',RECORDER_ID);
+  if(sessionIdAtEnd)fd.append('session_id',sessionIdAtEnd);
+  fd.append('duration_ms',String(duration));
+  fd.append('transcript',JSON.stringify(transcript));
+  fd.append('audio',blob,'call.webm');
+  try{
+    const r=await fetch('recordings',{method:'POST',body:fd});
+    if(!r.ok){console.warn('upload failed',r.status,await r.text());}
+  }catch(e){console.warn('upload error',e);}
+  mediaRecorder=null;recChunks=[];recTranscript=[];
+  refreshPastList();
+}
+
+function recTranscriptPush(role,text){
+  if(!text)return;
+  recTranscript.push({role,text,ts:Math.floor(Date.now()/1000)});
+}
+
+// ─── Past Conversations: list/delete UI ───────────────────────────────────
+const pastListEl=document.getElementById('pastList');
+const pastClearBtn=document.getElementById('pastClear');
+function fmtTS(iso){
+  try{const d=new Date(iso);return d.toLocaleString();}catch{return iso;}
+}
+function fmtDuration(ms){
+  if(!ms||ms<0)return '';
+  const s=Math.round(ms/1000);
+  return s<60?s+'s':Math.floor(s/60)+'m '+(s%60)+'s';
+}
+async function refreshPastList(){
+  let items=[];
+  try{
+    const r=await fetch('recordings?recorder_id='+encodeURIComponent(RECORDER_ID));
+    if(r.ok){const d=await r.json();items=d.recordings||[];}
+  }catch(e){console.warn('list failed',e);}
+  pastListEl.innerHTML='';
+  pastClearBtn.disabled=items.length===0;
+  if(items.length===0){
+    const e=document.createElement('div');e.className='past-empty';
+    e.textContent='No past conversations yet — finished calls will appear here.';
+    pastListEl.appendChild(e);return;
+  }
+  for(const it of items){
+    const card=document.createElement('div');card.className='rec';
+    const row=document.createElement('div');row.className='rec-row';
+    const ts=document.createElement('div');ts.className='rec-ts';
+    const dur=fmtDuration(it.duration_ms);
+    ts.textContent=fmtTS(it.created_at)+(dur?' • '+dur:'');
+    const audio=document.createElement('audio');audio.controls=true;audio.preload='none';
+    audio.src='recordings/'+encodeURIComponent(it.id)+'/audio?recorder_id='+encodeURIComponent(RECORDER_ID);
+    // Delete button swaps in place to a "Delete? [Confirm] [Cancel]" row,
+    // so the user never gets a browser-native popup. confirmEl is held
+    // here so the cancel handler can flip the UI back without a refresh.
+    const del=document.createElement('button');del.className='rec-del';del.textContent='Delete';
+    const confirmEl=document.createElement('div');confirmEl.className='rec-confirm';confirmEl.style.display='none';
+    const promptText=document.createElement('span');promptText.textContent='Delete?';
+    const yes=document.createElement('button');yes.className='yes';yes.textContent='Confirm';
+    const no=document.createElement('button');no.className='no';no.textContent='Cancel';
+    confirmEl.appendChild(promptText);confirmEl.appendChild(yes);confirmEl.appendChild(no);
+    del.onclick=()=>{del.style.display='none';confirmEl.style.display='flex';};
+    no.onclick=()=>{confirmEl.style.display='none';del.style.display='';};
+    yes.onclick=async()=>{
+      yes.disabled=true;no.disabled=true;promptText.textContent='Deleting…';
+      try{
+        const r=await fetch('recordings/'+encodeURIComponent(it.id)+'?recorder_id='+encodeURIComponent(RECORDER_ID),{method:'DELETE'});
+        if(!r.ok){
+          // Inline-revert the prompt with an error message so the user
+          // can retry without losing context. No browser alert.
+          promptText.textContent='Failed ('+r.status+'). Retry?';
+          yes.disabled=false;no.disabled=false;return;
+        }
+      }catch(e){
+        promptText.textContent='Network error. Retry?';
+        yes.disabled=false;no.disabled=false;return;
+      }
+      refreshPastList();
+    };
+    row.appendChild(ts);row.appendChild(audio);row.appendChild(del);row.appendChild(confirmEl);
+    card.appendChild(row);
+    // Show the first 1-2 lines as a preview, with the full transcript
+    // tucked behind a <details> so the panel stays compact.
+    const tr=Array.isArray(it.transcript)?it.transcript:[];
+    if(tr.length){
+      const preview=document.createElement('div');preview.className='rec-preview';
+      preview.textContent=tr.slice(0,2).map(l=>(l.role==='user'?'You: ':'Bot: ')+l.text).join(' · ');
+      card.appendChild(preview);
+      const det=document.createElement('details');
+      const sum=document.createElement('summary');sum.textContent='View full transcript ('+tr.length+' messages)';
+      det.appendChild(sum);
+      for(const line of tr){
+        const ln=document.createElement('div');ln.className='rec-line '+(line.role==='user'?'user':'assistant');
+        const role=document.createElement('span');role.className='role';
+        role.textContent=line.role==='user'?'You':'Bot';
+        ln.appendChild(role);
+        ln.appendChild(document.createTextNode(line.text));
+        det.appendChild(ln);
+      }
+      card.appendChild(det);
+    }
+    pastListEl.appendChild(card);
+  }
+}
+// "Delete all" toggles to an inline Confirm/Cancel pair instead of a
+// blocking browser popup. Errors also surface inline by rewriting the
+// prompt text — no alert dialogs anywhere in this widget.
+const pastClearConfirm=document.getElementById('pastClearConfirm');
+const pastClearYes=document.getElementById('pastClearYes');
+const pastClearNo=document.getElementById('pastClearNo');
+const pastClearPrompt=document.getElementById('pastClearPrompt');
+function pastClearReset(){
+  pastClearPrompt.textContent='Delete all? This cannot be undone.';
+  pastClearYes.disabled=false;pastClearNo.disabled=false;
+  pastClearConfirm.style.display='none';pastClearBtn.style.display='';
+}
+pastClearBtn.addEventListener('click',()=>{
+  pastClearBtn.style.display='none';pastClearConfirm.style.display='flex';
+});
+pastClearNo.addEventListener('click',pastClearReset);
+pastClearYes.addEventListener('click',async()=>{
+  pastClearYes.disabled=true;pastClearNo.disabled=true;
+  pastClearPrompt.textContent='Deleting…';
+  try{
+    const r=await fetch('recordings?recorder_id='+encodeURIComponent(RECORDER_ID),{method:'DELETE'});
+    if(!r.ok){
+      pastClearPrompt.textContent='Failed ('+r.status+'). Retry?';
+      pastClearYes.disabled=false;pastClearNo.disabled=false;return;
+    }
+  }catch(e){
+    pastClearPrompt.textContent='Network error. Retry?';
+    pastClearYes.disabled=false;pastClearNo.disabled=false;return;
+  }
+  pastClearReset();
+  refreshPastList();
+});
+refreshPastList();
 // speak: server-side ElevenLabs TTS. Posts the text to /tts, gets back an
 // MP3 stream, plays it via HTMLAudioElement. Falls back to browser
 // speechSynthesis if /tts fails (so a misconfigured key doesn't make the
@@ -215,21 +551,40 @@ function speak(text){return new Promise(async resolve=>{
   if(mode==='chat'){return resolve();}
   if(currentAudio){try{currentAudio.pause();}catch{}currentAudio=null;}
   speaking=true;setMic('speaking');setStatus('Speaking…');
+  const gender=(genderSel&&genderSel.value)||'female';
   try{
-    const gender=(genderSel&&genderSel.value)||'female';
     const voice_id=pickedVoiceId();
     const r=await fetch('tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,gender,voice_id})});
-    if(!r.ok)throw new Error('tts '+r.status);
+    if(!r.ok){
+      // Surface upstream error so the user knows why we fell back to system TTS
+      // (otherwise a misconfigured ELEVENLABS key silently produces a wrong-gender voice).
+      let detail='';try{const j=await r.clone().json();detail=j.error||'';}catch{try{detail=await r.text();}catch{}}
+      notice('TTS error '+r.status+(detail?': '+detail:'')+' — falling back to browser voice.');
+      throw new Error('tts '+r.status);
+    }
     const blob=await r.blob();
     const url=URL.createObjectURL(blob);
     const a=new Audio(url);currentAudio=a;
+    // Tap the bot voice into the recording graph BEFORE play(). In
+    // call mode this routes the audio through WebAudio so it lands in
+    // both the speakers and the MediaRecorder stream. In chat mode we
+    // skip the tap and play directly (no recording is happening).
+    let tapped=false;
+    if(mode==='call'){tapped=tapBotAudio(a);}
     a.onended=a.onerror=()=>{URL.revokeObjectURL(url);if(currentAudio===a)currentAudio=null;speaking=false;resolve();};
     await a.play();
+    // If the WebAudio tap failed in call mode, the browser still plays
+    // the audio via the element's default output — recording will miss
+    // this utterance but the caller still hears it.
+    void tapped;
   }catch(e){
     // Fallback: browser TTS so the page isn't silent if /tts errors.
+    // Pick a system voice matching the selected gender so the fallback honors
+    // the user's choice instead of using whatever the OS default happens to be.
     if(window.speechSynthesis){
       window.speechSynthesis.cancel();
       const u=new SpeechSynthesisUtterance(text);u.lang='en-US';
+      const v=pickSystemVoice(gender);if(v)u.voice=v;
       u.onend=u.onerror=()=>{speaking=false;resolve();};
       window.speechSynthesis.speak(u);
     }else{speaking=false;resolve();}
@@ -394,17 +749,26 @@ function pickedPersonaName(){
 }
 async function startCall(){
   log.innerHTML='';setBadge('connecting…');setStatus('Starting call…');
+  // Voice mode: pipe the mic into the recording graph and start the
+  // MediaRecorder so the whole call lands in /recordings on end. Chat
+  // mode skips this — there's no audio to record.
+  if(mode==='call'&&audioStream){
+    pipeMicToRecorder();
+    startRecorder();
+  }
   const agent_name=pickedPersonaName();
   const r=await fetch('start-call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caller_id:'browser-voice-demo',agent_name})});
   const d=await r.json();sessionId=d.session_id;setBadge(d.state,'live');
   addMsg('bot',d.message,{meta:'session '+sessionId.slice(0,8)});
+  recTranscriptPush('assistant',d.message);
   input.disabled=false;await speak(d.message);setMic('off');
   setStatus(recog?'Listening… go ahead.':'Type a message and press Enter.');
   autoListen();
 }
 async function send(text){
   if(!sessionId)return;
-  addMsg('user',text);input.value='';setStatus('Thinking…');setMic('off');
+  addMsg('user',text);recTranscriptPush('user',text);
+  input.value='';setStatus('Thinking…');setMic('off');
   let d;
   try{
     const r=await fetch('process-input',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,text})});
@@ -414,8 +778,21 @@ async function send(text){
   setBadge(d.state,d.is_emergency?'warn':'live');
   const meta='intent: '+d.intent+(d.metadata&&Object.keys(d.metadata).length?' • '+JSON.stringify(d.metadata):'');
   addMsg('bot',d.message,{emergency:d.is_emergency,meta});
+  recTranscriptPush('assistant',d.message);
   await speak(d.message);
-  if(d.state==='ended'){input.disabled=true;setMic('off');setStatus('Call ended. Click "New call".');return;}
+  if(d.state==='ended'){
+    input.disabled=true;setMic('off');setStatus('Call ended. Starting new call…');
+    // Flush the recorder asynchronously so the UI doesn't block on upload.
+    // refreshPastList fires inside stopRecorderAndUpload once upload finishes,
+    // so the panel auto-updates with the just-finished call.
+    stopRecorderAndUpload(sessionId);
+    // Auto-restart: clear the chat and open a fresh session so the caller
+    // doesn't have to click "New call" themselves. 1.5s delay gives the
+    // goodbye message time to finish playing/reading before the panel resets.
+    sessionId=null;
+    setTimeout(()=>{startCall();},1500);
+    return;
+  }
   // Auto-engage mic for the next caller turn (works for both normal
   // and emergency-followup states — caller still needs to speak).
   setStatus(recog?'Listening… go ahead.':'Type a message and press Enter.');
@@ -423,7 +800,12 @@ async function send(text){
 }
 form.addEventListener('submit',e=>{e.preventDefault();const t=input.value.trim();if(t)send(t);});
 document.getElementById('restart').addEventListener('click',async()=>{
+  const ending=sessionId;
   if(sessionId){try{await fetch('end-call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId})});}catch{}}
+  // Flush the in-progress recording before starting the next call so it
+  // shows up in Past Conversations. Don't await — the new call can
+  // proceed in parallel; the panel refreshes when upload completes.
+  if(mediaRecorder){stopRecorderAndUpload(ending);}
   sessionId=null;startCall();
 });
 document.querySelectorAll('.suggest button').forEach(b=>b.addEventListener('click',()=>send(b.dataset.text)));
@@ -435,6 +817,10 @@ document.querySelectorAll('.suggest button').forEach(b=>b.addEventListener('clic
 document.getElementById('gateStart').addEventListener('click',async()=>{
   const ok=await ensureMicAccess();
   if(!ok)return;
+  // Lazy-create + resume the recording AudioContext on this same gesture
+  // so subsequent speak() calls can route bot audio through it without
+  // hitting Safari's "context suspended; no user gesture" silence.
+  const ctx=ensureRecCtx();if(ctx&&ctx.state==='suspended'){try{await ctx.resume();}catch{}}
   document.getElementById('gate').classList.add('hidden');
   startCall();
 });
@@ -443,11 +829,23 @@ document.getElementById('gateStart').addEventListener('click',async()=>{
 // and again whenever the dropdown changes. End any in-flight session on
 // switch so the new mode starts fresh.
 modeSel.addEventListener('change',async()=>{
+  const ending=sessionId;
   if(sessionId){try{await fetch('end-call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId})});}catch{}}
+  if(mediaRecorder){stopRecorderAndUpload(ending);}
   sessionId=null;
   applyMode();
 });
 applyMode();
+
+// Best-effort save when the tab closes mid-call. We can't await an
+// async upload here, but kicking it off lets the request go in flight;
+// modern browsers honor in-progress fetches during unload more
+// reliably than synchronous XHR.
+window.addEventListener('beforeunload',()=>{
+  if(mediaRecorder&&mediaRecorder.state==='recording'){
+    try{stopRecorderAndUpload(sessionId);}catch{}
+  }
+});
 </script>
 </body>
 </html>`

@@ -99,6 +99,13 @@ func main() {
 		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")
+	} else {
+		// Receptionist demo doesn't need MySQL — mount it directly so local
+		// dev (without a DB) can still run the receptionist UI at
+		// /api/receptionist/. On a full deployment the api.Server above
+		// already wires this same handler under the same prefix.
+		mux.Handle("/api/receptionist/", api.NewReceptionistHandler())
+		logger.Info("Receptionist mounted standalone (no DB)")
 	}
 
 	// Prometheus metrics endpoint (scraped by Prometheus/Grafana)

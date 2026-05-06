@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,19 +17,24 @@ import (
 	"github.com/globussoft/callified-backend/internal/receptionist/conversation"
 	"github.com/globussoft/callified-backend/internal/receptionist/llm"
 	"github.com/globussoft/callified-backend/internal/receptionist/models"
+	"github.com/globussoft/callified-backend/internal/receptionist/recordings"
 	"github.com/globussoft/callified-backend/internal/receptionist/session"
 )
 
 // Server holds the deps and exposes a Handler for ListenAndServe.
 type Server struct {
-	store    *session.Store
-	apptSvc  *appointment.Service
-	ambSvc   *ambulance.Service
-	llmAgent *llm.Agent
-	manager  *conversation.Manager
+	store      *session.Store
+	apptSvc    *appointment.Service
+	ambSvc     *ambulance.Service
+	llmAgent   *llm.Agent
+	manager    *conversation.Manager
+	recordings *recordings.Store
 }
 
-// New constructs a server with all dependencies wired.
+// New constructs a server with all dependencies wired. The recordings
+// store is opened at RECORDINGS_DIR (or "./recordings" by default); a
+// failure there is logged but non-fatal — recordings endpoints will
+// return 503 and the rest of the receptionist still works.
 func New() *Server {
 	cfg := config.Get()
 	store := session.New(time.Duration(cfg.SessionTTLSeconds) * time.Second)
@@ -36,9 +42,20 @@ func New() *Server {
 	ambSvc := ambulance.New()
 	llmAgent := llm.New(apptSvc, ambSvc)
 	mgr := conversation.New(store, apptSvc, ambSvc, llmAgent)
+
+	recDir := os.Getenv("RECORDINGS_DIR")
+	if recDir == "" {
+		recDir = "recordings"
+	}
+	recStore, err := recordings.New(recDir)
+	if err != nil {
+		log.Printf("recordings: store unavailable (%v) — list/upload will return 503", err)
+		recStore = nil
+	}
+
 	return &Server{
 		store: store, apptSvc: apptSvc, ambSvc: ambSvc,
-		llmAgent: llmAgent, manager: mgr,
+		llmAgent: llmAgent, manager: mgr, recordings: recStore,
 	}
 }
 
@@ -63,6 +80,14 @@ func (s *Server) Handler() http.Handler {
 	// every caller hears the same studio-quality voice instead of whichever
 	// system voice their OS happens to ship with).
 	mux.HandleFunc("POST /tts", s.tts)
+
+	// Past-conversation recordings — combined mic+bot audio + transcript.
+	// Scoped per-browser via an opaque recorder_id (see recordings package).
+	mux.HandleFunc("GET /recordings", s.recordingsList)
+	mux.HandleFunc("POST /recordings", s.recordingsUpload)
+	mux.HandleFunc("DELETE /recordings", s.recordingsDeleteAll)
+	mux.HandleFunc("GET /recordings/{id}/audio", s.recordingsAudio)
+	mux.HandleFunc("DELETE /recordings/{id}", s.recordingsDelete)
 
 	// WebSocket placeholder (returns 501 — see notes in server.go)
 	mux.HandleFunc("GET /ws/{session_id}", s.websocket)
