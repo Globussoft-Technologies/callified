@@ -50,13 +50,24 @@ var rules = []rule{
 		`^\s*(?:no|nope|not really|don'?t|never mind|cancel that)\b`,
 	)},
 	{models.IntentBookAppointment, 10, mustCompileAll(
-		`\bbook\b.*\b(?:appointment|visit|slot|checkup|check-up|dr\.?|doctor)\b`,
-		`\bbook\s+(?:me|us|him|her)\b`,
+		// "book / books / booking" with a clinic noun anywhere in the
+		// utterance. Bidirectional: noun can come before OR after book
+		// — "I want appointment to book" is the same intent as "book
+		// an appointment". Without the bidirectional pattern, real
+		// callers who don't speak SVO English get IntentUnknown.
+		`\bbook(?:ing|s)?\b.*\b(?:appointment|visit|slot|checkup|check-up|dr\.?|doctor)\b`,
+		`\b(?:appointment|visit|slot|checkup|check-up)\b.*\bbook(?:ing|s)?\b`,
+		`\bbook(?:ing)?\s+(?:me|us|him|her)\b`,
 		`\bschedule\b.*\b(?:appointment|visit|checkup|check-up|dr\.?|doctor)\b`,
 		`\bmake\s+an\s+appointment\b`,
 		`\bset\s+up\s+(?:an\s+)?appointment\b`,
 		`\bsee\s+(?:a\s+|the\s+)?doctor\b`,
 		`\bnew\s+appointment\b`,
+		// "book on next tuesday" / "booking tomorrow" — bare book + a
+		// date phrase is a strong booking signal. We require an explicit
+		// time-marker so generic uses like "I'll book this away for later"
+		// don't false-trigger.
+		`\bbook(?:ing|s)?\b.*\b(?:today|tomorrow|next\s+\w+|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b`,
 	)},
 	{models.IntentRescheduleAppointment, 10, mustCompileAll(
 		`\breschedul\w*\b`,
