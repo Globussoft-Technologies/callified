@@ -16,7 +16,7 @@ const demoHTML = `<!doctype html>
   body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
          background:var(--bg); color:var(--ink); min-height:100vh; display:flex;
          align-items:center; justify-content:center; padding:16px; }
-  .app { width:min(760px,100%); height:min(90vh,860px); background:var(--panel);
+  .app { width:min(880px,100%); height:min(95vh,1100px); background:var(--panel);
          border-radius:14px; display:flex; flex-direction:column; overflow:hidden;
          box-shadow:0 20px 50px rgba(0,0,0,.4); }
   header { padding:14px 18px; border-bottom:1px solid #334155;
@@ -781,16 +781,18 @@ async function send(text){
   recTranscriptPush('assistant',d.message);
   await speak(d.message);
   if(d.state==='ended'){
-    input.disabled=true;setMic('off');setStatus('Call ended. Starting new call…');
-    // Flush the recorder asynchronously so the UI doesn't block on upload.
-    // refreshPastList fires inside stopRecorderAndUpload once upload finishes,
-    // so the panel auto-updates with the just-finished call.
+    input.disabled=true;setMic('off');
+    // Flush the recorder so the just-finished call shows up in Past
+    // Conversations. Fire-and-forget — refreshPastList runs after upload.
     stopRecorderAndUpload(sessionId);
-    // Auto-restart: clear the chat and open a fresh session so the caller
-    // doesn't have to click "New call" themselves. 1.5s delay gives the
-    // goodbye message time to finish playing/reading before the panel resets.
+    // Clear the chat immediately so the next session starts on a clean
+    // canvas. Wait for the user to click "New chat" / "New call" — do
+    // NOT auto-start a new session.
     sessionId=null;
-    setTimeout(()=>{startCall();},1500);
+    log.innerHTML='';
+    setBadge('ended');
+    const label=mode==='call'?'New call':'New chat';
+    setStatus('Click "'+label+'" to start a new conversation.');
     return;
   }
   // Auto-engage mic for the next caller turn (works for both normal
