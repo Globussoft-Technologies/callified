@@ -73,7 +73,7 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	)
 	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = fmt.Sprintf("%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%s&campaign_id=%s&org_id=%s",
+	wsURL = fmt.Sprintf("%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%s&campaign_id=%s&org_id=%s&tts_provider=%s&voice=%s&tts_language=%s",
 		wsURL,
 		url.QueryEscape(q.Get("name")),
 		url.QueryEscape(q.Get("interest")),
@@ -81,6 +81,9 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 		url.QueryEscape(q.Get("lead_id")),
 		url.QueryEscape(q.Get("campaign_id")),
 		url.QueryEscape(q.Get("org_id")),
+		url.QueryEscape(q.Get("tts_provider")),
+		url.QueryEscape(q.Get("voice")),
+		url.QueryEscape(q.Get("tts_language")),
 	)
 	s.logger.Info("exotelXML: serving ExoML with stream URL", zap.String("ws_url", wsURL))
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
