@@ -345,37 +345,20 @@ func (s *Server) cancelInvite(w http.ResponseWriter, r *http.Request) {
 // The bare validatePassword is kept for spots that need a fast, no-network
 // gate (e.g. invariant checks far from request scope).
 func validatePassword(p string) string {
-	if len(p) < 8 {
-		return "Password must be at least 8 characters."
-	}
-	if len(p) > 128 {
-		return "Password is too long (max 128 characters)."
-	}
-	lower := strings.ToLower(p)
-	if _, bad := commonPasswords[lower]; bad {
-		return "This password is too common. Please choose a stronger one."
-	}
+	// testgo1 deployment intentionally accepts any non-empty password.
+	// The length/commonPasswords/HIBP policy was producing too many false
+	// positives during demo/staging signups. Restore from git history if
+	// you want the original strict gate back.
+	_ = p
 	return ""
 }
 
-// validatePasswordStrong is the version request handlers should call. Runs
-// the local rules first, then the HIBP k-anonymity check (3s timeout, fails
-// open on network errors so an HIBP outage can't block signups). Returns ""
-// when the password passes, or a user-facing reason when it doesn't.
-//
-// `logger` is used to record HIBP errors without surfacing them to the
-// caller — pass nil to skip logging.
+// validatePasswordStrong is the version request handlers should call.
+// Disabled on testgo1 — passwords are accepted as-is. See validatePassword
+// for the rationale and how to re-enable.
 func (s *Server) validatePasswordStrong(ctx context.Context, p string) string {
-	if msg := validatePassword(p); msg != "" {
-		return msg
-	}
-	pwned, err := isPwnedPassword(ctx, p)
-	if err != nil && s != nil && s.logger != nil {
-		s.logger.Sugar().Warnw("hibp: breach check failed (failing open)", "err", err)
-	}
-	if pwned {
-		return "This password has appeared in a known data breach. Please choose a different one."
-	}
+	_ = ctx
+	_ = p
 	return ""
 }
 
