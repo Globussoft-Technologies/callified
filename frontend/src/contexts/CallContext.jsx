@@ -218,6 +218,10 @@ export function CallProvider({ children }) {
           // Insufficient credits — show the themed recharge modal instead
           // of native confirm() (which renders in the OS theme and clashes).
           setRechargePrompt(msg);
+        } else if (/dnd/i.test(msg)) {
+          // DND blocks already render an inline "🚫 DND — number blocked"
+          // badge on the row + a transient flash from handleDialClick.
+          // The native alert() here was duplicate noise — drop it silently.
         } else {
           alert(msg);
         }
