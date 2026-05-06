@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -212,28 +213,50 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 
-	// g2: STT goroutine — DualClient for non-Hindi/non-English Indian languages,
-	// single client otherwise. Hindi already uses Deepgram's dedicated nova-2
-	// hi model; English uses nova-2 en — no benefit from a parallel hi connection.
-	useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
-	wg.Add(1)
-	if useDualSTT {
-		dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
-		dual.OnTranscript = onTranscript
-		dual.OnSpeechStarted = onSpeechStarted
-		go func() {
-			defer wg.Done()
-			dual.Run(ctx, sess.AudioIn)
-		}()
-	} else {
-		dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
-		dgClient.OnTranscript = onTranscript
-		dgClient.OnSpeechStarted = onSpeechStarted
-		go func() {
-			defer wg.Done()
-			dgClient.Run(ctx, sess.AudioIn)
-		}()
+	// STT and greeting must be started *after* sess.Language is final. For
+	// web-sim that's already true (URL params populated everything). For real
+	// Exotel calls the WS connects with empty params and the campaign's
+	// language only arrives via Redis on the "start" event — starting STT or
+	// sending the greeting before then locks them to the wrong language for
+	// the duration of the call (Deepgram doesn't accept mid-stream language
+	// switches, and the greeting is one-shot).
+	//
+	// Solution: make both deferrable via closures that handleStartEvent can
+	// trigger after Redis hydration completes, and only fire them now when
+	// the URL params already gave us enough.
+	var sttStarted atomic.Bool
+	startSTT := func() {
+		// Idempotent: web-sim invokes this directly at startup; handleStartEvent
+		// invokes it again after Redis hydration if it wasn't fired yet.
+		// Without the atomic gate a stray Exotel "start" event mid-call would
+		// spawn a second Deepgram connection on the same audio channel.
+		if sttStarted.Swap(true) {
+			return
+		}
+		// g2: STT goroutine — DualClient for non-Hindi/non-English Indian languages,
+		// single client otherwise. Hindi already uses Deepgram's dedicated nova-2
+		// hi model; English uses nova-2 en — no benefit from a parallel hi connection.
+		useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
+		wg.Add(1)
+		if useDualSTT {
+			dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
+			dual.OnTranscript = onTranscript
+			dual.OnSpeechStarted = onSpeechStarted
+			go func() {
+				defer wg.Done()
+				dual.Run(ctx, sess.AudioIn)
+			}()
+		} else {
+			dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
+			dgClient.OnTranscript = onTranscript
+			dgClient.OnSpeechStarted = onSpeechStarted
+			go func() {
+				defer wg.Done()
+				dgClient.Run(ctx, sess.AudioIn)
+			}()
+		}
 	}
+	sess.StartSTT = startSTT
 
 	// g4: Pipeline orchestrator
 	wg.Add(1)
@@ -253,15 +276,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		runTTSWorker(ctx, sess)
 	}()
 
-	// Send greeting immediately (Exotel 10s VoiceBot timeout)
-	if sess.TrySetGreeting() && sess.GreetingText != "" && ttsProvider != nil {
-		go synthesizeAndSend(ctx, sess, ttsProvider, sess.GreetingText)
+	// Greeting closure — dispatched here for web-sim (we already have the
+	// language from URL params), or from handleStartEvent for Exotel after
+	// Redis hydration finalises the language. Reads sess.TTSInstance() so
+	// it picks up whatever provider was actually configured.
+	sendGreeting := func() {
+		if !sess.TrySetGreeting() || sess.GreetingText == "" {
+			return
+		}
+		prov := sess.TTSInstance()
+		if prov == nil {
+			return
+		}
+		go synthesizeAndSend(ctx, sess, prov, sess.GreetingText)
 		// Also broadcast the greeting to monitors / Sandbox panel and store it
 		// in chat history so the AI's opening line shows up alongside the
 		// user's reply (issue #33). Without this, the Live Transcripts panel
 		// only ever showed turns starting from the user's first utterance.
 		sess.BroadcastTranscript("agent", sess.GreetingText)
 		sess.AppendHistory("model", sess.GreetingText)
+	}
+	sess.SendGreeting = sendGreeting
+
+	// For web-sim the URL params have already given us the language, voice,
+	// and lead context — start STT and send the greeting now. For Exotel the
+	// URL is empty until the "start" event lands; handleStartEvent will fire
+	// these once Redis hydration has populated sess.Language / TTSInstance().
+	hasLanguage := sess.Language != ""
+	if hasLanguage {
+		startSTT()
+		sendGreeting()
 	}
 
 	// --- g1: WebSocket message loop ---
@@ -419,6 +463,19 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					if newProv, err := tts.New(sess.TTSProvider, h.ttsKeys); err == nil && newProv != nil {
 						sess.SetTTSInstance(newProv)
 					}
+				}
+				// Fire the deferred STT + greeting now that the language is
+				// final. ServeHTTP wired these closures and skipped the
+				// immediate startup path because URL params didn't carry a
+				// language. StartSTT is a no-op the second time (web-sim
+				// already invoked it directly); SendGreeting is gated by
+				// TrySetGreeting so it's also single-shot.
+				if sess.StartSTT != nil && sess.Language != "" {
+					sess.StartSTT()
+					sess.StartSTT = nil // prevent double-start on a second start event
+				}
+				if sess.SendGreeting != nil {
+					sess.SendGreeting()
 				}
 			}
 		}

@@ -82,6 +82,15 @@ type CallSession struct {
 	AgentName    string
 	Language     string
 
+	// Deferred-init hooks. Real Exotel calls connect with empty URL params
+	// (the campaign context arrives later via the Redis "start" event), so
+	// STT and the greeting must wait until handleStartEvent has finalised
+	// the language. ServeHTTP captures closures and stores them here so
+	// handleStartEvent can fire them when ready. Web-sim sets sendGreeting
+	// flag immediately (URL had everything) — these are no-ops in that path.
+	StartSTT     func() `json:"-"`
+	SendGreeting func() `json:"-"`
+
 	// ttsInstance is the actual TTS client (Sarvam/Smallest/ElevenLabs) that
 	// synthesises audio for this call. Stored on the session — not captured as
 	// a closure in ServeHTTP — so handleStartEvent can dispatch the greeting
