@@ -20,5 +20,12 @@ import (
 // HTML demo at "/" uses relative fetch paths so it works correctly under
 // any prefix.
 func newReceptionistHandler() http.Handler {
+	return NewReceptionistHandler()
+}
+
+// NewReceptionistHandler is the exported variant for callers outside the
+// api package — used by cmd/audiod when MySQL is unavailable so local
+// dev can still serve /api/receptionist/* without spinning up a DB.
+func NewReceptionistHandler() http.Handler {
 	return http.StripPrefix("/api/receptionist", receptionistsrv.New().Handler())
 }
