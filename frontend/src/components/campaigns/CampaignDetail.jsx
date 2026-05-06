@@ -359,7 +359,21 @@ export default function CampaignDetail({
         </div>
         <div style={{fontSize: '0.7rem', color: '#a78bfa', marginTop: '6px'}}>
           {campVoice.tts_provider
-            ? `Current: ${campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs' : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI' : 'Smallest AI'} - ${(INDIAN_VOICES[campVoice.tts_provider] || []).find(v => v.id === campVoice.tts_voice_id)?.name || campVoice.tts_voice_id || 'none'}`
+            ? (() => {
+                const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
+                  : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
+                  : 'Smallest AI';
+                const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
+                  .find(v => v.id === campVoice.tts_voice_id)?.name
+                  || campVoice.tts_voice_id || 'none';
+                // Language was saved correctly but never surfaced in the
+                // "Current:" line — the user couldn't tell at a glance which
+                // language a campaign was set to. Append it when present.
+                const langLabel = INDIAN_LANGUAGES
+                  .find(l => l.code === campVoice.tts_language)?.name
+                  || campVoice.tts_language;
+                return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '');
+              })()
             : 'Using org default'}
         </div>
         {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
