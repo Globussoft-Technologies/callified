@@ -16,6 +16,7 @@ const (
 	StateAppointmentRescheduleID   ConversationState = "appointment_reschedule_id"
 	StateAppointmentRescheduleTime ConversationState = "appointment_reschedule_time"
 	StateAppointmentCancelID       ConversationState = "appointment_cancel_id"
+	StateAwaitingCancelConfirm     ConversationState = "awaiting_cancel_confirm"
 	StateAwaitingFollowup          ConversationState = "awaiting_followup"
 	StateEmergency                 ConversationState = "emergency"
 	StateEnded                     ConversationState = "ended"
