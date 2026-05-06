@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 
 	"go.uber.org/zap"
 
@@ -14,10 +13,6 @@ import (
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/webhook"
 )
-
-// urlQueryEscape is just url.QueryEscape spelled out to keep the long
-// fmt.Sprintf legible.
-func urlQueryEscape(s string) string { return url.QueryEscape(s) }
 
 // CallData holds the information needed to initiate one outbound call.
 type CallData struct {
@@ -138,27 +133,15 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
 		callSid, err = i.twilio.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
 	default: // exotel
-		// Pass our own /webhook/exotel as the ExoML URL with the per-call
-		// context query-encoded — when Exotel opens the WebSocket it will
-		// hit our exotelXML handler with these params and we control the
-		// returned <Stream> URL. The earlier "use the dashboard app URL"
-		// approach broke because the configured app at appID=1210468
-		// just plays voice-404.mp3 ("number not reachable" in Hindi) and
-		// hangs up, so calls never reached our webhook at all.
-		exomlURL := fmt.Sprintf(
-			"%s/webhook/exotel?name=%s&interest=%s&phone=%s&lead_id=%d&campaign_id=%d&org_id=%d&tts_provider=%s&voice=%s&tts_language=%s",
-			i.cfg.PublicServerURL,
-			urlQueryEscape(data.LeadName),
-			urlQueryEscape(data.Interest),
-			urlQueryEscape(data.LeadPhone),
-			data.LeadID, data.CampaignID, data.OrgID,
-			urlQueryEscape(data.TTSProvider),
-			urlQueryEscape(data.TTSVoiceID),
-			urlQueryEscape(data.TTSLanguage),
-		)
+		// Exotel ignores arbitrary ExoML URLs in the Url parameter — only
+		// http://my.exotel.com/exoml/start/{appID} works. The dashboard app
+		// at appID has a Passthru applet pointing to /webhook/exotel which
+		// returns the WebSocket-streaming ExoML when the lead answers.
+		// Per-call context (name, lead_id, phone) is hydrated from Redis by
+		// the WS handler, not from URL params.
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, exomlURL, statusURL)
+		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, "", statusURL)
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))

@@ -33,32 +33,28 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *Exot
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
-// exomlURL is the URL Exotel fetches to get instructions when the call
-// connects. Pass the per-call /webhook/exotel URL with the campaign and
-// lead context already encoded — the WS handler reads those query params
-// when Exotel opens the media stream.
-//
-// Falls back to the Exotel-hosted app URL only if exomlURL is empty.
-// Earlier theory that Exotel "silently rejects" custom URLs was wrong —
-// what actually happened was that the dashboard app at appID=1210468
-// returns Exotel's default voice-404.mp3 ("number not reachable" Hindi
-// voicemail) and hangs up, so calls never reached our /webhook/exotel
-// regardless of which URL we pointed at. Going back to passing our own
-// URL skips the dashboard app entirely.
+// exomlURL is ignored — Exotel rejects arbitrary URLs in the Url field; only
+// the Exotel-hosted app URL (http://my.exotel.com/exoml/start/{appID}) works.
+// The dashboard app referenced by appID must have a Passthru applet pointing
+// at {PUBLIC_SERVER_URL}/webhook/exotel — that's what triggers our handler to
+// return the WebSocket-streaming ExoML when the lead answers.
+// callbackURL receives status events (answered, completed, etc.).
 //
 // Do NOT send "To" in this flow — Exotel rejects Url + To with 400
 // Bad/missing parameters (code 34001).
-// CallType=trans matches the working Python implementation.
+// CallType=trans matches the working Python implementation; without it the
+// dashboard app's Passthru applet is never invoked and the call drops on answer.
 func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
 
-	if exomlURL == "" {
-		// Last-resort fallback. Real callers (initiator.go) always pass an
-		// explicit URL with per-call context.
-		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
-	}
+	// Always use the Exotel-hosted app URL. Custom URLs (even on our own
+	// domain) are silently rejected — the call rings, the lead picks up,
+	// then drops because Exotel never fetched ExoML. Per-call context
+	// (lead_id, name, phone) is hydrated by wshandler from Redis instead
+	// of being passed through this URL.
+	exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
 
 	phone := ExotelPhone(toPhone)
 	form := url.Values{}
