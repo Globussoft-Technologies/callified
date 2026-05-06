@@ -205,14 +205,18 @@ func (s *Server) downloadInvoice(w http.ResponseWriter, r *http.Request) {
 	}
 	data.Subtotal, data.GST, data.Total = billing.NewInvoiceData(inv.AmountPaise)
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	// `inline` lets the frontend render the HTML in an iframe (View flow);
-	// `attachment` forced a download every time even when the user just
-	// wanted to look at the invoice. The browser's "Save As…" / Print
-	// menu still works on inline-rendered pages.
+	// Serve as PDF — bypasses Cloudflare's email obfuscation pass (which
+	// rewrites support@callified.ai into a "[email protected]" placeholder
+	// when the response is text/html, even with the documented
+	// <!--email_off--> opt-out comments). Browsers render application/pdf
+	// inline in an iframe via the built-in viewer, so the existing
+	// View / Print modal still works without changes.
+	pdfBytes := billing.GenerateInvoicePDF(data)
+	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("inline; filename=invoice_%s.html", invoiceNumber))
-	_, _ = io.WriteString(w, billing.GenerateInvoiceHTML(data))
+		fmt.Sprintf("inline; filename=invoice_%s.pdf", invoiceNumber))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pdfBytes)))
+	_, _ = w.Write(pdfBytes)
 }
 
 // firstDate returns just the YYYY-MM-DD prefix of a "YYYY-MM-DD HH:MM:SS"

@@ -574,7 +574,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   background: 'linear-gradient(135deg, #6366f1, #22d3ee)',
                   border: 'none', color: '#fff', fontSize: '0.8rem', fontWeight: 700,
                 }}>🖨 Print</button>
-                <a href={viewingInvoice.blobUrl} download={`${viewingInvoice.number}.html`}
+                <a href={viewingInvoice.blobUrl} download={`${viewingInvoice.number}.pdf`}
                   style={{
                     padding: '6px 14px', borderRadius: '6px', cursor: 'pointer',
                     background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(148,163,184,0.2)',
