@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // Predefined top-up amounts (rupees). Shown as quick-pick buttons in the
 // modal; the user can also type a custom value. Kept aligned with the ₹5/min
@@ -17,6 +17,11 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const [topupOpen, setTopupOpen] = useState(false);
   const [topupAmount, setTopupAmount] = useState(500);
   const [topupBusy, setTopupBusy] = useState(false);
+  // Invoice viewer — when set, an iframe modal renders the invoice HTML.
+  // Stored as { number, blobUrl } so the modal can revoke the URL on close.
+  const [viewingInvoice, setViewingInvoice] = useState(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(false);
+  const invoiceFrameRef = useRef(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { fetchAll(); }, []);
@@ -493,22 +498,32 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   </td>
                   <td style={{padding: '8px 4px', textAlign: 'right'}}>
                     <button onClick={async () => {
-                      // Fetch the PDF as a blob via the Authorization header
-                      // and open the resulting object URL — keeps the JWT out
-                      // of the URL (issue #80). Backend path uses the invoice
-                      // number, not the integer id.
+                      // Fetch the invoice HTML as a blob via the Authorization
+                      // header and render it in an in-app iframe modal —
+                      // window.open() from an async handler was getting
+                      // blocked by popup-blockers, leaving the user unsure
+                      // whether the click did anything (issue #80 keeps the
+                      // JWT out of the URL either way).
+                      setInvoiceLoading(true);
                       try {
                         const res = await apiFetch(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download`);
-                        if (!res.ok) { alert(`Invoice download failed (HTTP ${res.status})`); return; }
+                        if (!res.ok) {
+                          alert(`Invoice fetch failed (HTTP ${res.status})`);
+                          return;
+                        }
                         const blob = await res.blob();
                         const objURL = URL.createObjectURL(blob);
-                        window.open(objURL, '_blank', 'noopener,noreferrer');
-                        setTimeout(() => URL.revokeObjectURL(objURL), 60_000);
-                      } catch (e) { alert('Invoice download failed: ' + (e?.message || 'network error')); }
-                    }} style={{
-                      padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+                        setViewingInvoice({ number: inv.invoice_number || inv.id, blobUrl: objURL });
+                      } catch (e) {
+                        alert('Invoice fetch failed: ' + (e?.message || 'network error'));
+                      } finally {
+                        setInvoiceLoading(false);
+                      }
+                    }} disabled={invoiceLoading} style={{
+                      padding: '4px 10px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600,
+                      cursor: invoiceLoading ? 'wait' : 'pointer', opacity: invoiceLoading ? 0.6 : 1,
                       background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#a5b4fc',
-                    }}>View / Print</button>
+                    }}>{invoiceLoading ? 'Loading…' : 'View / Print'}</button>
                   </td>
                 </tr>
               ))}
@@ -516,6 +531,74 @@ export default function BillingPage({ apiFetch, API_URL }) {
           </table>
         )}
       </div>
+
+      {/* Invoice viewer modal — iframe with backend-rendered HTML, plus a
+          Print button that triggers the browser print dialog scoped to
+          the invoice (not the surrounding app). Closing revokes the blob
+          URL so it doesn't leak. */}
+      {viewingInvoice && (
+        <div onClick={() => {
+          if (viewingInvoice?.blobUrl) URL.revokeObjectURL(viewingInvoice.blobUrl);
+          setViewingInvoice(null);
+        }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.78)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 10000, padding: '1rem'
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: '100%', maxWidth: '880px', height: '90vh', maxHeight: '1100px',
+            background: '#0f172a', border: '1px solid rgba(99,102,241,0.25)',
+            borderRadius: '12px', boxShadow: '0 24px 48px rgba(0,0,0,0.5)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '14px 18px', borderBottom: '1px solid rgba(148,163,184,0.12)',
+              background: 'rgba(15,23,42,0.7)',
+            }}>
+              <div>
+                <div style={{fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px'}}>Invoice</div>
+                <div style={{fontFamily: 'monospace', fontSize: '0.95rem', fontWeight: 600, color: '#e2e8f0'}}>
+                  {viewingInvoice.number}
+                </div>
+              </div>
+              <div style={{display: 'flex', gap: '8px'}}>
+                <button onClick={() => {
+                  // Print the invoice content, not the surrounding app —
+                  // contentWindow.print() scopes the dialog to the iframe's
+                  // document so the user gets a clean printable page.
+                  try { invoiceFrameRef.current?.contentWindow?.print(); }
+                  catch (e) { alert('Print failed: ' + (e?.message || 'unknown')); }
+                }} style={{
+                  padding: '6px 14px', borderRadius: '6px', cursor: 'pointer',
+                  background: 'linear-gradient(135deg, #6366f1, #22d3ee)',
+                  border: 'none', color: '#fff', fontSize: '0.8rem', fontWeight: 700,
+                }}>🖨 Print</button>
+                <a href={viewingInvoice.blobUrl} download={`${viewingInvoice.number}.html`}
+                  style={{
+                    padding: '6px 14px', borderRadius: '6px', cursor: 'pointer',
+                    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(148,163,184,0.2)',
+                    color: '#cbd5e1', fontSize: '0.8rem', fontWeight: 600, textDecoration: 'none',
+                  }}>↓ Download</a>
+                <button onClick={() => {
+                  if (viewingInvoice?.blobUrl) URL.revokeObjectURL(viewingInvoice.blobUrl);
+                  setViewingInvoice(null);
+                }} style={{
+                  padding: '6px 12px', borderRadius: '6px', cursor: 'pointer',
+                  background: 'transparent', border: '1px solid rgba(148,163,184,0.2)',
+                  color: '#94a3b8', fontSize: '0.8rem', fontWeight: 600,
+                }}>Close</button>
+              </div>
+            </div>
+            <iframe
+              ref={invoiceFrameRef}
+              src={viewingInvoice.blobUrl}
+              title={`Invoice ${viewingInvoice.number}`}
+              style={{flex: 1, width: '100%', border: 'none', background: '#fff'}}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

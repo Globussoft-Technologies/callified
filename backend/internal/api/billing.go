@@ -206,8 +206,12 @@ func (s *Server) downloadInvoice(w http.ResponseWriter, r *http.Request) {
 	data.Subtotal, data.GST, data.Total = billing.NewInvoiceData(inv.AmountPaise)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// `inline` lets the frontend render the HTML in an iframe (View flow);
+	// `attachment` forced a download every time even when the user just
+	// wanted to look at the invoice. The browser's "Save As…" / Print
+	// menu still works on inline-rendered pages.
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=invoice_%s.html", invoiceNumber))
+		fmt.Sprintf("inline; filename=invoice_%s.html", invoiceNumber))
 	_, _ = io.WriteString(w, billing.GenerateInvoiceHTML(data))
 }
 
