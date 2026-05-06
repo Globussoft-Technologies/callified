@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.uber.org/zap"
@@ -71,6 +72,14 @@ func (rw *RetryWorker) tick(ctx context.Context) {
 		if _, err := rw.initiator.Initiate(ctx, data); err != nil {
 			rw.log.Warn("retry_worker: initiate failed",
 				zap.Error(err), zap.Int64("retry_id", r.ID))
+			// Insufficient-credits is not transient — burning retry attempts
+			// won't help. Stop the whole tick so we don't churn through every
+			// pending retry on a zero-balance org.
+			if errors.Is(err, dial.ErrInsufficientCredits) {
+				rw.log.Info("retry_worker: pausing tick — org is out of credits",
+					zap.Int64("lead_id", r.LeadID))
+				return
+			}
 			exhausted, _ := rw.db.IncrRetryAttempt(r.ID)
 			if exhausted {
 				rw.log.Info("retry_worker: exhausted", zap.Int64("lead_id", r.LeadID))

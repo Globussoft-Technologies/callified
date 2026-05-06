@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +14,20 @@ import (
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
 )
+
+// dialErrorStatus maps a dial.Initiator error to the right HTTP status code
+// so the frontend can distinguish "billing problem — show recharge prompt"
+// from a generic provider failure. Sentinel errors live in package dial.
+func dialErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, dial.ErrInsufficientCredits):
+		return http.StatusPaymentRequired // 402 — Razorpay top-up flow
+	case errors.Is(err, dial.ErrDND), errors.Is(err, dial.ErrCallHours):
+		return http.StatusConflict // 409 — request can't be served as-is
+	default:
+		return http.StatusBadGateway // 502 — upstream provider error
+	}
+}
 
 // dialLead initiates an immediate call to a specific lead.
 // POST /api/dial/{lead_id}
@@ -52,7 +67,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
 		s.logger.Warn("dialLead: initiate failed",
 			zap.Int64("lead_id", leadID), zap.Error(err))
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, dialErrorStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"dialed": true})
@@ -96,7 +111,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
 		s.logger.Warn("campaignDialLead: initiate failed",
 			zap.Int64("campaign_id", campaignID), zap.Int64("lead_id", leadID), zap.Error(err))
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeError(w, dialErrorStatus(err), err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"dialed": true})
@@ -197,6 +212,15 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("campaignDialAll: lead failed",
 					zap.Int64("lead_id", d.LeadID), zap.Error(err))
 				// Initiator already emits `failed` on error — no duplicate.
+				// Hard stop on insufficient credits — every remaining lead
+				// would fail the same way, and we'd flood the activity feed
+				// with N copies of the same recharge prompt. Surface it
+				// once and bail.
+				if errors.Is(err, dial.ErrInsufficientCredits) {
+					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
+						"failed", "insufficient credits — recharge to continue")
+					return
+				}
 			}
 		}
 		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
@@ -284,6 +308,11 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 					zap.Int64("lead_id", d.LeadID), zap.Error(err))
 				// initiator.Initiate already emits a `failed` event on errors,
 				// so no duplicate emit needed here.
+				if errors.Is(err, dial.ErrInsufficientCredits) {
+					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
+						"failed", "insufficient credits — recharge to continue")
+					return
+				}
 			}
 		}
 		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",

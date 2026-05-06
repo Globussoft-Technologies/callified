@@ -21,7 +21,18 @@ export function CallProvider({ children }) {
     try {
       const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
-      alert(`Status: ${data.message || 'Connecting call...'}`);
+      if (!res.ok) {
+        const msg = data.error || `Dial failed (HTTP ${res.status})`;
+        if (res.status === 402) {
+          if (window.confirm(`${msg}\n\nOpen Billing to recharge now?`)) {
+            window.location.assign('/billing');
+          }
+        } else {
+          alert(msg);
+        }
+      } else {
+        alert(`Status: ${data.message || 'Connecting call...'}`);
+      }
     } catch(e) {
       alert("Failed to hit the dialer API. Check console.");
     }
@@ -194,8 +205,25 @@ export function CallProvider({ children }) {
   const handleCampaignDial = useCallback(async (lead, campaignId) => {
     setDialingId(lead.id);
     try {
-      await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
-    } catch(e) {}
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
+      if (!res.ok) {
+        // Surface the backend error so silent failures (especially the
+        // 402 "insufficient credits" gate) don't look like nothing happened.
+        const body = await res.json().catch(() => ({}));
+        const msg = body.error || `Dial failed (HTTP ${res.status})`;
+        if (res.status === 402) {
+          // Insufficient credits — point the user at the Billing page so
+          // they can recharge instead of just getting a generic alert.
+          if (window.confirm(`${msg}\n\nOpen Billing to recharge now?`)) {
+            window.location.assign('/billing');
+          }
+        } else {
+          alert(msg);
+        }
+      }
+    } catch(e) {
+      alert('Network error: ' + (e?.message || 'unknown'));
+    }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 

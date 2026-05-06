@@ -59,6 +59,12 @@ var ErrDND = fmt.Errorf("lead is on DND list")
 // ErrCallHours is returned when TRAI calling hours are not active.
 var ErrCallHours = fmt.Errorf("outside TRAI calling hours (9 AM – 9 PM)")
 
+// ErrInsufficientCredits is returned when the org's prepaid balance is zero
+// or negative. Surfaced to the API handler so it can return HTTP 402 with a
+// "recharge to continue" message instead of letting Exotel be charged for a
+// dial we can't bill the customer for.
+var ErrInsufficientCredits = fmt.Errorf("insufficient credits — please recharge to continue making calls")
+
 // Initiate performs the full dial sequence for one lead.
 // Returns the carrier-issued call SID plus nil on successful dial initiation
 // (not call completion). The call_sid lets callers index the call for later
@@ -82,6 +88,25 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	status := callguard.Check(tz)
 	if !status.Allowed {
 		return "", fmt.Errorf("%w: %s", ErrCallHours, status.Reason)
+	}
+
+	// 2.5 Credit balance gate. Real telephony calls cost money — we won't
+	// dial the provider for an org that can't pay for it. Web-sim is free
+	// (it doesn't go through this Initiator at all), so the gate only
+	// affects outbound Exotel/Twilio dials.
+	//
+	// OrgID==0 happens in a few legacy/test code paths; let those through
+	// so we don't break dev environments with no billing setup.
+	if data.OrgID > 0 {
+		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
+		if ocErr != nil {
+			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
+		} else if oc != nil && oc.BalancePaise <= 0 {
+			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
+			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
+				"failed", "insufficient credits — recharge to continue")
+			return "", ErrInsufficientCredits
+		}
 	}
 
 	// 3. Store pending call info in Redis (wshandler reads this on stream connect)

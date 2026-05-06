@@ -94,7 +94,7 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			s.logger.Warn("manualCall: initiate failed",
 				zap.String("phone", body.Phone), zap.Error(err))
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeError(w, dialErrorStatus(err), err.Error())
 			return
 		}
 		// The monitor WS blocks up to 30s waiting for the session to register
