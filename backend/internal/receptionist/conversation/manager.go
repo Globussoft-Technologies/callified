@@ -37,6 +37,13 @@ type Manager struct {
 // New constructs a Manager.
 func New(store *session.Store, apptSvc *appointment.Service,
 	ambSvc *ambulance.Service, llmAgent *llm.Agent) *Manager {
+	// Register roster first names with the intent extractor so bare
+	// references like "book with Mike" resolve without the "Dr." prefix.
+	names := make([]string, 0, len(apptSvc.AvailableDoctors()))
+	for _, d := range apptSvc.AvailableDoctors() {
+		names = append(names, d.Name)
+	}
+	intent.SetRosterFirstNames(names)
 	return &Manager{
 		store: store, apptSvc: apptSvc, ambSvc: ambSvc, llmAgent: llmAgent,
 		// Built unconditionally — Reply() returns "" if GEMINI_API_KEY is
@@ -328,6 +335,8 @@ func (m *Manager) handleRuleBased(sess *session.Session, text string) *TurnResul
 		reply, meta = m.handleRescheduleTime(sess, intentMatch)
 	case models.StateAppointmentCancelID:
 		reply, meta = m.handleCancelID(sess, intentMatch)
+	case models.StateAwaitingCancelConfirm:
+		reply, meta = m.handleAwaitingCancelConfirm(sess, intentMatch)
 	case models.StateAwaitingFollowup:
 		reply, meta = m.handleFollowup(sess, text, intentMatch)
 	default:
@@ -433,7 +442,37 @@ func (m *Manager) routePurpose(sess *session.Session, text string, in intent.Mat
 	}
 	canned := "I can help with booking, rescheduling, or cancelling an appointment, " +
 		"or with general questions about our clinic. Which would you like to do?"
-	return m.llmFallbackOr(sess, text, canned), map[string]any{}
+	reply := m.llmFallbackOr(sess, text, canned)
+	if reply == canned {
+		// LLM fallback didn't fire (no API key, or empty response) — track
+		// how many times in a row we've returned this exact menu. After a
+		// couple of misses, escalate instead of looping the same line, which
+		// in real calls turns into 5+ identical replies and the caller
+		// gives up. The Telephony "I'd like to talk to you" / "in the call"
+		// utterances in the test transcript are exactly this case.
+		miss, _ := sess.Slots["fallback_misses"].(int)
+		miss++
+		sess.Slots["fallback_misses"] = miss
+		if miss >= 3 {
+			delete(sess.Slots, "fallback_misses")
+			cfg := config.Get()
+			return fmt.Sprintf(
+				"I'm having trouble understanding. A team member can call you back — "+
+					"would you like to leave a callback number, or you can also reach us at %s.",
+				cfg.ClinicPhone,
+			), map[string]any{}
+		}
+		// Vary the prompt slightly on the second miss so it doesn't sound
+		// like a parrot. Keeps the menu intent clear without word-for-word
+		// repeat.
+		if miss == 2 {
+			reply = "Sorry, I missed that. I can help with general questions or with appointment changes; which would you prefer?"
+		}
+	} else {
+		// Any non-canned reply means we got somewhere — reset the counter.
+		delete(sess.Slots, "fallback_misses")
+	}
+	return reply, map[string]any{}
 }
 
 // --- Booking ---------------------------------------------------------
@@ -517,12 +556,19 @@ func (m *Manager) finalizeBooking(sess *session.Session) (string, map[string]any
 	if err != nil {
 		switch {
 		case errIs(err, appointment.ErrUnknownDoctor):
-			// Don't surface "we don't have Dr. X" — just keep the
-			// conversation flowing by listing who IS available and
-			// inviting the caller to pick. Less awkward and avoids
-			// the bot lecturing the caller about the roster.
+			// Acknowledge the mismatch and offer a likely correction so
+			// callers don't think the bot ignored them. "Hema" → "Did
+			// you mean Dr. Emma?" instead of silently re-listing the roster.
+			badGuess, _ := sess.Slots["pending_doctor"].(string)
 			sess.State = models.StateAppointmentBookDoctor
 			delete(sess.Slots, "pending_doctor")
+			if suggest := m.apptSvc.SuggestDoctor(badGuess); suggest != "" && badGuess != "" {
+				return fmt.Sprintf(
+					"We don't have a Dr. %s on staff. Did you mean %s? Or pick from %s.",
+					strings.TrimPrefix(strings.TrimPrefix(badGuess, "Dr. "), "Dr "),
+					suggest, m.formatRoster(),
+				), map[string]any{}
+			}
 			return fmt.Sprintf(
 				"We have %s. Which one would you like to see?",
 				m.formatRoster(),
@@ -533,8 +579,26 @@ func (m *Manager) finalizeBooking(sess *session.Session) (string, map[string]any
 			delete(sess.Slots, "pending_time")
 			return fmt.Sprintf("%v. Could you suggest another day or time?", err),
 				map[string]any{}
+		case errIs(err, appointment.ErrBadDate):
+			// Caller said something we couldn't parse as a date (e.g. an
+			// ambiguous phrasing the regex didn't catch). Re-prompt with a
+			// concrete example so they can rephrase. Drop the slots so the
+			// next turn re-runs extraction cleanly.
+			sess.State = models.StateAppointmentBookTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
+			return "I didn't catch that date. Could you say it like '27th May 2026' or 'next Tuesday'?",
+				map[string]any{}
+		case errIs(err, appointment.ErrBadTime):
+			sess.State = models.StateAppointmentBookTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
+			return "I didn't catch the time. Could you say it like '6 AM' or '3:30 PM'?",
+				map[string]any{}
 		default:
 			sess.State = models.StateAppointmentBookTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
 			return fmt.Sprintf(
 				"I couldn't schedule that — %v. Please give me a clearer day and time, like 'Wednesday at 3 PM'.",
 				err,
@@ -549,6 +613,10 @@ func (m *Manager) finalizeBooking(sess *session.Session) (string, map[string]any
 	// Mark the session as post-booking so the next "thank you" ends the
 	// call cleanly (see the 1b shutoff in handleTurnInner).
 	sess.Slots["booking_confirmed"] = true
+	// Remember the last appointment so a follow-up "the time at 6 PM" /
+	// "I want to change the time" knows which booking to amend without
+	// asking for the confirmation number again.
+	sess.Slots["last_appointment_id"] = appt.ID
 	when := appt.ScheduledFor.Format("Monday, January 2 at 3:04 PM")
 	return fmt.Sprintf(
 			"You're booked with %s on %s. Your confirmation number is %s. Is there anything else I can help with?",
@@ -582,10 +650,120 @@ func (m *Manager) beginReschedule(sess *session.Session, slots map[string]string
 func (m *Manager) handleRescheduleID(sess *session.Session, in intent.Match) (string, map[string]any) {
 	if v := in.Slots["appointment_id"]; v != "" {
 		sess.Slots["pending_appt_id"] = v
+		delete(sess.Slots, "reschedule_id_misses")
 		return m.askForRescheduleTime(sess)
 	}
-	canned := "I didn't catch a valid confirmation number. It should look like 'APT-' followed by six letters or digits."
-	return m.llmFallbackOr(sess, lastUserText(sess), canned), map[string]any{}
+	// Intent switches let the caller bail out without saying "thank you"
+	// three times to escape. "Goodbye" / "book new" / "cancel" all jump
+	// to the right flow instead of being treated as bad-id retries.
+	if reply, ok := m.handleIDStateEscape(sess, in); ok {
+		return reply, map[string]any{}
+	}
+	text := lastUserText(sess)
+	if forgotPhraseRE.MatchString(text) {
+		return m.handleForgotID(sess, "reschedule")
+	}
+	miss, _ := sess.Slots["reschedule_id_misses"].(int)
+	miss++
+	sess.Slots["reschedule_id_misses"] = miss
+	if miss >= 2 {
+		// After two misses, proactively offer the name-lookup escape so
+		// the caller isn't trapped repeating "I forgot it".
+		return m.handleForgotID(sess, "reschedule")
+	}
+	canned := "I didn't catch a valid confirmation number. It should look like 'APT-' followed by six letters or digits — or say 'I forgot it' and I can look it up by your name."
+	return m.llmFallbackOr(sess, text, canned), map[string]any{}
+}
+
+// handleIDStateEscape: when a caller is being asked for an APT- number
+// but instead expresses a different intent, switch flows. Returns ok=true
+// when the caller's intent was handled here, ok=false to fall through
+// to the canned re-prompt.
+func (m *Manager) handleIDStateEscape(sess *session.Session, in intent.Match) (string, bool) {
+	switch in.Intent {
+	case models.IntentGoodbye:
+		sess.State = models.StateEnded
+		delete(sess.Slots, "reschedule_id_misses")
+		delete(sess.Slots, "cancel_id_misses")
+		return fmt.Sprintf("Thank you for calling %s. Goodbye.", config.Get().ClinicName), true
+	case models.IntentBookAppointment:
+		// Drop reschedule/cancel state, start a fresh booking.
+		delete(sess.Slots, "pending_appt_id")
+		delete(sess.Slots, "reschedule_id_misses")
+		delete(sess.Slots, "cancel_id_misses")
+		reply, _ := m.beginBooking(sess, in.Slots)
+		return reply, true
+	case models.IntentCancelAppointment:
+		delete(sess.Slots, "pending_appt_id")
+		delete(sess.Slots, "reschedule_id_misses")
+		reply, _ := m.beginCancel(sess, in.Slots)
+		return reply, true
+	}
+	return "", false
+}
+
+// forgotPhraseRE matches the common phrasings of "I don't have / can't
+// remember the confirmation number". Kept narrow on purpose — false
+// positives steal a re-prompt path the caller may need.
+var forgotPhraseRE = regexp.MustCompile(`(?i)\b(?:forgot|forget|lost|don'?t\s+(?:have|remember|know)|can'?t\s+(?:find|remember))\b.*\b(?:it|number|confirmation|appointment|apt|id)\b|\bI\s+(?:forgot|forget)\s+it\b|\bdon'?t\s+have\s+the\s+number\b|\bdon'?t\s+remember\b`)
+
+// handleForgotID looks up active appointments by patient name when the
+// caller has lost their confirmation number. flow is "reschedule" or
+// "cancel". With one match we proceed to the time prompt (or finalize
+// cancel) directly; with multiple matches we list them so the caller
+// can pick. With zero matches we apologize and offer to start over.
+func (m *Manager) handleForgotID(sess *session.Session, flow string) (string, map[string]any) {
+	patientName, _ := sess.Slots["patient_name"].(string)
+	if strings.TrimSpace(patientName) == "" {
+		// We never collected a name — can't look up. Fall back to the
+		// canned prompt with a softened tone.
+		return "I don't have your name on file to look it up. Could you give me your full name, please?",
+			map[string]any{}
+	}
+	matches := m.apptSvc.FindByPatient(patientName)
+	if len(matches) == 0 {
+		sess.State = models.StateAwaitingPurpose
+		return fmt.Sprintf(
+			"I couldn't find any appointments under %s. Would you like to book a new one instead?",
+			patientName,
+		), map[string]any{}
+	}
+	if len(matches) == 1 {
+		appt := matches[0]
+		sess.Slots["pending_appt_id"] = appt.ID
+		delete(sess.Slots, "reschedule_id_misses")
+		delete(sess.Slots, "cancel_id_misses")
+		when := appt.ScheduledFor.Format("Monday, January 2 at 3:04 PM")
+		if flow == "cancel" {
+			// Confirm before deleting — used to silently cancel which is
+			// a security/UX miss (anyone with the caller's name can blow
+			// away the booking). Stash the id and ask for yes/no.
+			sess.State = models.StateAwaitingCancelConfirm
+			return fmt.Sprintf(
+				"I found %s with %s on %s, confirmation %s. Should I cancel it?",
+				patientName, appt.Doctor, when, appt.ID,
+			), map[string]any{"appointment_id": appt.ID}
+		}
+		// Reschedule flow — proceed to time prompt.
+		ack := fmt.Sprintf(
+			"Found it — %s with %s on %s, confirmation %s. ",
+			patientName, appt.Doctor, when, appt.ID,
+		)
+		reply, meta := m.askForRescheduleTime(sess)
+		return ack + reply, meta
+	}
+	// Multiple matches — list them and ask the caller to pick by index
+	// or by speaking the doctor name. We stay in the same state; the
+	// next turn's APT- regex or doctor-name match will resolve it.
+	var lines []string
+	for i, r := range matches {
+		when := r.ScheduledFor.Format("Mon Jan 2 at 3:04 PM")
+		lines = append(lines, fmt.Sprintf("%d) %s — %s with %s", i+1, r.ID, when, r.Doctor))
+	}
+	return fmt.Sprintf(
+		"I found %d appointments under %s: %s. Could you read me the confirmation number of the one you mean?",
+		len(matches), patientName, strings.Join(lines, "; "),
+	), map[string]any{}
 }
 
 func (m *Manager) askForRescheduleTime(sess *session.Session) (string, map[string]any) {
@@ -626,8 +804,22 @@ func (m *Manager) finalizeReschedule(sess *session.Session) (string, map[string]
 			delete(sess.Slots, "pending_date")
 			delete(sess.Slots, "pending_time")
 			return fmt.Sprintf("%v. Could you suggest another time?", err), map[string]any{}
+		case errIs(err, appointment.ErrBadDate):
+			sess.State = models.StateAppointmentRescheduleTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
+			return "I didn't catch that date. Could you say it like '27th May 2026' or 'next Tuesday'?",
+				map[string]any{}
+		case errIs(err, appointment.ErrBadTime):
+			sess.State = models.StateAppointmentRescheduleTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
+			return "I didn't catch the time. Could you say it like '6 AM' or '3:30 PM'?",
+				map[string]any{}
 		default:
 			sess.State = models.StateAppointmentRescheduleTime
+			delete(sess.Slots, "pending_date")
+			delete(sess.Slots, "pending_time")
 			return fmt.Sprintf("I couldn't reschedule that — %v. What other time works?", err),
 				map[string]any{}
 		}
@@ -637,6 +829,9 @@ func (m *Manager) finalizeReschedule(sess *session.Session) (string, map[string]
 	delete(sess.Slots, "pending_date")
 	delete(sess.Slots, "pending_time")
 	sess.State = models.StateAwaitingFollowup
+	// Same as finalizeBooking — keep last_appointment_id around so a
+	// follow-up "the time at 6 PM" can amend without re-asking for the id.
+	sess.Slots["last_appointment_id"] = appt.ID
 	when := appt.ScheduledFor.Format("Monday, January 2 at 3:04 PM")
 	return fmt.Sprintf(
 			"All set — %s is now on %s with %s. Anything else I can help with?",
@@ -660,9 +855,23 @@ func (m *Manager) beginCancel(sess *session.Session, slots map[string]string) (s
 
 func (m *Manager) handleCancelID(sess *session.Session, in intent.Match) (string, map[string]any) {
 	if v := in.Slots["appointment_id"]; v != "" {
+		delete(sess.Slots, "cancel_id_misses")
 		return m.finalizeCancel(sess, v)
 	}
-	return "I need a valid confirmation number to cancel — it should look like 'APT-' followed by six letters or digits.",
+	if reply, ok := m.handleIDStateEscape(sess, in); ok {
+		return reply, map[string]any{}
+	}
+	text := lastUserText(sess)
+	if forgotPhraseRE.MatchString(text) {
+		return m.handleForgotID(sess, "cancel")
+	}
+	miss, _ := sess.Slots["cancel_id_misses"].(int)
+	miss++
+	sess.Slots["cancel_id_misses"] = miss
+	if miss >= 2 {
+		return m.handleForgotID(sess, "cancel")
+	}
+	return "I need a valid confirmation number to cancel — 'APT-' followed by six letters or digits — or say 'I forgot it' and I can look it up by your name.",
 		map[string]any{}
 }
 
@@ -672,6 +881,16 @@ func (m *Manager) finalizeCancel(sess *session.Session, id string) (string, map[
 		sess.State = models.StateAppointmentCancelID
 		return fmt.Sprintf("%v. Could you read me the number again?", err), map[string]any{}
 	}
+	// Clear every per-appointment slot. Without this, a later "reschedule
+	// the appointment" turn picked up the cancelled id from pending_appt_id
+	// and the apptSvc rejected it with "no active appointment with that
+	// id" instead of asking the caller for a fresh one.
+	delete(sess.Slots, "pending_appt_id")
+	delete(sess.Slots, "pending_date")
+	delete(sess.Slots, "pending_time")
+	delete(sess.Slots, "last_appointment_id")
+	delete(sess.Slots, "cancel_id_misses")
+	delete(sess.Slots, "reschedule_id_misses")
 	sess.State = models.StateAwaitingFollowup
 	return fmt.Sprintf(
 			"Your appointment %s has been cancelled. Is there anything else I can help with?",
@@ -680,6 +899,31 @@ func (m *Manager) finalizeCancel(sess *session.Session, id string) (string, map[
 			"appointment_id": appt.ID,
 			"status":         appt.Status,
 		}
+}
+
+// handleAwaitingCancelConfirm asks the caller to confirm a name-lookup
+// cancel before we actually delete. Reached from handleForgotID's cancel
+// branch when exactly one appointment matched.
+func (m *Manager) handleAwaitingCancelConfirm(sess *session.Session, in intent.Match) (string, map[string]any) {
+	id, _ := sess.Slots["pending_appt_id"].(string)
+	switch in.Intent {
+	case models.IntentAffirm:
+		return m.finalizeCancel(sess, id)
+	case models.IntentDeny, models.IntentGoodbye:
+		delete(sess.Slots, "pending_appt_id")
+		sess.State = models.StateAwaitingFollowup
+		if in.Intent == models.IntentGoodbye {
+			sess.State = models.StateEnded
+			return fmt.Sprintf("Thank you for calling %s. Goodbye.", config.Get().ClinicName),
+				map[string]any{}
+		}
+		return "OK, I won't cancel it. Is there anything else I can help with?",
+			map[string]any{}
+	}
+	// Anything else — re-prompt narrowly. Don't fall through to the generic
+	// menu; the caller is one step from a destructive action.
+	return fmt.Sprintf("Should I cancel appointment %s? Please say yes or no.", id),
+		map[string]any{}
 }
 
 // --- Followup --------------------------------------------------------
@@ -705,6 +949,26 @@ func (m *Manager) handleFollowup(sess *session.Session, text string, in intent.M
 		// If the LLM produced something else, keep state at follow-up so
 		// the caller can keep talking — don't end mid-thought.
 		return reply, map[string]any{}
+	}
+	// Bare time/date utterance after a booking — caller is fixing the slot
+	// they just booked (e.g. "the time at 7 PM" right after the bot
+	// confirmed 7 AM). Treat as an implicit reschedule of the last
+	// appointment instead of falling through to the generic menu.
+	if in.Intent == models.IntentUnknown {
+		_, hasTime := in.Slots["time"]
+		_, hasDate := in.Slots["date"]
+		if hasTime || hasDate {
+			if lastID, _ := sess.Slots["last_appointment_id"].(string); lastID != "" {
+				sess.Slots["pending_appt_id"] = lastID
+				if v := in.Slots["date"]; v != "" {
+					sess.Slots["pending_date"] = v
+				}
+				if v := in.Slots["time"]; v != "" {
+					sess.Slots["pending_time"] = v
+				}
+				return m.finalizeReschedule(sess)
+			}
+		}
 	}
 	sess.State = models.StateAwaitingPurpose
 	return m.routePurpose(sess, text, in)
