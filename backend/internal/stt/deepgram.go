@@ -116,11 +116,13 @@ func (c *Client) connect() (*websocket.Conn, error) {
 	q.Set("endpointing", "300")
 	q.Set("utterance_end_ms", "1000")
 	q.Set("interim_results", "true")
+	q.Set("vad_events", "true") // enables SpeechStarted events required for barge-in
 	u.RawQuery = q.Encode()
 
 	headers := http.Header{}
 	headers.Set("Authorization", "Token "+c.apiKey)
 
+	c.log.Info("deepgram: connecting", zap.String("url", u.String()))
 	conn, resp, err := websocket.DefaultDialer.DialContext(context.Background(), u.String(), headers)
 	if err != nil {
 		var body string
@@ -167,6 +169,8 @@ func (c *Client) handleMessage(raw []byte) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return
 	}
+	// Temporary: log every event type so we can confirm what Deepgram sends
+	c.log.Debug("deepgram: event", zap.String("type", msg.Type))
 	switch msg.Type {
 	case "Results":
 		if msg.IsFinal && len(msg.Channel.Alternatives) > 0 {
@@ -182,6 +186,7 @@ func (c *Client) handleMessage(raw []byte) {
 			}
 		}
 	case "SpeechStarted":
+		c.log.Info("deepgram: SpeechStarted received")
 		if c.OnSpeechStarted != nil {
 			c.OnSpeechStarted()
 		}

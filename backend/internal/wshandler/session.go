@@ -37,6 +37,8 @@ type CallSession struct {
 	ttsPlaying     atomic.Bool
 	hangupReq      atomic.Bool
 	dgAlive        atomic.Bool
+	bargeInActive   atomic.Bool  // set on SpeechStarted; cleared when new LLM response starts
+	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
 	lastTTSEndNano atomic.Int64 // UnixNano
 	lastTranscript atomic.Int64 // UnixNano — debounce timestamp
 
@@ -245,12 +247,60 @@ func (s *CallSession) UpdateStreamType() {
 // TrySetGreeting atomically marks greeting as sent. Returns true only the first call.
 func (s *CallSession) TrySetGreeting() bool { return s.greetingSent.CompareAndSwap(false, true) }
 
-func (s *CallSession) SetTTSPlaying(v bool) { s.ttsPlaying.Store(v) }
+func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
-func (s *CallSession) RequestHangup()         { s.hangupReq.Store(true) }
-func (s *CallSession) HangupRequested() bool  { return s.hangupReq.Load() }
-func (s *CallSession) StopDG()                { s.dgAlive.Store(false) }
-func (s *CallSession) DGAlive() bool          { return s.dgAlive.Load() }
+func (s *CallSession) RequestHangup()        { s.hangupReq.Store(true) }
+func (s *CallSession) HangupRequested() bool { return s.hangupReq.Load() }
+func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
+func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
+func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
+func (s *CallSession) IsBargeInActive() bool { return s.bargeInActive.Load() }
+
+// TriggerBargeIn is called by energy VAD when mic energy exceeds the threshold
+// while TTS is playing. Returns false if barge-in was triggered too recently
+// (500 ms cooldown) or is already active.
+func (s *CallSession) TriggerBargeIn() bool {
+	now := time.Now().UnixNano()
+	last := s.lastBargeInNano.Load()
+	if now-last < 500*int64(time.Millisecond) {
+		return false // cooldown: don't flood barge-in events
+	}
+	if !s.lastBargeInNano.CompareAndSwap(last, now) {
+		return false // another goroutine won the race
+	}
+	s.SetBargeIn(true)
+	s.DrainTTSSentences()
+	go func() {
+		time.Sleep(3 * time.Second)
+		s.SetBargeIn(false)
+	}()
+	s.CancelActiveTTS()
+	// Send clear event to flush browser/phone audio queue
+	var frame []byte
+	if s.IsWebSim {
+		frame, _ = json.Marshal(map[string]string{"type": "clear"})
+	} else if s.IsExotel {
+		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	}
+	if frame != nil {
+		_ = s.SendText(frame)
+	}
+	return true
+}
+
+// DrainTTSSentences discards all sentences currently buffered in TTSSentences.
+// Called on barge-in so stale agent sentences don't play after the customer interrupts.
+func (s *CallSession) DrainTTSSentences() int {
+	drained := 0
+	for {
+		select {
+		case <-s.TTSSentences:
+			drained++
+		default:
+			return drained
+		}
+	}
+}
 
 func (s *CallSession) MarkTTSEnd() { s.lastTTSEndNano.Store(time.Now().UnixNano()) }
 func (s *CallSession) MsSinceTTSEnd() int64 {

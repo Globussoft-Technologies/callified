@@ -193,21 +193,45 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
-		if sess.HangupRequested() || sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+		if sess.HangupRequested() {
 			return
 		}
+		// During barge-in, bypass TTS cooldown so the customer's interruption
+		// transcript is never dropped.
+		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
+			return
+		}
+		// Guard against send on closed channel if session tore down mid-STT.
 		select {
 		case sess.Transcripts <- text:
-		default:
+		case <-ctx.Done():
 		}
 	}
 	onSpeechStarted := func() {
+		sess.Log.Info("barge-in: SpeechStarted",
+			zap.Bool("tts_playing", sess.IsTTSPlaying()),
+			zap.Bool("is_web_sim", sess.IsWebSim),
+			zap.Bool("is_exotel", sess.IsExotel),
+		)
 		if sess.IsTTSPlaying() {
 			metrics.BargeIns.Inc()
 		}
+		// Always set flag + drain — even when TTS is between sentences the
+		// TTSSentences buffer may still hold queued text that must be dropped.
+		sess.SetBargeIn(true)
+		n := sess.DrainTTSSentences()
+		sess.Log.Info("barge-in: draining", zap.Int("drained", n), zap.Bool("tts_was_playing", sess.IsTTSPlaying()))
+		// Safety: clear flag after 3s in case LLM never responds.
+		go func() {
+			time.Sleep(3 * time.Second)
+			sess.SetBargeIn(false)
+		}()
 		sess.CancelActiveTTS()
 		if sess.IsExotel {
 			sendClearEvent(sess)
+		} else if sess.IsWebSim {
+			frame, _ := json.Marshal(map[string]string{"type": "clear"})
+			_ = sess.SendText(frame)
 		}
 	}
 
@@ -312,9 +336,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	done := h.messageLoop(ctx, sess)
 	cancel() // signal all goroutines to stop
 
-	// Close channels after cancellation so goroutines drain cleanly
+	// Close AudioIn so the STT send goroutine exits its range loop.
+	// Do NOT close sess.Transcripts — the Deepgram receive goroutine may still
+	// deliver a final transcript after cancel(), and sending to a closed channel
+	// panics. runPipeline exits via ctx.Done() instead.
 	close(sess.AudioIn)
-	close(sess.Transcripts)
 
 	wg.Wait()
 
@@ -360,6 +386,13 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		pcm = data // web sim sends PCM directly
 	}
 	sess.AppendMicChunk(pcm)
+	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
+	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
+	if sess.IsTTSPlaying() && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+		if sess.TriggerBargeIn() {
+			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+		}
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -497,6 +530,26 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	}
 }
 
+// bargeInEnergyThreshold is the mean-square PCM energy level above which we
+// treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
+// value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
+// Set conservatively at 500000 to avoid false triggers on line noise.
+const bargeInEnergyThreshold int64 = 500_000
+
+// pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
+func pcmEnergy(pcm []byte) int64 {
+	n := len(pcm) / 2
+	if n == 0 {
+		return 0
+	}
+	var sum int64
+	for i := 0; i+1 < len(pcm); i += 2 {
+		s := int64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
+		sum += s * s
+	}
+	return sum / int64(n)
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -592,6 +645,12 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		pcm = raw
 	}
 	sess.AppendMicChunk(pcm)
+	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
+	if sess.IsTTSPlaying() && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+		if sess.TriggerBargeIn() {
+			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+		}
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default:

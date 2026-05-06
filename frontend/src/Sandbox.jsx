@@ -43,6 +43,8 @@ export default function Sandbox({ apiUrl }) {
   const audioContextRef = useRef(null);
   const sourceRef = useRef(null);
   const processorRef = useRef(null);
+  const activeSourcesRef = useRef([]);
+  const nextPlayTimeRef = useRef(0);
 
   const handleProviderChange = (p) => {
     setProvider(p);
@@ -135,11 +137,15 @@ export default function Sandbox({ apiUrl }) {
           ws.send(JSON.stringify({ event: 'media', media: { payload: window.btoa(binary) } }));
         };
 
-        let nextPlayTime = audioContext.currentTime;
+        nextPlayTimeRef.current = audioContext.currentTime;
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            micMuted = true;
+          if (data.type === 'clear') {
+            // Backend detected barge-in — stop all queued audio immediately
+            activeSourcesRef.current.forEach(s => { try { s.stop(); } catch (_) {} });
+            activeSourcesRef.current = [];
+            nextPlayTimeRef.current = audioContext.currentTime;
+          } else if (data.event === 'media') {
             if (unmuteTimer) clearTimeout(unmuteTimer);
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
@@ -153,10 +159,17 @@ export default function Sandbox({ apiUrl }) {
             bufferSource.buffer = audioBuffer;
             bufferSource.connect(audioContext.destination);
             const now = audioContext.currentTime;
-            const startAt = Math.max(now, nextPlayTime);
+            const startAt = Math.max(now, nextPlayTimeRef.current);
             bufferSource.start(startAt);
-            nextPlayTime = startAt + audioBuffer.duration;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, (nextPlayTime - now) * 1000 + 200);
+            nextPlayTimeRef.current = startAt + audioBuffer.duration;
+            activeSourcesRef.current.push(bufferSource);
+            bufferSource.onended = () => {
+              activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== bufferSource);
+            };
+            // Unmute mic once after first chunk so it stays live for barge-in
+            if (micMuted) {
+              unmuteTimer = setTimeout(() => { micMuted = false; }, 400);
+            }
           } else if (data.type === 'transcript') {
             // Backend sends {type:"transcript", role:"user"|"agent", text}.
             // Map "agent" → "assistant" for the existing render styling.
