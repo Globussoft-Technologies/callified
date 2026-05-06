@@ -445,14 +445,16 @@ func (s *Store) SetRaw(ctx context.Context, k, v string, ttl time.Duration) {
 const LeadVoiceTTL = 90 * 24 * time.Hour
 
 // ResolveLeadVoice returns the voice ID to use for a call to leadID. If a
-// previously-used voice is cached, it wins (consistency over campaign default).
-// Otherwise currentVoice is cached for next time. leadID == 0 disables the cache.
-// Returns (voiceID, fromCache).
-func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, currentVoice string) (string, bool) {
+// previously-used voice is cached for this provider, it wins (consistency over
+// campaign default). Otherwise currentVoice is cached for next time.
+// leadID == 0 disables the cache. Returns (voiceID, fromCache).
+// provider is included in the key so ElevenLabs and Sarvam voice IDs never
+// cross-contaminate when a campaign's TTS provider changes.
+func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, provider, currentVoice string) (string, bool) {
 	if leadID == 0 || currentVoice == "" {
 		return currentVoice, false
 	}
-	k := fmt.Sprintf("lead_voice:%d", leadID)
+	k := fmt.Sprintf("lead_voice:%s:%d", provider, leadID)
 	if cached, ok := s.GetRaw(ctx, k); ok && cached != "" {
 		// Refresh TTL on hit so active leads don't expire.
 		s.SetRaw(ctx, k, cached, LeadVoiceTTL)

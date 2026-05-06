@@ -162,7 +162,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Same lead reliably hears the same agent voice across calls (ported from
 	// main-branch ws_handler.py 4aa3fa3). Best-effort: errors are swallowed.
 	if h.store != nil && sess.LeadID != 0 && sess.TTSVoiceID != "" {
-		voice, fromCache := h.store.ResolveLeadVoice(ctx, sess.LeadID, sess.TTSVoiceID)
+		voice, fromCache := h.store.ResolveLeadVoice(ctx, sess.LeadID, sess.TTSProvider, sess.TTSVoiceID)
 		if fromCache && voice != sess.TTSVoiceID {
 			h.log.Info("voice cache: using cached voice",
 				zap.Int64("lead_id", sess.LeadID),
@@ -196,9 +196,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sess.HangupRequested() {
 			return
 		}
-		// During barge-in, bypass TTS cooldown so the customer's interruption
-		// transcript is never dropped.
-		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
+		// Block transcript only while TTS is actively playing and barge-in hasn't
+		// fired yet. Post-TTS gate is 200ms (down from 1000ms) — keeps echo out
+		// while letting quick replies like "yes" / "no" through.
+		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 200) {
+			sess.Log.Debug("transcript dropped: TTS cooldown",
+				zap.Bool("tts_playing", sess.IsTTSPlaying()),
+				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
 			return
 		}
 		// Guard against send on closed channel if session tore down mid-STT.
@@ -388,7 +392,11 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	sess.AppendMicChunk(pcm)
 	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
 	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
-	if sess.IsTTSPlaying() && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
+	// The 500ms window catches users who speak the instant the agent finishes
+	// (their audio may still be in-flight when IsTTSPlaying flips to false).
+	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
 		if sess.TriggerBargeIn() {
 			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
 		}
@@ -533,8 +541,8 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 // bargeInEnergyThreshold is the mean-square PCM energy level above which we
 // treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
 // value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
-// Set conservatively at 500000 to avoid false triggers on line noise.
-const bargeInEnergyThreshold int64 = 500_000
+// 150_000 ≈ RMS 387 — catches soft voices while staying above mic noise floor.
+const bargeInEnergyThreshold int64 = 150_000
 
 // pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
 func pcmEnergy(pcm []byte) int64 {
@@ -646,7 +654,11 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	}
 	sess.AppendMicChunk(pcm)
 	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	if sess.IsTTSPlaying() && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
+	// The 500ms window catches users who speak the instant the agent finishes
+	// (their audio may still be in-flight when IsTTSPlaying flips to false).
+	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
 		if sess.TriggerBargeIn() {
 			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
 		}
