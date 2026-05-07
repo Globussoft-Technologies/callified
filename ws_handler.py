@@ -135,6 +135,7 @@ async def handle_media_stream(websocket: WebSocket):
     _debounce_delay = 0.15  # 150ms debounce — near-instant response
     _last_tts_end_time = [0.0]  # Track when TTS last finished, to give user breathing room
     _tts_playing = [False]  # True while TTS is actively sending audio — suppress STT echo
+    _active_process_task = [None]  # Tracks in-flight _process_transcript asyncio.Task for barge-in cancellation
     _recording_mic_chunks = []
     _recording_tts_chunks = []
 
@@ -219,13 +220,25 @@ async def handle_media_stream(websocket: WebSocket):
         logging.getLogger("uvicorn.error").error(f"[STT ERROR] Deepgram fired an error: {error}")
 
     def on_speech_started(self, **kwargs):
+        # Clear echo-suppression flags immediately in this thread so that the
+        # final transcript arriving in on_message (50-200ms later, same thread)
+        # is never blocked by a stale _tts_playing or _last_tts_end_time check.
+        _tts_playing[0] = False
+        _last_tts_end_time[0] = 0
         if stream_sid:
             asyncio.run_coroutine_threadsafe(
                 websocket.send_text(json.dumps({"event": "clear", "streamSid": stream_sid})),
                 loop,
             )
-        if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
-            loop.call_soon_threadsafe(active_tts_tasks[stream_sid].cancel)
+        def _cancel_pipeline():
+            # Cancel in-flight LLM task so barge-in transcript can acquire _llm_lock.
+            # asyncio.Task cancellation propagates CancelledError through async with _llm_lock,
+            # which calls __aexit__ and releases the lock automatically.
+            if _active_process_task[0] and not _active_process_task[0].done():
+                _active_process_task[0].cancel()
+            if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
+                active_tts_tasks[stream_sid].cancel()
+        loop.call_soon_threadsafe(_cancel_pipeline)
 
     def on_message(self, result, **kwargs):
         sentence = result.channel.alternatives[0].transcript
@@ -324,7 +337,8 @@ async def handle_media_stream(websocket: WebSocket):
                                     tts_queue.task_done()
                             except asyncio.CancelledError:
                                 _tts_playing[0] = False
-                                _last_tts_end_time[0] = time.time()
+                                # Don't update _last_tts_end_time here — on_speech_started
+                                # already reset it to 0 so the barge-in transcript isn't suppressed.
                             except Exception as e:
                                 conv_logger.error(f"TTS Worker Error: {e}")
 
@@ -434,7 +448,9 @@ async def handle_media_stream(websocket: WebSocket):
                     logging.getLogger("uvicorn.error").error(f"[SYSTEM FATAL] _process_transcript SILENT CRASH: {_crash}")
                     logging.getLogger("uvicorn.error").error(traceback.format_exc())
 
-            asyncio.run_coroutine_threadsafe(_process_transcript(), loop)
+            def _sched():
+                _active_process_task[0] = asyncio.create_task(_process_transcript())
+            loop.call_soon_threadsafe(_sched)
 
     dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
     dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)

@@ -140,10 +140,9 @@ export function CallProvider({ children }) {
             activeSources.forEach(s => { try { s.stop(); } catch (_) {} });
             activeSources = [];
             nextPlayTime = audioContext.currentTime;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
           } else if (data.event === 'media') {
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -170,9 +169,9 @@ export function CallProvider({ children }) {
             activeSources.push(destSource);
             destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            // Unmute mic once after first chunk so it stays live for barge-in
-            if (micMuted) {
-              unmuteTimer = setTimeout(() => { micMuted = false; }, 400);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
             }
           }
         };
@@ -336,10 +335,9 @@ export function CallProvider({ children }) {
             activeSources.forEach(s => { try { s.stop(); } catch (_) {} });
             activeSources = [];
             nextPlayTime = audioContext.currentTime;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
           } else if (data.event === 'media') {
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -365,9 +363,9 @@ export function CallProvider({ children }) {
             activeSources.push(destSource);
             destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            // Unmute mic once after first chunk so it stays live for barge-in
-            if (micMuted) {
-              unmuteTimer = setTimeout(() => { micMuted = false; }, 400);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
             }
           }
         };

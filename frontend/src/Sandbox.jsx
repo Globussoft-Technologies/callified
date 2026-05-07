@@ -145,8 +145,9 @@ export default function Sandbox({ apiUrl }) {
             activeSourcesRef.current.forEach(s => { try { s.stop(); } catch (_) {} });
             activeSourcesRef.current = [];
             nextPlayTimeRef.current = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
           } else if (data.event === 'media') {
-            if (unmuteTimer) clearTimeout(unmuteTimer);
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) audioBytes[i] = audioStr.charCodeAt(i);
@@ -166,9 +167,9 @@ export default function Sandbox({ apiUrl }) {
             bufferSource.onended = () => {
               activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== bufferSource);
             };
-            // Unmute mic once after first chunk so it stays live for barge-in
-            if (micMuted) {
-              unmuteTimer = setTimeout(() => { micMuted = false; }, 400);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
             }
           } else if (data.type === 'transcript') {
             // Backend sends {type:"transcript", role:"user"|"agent", text}.
