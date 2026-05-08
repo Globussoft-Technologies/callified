@@ -3,6 +3,19 @@ import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', pink: '#ec4899', green: '#10b981',
+  amber: '#f59e0b', red: '#ef4444', wa: '#25D366',
+  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+};
+
 function withDate(label, tsMs) {
   const d = new Date(tsMs);
   const dd = String(d.getDate()).padStart(2, '0');
@@ -62,38 +75,38 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
   const progress = job ? Math.round(((job.sent + job.failed) / Math.max(job.total, 1)) * 100) : 0;
 
   return (
-    <div style={{marginBottom: '1rem'}}>
+    <div style={{ marginBottom: '1rem' }}>
       {error && (
-        <div style={{background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', borderRadius: '8px', padding: '10px 14px', marginBottom: '10px', fontSize: '0.85rem'}}>
+        <div style={{ background: '#fee2e2', border: `1px solid #fca5a5`, color: T.red, borderRadius: 8, padding: '10px 14px', marginBottom: 10, fontSize: '0.85rem' }}>
           ⚠️ {error}
         </div>
       )}
       {!isRunning && !isDone && (
-        <button className="btn-primary"
-          style={{background: 'linear-gradient(135deg, #25D366, #128C7E)', fontSize: '0.85rem', padding: '8px 18px'}}
+        <button
+          style={{ background: `linear-gradient(135deg, ${T.wa}, #128C7E)`, border: 'none', color: '#fff', fontSize: '0.85rem', padding: '8px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontFamily: T.font }}
           disabled={blasting}
           onClick={handleBlast}>
           {blasting ? 'Starting...' : '💬 Send to New Leads'}
         </button>
       )}
       {(isRunning || isDone) && (
-        <div className="glass-panel" style={{padding: '12px 16px'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.85rem', color: '#e2e8f0'}}>
+        <div style={{ ...card, padding: '12px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.85rem', color: T.sub }}>
             <span>{isRunning ? '⏳ Sending...' : '✅ Blast complete'}</span>
-            <span style={{color: '#94a3b8'}}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
+            <span style={{ color: T.muted }}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
           </div>
-          <div style={{background: 'rgba(255,255,255,0.05)', borderRadius: '4px', height: '6px', overflow: 'hidden'}}>
-            <div style={{width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg, #25D366, #128C7E)', transition: 'width 0.4s'}} />
+          <div style={{ background: T.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
+            <div style={{ width: `${progress}%`, height: '100%', background: `linear-gradient(90deg, ${T.wa}, #128C7E)`, transition: 'width 0.4s' }} />
           </div>
           {isDone && job.failed > 0 && (
-            <div style={{marginTop: '8px', fontSize: '0.75rem', color: '#f97316'}}>
+            <div style={{ marginTop: 8, fontSize: '0.75rem', color: T.amber }}>
               {job.errors?.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
               {job.errors?.length > 3 && <div>…and {job.errors.length - 3} more</div>}
             </div>
           )}
           {isDone && (
             <button onClick={() => { setJob(null); setError(''); }}
-              style={{marginTop: '8px', background: 'none', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem'}}>
+              style={{ marginTop: 8, background: '#fff', border: `1px solid ${T.border}`, color: T.muted, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem', fontFamily: T.font }}>
               Send Again
             </button>
           )}
@@ -127,8 +140,6 @@ export default function CampaignDetail({
   const [billingUsage, setBillingUsage] = useState(null);
   const [retries, setRetries] = useState([]);
   const [retriesLoading, setRetriesLoading] = useState(false);
-  // Schedule Call modal state — POSTs to /api/scheduled-calls which the
-  // backend worker (workers/scheduler.go) polls every 60s and auto-dials.
   const [scheduleLead, setScheduleLead] = useState(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduleNotes, setScheduleNotes] = useState('');
@@ -141,10 +152,6 @@ export default function CampaignDetail({
   const [qaPhoneErr, setQaPhoneErr] = useState('');
   const [qaApiErr, setQaApiErr] = useState('');
 
-  // Lead IDs that came back as DND-blocked from the most recent Dial click.
-  // The badge surfaces only after the user actually attempts to dial — we
-  // don't pre-fetch the DND list on mount so admin and non-admin views look
-  // the same until a dial happens.
   const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
   const handleDialClick = async (lead) => {
     onCampaignDial(lead, selectedCampaign.id);
@@ -153,8 +160,6 @@ export default function CampaignDetail({
       if (!res.ok) return;
       const data = await res.json();
       if (!data.is_dnd) return;
-      // Flash the badge briefly so the user sees why the dial isn't going
-      // through, then auto-dismiss after 2s.
       setDndBlockedLeadIds(prev => {
         const next = new Set(prev);
         next.add(lead.id);
@@ -179,9 +184,6 @@ export default function CampaignDetail({
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
       ]);
-      // Surface non-OK responses instead of silently swallowing them — the
-      // tab used to render the "no reviews yet" empty state forever when
-      // /call-insights 404'd. Issue #75.
       if (!insightsRes.ok) {
         setCallInsights(null);
         setInsightsError(`Insights endpoint returned ${insightsRes.status}`);
@@ -206,7 +208,6 @@ export default function CampaignDetail({
     if (detailTab === 'retries') fetchRetries();
   }, [detailTab, selectedCampaign.id]);
 
-  // Fetch billing usage for the widget
   useEffect(() => {
     const fetchBilling = async () => {
       try {
@@ -218,57 +219,80 @@ export default function CampaignDetail({
     fetchBilling();
   }, []);
 
-
   const fetchRetries = async () => {
     setRetriesLoading(true);
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
-      setRetries(await res.json());
+      const data = await res.json();
+      setRetries(Array.isArray(data) ? data : (data?.retries || []));
     } catch (e) { console.error('Failed to fetch retries', e); }
     setRetriesLoading(false);
   };
 
   const scoreColor = (s) => {
-    if (s >= 4) return '#22c55e';
-    if (s >= 3) return '#f59e0b';
+    if (s >= 4) return T.green;
+    if (s >= 3) return T.amber;
     if (s >= 2) return '#f97316';
-    return '#ef4444';
+    return T.red;
   };
 
   const sentimentColor = (s) => {
-    if (s === 'positive') return '#22c55e';
+    if (s === 'positive') return T.green;
     if (s === 'neutral') return '#60a5fa';
     if (s === 'negative') return '#f97316';
-    if (s === 'annoyed') return '#ef4444';
-    return '#94a3b8';
+    if (s === 'annoyed') return T.red;
+    return T.muted;
   };
 
-  // Build a map of transcript_id -> review for the call log badges
   const reviewByTranscript = {};
   callReviews.forEach(r => { reviewByTranscript[r.transcript_id] = r; });
 
+  // ── shared mini styles ──────────────────────────────────────────
+  const btnPrimary = {
+    background: T.accent, border: 'none', color: '#fff',
+    borderRadius: 8, padding: '8px 18px', cursor: 'pointer',
+    fontSize: 13, fontWeight: 600, fontFamily: T.font,
+  };
+  const btnGhost = {
+    background: '#fff', border: `1px solid ${T.border}`, color: T.sub,
+    borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+    fontSize: 12, fontWeight: 600, fontFamily: T.font,
+  };
+  const inputStyle = {
+    padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
+    fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none',
+  };
+  const thStyle = {
+    padding: '10px 14px', fontSize: 11, fontWeight: 600, color: T.muted,
+    textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`, background: T.bg,
+  };
+  const tdStyle = { padding: '11px 14px', fontSize: 13, color: T.sub, borderBottom: `1px solid ${T.border}` };
+
   return (
-    <div style={{padding: '1rem'}}>
+    <div style={{ padding: '24px 28px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Back */}
       <button onClick={handleBack}
-        style={{background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, marginBottom: '1rem', padding: 0}}>
-        &larr; Back to Campaigns
+        style={{ background: 'none', border: 'none', color: T.accent, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, marginBottom: '1.25rem', padding: 0, fontFamily: T.font }}>
+        ← Back to Campaigns
       </button>
 
-      <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap'}}>
-        <h2 style={{margin: 0, color: '#e2e8f0'}}>{selectedCampaign.name}</h2>
+      {/* Campaign header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>{selectedCampaign.name}</h2>
         {selectedCampaign.product_id > 0 ? (
-          <span className="badge" style={{background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.75rem', padding: '2px 10px', borderRadius: '12px'}}>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#0891b2', background: 'rgba(8,145,178,0.1)' }}>
             {getProductName(selectedCampaign.product_id)}
           </span>
         ) : (
-          <span className="badge" style={{background: 'rgba(234,179,8,0.15)', color: '#fbbf24', fontSize: '0.75rem', padding: '2px 10px', borderRadius: '12px'}}>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.amber, background: 'rgba(245,158,11,0.1)' }}>
             ⚠ No product linked
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
         <button onClick={() => handleEditCampaign(selectedCampaign)}
-          style={{background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-            color: '#facc15', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600}}>
+          style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
           Edit Campaign
         </button>
         <select className="form-input" value={selectedCampaign.lead_source || ''}
@@ -280,7 +304,7 @@ export default function CampaignDetail({
             });
             setSelectedCampaign({...selectedCampaign, lead_source: src});
           }}
-          style={{width: 'auto', height: '28px', fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0', borderRadius: '6px'}}>
+          style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
           <option value="">No Source</option>
           <option value="facebook">Facebook / Meta</option>
           <option value="google">Google Ads</option>
@@ -292,148 +316,146 @@ export default function CampaignDetail({
         </select>
       </div>
 
-      <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
-        <div className="glass-panel metric-card"><div className="metric-label">Total Leads</div><div className="metric-value">{stats.total}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Called</div><div className="metric-value">{stats.called}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Qualified</div><div className="metric-value">{stats.qualified}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Appointments</div><div className="metric-value">{stats.booked}</div></div>
+      {/* Metrics grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+        {[
+          { label: 'Total Leads', val: stats.total, color: T.accent },
+          { label: 'Called', val: stats.called, color: T.sub },
+          { label: 'Qualified', val: stats.qualified, color: T.pink },
+          { label: 'Appointments', val: stats.booked, color: T.green },
+        ].map(s => (
+          <div key={s.label} style={{ ...card, padding: '18px 20px' }}>
+            <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{s.label}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
+          </div>
+        ))}
       </div>
 
       {/* Voice Settings — hidden for WhatsApp campaigns */}
-      {selectedCampaign.channel !== 'whatsapp' && <div className="glass-panel" style={{marginBottom: '1.5rem', padding: '12px 16px'}}>
-        <div style={{display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'}}>
-          <span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap'}}>🔊 Campaign Voice Settings</span>
-          <select className="form-input" value={campVoice.tts_provider}
-            onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '100px'}}>
-            <option value="">-- Provider --</option>
-            <option value="elevenlabs">ElevenLabs</option>
-            <option value="sarvam">Sarvam AI</option>
-            <option value="smallest">Smallest AI</option>
-          </select>
-          <select className="form-input" value={campVoice.tts_voice_id}
-            onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '160px'}}>
-            <option value="">-- Voice --</option>
-            {(() => {
-              const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
-              const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
-              const recommended = voices.filter(v => recs.includes(v.id));
-              const others = voices.filter(v => !recs.includes(v.id));
-              return (<>
-                {recommended.length > 0 && <optgroup label="★ Recommended">
-                  {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
-                </optgroup>}
-                {recommended.length > 0 && <optgroup label="All Voices">
-                  {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </optgroup>}
-                {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </>);
-            })()}
-          </select>
-          <select className="form-input" value={campVoice.tts_language}
-            onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '90px'}}>
-            <option value="">-- Language --</option>
-            {INDIAN_LANGUAGES.map(l => (
-              <option key={l.code} value={l.code}>{l.name}</option>
-            ))}
-          </select>
-          <button style={{
-              background: campVoiceSaveStatus === 'saved' ? 'linear-gradient(135deg, #22c55e, #16a34a)'
-                : campVoiceSaveStatus === 'error' ? 'linear-gradient(135deg, #ef4444, #b91c1c)'
-                : 'linear-gradient(135deg, #8b5cf6, #6d28d9)',
-              border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px',
-              cursor: campVoiceSaveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-              opacity: campVoiceSaveStatus === 'saving' ? 0.7 : 1, transition: 'background 0.2s'
-            }}
-            disabled={campVoiceSaveStatus === 'saving'}
-            onClick={handleSaveCampVoice}>
-            {campVoiceSaveStatus === 'saving' ? 'Saving…'
-              : campVoiceSaveStatus === 'saved' ? '✓ Saved'
-              : campVoiceSaveStatus === 'error' ? '✗ Failed'
-              : 'Save'}
-          </button>
-          <button style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
-            onClick={handleResetCampVoice}>Reset to Org Default</button>
-        </div>
-        <div style={{fontSize: '0.7rem', color: '#a78bfa', marginTop: '6px'}}>
-          {campVoice.tts_provider
-            ? (() => {
-                const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
-                  : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
-                  : 'Smallest AI';
-                const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
-                  .find(v => v.id === campVoice.tts_voice_id)?.name
-                  || campVoice.tts_voice_id || 'none';
-                // Language was saved correctly but never surfaced in the
-                // "Current:" line — the user couldn't tell at a glance which
-                // language a campaign was set to. Append it when present.
-                const langLabel = INDIAN_LANGUAGES
-                  .find(l => l.code === campVoice.tts_language)?.name
-                  || campVoice.tts_language;
-                return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '');
-              })()
-            : 'Using org default'}
-        </div>
-        {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
-          <div style={{fontSize: '0.65rem', color: '#22d3ee', marginTop: '4px'}}>
-            ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+      {selectedCampaign.channel !== 'whatsapp' && (
+        <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔊 Voice Settings</span>
+            <select className="form-input" value={campVoice.tts_provider}
+              onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
+              style={{ ...inputStyle, height: 32, minWidth: 110 }}>
+              <option value="">-- Provider --</option>
+              <option value="elevenlabs">ElevenLabs</option>
+              <option value="sarvam">Sarvam AI</option>
+              <option value="smallest">Smallest AI</option>
+            </select>
+            <select className="form-input" value={campVoice.tts_voice_id}
+              onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
+              style={{ ...inputStyle, height: 32, minWidth: 160 }}>
+              <option value="">-- Voice --</option>
+              {(() => {
+                const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
+                const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
+                const recommended = voices.filter(v => recs.includes(v.id));
+                const others = voices.filter(v => !recs.includes(v.id));
+                return (<>
+                  {recommended.length > 0 && <optgroup label="★ Recommended">
+                    {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
+                  </optgroup>}
+                  {recommended.length > 0 && <optgroup label="All Voices">
+                    {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </optgroup>}
+                  {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </>);
+              })()}
+            </select>
+            <select className="form-input" value={campVoice.tts_language}
+              onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
+              style={{ ...inputStyle, height: 32, minWidth: 100 }}>
+              <option value="">-- Language --</option>
+              {INDIAN_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <button style={{
+                background: campVoiceSaveStatus === 'saved' ? T.green
+                  : campVoiceSaveStatus === 'error' ? T.red
+                  : T.accent,
+                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                cursor: campVoiceSaveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                opacity: campVoiceSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
+              }}
+              disabled={campVoiceSaveStatus === 'saving'}
+              onClick={handleSaveCampVoice}>
+              {campVoiceSaveStatus === 'saving' ? 'Saving…'
+                : campVoiceSaveStatus === 'saved' ? '✓ Saved'
+                : campVoiceSaveStatus === 'error' ? '✗ Failed'
+                : 'Save'}
+            </button>
+            <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>
           </div>
-        )}
-      </div>}
+          <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>
+            {campVoice.tts_provider
+              ? (() => {
+                  const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
+                    : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
+                    : 'Smallest AI';
+                  const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
+                    .find(v => v.id === campVoice.tts_voice_id)?.name
+                    || campVoice.tts_voice_id || 'none';
+                  const langLabel = INDIAN_LANGUAGES
+                    .find(l => l.code === campVoice.tts_language)?.name
+                    || campVoice.tts_language;
+                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '');
+                })()
+              : 'Using org default'}
+          </div>
+          {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
+            <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}>
+              ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Billing Minutes Widget */}
       {billingUsage && (
         <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: '10px',
-          background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
-          borderRadius: '20px', padding: '6px 16px', marginBottom: '1rem',
+          display: 'inline-flex', alignItems: 'center', gap: 10,
+          background: 'rgba(99,102,241,0.06)', border: `1px solid rgba(99,102,241,0.2)`,
+          borderRadius: 20, padding: '6px 16px', marginBottom: 14,
         }}>
-          <span style={{fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap'}}>
-            {'\u23F1'} {billingUsage.minutes_remaining} / {billingUsage.minutes_included} min remaining
+          <span style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            ⏱ {billingUsage.minutes_remaining} / {billingUsage.minutes_included} min remaining
           </span>
-          <div style={{
-            width: '80px', height: '6px', background: 'rgba(100,116,139,0.3)',
-            borderRadius: '3px', overflow: 'hidden',
-          }}>
+          <div style={{ width: 80, height: 6, background: T.border, borderRadius: 3, overflow: 'hidden' }}>
             <div style={{
               width: `${Math.min(100, (billingUsage.minutes_used / billingUsage.minutes_included) * 100)}%`,
-              height: '100%', borderRadius: '3px',
+              height: '100%', borderRadius: 3,
               background: (billingUsage.minutes_used / billingUsage.minutes_included) > 0.9
-                ? '#ef4444' : (billingUsage.minutes_used / billingUsage.minutes_included) > 0.7
-                ? '#f59e0b' : '#6366f1',
+                ? T.red : (billingUsage.minutes_used / billingUsage.minutes_included) > 0.7
+                ? T.amber : T.accent,
               transition: 'width 0.5s ease',
             }} />
           </div>
         </div>
       )}
 
-      {/* Live Dial Events Feed — always visible while the SSE stream is open
-          so the user knows we're listening even right after they click Clear. */}
-      <div className="glass-panel" style={{marginBottom: '1rem', padding: '12px', maxHeight: '200px', overflowY: 'auto'}}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-          <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px'}}>📡 Live Campaign Activity</span>
+      {/* Live Dial Events Feed */}
+      <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>📡 Live Campaign Activity</span>
           {liveEvents.length > 0 && (
             <button onClick={() => {
               setLiveEvents([]);
-              // Persist the clear timestamp so a page reload doesn't replay
-              // the events we just dismissed (backend SSE replays last 20 on
-              // every connect). New events strictly newer than this stamp
-              // will continue to flow in.
               try {
                 localStorage.setItem(`liveEventsClearedAt:${selectedCampaign.id}`, String(Date.now()));
-              } catch (_) { /* private mode / quota — non-fatal */ }
-            }} style={{background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.7rem'}}>Clear</button>
+              } catch (_) { }
+            }} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: '0.7rem', fontFamily: T.font }}>Clear</button>
           )}
         </div>
         {liveEvents.length === 0 ? (
-          <div style={{fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic', padding: '4px 0'}}>
+          <div style={{ fontSize: '0.75rem', color: T.muted, fontStyle: 'italic', padding: '4px 0' }}>
             Listening for new events… start a dial to see activity here.
           </div>
         ) : (
           liveEvents.map((ev, i) => (
-            <div key={i} style={{fontSize: '0.8rem', color: '#e2e8f0', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'SFMono-Regular, Consolas, monospace'}}>
+            <div key={i} style={{ fontSize: '0.8rem', color: T.sub, padding: '3px 0', borderBottom: `1px solid ${T.border}`, fontFamily: T.mono }}>
               {withDate(ev.label, ev.ts)}
             </div>
           ))
@@ -441,9 +463,9 @@ export default function CampaignDetail({
       </div>
 
       {/* Quick Add Lead Form */}
-      <div className="glass-panel" style={{padding: '12px', marginBottom: '1rem', display: 'flex', gap: '8px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
-        <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, height: '32px', display: 'flex', alignItems: 'center'}}>➕ Quick Add:</span>
-        <div style={{display: 'flex', flexDirection: 'column'}}>
+      <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
             onChange={e => {
               const v = e.target.value;
@@ -453,11 +475,10 @@ export default function CampaignDetail({
               else if (/\d/.test(t) || !/[A-Za-z]/.test(t)) setQaNameErr('Name must contain only letters');
               else setQaNameErr('');
             }}
-            style={{width: '120px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
-              border: qaNameErr ? '1px solid #ef4444' : undefined}} />
-          {qaNameErr && <span style={{color: '#ef4444', fontSize: '0.7rem', marginTop: '4px'}}>{qaNameErr}</span>}
+            style={{ ...inputStyle, width: 130, height: 32, border: qaNameErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+          {qaNameErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaNameErr}</span>}
         </div>
-        <div style={{display: 'flex', flexDirection: 'column'}}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Phone (10 digits)" value={qaPhone}
             inputMode="numeric" maxLength={10} pattern="\d{10}"
             onChange={e => {
@@ -465,11 +486,10 @@ export default function CampaignDetail({
               setQaPhone(v);
               if (qaPhoneErr) setQaPhoneErr('');
             }}
-            style={{width: '150px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
-              border: qaPhoneErr ? '1px solid #ef4444' : undefined}} />
-          {qaPhoneErr && <span style={{color: '#ef4444', fontSize: '0.7rem', marginTop: '4px'}}>{qaPhoneErr}</span>}
+            style={{ ...inputStyle, width: 160, height: 32, border: qaPhoneErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+          {qaPhoneErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaPhoneErr}</span>}
         </div>
-        <button className="btn-primary" style={{height: '32px', fontSize: '0.8rem', padding: '4px 12px'}}
+        <button style={{ ...btnPrimary, height: 32, padding: '4px 14px' }}
           onClick={async () => {
             const name = qaName.trim();
             const phone = qaPhone.trim();
@@ -514,22 +534,23 @@ export default function CampaignDetail({
               } else if (!data.fields) { setQaApiErr(errMsg || `Error (${res.status})`); }
             } catch(e) { setQaApiErr('Failed: ' + (e?.message || 'network error')); }
           }}>Add & Assign</button>
-        {qaApiErr && <span style={{color: '#ef4444', fontSize: '0.75rem', width: '100%', marginTop: '4px'}}>{qaApiErr}</span>}
+        {qaApiErr && <span style={{ color: T.red, fontSize: '0.75rem', width: '100%', marginTop: 4 }}>{qaApiErr}</span>}
       </div>
 
       {selectedCampaign.channel === 'whatsapp' && (
-        <div style={{marginBottom: '1rem'}}>
+        <div style={{ marginBottom: 14 }}>
           <WhatsAppBlastPanel campaignId={selectedCampaign.id} apiFetch={apiFetch} API_URL={API_URL} />
         </div>
       )}
 
-      <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', flexWrap: 'wrap'}}>
-        <button className="btn-primary" onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
-        <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
+        <button style={{ ...btnPrimary, background: '#0891b2' }}
           onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
-        <a href={`${API_URL}/leads/sample-csv`} download style={{color: '#94a3b8', fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center'}}>📋 Sample CSV</a>
+        <a href={`${API_URL}/leads/sample-csv`} download style={{ color: T.muted, fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center' }}>📋 Sample CSV</a>
         {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
-          <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', fontSize: '0.85rem', padding: '8px 16px'}}
+          <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
               if (!window.confirm(`Dial ALL ${newCount} new leads? (30s gap between calls)`)) return;
@@ -544,7 +565,7 @@ export default function CampaignDetail({
             📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        <button className="btn-primary" style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', fontSize: '0.85rem', padding: '8px 16px'}}
+        <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
             if (!window.confirm(`Dial ALL ${campaignLeads.length} leads? (30s gap)`)) return;
             try {
@@ -559,80 +580,74 @@ export default function CampaignDetail({
         </button>
       </div>
 
-      {/* Tab Switcher: Leads | Call Log */}
-      <div style={{display: 'flex', gap: '0', marginBottom: '1rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', width: 'fit-content'}}>
-        <button onClick={() => setDetailTab('leads')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'leads' ? 'rgba(99,102,241,0.2)' : 'transparent',
-            color: detailTab === 'leads' ? '#818cf8' : '#64748b'}}>
-          👥 Leads ({campaignLeads.length})
-        </button>
-        <button onClick={() => { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'calllog' ? 'rgba(34,197,94,0.2)' : 'transparent',
-            color: detailTab === 'calllog' ? '#22c55e' : '#64748b'}}>
-          📞 Call Log ({callLog.length})
-        </button>
-        <button onClick={() => setDetailTab('insights')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'insights' ? 'rgba(168,85,247,0.2)' : 'transparent',
-            color: detailTab === 'insights' ? '#a855f7' : '#64748b'}}>
-          📊 Call Insights
-        </button>
-        <button onClick={() => setDetailTab('retries')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'retries' ? 'rgba(245,158,11,0.2)' : 'transparent',
-            color: detailTab === 'retries' ? '#f59e0b' : '#64748b'}}>
-          🔄 Retries
-        </button>
+      {/* Tab Switcher */}
+      <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content', marginBottom: 16 }}>
+        {[
+          { id: 'leads',   label: `👥 Leads (${campaignLeads.length})`,   activeColor: T.accent },
+          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
+          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7' },
+          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber  },
+        ].map(tab => (
+          <button key={tab.id}
+            onClick={() => {
+              if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
+              else setDetailTab(tab.id);
+            }}
+            style={{
+              padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, fontFamily: T.font,
+              background: detailTab === tab.id ? tab.activeColor : 'transparent',
+              color: detailTab === tab.id ? '#fff' : T.muted,
+              transition: 'all 0.15s',
+            }}>
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* Call Log Table */}
+      {/* Call Log Tab — WhatsApp notice */}
       {detailTab === 'calllog' && selectedCampaign.channel === 'whatsapp' && (
-        <div className="glass-panel" style={{padding: '1.5rem', marginBottom: '1.5rem', textAlign: 'center', color: '#64748b'}}>
-          💬 Conversation history is in the <strong style={{color: '#25D366'}}>WhatsApp Comms</strong> tab.
+        <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem', textAlign: 'center', color: T.muted }}>
+          💬 Conversation history is in the <strong style={{ color: T.wa }}>WhatsApp Comms</strong> tab.
         </div>
       )}
+
+      {/* Call Log Table */}
       {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
-        <div className="glass-panel" style={{overflowX: 'auto', marginBottom: '1.5rem'}}>
-          <table className="leads-table" style={{width: '100%'}}>
+        <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th>Lead</th>
-                <th>Phone</th>
-                <th>Source</th>
-                <th>Time</th>
-                <th>Outcome</th>
-                <th>Quality</th>
-                <th>Duration</th>
-                <th>Recording</th>
+                {['Lead','Phone','Source','Time','Outcome','Quality','Duration','Recording'].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {callLog.length === 0 ? (
-                <tr><td colSpan="8" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No calls made yet.</td></tr>
+                <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No calls made yet.</td></tr>
               ) : callLog.map(call => {
                 const review = reviewByTranscript[call.id];
                 const outcomeColors = {
-                  'Completed': '#22c55e', 'Connected': '#60a5fa', 'No Answer': '#f59e0b',
-                  'Busy': '#f97316', 'Failed': '#ef4444', 'DND Blocked': '#dc2626'
+                  'Completed': T.green, 'Connected': '#60a5fa', 'No Answer': T.amber,
+                  'Busy': '#f97316', 'Failed': T.red, 'DND Blocked': '#dc2626'
                 };
                 const outcomeBg = {
-                  'Completed': 'rgba(34,197,94,0.1)', 'Connected': 'rgba(96,165,250,0.1)', 'No Answer': 'rgba(245,158,11,0.1)',
+                  'Completed': 'rgba(16,185,129,0.1)', 'Connected': 'rgba(96,165,250,0.1)', 'No Answer': 'rgba(245,158,11,0.1)',
                   'Busy': 'rgba(249,115,22,0.1)', 'Failed': 'rgba(239,68,68,0.1)', 'DND Blocked': 'rgba(220,38,38,0.1)'
                 };
                 return (
                   <tr key={call.id}>
-                    <td style={{fontWeight: 600}}>{call.first_name} {call.last_name || ''}</td>
-                    <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{call.phone}</td>
-                    <td><span className="badge">{call.source || '-'}</span></td>
-                    <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{formatDateTime(call.created_at, orgTimezone)}</td>
-                    <td>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{call.first_name} {call.last_name || ''}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.mono, fontSize: '0.85rem' }}>{call.phone}</td>
+                    <td style={tdStyle}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{call.source || '-'}</span></td>
+                    <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted }}>{formatDateTime(call.created_at, orgTimezone)}</td>
+                    <td style={tdStyle}>
                       <span style={{
-                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
-                        color: outcomeColors[call.outcome] || '#94a3b8',
-                        background: outcomeBg[call.outcome] || 'rgba(148,163,184,0.1)',
-                        border: `1px solid ${outcomeColors[call.outcome] || '#94a3b8'}30`
+                        padding: '3px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                        color: outcomeColors[call.outcome] || T.muted,
+                        background: outcomeBg[call.outcome] || 'rgba(156,163,175,0.1)',
+                        border: `1px solid ${(outcomeColors[call.outcome] || T.muted)}30`
                       }}>
                         {call.outcome === 'Completed' && '✅ '}
                         {call.outcome === 'Connected' && '📞 '}
@@ -643,36 +658,29 @@ export default function CampaignDetail({
                         {call.outcome}
                       </span>
                     </td>
-                    <td>
+                    <td style={tdStyle}>
                       {review ? (() => {
                         const q = Math.max(0, Math.min(5, Math.round(Number(review.quality_score) || 0)));
                         return (
                           <span style={{
-                            padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700,
-                            color: scoreColor(q),
-                            background: `${scoreColor(q)}18`,
-                            border: `1px solid ${scoreColor(q)}40`
+                            padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 700,
+                            color: scoreColor(q), background: `${scoreColor(q)}18`, border: `1px solid ${scoreColor(q)}40`
                           }}>
                             {'★'.repeat(q)}{'☆'.repeat(5 - q)}
                           </span>
                         );
                       })() : (
-                        <span style={{color: '#64748b', fontSize: '0.75rem'}}>--</span>
+                        <span style={{ color: T.muted, fontSize: '0.75rem' }}>--</span>
                       )}
                     </td>
-                    <td style={{fontSize: '0.85rem', color: call.call_duration_s > 0 ? '#e2e8f0' : '#64748b'}}>
+                    <td style={{ ...tdStyle, fontFamily: T.mono }}>
                       {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
                     </td>
-                    <td>
+                    <td style={tdStyle}>
                       {call.recording_url ? (
-                        <AuthAudio
-                          preload="none"
-                          src={call.recording_url}
-                          className="call-log-audio"
-                          style={{height: '36px', width: '260px'}}
-                        />
+                        <AuthAudio preload="none" src={call.recording_url} className="call-log-audio" style={{ height: 36, width: 260 }} />
                       ) : (
-                        <span style={{color: '#64748b', fontSize: '0.8rem'}}>—</span>
+                        <span style={{ color: T.muted, fontSize: '0.8rem' }}>—</span>
                       )}
                     </td>
                   </tr>
@@ -685,56 +693,48 @@ export default function CampaignDetail({
 
       {/* Call Insights Tab */}
       {detailTab === 'insights' && (
-        <div style={{marginBottom: '1.5rem'}}>
+        <div style={{ marginBottom: '1.5rem' }}>
           {insightsLoading ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading insights...</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>Loading insights...</div>
           ) : insightsError ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)'}}>
-              <div style={{fontWeight: 600, marginBottom: '6px'}}>Call Insights are temporarily unavailable</div>
-              <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>{insightsError}</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.red, border: `1px solid #fca5a5` }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Call Insights are temporarily unavailable</div>
+              <div style={{ fontSize: '0.8rem', color: T.muted }}>{insightsError}</div>
             </div>
           ) : !callInsights || callInsights.total_reviews === 0 ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No call reviews yet. Reviews are generated automatically after each call.</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>No call reviews yet. Reviews are generated automatically after each call.</div>
           ) : (
             <>
               {/* Summary Cards */}
-              <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Avg Quality Score</div>
-                  <div className="metric-value" style={{color: scoreColor(Math.round(callInsights.avg_quality_score))}}>
-                    {callInsights.avg_quality_score}/5
-                  </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Avg Quality Score</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: scoreColor(Math.round(callInsights.avg_quality_score)) }}>{callInsights.avg_quality_score}/5</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Appointment Rate</div>
-                  <div className="metric-value" style={{color: callInsights.appointment_rate > 30 ? '#22c55e' : '#f59e0b'}}>
-                    {callInsights.appointment_rate}%
-                  </div>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Appointment Rate</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: callInsights.appointment_rate > 30 ? T.green : T.amber }}>{callInsights.appointment_rate}%</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Calls Analyzed</div>
-                  <div className="metric-value">{callInsights.total_reviews}</div>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Calls Analyzed</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: T.text }}>{callInsights.total_reviews}</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Top Sentiment</div>
-                  <div className="metric-value" style={{fontSize: '1.1rem', color: sentimentColor(
-                    Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0]
-                  )}}>
-                    {Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '-'}
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Top Sentiment</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: sentimentColor(Object.entries(callInsights.sentiment_breakdown || {}).sort((a,b)=>b[1]-a[1])[0]?.[0]) }}>
+                    {Object.entries(callInsights.sentiment_breakdown || {}).sort((a,b)=>b[1]-a[1])[0]?.[0] || '-'}
                   </div>
                 </div>
               </div>
 
               {/* Improvement Suggestions */}
               {callInsights.top_improvements && callInsights.top_improvements.length > 0 && (
-                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
-                  <div style={{fontSize: '0.85rem', color: '#a855f7', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
-                    Prompt Improvement Suggestions
-                  </div>
+                <div style={{ ...card, padding: 18, marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: '#a855f7', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Prompt Improvement Suggestions</div>
                   {callInsights.top_improvements.map((imp, i) => (
-                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(168,85,247,0.06)', borderRadius: '6px', borderLeft: '3px solid #a855f7', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                    <div key={i} style={{ padding: '8px 12px', marginBottom: 6, background: 'rgba(168,85,247,0.06)', borderRadius: 8, borderLeft: '3px solid #a855f7', fontSize: '0.85rem', color: T.sub }}>
                       {imp.suggestion}
-                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({imp.count}x)</span>
+                      <span style={{ color: T.muted, fontSize: '0.75rem', marginLeft: 8 }}>({imp.count}x)</span>
                     </div>
                   ))}
                 </div>
@@ -742,70 +742,55 @@ export default function CampaignDetail({
 
               {/* Top Failure Reasons */}
               {callInsights.top_failure_reasons && callInsights.top_failure_reasons.length > 0 && (
-                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
-                  <div style={{fontSize: '0.85rem', color: '#f97316', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
-                    Top Failure Reasons
-                  </div>
+                <div style={{ ...card, padding: 18, marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: '#f97316', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Top Failure Reasons</div>
                   {callInsights.top_failure_reasons.map((fr, i) => (
-                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(249,115,22,0.06)', borderRadius: '6px', borderLeft: '3px solid #f97316', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                    <div key={i} style={{ padding: '8px 12px', marginBottom: 6, background: 'rgba(249,115,22,0.06)', borderRadius: 8, borderLeft: '3px solid #f97316', fontSize: '0.85rem', color: T.sub }}>
                       {fr.reason}
-                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({fr.count}x)</span>
+                      <span style={{ color: T.muted, fontSize: '0.75rem', marginLeft: 8 }}>({fr.count}x)</span>
                     </div>
                   ))}
                 </div>
               )}
 
               {/* Per-Call Reviews Table */}
-              <div className="glass-panel" style={{overflowX: 'auto'}}>
-                <table className="leads-table" style={{width: '100%'}}>
+              <div style={{ ...card, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      <th>Lead</th>
-                      <th>Quality</th>
-                      <th>Appt Booked</th>
-                      <th>Date / Time</th>
-                      <th>Sentiment</th>
-                      <th>What Went Well</th>
-                      <th>What Went Wrong</th>
-                      <th>Failure Reason</th>
+                      {['Lead','Quality','Appt Booked','Date / Time','Sentiment','What Went Well','What Went Wrong','Failure Reason'].map(h => (
+                        <th key={h} style={thStyle}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {callReviews.map(r => (
                       <tr key={r.id}>
-                        <td style={{fontWeight: 600}}>{r.first_name} {r.last_name || ''}</td>
-                        <td>
+                        <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{r.first_name} {r.last_name || ''}</td>
+                        <td style={tdStyle}>
                           {(() => {
-                            // Clamp to 0..5 — old rows have scores outside that range
-                            // (some are 0..10), which would crash String.repeat().
                             const q = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
                             return (
-                              <span style={{fontWeight: 700, color: scoreColor(q), fontSize: '0.9rem'}}>
+                              <span style={{ fontWeight: 700, color: scoreColor(q), fontSize: '0.9rem' }}>
                                 {'★'.repeat(q)}{'☆'.repeat(5 - q)}
                               </span>
                             );
                           })()}
                         </td>
-                        <td>
+                        <td style={tdStyle}>
                           <span style={{
-                            padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
-                            color: r.appointment_booked ? '#22c55e' : '#f97316',
-                            background: r.appointment_booked ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
+                            padding: '2px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                            color: r.appointment_booked ? T.green : '#f97316',
+                            background: r.appointment_booked ? 'rgba(16,185,129,0.1)' : 'rgba(249,115,22,0.1)',
                           }}>
                             {r.appointment_booked ? 'Yes' : 'No'}
                           </span>
                         </td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap'}}>
-                          {formatDateTime(r.created_at, orgTimezone)}
-                        </td>
-                        <td>
-                          <span style={{color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem'}}>
-                            {r.customer_sentiment}
-                          </span>
-                        </td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.what_went_well || '-'}</td>
-                        <td style={{fontSize: '0.8rem', color: '#f87171', maxWidth: '200px'}}>{r.what_went_wrong || '-'}</td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.failure_reason || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, whiteSpace: 'nowrap' }}>{formatDateTime(r.created_at, orgTimezone)}</td>
+                        <td style={tdStyle}><span style={{ color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem' }}>{r.customer_sentiment}</span></td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, maxWidth: 200 }}>{r.what_went_well || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.red, maxWidth: 200 }}>{r.what_went_wrong || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, maxWidth: 200 }}>{r.failure_reason || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -818,41 +803,39 @@ export default function CampaignDetail({
 
       {/* Retries Tab */}
       {detailTab === 'retries' && (
-        <div style={{marginBottom: '1.5rem'}}>
+        <div style={{ marginBottom: '1.5rem' }}>
           {retriesLoading ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading retry queue...</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>Loading retry queue...</div>
           ) : retries.length === 0 ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No retries queued for this campaign.</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>No retries queued for this campaign.</div>
           ) : (
-            <div className="glass-panel" style={{overflowX: 'auto'}}>
-              <table className="leads-table" style={{width: '100%'}}>
+            <div style={{ ...card, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th>Lead</th>
-                    <th>Phone</th>
-                    <th>Attempt</th>
-                    <th>Retry Time</th>
-                    <th>Status</th>
+                    {['Lead','Phone','Attempt','Retry Time','Status'].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {retries.map(r => {
                     const retryStatusColors = {
-                      pending: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' },
-                      dialing: { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
-                      completed: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)' },
-                      exhausted: { color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' },
+                      pending:   { color: T.amber, bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.3)' },
+                      dialing:   { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
+                      completed: { color: T.green,  bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)' },
+                      exhausted: { color: T.red,    bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.3)' },
                     };
                     const sc = retryStatusColors[r.status] || retryStatusColors.pending;
                     return (
                       <tr key={r.id}>
-                        <td style={{fontWeight: 600}}>{r.first_name || r.lead_name || '-'} {r.last_name || ''}</td>
-                        <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{r.phone}</td>
-                        <td style={{fontSize: '0.85rem', color: '#e2e8f0', fontWeight: 600}}>{r.attempt || r.attempt_number || 1}/{r.max_attempts || 3}</td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{r.retry_time ? formatDateTime(r.retry_time, orgTimezone) : '-'}</td>
-                        <td>
+                        <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{r.first_name || r.lead_name || '-'} {r.last_name || ''}</td>
+                        <td style={{ ...tdStyle, fontFamily: T.mono, fontSize: '0.85rem' }}>{r.phone}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>{r.attempt || r.attempt_number || 1}/{r.max_attempts || 3}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted }}>{r.retry_time ? formatDateTime(r.retry_time, orgTimezone) : '-'}</td>
+                        <td style={tdStyle}>
                           <span style={{
-                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                            padding: '3px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
                             color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`,
                           }}>
                             {r.status}
@@ -870,144 +853,143 @@ export default function CampaignDetail({
 
       {/* Leads Table */}
       {detailTab === 'leads' && (
-      <div className="glass-panel" style={{overflowX: 'auto'}}>
-        <table className="leads-table" style={{width: '100%'}}>
-          <thead>
-            <tr>
-              <th>Name</th><th>Phone</th><th>Source</th><th>Status</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {campaignLeads.length === 0 ? (
-              <tr><td colSpan="5" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No leads in this campaign yet. Add some to start dialing!</td></tr>
-            ) : campaignLeads.map(lead => (
-              <React.Fragment key={lead.id}>
+        <div style={{ ...card, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
               <tr>
-                <td style={{fontWeight: 600}}>{lead.first_name} {lead.last_name}</td>
-                <td>{lead.phone}</td>
-                <td>{lead.source || '-'}</td>
-                <td>
-                  <select className="form-input" value={lead.status || 'New'}
-                    onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
-                    style={{width: 'auto', height: '30px', fontSize: '0.75rem', padding: '2px 6px'}}>
-                    {['New','Contacted','Qualified','Appointment Set','Converted','Lost'].map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </td>
-                <td>
-                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
-                    <button className="btn-call"
-                      onClick={() => handleEditLead(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(250,204,21,0.15)', color: '#facc15', borderColor: 'rgba(250,204,21,0.3)'}}>
-                      ✏️ Edit
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => handleDialClick(lead)}
-                      disabled={dialingId === lead.id || webCallActive === lead.id}
-                      style={{
-                        fontSize: '0.75rem', padding: '4px 10px',
-                        cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
-                        opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
-                      }}>
-                      {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
-                      disabled={webCallActive != null && webCallActive !== lead.id}
-                      style={{
-                        fontSize: '0.75rem', padding: '4px 10px',
-                        cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
-                        opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
-                        borderColor: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
-                        color: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
-                        background: webCallActive === lead.id ? 'rgba(239,68,68,0.1)' : 'rgba(139,92,246,0.1)'
-                      }}>
-                      {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
-                    </button>
-                    {dndBlockedLeadIds.has(lead.id) && (
-                      <span title="This number is on the DND list — outbound dials are blocked"
-                        style={{fontSize: '0.75rem', padding: '4px 10px', borderRadius: '6px',
-                          background: 'rgba(239,68,68,0.12)', color: '#fca5a5',
-                          border: '1px solid rgba(239,68,68,0.35)', fontWeight: 600,
-                          display: 'inline-flex', alignItems: 'center', gap: '4px'}}>
-                        🚫 DND — number blocked
-                      </span>
-                    )}
-                    <button className="btn-call"
-                      onClick={() => handleViewTranscripts(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
-                        background: lead.transcript_count > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.08)',
-                        color: lead.transcript_count > 0 ? '#22c55e' : '#64748b',
-                        borderColor: lead.transcript_count > 0 ? 'rgba(34,197,94,0.3)' : 'rgba(99,102,241,0.15)',
-                        fontWeight: lead.transcript_count > 0 ? 600 : 400}}>
-                      {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
-                      {lead.recording_count > 0 && ' 🔊'}
-                      {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => handleNote(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.3)'}}>
-                      📝 Note
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => {
-                        setScheduleLead(lead);
-                        // Default to one hour from now in local time — typed
-                        // into a datetime-local input (YYYY-MM-DDTHH:MM).
-                        const d = new Date(Date.now() + 60 * 60 * 1000);
-                        const pad = n => String(n).padStart(2, '0');
-                        setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                        setScheduleNotes('');
-                      }}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.15)', color: '#60a5fa', borderColor: 'rgba(59,130,246,0.3)'}}>
-                      📅 Schedule
-                    </button>
-                    <button onClick={() => handleRemoveLead(lead.id)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
-                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                        color: '#fca5a5', borderRadius: '6px'}}>
-                      Remove
-                    </button>
-                  </div>
-                </td>
+                {['Name','Phone','Source','Status','Action'].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
               </tr>
-              {lead.follow_up_note && (
-                <tr>
-                  <td colSpan="5" style={{padding: '12px 24px', background: 'rgba(0,0,0,0.2)', borderLeft: '3px solid #6366f1'}}>
-                    <div style={{fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600}}>AI Follow-Up Note</div>
-                    <div style={{whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: '0.85rem', lineHeight: 1.5}}>{lead.follow_up_note}</div>
-                  </td>
-                </tr>
-              )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {campaignLeads.length === 0 ? (
+                <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No leads in this campaign yet. Add some to start dialing!</td></tr>
+              ) : campaignLeads.map(lead => (
+                <React.Fragment key={lead.id}>
+                  <tr>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{lead.first_name} {lead.last_name}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
+                    <td style={tdStyle}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{lead.source || '-'}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      <select className="form-input" value={lead.status || 'New'}
+                        onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
+                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
+                        {['New','Contacted','Qualified','Appointment Set','Converted','Lost'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => handleEditLead(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => handleDialClick(lead)}
+                          disabled={dialingId === lead.id || webCallActive === lead.id}
+                          style={{
+                            fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                            cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
+                            opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
+                            background: 'rgba(16,185,129,0.08)', color: '#065f46',
+                            border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
+                          }}>
+                          {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
+                        </button>
+                        <button
+                          onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
+                          disabled={webCallActive != null && webCallActive !== lead.id}
+                          style={{
+                            fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                            cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
+                            opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
+                            borderRadius: 6,
+                            border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
+                            color: webCallActive === lead.id ? T.red : T.accent,
+                            background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
+                          }}>
+                          {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
+                        </button>
+                        {dndBlockedLeadIds.has(lead.id) && (
+                          <span title="This number is on the DND list — outbound dials are blocked"
+                            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                              background: '#fee2e2', color: T.red,
+                              border: '1px solid #fca5a5', fontWeight: 600,
+                              display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            🚫 DND — number blocked
+                          </span>
+                        )}
+                        <button
+                          onClick={() => handleViewTranscripts(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: lead.transcript_count > 0 ? 600 : 400,
+                            background: lead.transcript_count > 0 ? 'rgba(16,185,129,0.08)' : T.bg,
+                            color: lead.transcript_count > 0 ? '#065f46' : T.muted,
+                            border: lead.transcript_count > 0 ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
+                          }}>
+                          {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
+                          {lead.recording_count > 0 && ' 🔊'}
+                          {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
+                        </button>
+                        <button
+                          onClick={() => handleNote(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          📝 Note
+                        </button>
+                        <button
+                          onClick={() => {
+                            setScheduleLead(lead);
+                            const d = new Date(Date.now() + 60 * 60 * 1000);
+                            const pad = n => String(n).padStart(2, '0');
+                            setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                            setScheduleNotes('');
+                          }}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          📅 Schedule
+                        </button>
+                        <button onClick={() => handleRemoveLead(lead.id)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                            background: '#fee2e2', border: '1px solid #fca5a5',
+                            color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {lead.follow_up_note && (
+                    <tr>
+                      <td colSpan="5" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: '0.8rem', color: T.muted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>AI Follow-Up Note</div>
+                        <div style={{ whiteSpace: 'pre-wrap', color: T.sub, fontSize: '0.85rem', lineHeight: 1.5 }}>{lead.follow_up_note}</div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {/* ── Schedule Call Modal ─────────────────────────────────────────────
-          Simple datetime + optional notes, POSTs to /api/scheduled-calls.
-          The datetime-local input returns "YYYY-MM-DDTHH:MM" (no seconds),
-          so we append ":00" and convert the T→space to match the backend's
-          accepted "2006-01-02 15:04:05" format. Avoids RFC3339/timezone
-          ambiguity — the backend interprets as server-local time, which is
-          what the user sees in the input. */}
+      {/* Schedule Call Modal */}
       {scheduleLead && (
         <div
           className="modal-overlay"
           onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}
         >
-          <div className="modal-content glass-panel" style={{maxWidth: '440px', padding: '1.5rem'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-              <h3 style={{margin: 0, color: '#e2e8f0'}}>📅 Schedule Call</h3>
+          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Schedule Call</h3>
               <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
-                style={{background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer'}}>✕</button>
+                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
-            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem'}}>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
             </p>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
-              <label style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600}}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Date &amp; Time
                 <input
                   type="datetime-local"
@@ -1019,10 +1001,10 @@ export default function CampaignDetail({
                     const pad = n => String(n).padStart(2, '0');
                     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
                   })()}
-                  style={{width: '100%', marginTop: '6px'}}
+                  style={{ ...inputStyle, width: '100%', marginTop: 6 }}
                 />
               </label>
-              <label style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600}}>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Notes (optional)
                 <textarea
                   className="form-input"
@@ -1030,25 +1012,25 @@ export default function CampaignDetail({
                   onChange={e => setScheduleNotes(e.target.value)}
                   rows={3}
                   placeholder="e.g. follow-up on pricing discussion"
-                  style={{width: '100%', marginTop: '6px', resize: 'vertical'}}
+                  style={{ ...inputStyle, width: '100%', marginTop: 6, resize: 'vertical' }}
                 />
               </label>
             </div>
             {scheduleStatus.kind === 'error' && (
               <div style={{
-                marginTop: '1rem', padding: '8px 12px', borderRadius: '6px', fontSize: '0.8rem',
-                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#ef4444'
+                marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
+                background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
               }}>
                 ⚠️ {scheduleStatus.text}
               </div>
             )}
-            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '1.25rem'}}>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
               <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
-                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
+                style={{ ...btnGhost }}>
                 Cancel
               </button>
               <button
-                className="btn-primary"
+                style={{ ...btnPrimary, opacity: (scheduleSaving || !scheduleAt) ? 0.6 : 1 }}
                 disabled={scheduleSaving || !scheduleAt}
                 onClick={async () => {
                   if (!scheduleAt) return;

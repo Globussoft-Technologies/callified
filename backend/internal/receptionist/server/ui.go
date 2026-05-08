@@ -10,74 +10,89 @@ const demoHTML = `<!doctype html>
 <meta charset="utf-8">
 <title>AI Receptionist — Voice Demo</title>
 <style>
-  :root { --bg:#0f172a; --panel:#1e293b; --ink:#e2e8f0; --me:#2563eb;
-          --bot:#334155; --warn:#dc2626; --ok:#16a34a; --muted:#94a3b8; }
+  :root { --bg:#f4f5f9; --panel:#ffffff; --ink:#111827; --me:#6366f1;
+          --bot:#f3f4f6; --warn:#dc2626; --ok:#10b981; --muted:#9ca3af;
+          --border:#e5e7eb; --sub:#374151; }
   * { box-sizing: border-box; }
-  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-         background:var(--bg); color:var(--ink); min-height:100vh; display:flex;
-         align-items:center; justify-content:center; padding:16px; }
-  .app { width:min(760px,100%); height:min(90vh,860px); background:var(--panel);
-         border-radius:14px; display:flex; flex-direction:column; overflow:hidden;
-         box-shadow:0 20px 50px rgba(0,0,0,.4); }
-  header { padding:14px 18px; border-bottom:1px solid #334155;
-           display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  header h1 { margin:0; font-size:16px; font-weight:600; }
-  .pill { font-size:11px; padding:3px 8px; background:#334155;
-          border-radius:999px; color:var(--muted); }
-  .pill.live { background:var(--ok); color:#fff; }
-  .pill.warn { background:var(--warn); color:#fff; }
+  body { margin:0; font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:var(--bg); color:var(--ink); min-height:100vh;
+         display:flex; flex-direction:column; padding:0; }
+  .app { flex:1; background:var(--panel); display:flex; flex-direction:column;
+         border:1px solid var(--border);
+         box-shadow:0 1px 3px rgba(0,0,0,.06),0 4px 12px rgba(0,0,0,.04); }
+  header { padding:12px 20px; border-bottom:1px solid var(--border);
+           display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           background:var(--panel); }
+  header h1 { margin:0; font-size:15px; font-weight:700; color:var(--ink); }
+  .pill { font-size:11px; padding:3px 10px; background:#f3f4f6;
+          border-radius:999px; color:var(--sub); border:1px solid var(--border); }
+  .pill.live { background:rgba(16,185,129,.1); color:var(--ok); border-color:rgba(16,185,129,.2); }
+  .pill.warn { background:rgba(220,38,38,.1); color:var(--warn); border-color:rgba(220,38,38,.2); }
   .controls { display:flex; gap:6px; margin-left:auto; align-items:center; }
+  .controls label.pill { background:transparent; border:none; color:var(--muted); font-size:12px; padding:0 4px; }
   .controls select, .controls button {
-    padding:6px 10px; font-size:12px; background:#475569;
-    color:var(--ink); border:none; border-radius:8px; cursor:pointer; }
-  .controls select { background:#0f172a; color:var(--ink); }
-  #log { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:10px; }
-  .msg { max-width:80%; padding:10px 14px; border-radius:14px; line-height:1.4;
-         white-space:pre-wrap; word-wrap:break-word; }
+    padding:6px 10px; font-size:12px; background:var(--panel);
+    color:var(--sub); border:1px solid var(--border); border-radius:8px; cursor:pointer;
+    font-family:inherit; }
+  .controls select:focus, .controls button:focus { outline:none; box-shadow:0 0 0 2px rgba(99,102,241,.3); }
+  .controls button#restart { background:var(--bg); }
+  #log { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:10px;
+         background:var(--bg); }
+  .msg { max-width:75%; padding:10px 14px; border-radius:14px; line-height:1.5;
+         white-space:pre-wrap; word-wrap:break-word; font-size:14px; }
   .msg.user { align-self:flex-end; background:var(--me); color:#fff;
               border-bottom-right-radius:4px; }
-  .msg.bot { align-self:flex-start; background:var(--bot);
-             border-bottom-left-radius:4px; }
-  .msg.emergency { background:var(--warn); color:#fff; font-weight:500; }
-  .msg.partial { opacity:.6; font-style:italic; }
-  .meta { font-size:11px; color:var(--muted); margin-top:4px; }
-  .callbar { display:none; }
-  .mic { width:56px; height:56px; border-radius:50%; border:none;
-         background:var(--me); color:#fff; font-size:22px; cursor:pointer;
+  .msg.bot { align-self:flex-start; background:var(--panel); color:var(--ink);
+             border:1px solid var(--border); border-bottom-left-radius:4px;
+             box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .msg.emergency { background:rgba(220,38,38,.08); color:var(--warn);
+                   border-color:rgba(220,38,38,.2); font-weight:500; }
+  .msg.partial { opacity:.55; font-style:italic; }
+  .meta { font-size:11px; color:var(--muted); margin-top:5px; }
+  .callbar { display:none; padding:10px 20px; gap:10px; align-items:center;
+             border-top:1px solid var(--border); background:var(--panel); }
+  .mic { width:48px; height:48px; border-radius:50%; border:none;
+         background:var(--me); color:#fff; font-size:20px; cursor:pointer;
          display:flex; align-items:center; justify-content:center;
          flex-shrink:0; transition:transform .1s; }
   .mic:active { transform:scale(.95); }
   .mic.listening { background:var(--ok); animation:pulse 1.2s infinite; }
   .mic.speaking { background:#a855f7; }
-  .mic.off { background:#475569; }
-  @keyframes pulse { 0%,100% { box-shadow:0 0 0 0 rgba(22,163,74,.6); }
-                     50% { box-shadow:0 0 0 12px rgba(22,163,74,0); } }
-  .level { width:80px; height:6px; background:#334155; border-radius:3px;
+  .mic.off { background:#e5e7eb; color:var(--muted); }
+  @keyframes pulse { 0%,100% { box-shadow:0 0 0 0 rgba(16,185,129,.5); }
+                     50% { box-shadow:0 0 0 12px rgba(16,185,129,0); } }
+  .level { width:80px; height:5px; background:var(--border); border-radius:3px;
            overflow:hidden; margin-left:8px; display:none; }
   .level.on { display:inline-block; }
-  .level-bar { height:100%; width:0%; background:var(--ok);
-               transition:width .1s linear; }
+  .level-bar { height:100%; width:0%; background:var(--ok); transition:width .1s linear; }
   .status { flex:1; font-size:13px; color:var(--muted); }
-  form { display:flex; gap:8px; padding:0 14px 14px; }
-  input[type=text] { flex:1; padding:10px 14px; border-radius:10px; border:none;
-                     background:#0f172a; color:var(--ink); font-size:14px; outline:none; }
-  input[type=text]:focus { box-shadow:0 0 0 2px var(--me); }
-  form button { padding:10px 18px; border:none; border-radius:10px;
-                background:var(--me); color:#fff; font-weight:500; cursor:pointer; }
+  form { display:flex; gap:8px; padding:14px 20px; border-top:1px solid var(--border);
+         background:var(--panel); }
+  input[type=text] { flex:1; padding:10px 14px; border-radius:10px;
+                     border:1px solid var(--border); background:var(--panel);
+                     color:var(--ink); font-size:14px; outline:none; font-family:inherit; }
+  input[type=text]::placeholder { color:var(--muted); }
+  input[type=text]:focus { border-color:var(--me); box-shadow:0 0 0 3px rgba(99,102,241,.12); }
+  form button { padding:10px 20px; border:none; border-radius:10px;
+                background:var(--me); color:#fff; font-weight:600; cursor:pointer;
+                font-size:14px; font-family:inherit; }
+  form button:hover { background:#4f46e5; }
   .suggest { display:none; }
-  .suggest button { font-size:12px; padding:6px 10px; background:#475569;
-                    color:var(--ink); border:none; border-radius:8px; cursor:pointer; }
-  .notice { padding:10px 14px; background:#7c2d12; color:#fed7aa;
-            font-size:12px; display:none; }
-  .gate { position:fixed; inset:0; background:rgba(15,23,42,.92);
+  .notice { padding:12px 20px; background:#fef3c7; color:#92400e;
+            font-size:13px; display:none; border-bottom:1px solid #fde68a;
+            font-weight:500; }
+  .gate { position:fixed; inset:0; background:rgba(0,0,0,.25);
+          backdrop-filter:blur(4px);
           display:flex; align-items:center; justify-content:center;
           flex-direction:column; gap:18px; z-index:10; }
   .gate.hidden { display:none; }
-  .gate h2 { margin:0; font-size:22px; font-weight:600; }
-  .gate p { margin:0; max-width:400px; text-align:center; color:var(--muted); }
-  .gate button { padding:14px 32px; border:none; border-radius:12px;
-                 background:var(--ok); color:#fff; font-size:16px;
-                 font-weight:600; cursor:pointer; }
+  .gate h2 { margin:0; font-size:22px; font-weight:700; color:var(--ink); }
+  .gate p { margin:0; max-width:400px; text-align:center; color:var(--muted);
+            background:var(--panel); padding:24px; border-radius:14px;
+            border:1px solid var(--border); box-shadow:0 4px 24px rgba(0,0,0,.08); }
+  .gate button { padding:13px 32px; border:none; border-radius:10px;
+                 background:var(--me); color:#fff; font-size:15px;
+                 font-weight:600; cursor:pointer; font-family:inherit; }
 </style>
 </head>
 <body>
@@ -91,12 +106,12 @@ const demoHTML = `<!doctype html>
     <h1>AI Receptionist</h1>
     <span class="pill" id="state">connecting…</span>
     <div class="controls">
-      <label class="pill" style="background:#0f172a;">Mode</label>
+      <label class="pill">Mode</label>
       <select id="modeSel">
         <option value="chat">Chat</option>
         <option value="call">Call</option>
       </select>
-      <label class="pill" style="background:#0f172a;">Voice</label>
+      <label class="pill">Voice</label>
       <select id="voiceGender">
         <option value="female">Female</option>
         <option value="male">Male</option>

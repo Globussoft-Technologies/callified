@@ -505,86 +505,71 @@ export default function CampaignsTab({
   }
 
   // ─── LIST VIEW ───
+  const cardStyle = {
+    background: '#fff', border: '1px solid #e5e7eb',
+    borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+    padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12,
+  };
+  const smallBtn = (bg, color, border) => ({
+    padding: '5px 14px', borderRadius: 8, border: `1px solid ${border}`,
+    background: bg, color, fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', fontFamily: 'inherit',
+  });
+
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h2 style={{ margin: 0, color: '#e2e8f0' }}>📢 Campaigns</h2>
-        <button className="btn-primary" onClick={() => setShowCreateModal(true)}>+ Create Campaign</button>
+    <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+          Campaigns
+        </h2>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+          + Create Campaign
+        </button>
       </div>
 
       {campaigns.length === 0 ? (
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
           No campaigns yet. Create one to start dialing!
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
           {campaigns.map(campaign => {
             const stats = getCampaignStats(campaign);
+            const calledPct = stats.total > 0 ? Math.round((stats.called / stats.total) * 100) : 0;
+            const typeColor = campaign.channel === 'whatsapp' ? '#25D366' : '#6366f1';
             return (
-              <div key={campaign.id} className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div key={campaign.id} style={cardStyle}>
+                {/* Card header: name + edit/delete */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{minWidth: 0, flex: 1}}>
-                    <div style={{fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '8px', wordBreak: 'break-word'}}>
-                      {campaign.name}
-                    </div>
-                    <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
-                      <span style={{
-                        background: campaign.channel === 'whatsapp' ? 'rgba(37,211,102,0.15)' : 'rgba(99,102,241,0.15)',
-                        color: campaign.channel === 'whatsapp' ? '#25D366' : '#818cf8',
-                        fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600
-                      }}>
-                        {campaign.channel === 'whatsapp' ? '💬 WhatsApp' : '📞 Voice'}
-                      </span>
-                      {campaign.product_id > 0 ? (
-                        <span style={{ background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
-                          {getProductName(campaign.product_id)}
-                        </span>
-                      ) : (
-                        <span style={{ background: 'rgba(234,179,8,0.15)', color: '#fbbf24', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
-                          ⚠ No product
-                        </span>
-                      )}
-                      {statusBadge(campaign.status || 'active')}
-                    </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', wordBreak: 'break-word', flex: 1, marginRight: 10 }}>
+                    {campaign.name}
                   </div>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     {deleteConfirmId === campaign.id ? (
                       <>
-                        <span style={{color: '#fca5a5', fontSize: '0.75rem'}}>Delete?</span>
+                        <span style={{ color: '#ef4444', fontSize: 12, alignSelf: 'center', fontWeight: 600 }}>Delete?</span>
                         <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id); }}
                           disabled={deleting}
-                          style={{
-                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)',
-                            color: '#fca5a5', borderRadius: '6px', padding: '4px 10px',
-                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 600,
-                            opacity: deleting ? 0.6 : 1,
-                          }}>
+                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
                           {deleting ? '…' : 'Yes'}
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
                           disabled={deleting}
-                          style={{
-                            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-                            color: '#cbd5e1', borderRadius: '6px', padding: '4px 10px',
-                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem',
-                          }}>
+                          style={smallBtn('#fff', '#6b7280', '#e5e7eb')}>
                           No
                         </button>
                       </>
                     ) : (
                       <>
                         <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                          style={{
-                            background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-                            color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                          }}>
+                          style={smallBtn('#fff', '#374151', '#e5e7eb')}>
                           Edit
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(campaign.id); }}
-                          style={{
-                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                            color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                          }}>
+                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
                           Delete
                         </button>
                       </>
@@ -592,20 +577,50 @@ export default function CampaignsTab({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', color: '#94a3b8' }}>
-                  <span>Total: <strong style={{ color: '#e2e8f0' }}>{stats.total}</strong></span>
-                  <span>Called: <strong style={{ color: '#e2e8f0' }}>{stats.called}</strong></span>
-                  <span>Qualified: <strong style={{ color: '#22c55e' }}>{stats.qualified}</strong></span>
-                  <span>Booked: <strong style={{ color: '#60a5fa' }}>{stats.booked}</strong></span>
+                {/* Badges */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: typeColor, background: `${typeColor}18` }}>
+                    {campaign.channel === 'whatsapp' ? 'WhatsApp' : 'Voice'}
+                  </span>
+                  {campaign.product_id > 0 ? (
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#0891b2', background: 'rgba(8,145,178,0.1)' }}>
+                      {getProductName(campaign.product_id)}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#f59e0b', background: 'rgba(245,158,11,0.1)' }}>
+                      ⚠ No product
+                    </span>
+                  )}
+                  {statusBadge(campaign.status || 'active')}
                 </div>
 
-                <button onClick={() => handleViewCampaign(campaign)}
-                  style={{
-                    marginTop: 'auto', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.3)',
-                    color: '#60a5fa', padding: '8px 0', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem'
-                  }}>
-                  View Leads
-                </button>
+                {/* Stats */}
+                <div style={{ display: 'flex', gap: 24 }}>
+                  {[
+                    { label: 'Total',     val: stats.total,     color: '#111827' },
+                    { label: 'Called',    val: stats.called,    color: '#111827' },
+                    { label: 'Qualified', val: stats.qualified, color: '#10b981' },
+                    { label: 'Booked',    val: stats.booked,    color: '#6366f1' },
+                  ].map(({ label, val, color }) => (
+                    <div key={label}>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}: </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: val === 0 ? '#9ca3af' : color }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress bar */}
+                <div style={{ height: 5, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${calledPct}%`, background: 'linear-gradient(90deg, #6366f1, #ec4899)', borderRadius: 3, transition: 'width 0.4s' }} />
+                </div>
+
+                {/* View Leads button */}
+                <div>
+                  <button onClick={() => handleViewCampaign(campaign)}
+                    style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: 0, fontFamily: 'inherit' }}>
+                    View Leads →
+                  </button>
+                </div>
               </div>
             );
           })}

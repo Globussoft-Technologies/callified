@@ -13,20 +13,30 @@ const RECEPTIONIST_URL = import.meta.env.VITE_RECEPTIONIST_URL || '/api/receptio
 
 export default function ReceptionistPage() {
   return (
-    <div style={{ padding: 16, height: 'calc(100vh - 80px)' }}>
-      <iframe
-        src={RECEPTIONIST_URL}
-        title="AI Receptionist"
-        style={{
-          width: '100%',
-          height: '100%',
-          border: '1px solid #334155',
-          borderRadius: 12,
-          background: '#0f172a',
-        }}
-        // Mic access for the receptionist's voice demo.
-        allow="microphone; autoplay; clipboard-read; clipboard-write"
-      />
+    <div style={{
+      padding: '24px 32px', background: '#f4f5f9', minHeight: '100%',
+      display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', fontFamily: "'DM Sans', sans-serif" }}>
+          AI Receptionist
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9ca3af', fontFamily: "'DM Sans', sans-serif" }}>
+          Live chat &amp; voice demo powered by the AI receptionist engine.
+        </p>
+      </div>
+      <div style={{
+        flex: 1, background: '#ffffff', border: '1px solid #e5e7eb',
+        borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+        overflow: 'hidden', minHeight: 'calc(100vh - 200px)',
+      }}>
+        <iframe
+          src={RECEPTIONIST_URL}
+          title="AI Receptionist"
+          style={{ width: '100%', height: '100%', border: 'none', minHeight: 'calc(100vh - 200px)' }}
+          allow="microphone; autoplay; clipboard-read; clipboard-write"
+        />
+      </div>
     </div>
   );
 }

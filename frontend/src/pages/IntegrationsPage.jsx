@@ -19,7 +19,7 @@ export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
   const [loading, setLoading] = useState(false);
 
   const fetchIntegrations = async () => {
-    try { const res = await apiFetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/integrations`); const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []); } catch(e){}
   };
 
   useEffect(() => {
