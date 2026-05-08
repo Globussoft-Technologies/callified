@@ -1,6 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,87 +39,104 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const statusStyle = (status) => {
     const map = {
       pending:   { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' },
-      dialing:   { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
-      completed: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)',  border: 'rgba(34,197,94,0.3)' },
+      dialing:   { color: '#6366f1', bg: 'rgba(99,102,241,0.1)', border: 'rgba(99,102,241,0.3)' },
+      completed: { color: '#10b981', bg: 'rgba(16,185,129,0.1)',  border: 'rgba(16,185,129,0.3)' },
       failed:    { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.3)' },
-      cancelled: { color: '#94a3b8', bg: 'rgba(148,163,184,0.1)', border: 'rgba(148,163,184,0.3)' },
+      cancelled: { color: '#9ca3af', bg: 'rgba(156,163,175,0.1)', border: 'rgba(156,163,175,0.3)' },
     };
     return map[status] || map.pending;
   };
 
-  if (loading) {
-    return (
-      <div className="page-container">
-        <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>
-          Loading scheduled calls...
-        </div>
-      </div>
-    );
-  }
+  const thStyle = {
+    fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+    letterSpacing: '0.07em', padding: '0 12px 12px', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`,
+  };
+  const tdStyle = {
+    fontSize: 13, color: T.sub, padding: '13px 12px',
+    borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
+  };
 
   return (
-    <div className="page-container">
-      <h2 style={{marginBottom: '1.5rem', color: '#e2e8f0'}}>Scheduled Calls</h2>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          <span style={{ color: T.accent }}>Scheduled</span> Calls
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          Upcoming and past scheduled calls. Schedule calls from the CRM or campaign pages.
+        </p>
+      </div>
 
-      {scheduledCalls.length === 0 ? (
-        <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>
+      {loading ? (
+        <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>
+          Loading scheduled calls...
+        </div>
+      ) : scheduledCalls.length === 0 ? (
+        <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>
           No scheduled calls. Schedule calls from the CRM or campaign pages.
         </div>
       ) : (
-        <div className="glass-panel" style={{overflowX: 'auto'}}>
-          <table className="leads-table" style={{width: '100%'}}>
+        <div style={{ ...card, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th>Scheduled Time</th>
-                <th>Lead Name</th>
-                <th>Phone</th>
-                <th>Status</th>
-                <th style={{width: '260px', minWidth: '260px'}}>Action</th>
+                <th style={thStyle}>Scheduled Time</th>
+                <th style={thStyle}>Lead Name</th>
+                <th style={thStyle}>Phone</th>
+                <th style={thStyle}>Status</th>
+                <th style={{ ...thStyle, width: 260, minWidth: 260 }}>Action</th>
               </tr>
             </thead>
             <tbody>
-              {scheduledCalls.map(call => {
+              {scheduledCalls.map((call, i) => {
                 const sc = statusStyle(call.status);
+                const isLast = i === scheduledCalls.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
                 return (
                   <tr key={call.id}>
-                    <td style={{fontSize: '0.85rem', color: '#e2e8f0'}}>
+                    <td style={{ ...rowTd, color: T.sub }}>
                       {formatDateTime(call.scheduled_time, orgTimezone)}
                     </td>
-                    <td style={{fontWeight: 600}}>{call.lead_name || call.first_name || '-'}</td>
-                    <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>
+                    <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>
+                      {call.lead_name || call.first_name || '-'}
+                    </td>
+                    <td style={{ ...rowTd, fontFamily: T.mono, fontSize: 12, color: T.muted }}>
                       {call.phone}
                     </td>
-                    <td>
+                    <td style={rowTd}>
                       <span style={{
-                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                        padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
                         color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`,
                       }}>
                         {call.status}
                       </span>
                     </td>
-                    <td style={{width: '260px', minWidth: '260px'}}>
-                      {(call.status === 'pending') && (
+                    <td style={{ ...rowTd, width: 260, minWidth: 260 }}>
+                      {call.status === 'pending' && (
                         confirmCancelId === call.id ? (
-                          <div style={{display: 'inline-flex', alignItems: 'center', gap: '6px'}}>
-                            <span style={{color: '#fbbf24', fontSize: '0.75rem'}}>Cancel call?</span>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: T.amber, fontSize: 12 }}>Cancel call?</span>
                             <button onClick={() => { setConfirmCancelId(null); handleCancel(call.id); }}
-                              style={{background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
-                              Confirm
-                            </button>
+                              style={{
+                                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                                color: T.red, borderRadius: 6, padding: '4px 10px',
+                                cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                              }}>Confirm</button>
                             <button onClick={() => setConfirmCancelId(null)}
-                              style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '6px', padding: '4px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
-                              Keep
-                            </button>
+                              style={{
+                                background: 'transparent', border: `1px solid ${T.border}`,
+                                color: T.muted, borderRadius: 6, padding: '4px 10px',
+                                cursor: 'pointer', fontSize: 12, fontFamily: T.font,
+                              }}>Keep</button>
                           </div>
                         ) : (
                           <button onClick={() => setConfirmCancelId(call.id)}
                             style={{
-                              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                              color: '#fca5a5', borderRadius: '6px', padding: '4px 12px',
-                              cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
-                            }}>
-                            Cancel
-                          </button>
+                              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
+                              color: T.red, borderRadius: 6, padding: '4px 12px',
+                              cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                            }}>Cancel</button>
                         )
                       )}
                     </td>

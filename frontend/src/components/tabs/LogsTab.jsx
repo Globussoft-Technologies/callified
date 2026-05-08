@@ -1,6 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
 const PER_PAGE = 50;
 const ACTIVITY_BUFFER = 1000;
 
@@ -16,10 +28,6 @@ function withDate(label, tsMs) {
   return `[${dateStr}] ${label}`;
 }
 
-// Each entry in activityLogs is { arrivedAt: number, line: string } so the
-// date filter has a real timestamp even when the backend is still sending
-// plain-text events. parseActivity extracts the rest from JSON or falls back
-// to regex on legacy strings.
 function parseActivity(entry) {
   const line = entry.line;
   let parsed = null;
@@ -65,9 +73,6 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   const [page, setPage] = useState(1);
   const [campaigns, setCampaigns] = useState([]);
   const [confirmClear, setConfirmClear] = useState(false);
-  // streamStatus distinguishes "connected but no recent activity" from
-  // "stream broken" — the empty-state message used to be the same in both
-  // cases (issue #79), making silent failures look identical to a quiet feed.
   const [streamStatus, setStreamStatus] = useState('connecting');
   const verboseRef = useRef(null);
   const activityEsRef = useRef(null);
@@ -79,21 +84,14 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
     apiFetch(`${API_URL}/campaigns`)
       .then(r => r.ok ? r.json() : [])
       .then(list => { if (!cancelled && Array.isArray(list)) setCampaigns(list); })
-      .catch(() => { /* dropdown falls back to ids */ });
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [apiFetch, API_URL]);
 
-  // Subscribe to per-campaign Redis channel when a campaign is selected;
-  // fall back to firehose ("all") when no filter. This pushes the campaign
-  // filter down to the source so legacy plain-text events also get filtered
-  // correctly without needing campaign_id in the payload.
   useEffect(() => {
     if (activityEsRef.current) activityEsRef.current.close();
-    // Use the "all" sentinel for the firehose instead of the legacy "0"
-    // (issue #79). Backend accepts both; "all" is self-explanatory in
-    // network logs / browser DevTools.
     const cid = campaignFilter || 'all';
-    setActivityLogs([]); // discard previous campaign's buffer on switch
+    setActivityLogs([]);
     setStreamStatus('connecting');
     let cancelled = false;
     let es = null;
@@ -142,22 +140,22 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
         else if (ev.data.includes('DIAL') || ev.data.includes('EXOTEL')) { line.style.color = '#60a5fa'; }
         else if (ev.data.includes('HANGUP') || ev.data.includes('CLOSED')) { line.style.color = '#fb923c'; }
         else if (ev.data.includes('DEBUG-REC')) { line.style.color = '#22d3ee'; }
-        else { line.style.color = '#64748b'; }
+        else { line.style.color = '#94a3b8'; }
         el.appendChild(line);
         if (el.children.length > 500) el.removeChild(el.firstChild);
         el.scrollTop = el.scrollHeight;
       };
-    }).catch(() => { /* UI shows empty stream */ });
+    }).catch(() => {});
     return () => { cancelled = true; if (es) es.close(); };
   }, [mode, paused, filter, API_URL, fetchSseTicket]);
 
   const activityIcon = (text) => {
-    if (text.includes('📞')) return { bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.2)' };
-    if (text.includes('✅') || text.includes('🎯')) return { bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.2)' };
-    if (text.includes('❌')) return { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.2)' };
-    if (text.includes('📵') || text.includes('⚠️') || text.includes('💥')) return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.2)' };
-    if (text.includes('🚀') || text.includes('🏁')) return { bg: 'rgba(139,92,246,0.1)', border: 'rgba(139,92,246,0.2)' };
-    return { bg: 'rgba(255,255,255,0.03)', border: 'rgba(255,255,255,0.05)' };
+    if (text.includes('📞')) return { bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.2)' };
+    if (text.includes('✅') || text.includes('🎯')) return { bg: 'rgba(16,185,129,0.06)', border: 'rgba(16,185,129,0.2)' };
+    if (text.includes('❌')) return { bg: 'rgba(245,158,11,0.06)', border: 'rgba(245,158,11,0.2)' };
+    if (text.includes('📵') || text.includes('⚠️') || text.includes('💥')) return { bg: 'rgba(239,68,68,0.06)', border: 'rgba(239,68,68,0.2)' };
+    if (text.includes('🚀') || text.includes('🏁')) return { bg: 'rgba(139,92,246,0.06)', border: 'rgba(139,92,246,0.2)' };
+    return { bg: T.bg, border: T.border };
   };
 
   const parsedLogs = useMemo(() => activityLogs.map(parseActivity), [activityLogs]);
@@ -169,7 +167,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   }, [parsedLogs]);
 
   const campaignOptions = useMemo(() => {
-    const seen = new Map(); // id -> display name
+    const seen = new Map();
     campaigns.forEach(c => { if (c && c.id != null) seen.set(String(c.id), c.name || `Campaign #${c.id}`); });
     parsedLogs.forEach(p => {
       if (p.campaignId != null) {
@@ -188,7 +186,6 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
     const toMs = dateTo ? new Date(dateTo + 'T23:59:59.999').getTime() : null;
     return parsedLogs.filter(p => {
       if (statusFilter && p.status !== statusFilter) return false;
-      // campaign filter is enforced at SSE subscription, not here
       if (fromMs !== null && p.tsMs < fromMs) return false;
       if (toMs !== null && p.tsMs > toMs) return false;
       if (q && !(p.raw + ' ' + p.leadName + ' ' + p.phone).toLowerCase().includes(q)) return false;
@@ -209,106 +206,124 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
     if (verboseRef.current) verboseRef.current.innerHTML = '';
   };
 
+  const inputStyle = {
+    height: 32, padding: '4px 10px', borderRadius: 8, fontSize: 12,
+    border: `1px solid ${T.border}`, background: T.card, color: T.text,
+    fontFamily: T.font, outline: 'none', cursor: 'pointer',
+  };
+
+  const streamMap = {
+    connecting: { color: T.amber, bg: 'rgba(245,158,11,0.1)', dot: T.amber, label: 'Connecting' },
+    connected:  { color: T.green, bg: 'rgba(16,185,129,0.1)', dot: T.green, label: 'Live' },
+    error:      { color: T.red,   bg: 'rgba(239,68,68,0.1)',  dot: T.red,   label: 'Disconnected' },
+  };
+
   return (
-    <div style={{padding: '1rem'}}>
-      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '10px'}}>
-        <h2 style={{margin: 0}}>📡 System Logs</h2>
-        <div style={{display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap'}}>
-          <div style={{display: 'flex', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)'}}>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Page title + controls */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+            <span style={{ color: T.accent }}>Live</span> Logs
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+            Real-time campaign activity feed and verbose system log stream.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+
+          {/* Mode toggle */}
+          <div style={{ display: 'flex', background: T.bg, borderRadius: 8, padding: 3, gap: 2, border: `1px solid ${T.border}` }}>
             <button onClick={() => setMode('activity')}
-              style={{padding: '6px 16px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600,
-                background: mode === 'activity' ? 'rgba(34,197,94,0.2)' : 'transparent',
-                color: mode === 'activity' ? '#22c55e' : '#64748b'}}>
+              style={{
+                padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                background: mode === 'activity' ? T.accent : 'transparent',
+                color: mode === 'activity' ? '#fff' : T.muted,
+              }}>
               📋 Activity
             </button>
             <button onClick={() => setMode('verbose')}
-              style={{padding: '6px 16px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600,
-                background: mode === 'verbose' ? 'rgba(96,165,250,0.2)' : 'transparent',
-                color: mode === 'verbose' ? '#60a5fa' : '#64748b'}}>
+              style={{
+                padding: '5px 14px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                background: mode === 'verbose' ? T.accent : 'transparent',
+                color: mode === 'verbose' ? '#fff' : T.muted,
+              }}>
               🔧 Verbose
             </button>
           </div>
 
           {mode === 'verbose' && (
-            <input className="form-input" placeholder="Filter logs..." value={filter}
+            <input placeholder="Filter logs..." value={filter}
               onChange={e => setFilter(e.target.value)}
-              style={{width: '160px', height: '30px', fontSize: '0.8rem', padding: '4px 8px'}} />
+              style={{ ...inputStyle, width: 160 }} />
           )}
 
+          {/* Pause/Live toggle */}
           <button onClick={() => setPaused(!paused)}
-            style={{padding: '6px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
-              background: paused ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-              color: paused ? '#ef4444' : '#22c55e', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600}}>
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+              border: `1px solid ${paused ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}`,
+              background: paused ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
+              color: paused ? T.red : T.green,
+            }}>
             {paused ? '⏸ Paused' : '▶ Live'}
           </button>
 
+          {/* Clear */}
           {confirmClear ? (
-            <div style={{display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)'}}>
-              <span style={{color: '#fbbf24', fontSize: '0.75rem'}}>Clear logs?</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span style={{ color: T.amber, fontSize: 12 }}>Clear logs?</span>
               <button onClick={() => { setConfirmClear(false); handleClear(); }}
-                style={{background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)', color: '#ef4444', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
+                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', color: T.red, borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
                 Confirm
               </button>
               <button onClick={() => setConfirmClear(false)}
-                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
+                style={{ background: 'transparent', border: `1px solid ${T.border}`, color: T.muted, borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
                 Cancel
               </button>
             </div>
           ) : (
             <button onClick={() => setConfirmClear(true)}
-              style={{padding: '6px 12px', borderRadius: '6px', border: '1px solid rgba(239,68,68,0.2)',
-                background: 'rgba(239,68,68,0.1)', color: '#fca5a5', cursor: 'pointer', fontSize: '0.8rem'}}>
+              style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid rgba(239,68,68,0.2)`, background: 'rgba(239,68,68,0.06)', color: T.red, cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
               🗑️ Clear
             </button>
           )}
         </div>
       </div>
 
+      {/* Activity filters */}
       {mode === 'activity' && (
-        <div style={{display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap'}}>
-          <select className="form-input" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-            style={{height: '30px', fontSize: '0.8rem', padding: '2px 8px', width: '150px'}}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: 150 }}>
             <option value="">All statuses</option>
             {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select className="form-input" value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)}
-            style={{height: '30px', fontSize: '0.8rem', padding: '2px 8px', width: '180px'}}>
+          <select value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)} style={{ ...inputStyle, width: 180 }}>
             <option value="">All campaigns</option>
             {campaignOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <input type="date" className="form-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            title="From date"
-            style={{height: '30px', fontSize: '0.8rem', padding: '2px 8px', width: '140px'}} />
-          <input type="date" className="form-input" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            title="To date"
-            style={{height: '30px', fontSize: '0.8rem', padding: '2px 8px', width: '140px'}} />
-          <input className="form-input" placeholder="Search name or phone..." value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{height: '30px', fontSize: '0.8rem', padding: '2px 8px', width: '200px'}} />
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" style={{ ...inputStyle, width: 140 }} />
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" style={{ ...inputStyle, width: 140 }} />
+          <input placeholder="Search name or phone..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, width: 200 }} />
           {(statusFilter || campaignFilter || dateFrom || dateTo || search) && (
             <button onClick={() => { setStatusFilter(''); setCampaignFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}
-              style={{padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)', color: '#cbd5e1', cursor: 'pointer', fontSize: '0.75rem'}}>
+              style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.sub, cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
               Reset
             </button>
           )}
-          <span style={{fontSize: '0.75rem', color: '#64748b'}}>
-            {filteredLogs.length} of {activityLogs.length} events
-          </span>
+          <span style={{ fontSize: 12, color: T.muted }}>{filteredLogs.length} of {activityLogs.length} events</span>
           {(() => {
-            const map = {
-              connecting: { color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', dot: '#fbbf24', label: 'Connecting' },
-              connected:  { color: '#22c55e', bg: 'rgba(34,197,94,0.1)',   dot: '#22c55e', label: 'Live' },
-              error:      { color: '#f87171', bg: 'rgba(239,68,68,0.1)',   dot: '#ef4444', label: 'Disconnected' },
-            };
-            const s = map[streamStatus] || map.connecting;
+            const s = streamMap[streamStatus] || streamMap.connecting;
             return (
-              <span title={`SSE stream status: ${streamStatus}`} style={{
-                display: 'inline-flex', alignItems: 'center', gap: '6px',
-                padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem',
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11,
                 color: s.color, background: s.bg, border: `1px solid ${s.color}40`, fontWeight: 600,
               }}>
-                <span style={{width: '6px', height: '6px', borderRadius: '50%', background: s.dot}} />
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.dot }} />
                 {s.label}
               </span>
             );
@@ -316,40 +331,42 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
         </div>
       )}
 
+      {/* Verbose legend */}
       {mode === 'verbose' && (
-        <div style={{display: 'flex', gap: '12px', marginBottom: '10px', fontSize: '0.7rem', flexWrap: 'wrap'}}>
-          <span style={{color: '#4ade80'}}>● STT</span>
-          <span style={{color: '#67e8f9'}}>● LLM</span>
-          <span style={{color: '#a78bfa'}}>● TTS</span>
-          <span style={{color: '#60a5fa'}}>● DIAL</span>
-          <span style={{color: '#f59e0b'}}>● GREETING/REC</span>
-          <span style={{color: '#fb923c'}}>● HANGUP</span>
-          <span style={{color: '#22d3ee'}}>● DEBUG</span>
-          <span style={{color: '#f87171'}}>● ERROR</span>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, flexWrap: 'wrap', color: T.muted }}>
+          <span style={{ color: '#4ade80' }}>● STT</span>
+          <span style={{ color: '#67e8f9' }}>● LLM</span>
+          <span style={{ color: '#a78bfa' }}>● TTS</span>
+          <span style={{ color: '#60a5fa' }}>● DIAL</span>
+          <span style={{ color: T.amber }}>● GREETING/REC</span>
+          <span style={{ color: '#fb923c' }}>● HANGUP</span>
+          <span style={{ color: '#22d3ee' }}>● DEBUG</span>
+          <span style={{ color: T.red }}>● ERROR</span>
         </div>
       )}
 
+      {/* Activity log area */}
       {mode === 'activity' && (
         <>
-          <div style={{background: 'rgba(2,6,23,0.8)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', height: '64vh', overflowY: 'auto', padding: '8px'}}>
+          <div style={{ ...card, height: '62vh', overflowY: 'auto', padding: 8 }}>
             {pageLogs.length === 0 ? (
-              <div style={{textAlign: 'center', color: '#64748b', padding: '3rem'}}>
-                <div style={{fontSize: '2rem', marginBottom: '12px'}}>📡</div>
+              <div style={{ textAlign: 'center', color: T.muted, padding: '3rem' }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>📡</div>
                 {activityLogs.length === 0 ? (
                   streamStatus === 'error' ? (
                     <>
-                      <div style={{color: '#f87171'}}>Stream disconnected.</div>
-                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>The browser will retry automatically; check your network if this persists.</div>
+                      <div style={{ color: T.red }}>Stream disconnected.</div>
+                      <div style={{ fontSize: 12, marginTop: 8 }}>The browser will retry automatically; check your network if this persists.</div>
                     </>
                   ) : streamStatus === 'connected' ? (
                     <>
                       <div>Connected — no recent campaign activity.</div>
-                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>The last 7 days of events are replayed on connect; new events appear here in real time.</div>
+                      <div style={{ fontSize: 12, marginTop: 8 }}>The last 7 days of events are replayed on connect; new events appear here in real time.</div>
                     </>
                   ) : (
                     <>
                       <div>Connecting to event stream…</div>
-                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>Once connected, recent events replay and new dials stream in live.</div>
+                      <div style={{ fontSize: 12, marginTop: 8 }}>Once connected, recent events replay and new dials stream in live.</div>
                     </>
                   )
                 ) : (
@@ -361,9 +378,9 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
                 const style = activityIcon(p.raw);
                 return (
                   <div key={`${safePage}-${i}`} style={{
-                    padding: '8px 12px', marginBottom: '4px', borderRadius: '6px',
+                    padding: '8px 12px', marginBottom: 4, borderRadius: 6,
                     background: style.bg, borderLeft: `3px solid ${style.border}`,
-                    fontSize: '0.85rem', color: '#e2e8f0', fontFamily: 'system-ui'
+                    fontSize: 13, color: T.sub, fontFamily: T.font,
                   }}>
                     {withDate(p.raw, p.tsMs)}
                   </div>
@@ -372,28 +389,35 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
             )}
           </div>
 
-          <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', marginTop: '10px', fontSize: '0.8rem'}}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 12, fontSize: 13 }}>
             <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage <= 1}
-              style={{padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)', color: safePage <= 1 ? '#475569' : '#cbd5e1',
-                cursor: safePage <= 1 ? 'not-allowed' : 'pointer'}}>
+              style={{
+                padding: '5px 14px', borderRadius: 8, fontFamily: T.font,
+                border: `1px solid ${T.border}`, background: T.card,
+                color: safePage <= 1 ? T.muted : T.sub,
+                cursor: safePage <= 1 ? 'not-allowed' : 'pointer',
+              }}>
               ← Prev
             </button>
-            <span style={{color: '#94a3b8'}}>Page {safePage} of {totalPages}</span>
+            <span style={{ color: T.muted }}>Page {safePage} of {totalPages}</span>
             <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages}
-              style={{padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.05)', color: safePage >= totalPages ? '#475569' : '#cbd5e1',
-                cursor: safePage >= totalPages ? 'not-allowed' : 'pointer'}}>
+              style={{
+                padding: '5px 14px', borderRadius: 8, fontFamily: T.font,
+                border: `1px solid ${T.border}`, background: T.card,
+                color: safePage >= totalPages ? T.muted : T.sub,
+                cursor: safePage >= totalPages ? 'not-allowed' : 'pointer',
+              }}>
               Next →
             </button>
           </div>
         </>
       )}
 
+      {/* Verbose terminal — kept dark intentionally */}
       {mode === 'verbose' && (
         <div ref={verboseRef} style={{
-          background: 'rgba(2,6,23,0.8)', border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: '8px', height: '70vh', overflowY: 'auto', overflowX: 'hidden'
+          background: 'rgba(2,6,23,0.95)', border: `1px solid ${T.border}`,
+          borderRadius: 12, height: '68vh', overflowY: 'auto', overflowX: 'hidden',
         }} />
       )}
     </div>

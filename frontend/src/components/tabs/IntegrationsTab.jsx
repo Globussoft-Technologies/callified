@@ -1,17 +1,23 @@
 import React, { useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 16, boxShadow: '0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.06)',
+};
+
 const FALLBACK_FIELDS = [
   { key: 'api_key', label: 'API Key / Token', type: 'password' },
   { key: 'base_url', label: 'REST API Base URL', type: 'text' },
 ];
 
-// SecretField masks credential inputs by default with an explicit show/hide
-// toggle, and opts out of browser/password-manager autofill. The CRM
-// integration form previously used a bare <input type=password> which
-// rendered correctly but didn't disable autofill — Chrome would silently
-// suggest the user's saved logins into a third-party API-key field. Mirrors
-// the pattern already used in WhatsAppTab for parity (issue #46).
 function SecretField({ value, onChange, placeholder, ariaInvalid }) {
   const [reveal, setReveal] = useState(false);
   return (
@@ -26,17 +32,22 @@ function SecretField({ value, onChange, placeholder, ariaInvalid }) {
         data-1p-ignore
         data-lpignore="true"
         aria-invalid={ariaInvalid}
-        className="form-input"
-        style={{ paddingRight: '52px', borderColor: ariaInvalid ? '#ef4444' : undefined }}
+        style={{
+          width: '100%', padding: '11px 52px 11px 14px', borderRadius: 10, fontSize: 13,
+          border: `1px solid ${ariaInvalid ? T.red : T.border}`,
+          background: '#f9fafb', color: T.text, fontFamily: T.font, outline: 'none',
+          boxSizing: 'border-box',
+        }}
       />
       <button
         type="button"
         onClick={() => setReveal(!reveal)}
         aria-label={reveal ? 'Hide value' : 'Show value'}
         style={{
-          position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
-          background: 'none', border: 'none', color: '#94a3b8',
-          cursor: 'pointer', fontSize: '0.75rem', padding: '4px 8px',
+          position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+          background: 'none', border: 'none', color: T.accent,
+          cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: '2px 4px',
+          fontFamily: T.font,
         }}>
         {reveal ? 'Hide' : 'Show'}
       </button>
@@ -44,18 +55,10 @@ function SecretField({ value, onChange, placeholder, ariaInvalid }) {
   );
 }
 
-// connectionStatus maps the backend's (is_active, last_synced_at) into a single
-// badge so we never show "Active Sync" for a connection that has never synced
-// (issue #73). Auth errors land here too once the backend exposes a
-// last_error column — for now is_active=false serves as the proxy.
 function connectionStatus(intg) {
-  if (!intg.is_active) {
-    return { label: 'Disabled', bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
-  }
-  if (!intg.last_synced_at) {
-    return { label: 'Pending first sync', bg: 'rgba(234,179,8,0.12)', color: '#fbbf24' };
-  }
-  return { label: 'Active Sync', bg: 'rgba(34,197,94,0.1)', color: '#4ade80' };
+  if (!intg.is_active) return { label: 'Disabled', bg: 'rgba(148,163,184,0.15)', color: T.muted };
+  if (!intg.last_synced_at) return { label: 'Pending first sync', bg: 'rgba(245,158,11,0.1)', color: T.amber };
+  return { label: 'Active Sync', bg: 'rgba(16,185,129,0.1)', color: T.green };
 }
 
 export default function IntegrationsTab({
@@ -64,35 +67,61 @@ export default function IntegrationsTab({
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const fields = CRM_SCHEMAS[intFormData.provider] || FALLBACK_FIELDS;
-  const missingKeys = fields
-    .map(f => f.key)
-    .filter(k => !(intFormData.credentials[k] || '').trim());
+  const missingKeys = fields.map(f => f.key).filter(k => !(intFormData.credentials[k] || '').trim());
   const isFormValid = missingKeys.length === 0;
 
   const onSubmit = (e) => {
     setSubmitAttempted(true);
-    if (!isFormValid) {
-      e.preventDefault();
-      return;
-    }
+    if (!isFormValid) { e.preventDefault(); return; }
     setSubmitAttempted(false);
     handleCreateIntegration(e);
   };
 
+  const labelStyle = { fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 8, display: 'block', fontFamily: T.font };
+  const inputStyle = (hasError) => ({
+    width: '100%', padding: '11px 14px', borderRadius: 10, fontSize: 13,
+    border: `1px solid ${hasError ? T.red : T.border}`,
+    background: '#f9fafb', color: T.text, fontFamily: T.font, outline: 'none',
+    boxSizing: 'border-box',
+  });
+
+  const thStyle = {
+    fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+    letterSpacing: '0.07em', padding: '0 0 12px', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`,
+  };
+  const tdStyle = {
+    fontSize: 13, color: T.sub, padding: '13px 0',
+    borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
+  };
+
   return (
-    <div className="integrations-container" style={{padding: '1rem'}}>
-      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
-        <h3><span style={{color: '#38bdf8'}}>CRM</span> Integrations</h3>
-        <p>Connect external CRM platforms to pull leads automatically and push call outcomes back.</p>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Page title */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          <span style={{ color: T.accent }}>CRM</span> Integrations
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          Connect external CRM platforms to pull leads automatically and push call outcomes back.
+        </p>
       </div>
-      
-      <div style={{display: 'grid', gridTemplateColumns: 'minmax(300px, 400px) 1fr', gap: '2rem'}}>
-        <div className="glass-panel" style={{height: 'fit-content'}}>
-          <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>Add New Connection</h4>
-          <form onSubmit={onSubmit} noValidate style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>Provider</label>
-              <select className="form-input" value={intFormData.provider} onChange={e => setIntFormData({provider: e.target.value, credentials: {}})}>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 380px) 1fr', gap: 16, alignItems: 'stretch' }}>
+
+        {/* Add Connection card */}
+        <div style={{ ...card, padding: '24px 28px' }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 700, color: T.text }}>Add New Connection</h3>
+          <form onSubmit={onSubmit} noValidate style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+            {/* Provider */}
+            <div>
+              <label style={labelStyle}>Provider</label>
+              <select
+                value={intFormData.provider}
+                onChange={e => setIntFormData({ provider: e.target.value, credentials: {} })}
+                style={{ ...inputStyle(false), cursor: 'pointer' }}>
                 <option value="HubSpot">HubSpot</option>
                 <option value="Salesforce">Salesforce</option>
                 <option value="Zoho">Zoho CRM</option>
@@ -133,151 +162,118 @@ export default function IntegrationsTab({
                 <option value="Scoro">Scoro</option>
                 <option value="Odoo">Odoo</option>
                 <option value="Streak">Streak</option>
+                <option value="GoHighLevel">GoHighLevel</option>
                 <option value="LessAnnoyingCRM">LessAnnoyingCRM</option>
                 <option value="Daylite">Daylite</option>
-                <option value="ConvergeHub">ConvergeHub</option>
-                <option value="Claritysoft">Claritysoft</option>
                 <option value="AmoCRM">AmoCRM</option>
-                <option value="BenchmarkONE">BenchmarkONE</option>
-                <option value="Bigin">Bigin</option>
-                <option value="BoomTown">BoomTown</option>
-                <option value="BuddyCRM">BuddyCRM</option>
-                <option value="Bullhorn">Bullhorn</option>
-                <option value="CiviCRM">CiviCRM</option>
-                <option value="ClientLook">ClientLook</option>
-                <option value="ClientSuccess">ClientSuccess</option>
-                <option value="ClientTether">ClientTether</option>
-                <option value="CommandCenter">CommandCenter</option>
-                <option value="ConnectWise">ConnectWise</option>
-                <option value="Contactually">Contactually</option>
-                <option value="Corezoid">Corezoid</option>
-                <option value="CRMNext">CRMNext</option>
-                <option value="Daycos">Daycos</option>
-                <option value="DealerSocket">DealerSocket</option>
-                <option value="Efficy">Efficy</option>
-                <option value="Enquire">Enquire</option>
-                <option value="Entrata">Entrata</option>
-                <option value="Epsilon">Epsilon</option>
-                <option value="EspoCRM">EspoCRM</option>
-                <option value="Exact">Exact</option>
-                <option value="Flowlu">Flowlu</option>
-                <option value="FollowUpBoss">FollowUpBoss</option>
-                <option value="Front">Front</option>
-                <option value="Funnel">Funnel</option>
-                <option value="Genesis">Genesis</option>
-                <option value="GoHighLevel">GoHighLevel</option>
-                <option value="GoldMine">GoldMine</option>
-                <option value="GreenRope">GreenRope</option>
-                <option value="Highrise">Highrise</option>
-                <option value="iContact">iContact</option>
-                <option value="Infusionsoft">Infusionsoft</option>
-                <option value="IxactContact">IxactContact</option>
-                <option value="Jobber">Jobber</option>
-                <option value="Junxure">Junxure</option>
-                <option value="Kaseya">Kaseya</option>
-                <option value="Kixie">Kixie</option>
-                <option value="Klaviyo">Klaviyo</option>
-                <option value="Kommo">Kommo</option>
                 <option value="LeadSquared">LeadSquared</option>
-                <option value="LionDesk">LionDesk</option>
-                <option value="Lusha">Lusha</option>
-                <option value="Mailchimp">Mailchimp</option>
-                <option value="Marketo">Marketo</option>
-                <option value="Membrain">Membrain</option>
-                <option value="MethodCRM">MethodCRM</option>
-                <option value="MightyCRM">MightyCRM</option>
-                <option value="Mindbody">Mindbody</option>
-                <option value="Mixpanel">Mixpanel</option>
-                <option value="Navatar">Navatar</option>
-                <option value="NetHunt">NetHunt</option>
-                <option value="NexTravel">NexTravel</option>
-                <option value="Nurture">Nurture</option>
-                <option value="OnePageCRM">OnePageCRM</option>
-                <option value="Pipeliner">Pipeliner</option>
-                <option value="Planhat">Planhat</option>
-                <option value="Podio">Podio</option>
+                <option value="Freshworks">Freshworks</option>
               </select>
             </div>
+
+            {/* Dynamic fields */}
             {fields.map(field => {
               const value = intFormData.credentials[field.key] || '';
               const showError = submitAttempted && !value.trim();
               return (
-                <div className="form-group" key={field.key} style={{marginBottom: 0}}>
-                  <label>{field.label} <span style={{color: '#f87171'}}>*</span></label>
+                <div key={field.key}>
+                  <label style={labelStyle}>
+                    {field.label} <span style={{ color: T.red }}>*</span>
+                  </label>
                   {field.type === 'password' ? (
                     <SecretField
                       value={value}
                       ariaInvalid={showError}
-                      onChange={(v) => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: v}})}
-                      placeholder={field.label + "..."}
+                      onChange={(v) => setIntFormData({ ...intFormData, credentials: { ...intFormData.credentials, [field.key]: v } })}
+                      placeholder={field.label + '...'}
                     />
                   ) : (
                     <input
                       type={field.type}
-                      className="form-input"
                       value={value}
                       required
                       autoComplete="off"
                       aria-invalid={showError}
-                      onChange={e => setIntFormData({...intFormData, credentials: {...intFormData.credentials, [field.key]: e.target.value}})}
-                      placeholder={field.label + "..."}
-                      style={showError ? {borderColor: '#ef4444'} : undefined}
+                      onChange={e => setIntFormData({ ...intFormData, credentials: { ...intFormData.credentials, [field.key]: e.target.value } })}
+                      placeholder={field.label + '...'}
+                      style={inputStyle(showError)}
                     />
                   )}
                   {showError && (
-                    <div style={{marginTop: '4px', color: '#fca5a5', fontSize: '0.8rem'}}>
+                    <div style={{ marginTop: 4, color: T.red, fontSize: 12, fontWeight: 600 }}>
                       {field.label} is required
                     </div>
                   )}
                 </div>
               );
             })}
+
             <button
               type="submit"
-              className="btn-primary"
               disabled={loading || !isFormValid}
-              style={{marginTop: '0.5rem', opacity: (loading || !isFormValid) ? 0.6 : 1, cursor: (loading || !isFormValid) ? 'not-allowed' : 'pointer'}}
               title={!isFormValid ? `Fill in: ${missingKeys.join(', ')}` : undefined}
-            >
-              {loading ? 'Connecting...' : '🔌 Save Connection'}
+              style={{
+                marginTop: 4, padding: '12px 18px', borderRadius: 8, border: 'none',
+                fontWeight: 700, fontSize: 14, fontFamily: T.font,
+                background: loading || !isFormValid
+                  ? T.muted
+                  : 'linear-gradient(135deg, #6366f1, #ec4899)',
+                color: '#fff',
+                cursor: loading || !isFormValid ? 'not-allowed' : 'pointer',
+                width: '100%',
+              }}>
+              {loading ? 'Connecting...' : '⚡ Save Connection'}
             </button>
           </form>
         </div>
 
-        <div className="glass-panel" style={{overflowX: 'auto'}}>
-          <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>Active Connections</h4>
-          <table className="leads-table">
+        {/* Active Connections card */}
+        <div style={{ ...card, padding: '24px 28px', overflowX: 'auto' }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 15, fontWeight: 700, color: T.text }}>Active Connections</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th>Provider</th>
-                <th>API Key (Masked)</th>
-                <th>Status</th>
-                <th>Last Synced</th>
+                <th style={thStyle}>Provider</th>
+                <th style={thStyle}>API Key (Masked)</th>
+                <th style={thStyle}>Status</th>
+                <th style={{ ...thStyle, textAlign: 'right' }}>Last Synced</th>
               </tr>
             </thead>
             <tbody>
               {integrations.length === 0 ? (
-                 <tr><td colSpan="4" style={{textAlign: "center", padding: "2rem", color: '#94a3b8'}}>No implementations hooked yet.</td></tr>
-              ) : integrations.map(intg => (
-                <tr key={intg.id}>
-                  <td style={{fontWeight: 'bold', color: '#e2e8f0'}}>{intg.provider}</td>
-                  <td style={{fontFamily: 'monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>
-                     {Object.keys(intg.credentials || {}).map(k => (
-                        <div key={k}>{k}: ****</div>
-                     ))}
+                <tr>
+                  <td colSpan="4" style={{ textAlign: 'center', padding: '2.5rem 0', color: T.muted, fontSize: 14 }}>
+                    No integrations connected yet.
                   </td>
-                  <td>
-                    {(() => {
-                      const s = connectionStatus(intg);
-                      return <span className="badge" style={{background: s.bg, color: s.color}}>{s.label}</span>;
-                    })()}
-                  </td>
-                  <td style={{color: '#94a3b8', fontSize: '0.9rem'}}>{intg.last_synced_at ? formatDateTime(intg.last_synced_at, orgTimezone) : 'Never'}</td>
                 </tr>
-              ))}
+              ) : integrations.map((intg, i) => {
+                const isLast = i === integrations.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                const s = connectionStatus(intg);
+                return (
+                  <tr key={intg.id}>
+                    <td style={{ ...rowTd, fontWeight: 600, color: T.text, paddingRight: 16 }}>{intg.provider}</td>
+                    <td style={{ ...rowTd, fontFamily: T.mono, fontSize: 12, color: T.muted, paddingRight: 16 }}>
+                      {Object.keys(intg.credentials || {}).map(k => (
+                        <div key={k}>{k}: ••••••••</div>
+                      ))}
+                    </td>
+                    <td style={{ ...rowTd, paddingRight: 16 }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+                        background: s.bg, color: s.color,
+                      }}>{s.label}</span>
+                    </td>
+                    <td style={{ ...rowTd, textAlign: 'right', color: T.muted }}>
+                      {intg.last_synced_at ? formatDateTime(intg.last_synced_at, orgTimezone) : 'Never'}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+
       </div>
     </div>
   );

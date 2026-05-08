@@ -1,6 +1,19 @@
 import React from 'react';
 import { formatDate } from '../../utils/dateFormat';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  padding: '24px 28px',
+};
+
 export default function SettingsTab({
   handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
   selectedOrg,
@@ -8,133 +21,197 @@ export default function SettingsTab({
   setSystemPromptCustom, setPromptDirty,
   orgTimezone
 }) {
+  const labelStyle = { fontSize: 13, fontWeight: 600, color: T.sub, marginBottom: 6, display: 'block', fontFamily: T.font };
+  const inputStyle = {
+    width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 13,
+    border: `1px solid ${T.border}`, background: '#f9fafb', color: T.text,
+    fontFamily: T.font, outline: 'none', boxSizing: 'border-box',
+  };
+  const thStyle = {
+    fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+    letterSpacing: '0.07em', padding: '0 0 10px', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`,
+  };
+  const tdStyle = {
+    fontSize: 13, color: T.sub, padding: '11px 0',
+    borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
+  };
+
   return (
-    <div style={{padding: '1rem', maxWidth: '800px', margin: '0 auto'}}>
-      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
-        <h3><span style={{color: '#f59e0b'}}>AI Voice</span> Settings</h3>
-        <p>Configure how the AI pronounces product names, brand names, and technical terms during calls.</p>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Page title */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          <span style={{ color: T.amber }}>AI Voice</span> Settings
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          Configure how the AI pronounces product names, brand names, and technical terms during calls.
+        </p>
       </div>
 
-      <div className="glass-panel" style={{marginBottom: '2rem'}}>
-        <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>🗣️ Pronunciation Guide</h4>
-        <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem'}}>
-          Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
-        </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        <form onSubmit={handleAddPronunciation} style={{display: 'flex', gap: '12px', marginBottom: '2rem', alignItems: 'flex-end'}}>
-          <div className="form-group" style={{marginBottom: 0, flex: 1}}>
-            <label>Written Word</label>
-            <input
-              className="form-input"
-              required
-              value={pronFormData.word}
-              onChange={e => setPronFormData({...pronFormData, word: e.target.value})}
-              placeholder="e.g. Adsgpt"
-              data-testid="pron-word"
-            />
-          </div>
-          <div style={{fontSize: '1.5rem', color: '#64748b', paddingBottom: '8px'}}>→</div>
-          <div className="form-group" style={{marginBottom: 0, flex: 1}}>
-            <label>How to Pronounce</label>
-            <input
-              className="form-input"
-              required
-              value={pronFormData.phonetic}
-              onChange={e => setPronFormData({...pronFormData, phonetic: e.target.value})}
-              placeholder="e.g. Ads G P T"
-              data-testid="pron-phonetic"
-            />
-          </div>
-          <button data-testid="add-rule-btn" type="submit" className="btn-primary" style={{height: '46px', padding: '0 20px', whiteSpace: 'nowrap'}}>
-            + Add Rule
-          </button>
-        </form>
+        {/* Pronunciation Guide */}
+        <div style={card}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>🗣️ Pronunciation Guide</h3>
+          <p style={{ margin: '0 0 20px', fontSize: 13, color: T.muted }}>
+            Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
+          </p>
 
-        {pronunciations.length === 0 ? (
-          <div style={{padding: '2rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '8px'}}>
-            No pronunciation rules added yet. Add one above to get started!
-          </div>
-        ) : (
-          <table className="leads-table">
-            <thead>
-              <tr>
-                <th>Written Word</th>
-                <th>AI Says</th>
-                <th>Added</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pronunciations.map(p => (
-                <tr key={p.id}>
-                  <td style={{fontWeight: 600, color: '#e2e8f0', fontFamily: 'monospace'}}>{p.word}</td>
-                  <td style={{color: '#4ade80', fontStyle: 'italic'}}>🔊 "{p.phonetic}"</td>
-                  <td style={{color: '#94a3b8', fontSize: '0.85rem'}}>{formatDate(p.created_at, orgTimezone)}</td>
-                  <td>
-                    <button
-                      className="btn-call"
-                      style={{background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', padding: '4px 12px', fontSize: '0.8rem'}}
-                      onClick={() => handleDeletePronunciation(p.id)}
-                    >
-                      🗑️ Remove
-                    </button>
-                  </td>
+          <form onSubmit={handleAddPronunciation} style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Written Word</label>
+              <input
+                required value={pronFormData.word}
+                onChange={e => setPronFormData({ ...pronFormData, word: e.target.value })}
+                placeholder="e.g. Adsgpt"
+                data-testid="pron-word"
+                style={inputStyle}
+              />
+            </div>
+            <div style={{ fontSize: 20, color: T.muted, paddingBottom: 10 }}>→</div>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>How to Pronounce</label>
+              <input
+                required value={pronFormData.phonetic}
+                onChange={e => setPronFormData({ ...pronFormData, phonetic: e.target.value })}
+                placeholder="e.g. Ads G P T"
+                data-testid="pron-phonetic"
+                style={inputStyle}
+              />
+            </div>
+            <button data-testid="add-rule-btn" type="submit"
+              style={{
+                height: 42, padding: '0 20px', borderRadius: 8, border: 'none',
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                color: '#fff', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}>
+              + Add Rule
+            </button>
+          </form>
+
+          {pronunciations.length === 0 ? (
+            <div style={{
+              padding: '2rem', textAlign: 'center', color: T.muted,
+              background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`,
+            }}>
+              No pronunciation rules added yet. Add one above to get started!
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Written Word</th>
+                  <th style={thStyle}>AI Says</th>
+                  <th style={thStyle}>Added</th>
+                  <th style={thStyle}>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {pronunciations.map((p, i) => {
+                  const isLast = i === pronunciations.length - 1;
+                  const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ ...rowTd, fontWeight: 600, color: T.text, fontFamily: T.mono }}>{p.word}</td>
+                      <td style={{ ...rowTd, color: T.green, fontStyle: 'italic' }}>🔊 "{p.phonetic}"</td>
+                      <td style={{ ...rowTd, color: T.muted }}>{formatDate(p.created_at, orgTimezone)}</td>
+                      <td style={rowTd}>
+                        <button
+                          onClick={() => handleDeletePronunciation(p.id)}
+                          style={{
+                            background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
+                            color: T.red, borderRadius: 6, padding: '4px 12px',
+                            cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                          }}>
+                          🗑️ Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
 
-      <div className="glass-panel" style={{background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.15)'}}>
-        <h4 style={{marginTop: 0, color: '#f59e0b', fontSize: '0.95rem'}}>💡 How it works</h4>
-        <p style={{color: '#94a3b8', fontSize: '0.85rem', margin: 0, lineHeight: 1.7}}>
-          The pronunciation guide is injected into the AI's prompt at the start of every call.
-          When the AI generates a response containing a mapped word, it will use the phonetic version instead.
-          The TTS engine then speaks the phonetic text, resulting in correct pronunciation.
-          <br/><br/>
-          <strong style={{color: '#e2e8f0'}}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
-        </p>
-      </div>
+        {/* How it works */}
+        <div style={{
+          ...card,
+          background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
+          boxShadow: 'none',
+        }}>
+          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: T.amber }}>💡 How it works</h4>
+          <p style={{ color: T.sub, fontSize: 13, margin: 0, lineHeight: 1.7 }}>
+            The pronunciation guide is injected into the AI's prompt at the start of every call.
+            When the AI generates a response containing a mapped word, it will use the phonetic version instead.
+            The TTS engine then speaks the phonetic text, resulting in correct pronunciation.
+            <br /><br />
+            <strong style={{ color: T.text }}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
+          </p>
+        </div>
 
-      {/* System Prompt Preview & Edit */}
-      {selectedOrg && (
-        <div className="glass-panel" style={{marginBottom: '2rem'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-            <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600}}>🤖 AI System Prompt</h4>
-            <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+        {/* System Prompt */}
+        {selectedOrg && (
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
               {promptDirty && (
-                <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px'}}
-                  onClick={handleSaveSystemPrompt} disabled={promptSaving}>
+                <button
+                  onClick={handleSaveSystemPrompt} disabled={promptSaving}
+                  style={{
+                    background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
+                    borderRadius: 8, color: '#fff', padding: '8px 16px',
+                    cursor: promptSaving ? 'not-allowed' : 'pointer',
+                    fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                    opacity: promptSaving ? 0.7 : 1,
+                  }}>
                   {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
                 </button>
               )}
             </div>
-          </div>
-          <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.</p>
+            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+              This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.
+            </p>
 
-          {systemPromptAuto && !systemPromptCustom && (
-            <div style={{marginBottom: '1rem'}}>
-              <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, color: '#22d3ee', fontSize: '0.85rem'}}>📄 Auto-Generated from Products</label>
-              <div style={{background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px',
-                border: '1px solid rgba(34, 211, 238, 0.15)', whiteSpace: 'pre-wrap',
-                color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6, maxHeight: '200px', overflowY: 'auto'}}>
-                {systemPromptAuto}
+            {systemPromptAuto && !systemPromptCustom && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...labelStyle, color: T.accent }}>📄 Auto-Generated from Products</label>
+                <div style={{
+                  background: T.bg, padding: 12, borderRadius: 8,
+                  border: `1px solid ${T.border}`, whiteSpace: 'pre-wrap',
+                  color: T.sub, fontSize: 13, lineHeight: 1.6, maxHeight: 200, overflowY: 'auto',
+                  fontFamily: T.mono,
+                }}>
+                  {systemPromptAuto}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          <div>
-            <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem'}}>✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}</label>
-            <textarea className="form-input" rows={8}
-              placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
-              value={systemPromptCustom}
-              onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
-              style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6}} />
-            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '6px'}}>If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.</p>
+            <div>
+              <label style={labelStyle}>
+                ✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}
+              </label>
+              <textarea
+                rows={8}
+                placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
+                value={systemPromptCustom}
+                onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
+                style={{
+                  ...inputStyle, resize: 'vertical', minHeight: 120, lineHeight: 1.6,
+                  fontFamily: T.mono,
+                }}
+              />
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
+                If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+      </div>
     </div>
   );
 }

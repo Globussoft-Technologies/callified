@@ -1,6 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  padding: '24px 28px',
+};
+
+const inputStyle = {
+  background: '#f9fafb', border: `1px solid ${T.border}`,
+  borderRadius: 8, color: T.text, padding: '10px 14px', fontSize: 13,
+  outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: T.font,
+};
+
+const thStyle = {
+  textAlign: 'left', padding: '0 12px 12px', color: T.muted,
+  fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em',
+  borderBottom: `1px solid ${T.border}`,
+};
+
+const tdStyle = {
+  padding: '12px', color: T.sub, fontSize: 13, borderBottom: `1px solid ${T.border}`,
+  verticalAlign: 'middle',
+};
+
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
   const [members, setMembers] = useState([]);
@@ -70,9 +100,6 @@ export default function TeamPage({ apiFetch, API_URL }) {
         alert(data.error || data.detail || 'Failed to fetch invite link');
         return;
       }
-      // navigator.clipboard requires a secure context (https / localhost),
-      // which both dev and prod satisfy. Fall back to a prompt() if it
-      // throws (e.g. permission denied / non-secure origin).
       try {
         await navigator.clipboard.writeText(data.invite_link);
         setCopiedInviteId(inviteId);
@@ -128,51 +155,56 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
   const roleBadge = (role) => {
     const colors = {
-      Admin: { bg: 'rgba(99,102,241,0.2)', color: '#a5b4fc', border: 'rgba(99,102,241,0.4)' },
-      Agent: { bg: 'rgba(34,197,94,0.2)', color: '#4ade80', border: 'rgba(34,197,94,0.4)' },
-      Viewer: { bg: 'rgba(234,179,8,0.2)', color: '#fde047', border: 'rgba(234,179,8,0.4)' },
+      Admin:  { bg: 'rgba(99,102,241,0.1)',  color: T.accent, border: 'rgba(99,102,241,0.3)' },
+      Agent:  { bg: 'rgba(16,185,129,0.1)',  color: T.green,  border: 'rgba(16,185,129,0.3)' },
+      Viewer: { bg: 'rgba(245,158,11,0.1)',  color: T.amber,  border: 'rgba(245,158,11,0.3)' },
     };
     const c = colors[role] || colors.Agent;
     return (
       <span style={{
-        padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+        padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
         background: c.bg, color: c.color, border: `1px solid ${c.border}`,
       }}>{role}</span>
     );
   };
 
-  const cardStyle = {
-    background: 'rgba(30,41,59,0.7)', border: '1px solid rgba(148,163,184,0.1)',
-    borderRadius: '12px', padding: '24px',
-  };
-
   return (
-    <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, color: '#f1f5f9' }}>Team Members</h2>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+            <span style={{ color: T.accent }}>Team</span> Members
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+            Manage your organization's users and their roles.
+          </p>
+        </div>
         <button
           onClick={() => setShowInvite(true)}
           style={{
             background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-            borderRadius: '8px', color: '#fff', padding: '10px 20px', cursor: 'pointer',
-            fontWeight: 600, fontSize: '0.85rem',
-          }}
-        >+ Invite Member</button>
+            borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
+            fontWeight: 700, fontSize: 13, fontFamily: T.font,
+          }}>
+          + Invite Member
+        </button>
       </div>
 
       {/* Invite Modal */}
       {showInvite && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
         }} onClick={closeInvite}>
-          <div style={{ ...cardStyle, width: '440px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 6px', color: '#f1f5f9' }}>Invite Team Member</h3>
-            <p style={{ margin: '0 0 16px', color: '#94a3b8', fontSize: '0.8rem' }}>
+          <div style={{ ...card, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Invite Team Member</h3>
+            <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
               They'll get an email with a link to set their own password — no password is set here.
             </p>
             <form onSubmit={handleInvite}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <input
                   placeholder="Full Name" required value={inviteForm.full_name}
                   onChange={e => setInviteForm({ ...inviteForm, full_name: e.target.value })}
@@ -186,24 +218,32 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <select
                   value={inviteForm.role}
                   onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })}
-                  style={inputStyle}
+                  style={{ ...inputStyle, cursor: 'pointer' }}
                 >
                   <option value="Admin">Admin</option>
                   <option value="Agent">Agent</option>
                   <option value="Viewer">Viewer</option>
                 </select>
-                {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
-                {inviteSuccess && <div style={{ color: '#86efac', fontSize: '0.85rem', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '6px', padding: '8px 12px' }}>{inviteSuccess}</div>}
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+                {inviteError && (
+                  <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                    {inviteError}
+                  </div>
+                )}
+                {inviteSuccess && (
+                  <div style={{ color: T.green, fontSize: 13, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 12px' }}>
+                    {inviteSuccess}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                   <button type="button" onClick={closeInvite}
-                    style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
+                    style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '8px 16px', cursor: 'pointer', fontFamily: T.font, fontWeight: 600, fontSize: 13 }}>
                     {inviteSuccess ? 'Done' : 'Cancel'}
                   </button>
                   <button type="submit" disabled={inviteLoading}
                     style={{
                       background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-                      borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600,
-                      opacity: inviteLoading ? 0.6 : 1,
+                      borderRadius: 8, color: '#fff', padding: '8px 20px', cursor: inviteLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: inviteLoading ? 0.7 : 1,
                     }}>
                     {inviteLoading ? 'Sending...' : 'Send Invite'}
                   </button>
@@ -216,13 +256,14 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
       {/* Pending Invites */}
       {pendingInvites.length > 0 && (
-        <div style={{ ...cardStyle, marginBottom: '20px' }}>
-          <h3 style={{ margin: '0 0 14px', color: '#f1f5f9', fontSize: '1rem' }}>
-            Pending Invites <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.85rem' }}>({pendingInvites.length})</span>
+        <div style={{ ...card, marginBottom: 16 }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: T.text }}>
+            Pending Invites{' '}
+            <span style={{ color: T.muted, fontWeight: 400, fontSize: 13 }}>({pendingInvites.length})</span>
           </h3>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+              <tr>
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
@@ -232,55 +273,64 @@ export default function TeamPage({ apiFetch, API_URL }) {
               </tr>
             </thead>
             <tbody>
-              {pendingInvites.map(inv => (
-                <tr key={inv.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                  <td style={tdStyle}>{inv.full_name || '-'}</td>
-                  <td style={tdStyle}>{inv.email}</td>
-                  <td style={tdStyle}>{roleBadge(inv.role)}</td>
-                  <td style={tdStyle}>{inv.invited_by || '-'}</td>
-                  <td style={tdStyle}>
-                    {inv.expires_at ? new Date(inv.expires_at).toLocaleString() : '-'}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {confirmCancelInvite === inv.id ? (
-                      <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Cancel?</span>
-                        <button onClick={() => handleCancelInvite(inv.id)}
-                          style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Yes</button>
-                        <button onClick={() => setConfirmCancelInvite(null)}
-                          style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>No</button>
-                      </span>
-                    ) : (
-                      <span style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
-                        <button onClick={() => handleCopyInviteLink(inv.id)}
-                          title="Copy invite link to clipboard — useful when SMTP isn't configured or to resend out-of-band"
-                          style={{ background: copiedInviteId === inv.id ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.1)', border: `1px solid ${copiedInviteId === inv.id ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.25)'}`, borderRadius: '4px', color: copiedInviteId === inv.id ? '#86efac' : '#a5b4fc', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
-                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
-                        </button>
-                        <button onClick={() => setConfirmCancelInvite(inv.id)}
-                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
-                          Cancel Invite
-                        </button>
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {pendingInvites.map((inv, i) => {
+                const isLast = i === pendingInvites.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                return (
+                  <tr key={inv.id}>
+                    <td style={rowTd}>{inv.full_name || '-'}</td>
+                    <td style={rowTd}>{inv.email}</td>
+                    <td style={rowTd}>{roleBadge(inv.role)}</td>
+                    <td style={rowTd}>{inv.invited_by || '-'}</td>
+                    <td style={{ ...rowTd, color: T.muted }}>
+                      {inv.expires_at ? new Date(inv.expires_at).toLocaleString() : '-'}
+                    </td>
+                    <td style={{ ...rowTd, textAlign: 'right' }}>
+                      {confirmCancelInvite === inv.id ? (
+                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, color: T.red }}>Cancel?</span>
+                          <button onClick={() => handleCancelInvite(inv.id)}
+                            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>Yes</button>
+                          <button onClick={() => setConfirmCancelInvite(null)}
+                            style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>No</button>
+                        </span>
+                      ) : (
+                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                          <button onClick={() => handleCopyInviteLink(inv.id)}
+                            title="Copy invite link to clipboard"
+                            style={{
+                              background: copiedInviteId === inv.id ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)',
+                              border: `1px solid ${copiedInviteId === inv.id ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.25)'}`,
+                              borderRadius: 6, color: copiedInviteId === inv.id ? T.green : T.accent,
+                              padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                            }}>
+                            {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                          </button>
+                          <button onClick={() => setConfirmCancelInvite(inv.id)}
+                            style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
+                            Cancel Invite
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
       {/* Team Table */}
-      <div style={cardStyle}>
+      <div style={card}>
         {loading ? (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>Loading team...</div>
+          <div style={{ textAlign: 'center', color: T.muted, padding: '40px' }}>Loading team...</div>
         ) : members.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No team members found.</div>
+          <div style={{ textAlign: 'center', color: T.muted, padding: '40px' }}>No team members found.</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+              <tr>
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
@@ -289,71 +339,60 @@ export default function TeamPage({ apiFetch, API_URL }) {
               </tr>
             </thead>
             <tbody>
-              {members.map(m => {
+              {members.map((m, i) => {
                 const isSelf = currentUser && currentUser.id === m.id;
+                const isLast = i === members.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
                 return (
-                <tr key={m.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
-                  <td style={tdStyle}>
-                    {m.full_name || '-'}
-                    {isSelf && (
-                      <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#a78bfa', fontWeight: 600 }}>(you)</span>
-                    )}
-                  </td>
-                  <td style={tdStyle}>{m.email}</td>
-                  <td style={tdStyle}>
-                    <select
-                      value={m.role}
-                      disabled={isSelf}
-                      title={isSelf ? "You cannot change your own role" : undefined}
-                      onChange={e => handleRoleChange(m.id, e.target.value)}
-                      style={{
-                        background: 'rgba(30,41,59,0.9)', border: '1px solid rgba(148,163,184,0.2)',
-                        borderRadius: '6px', color: isSelf ? '#64748b' : '#e2e8f0', padding: '4px 8px', fontSize: '0.8rem',
-                        cursor: isSelf ? 'not-allowed' : 'pointer',
-                        opacity: isSelf ? 0.6 : 1,
-                      }}
-                    >
-                      <option value="Admin">Admin</option>
-                      <option value="Agent">Agent</option>
-                      <option value="Viewer">Viewer</option>
-                    </select>
-                  </td>
-                  <td style={tdStyle}>
-                    {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {currentUser && currentUser.id === m.id ? (
-                      // No Remove button on the caller's own row — self-removal
-                      // would lock them out (and could lock the org out if
-                      // they're the only admin). Backend rejects it anyway.
-                      // Issue #54.
-                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}>—</span>
-                    ) : confirmDelete === m.id ? (
-                      <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Remove?</span>
-                        <button onClick={() => handleDelete(m.id)}
-                          style={{
-                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)',
-                            borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
-                            fontSize: '0.75rem', fontWeight: 600,
-                          }}>Yes</button>
-                        <button onClick={() => setConfirmDelete(null)}
-                          style={{
-                            background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)',
-                            borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer',
-                            fontSize: '0.75rem',
-                          }}>No</button>
-                      </span>
-                    ) : (
-                      <button onClick={() => setConfirmDelete(m.id)}
+                  <tr key={m.id}>
+                    <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>
+                      {m.full_name || '-'}
+                      {isSelf && (
+                        <span style={{ marginLeft: 8, fontSize: 11, color: T.accent, fontWeight: 600 }}>(you)</span>
+                      )}
+                    </td>
+                    <td style={rowTd}>{m.email}</td>
+                    <td style={rowTd}>
+                      <select
+                        value={m.role}
+                        disabled={isSelf}
+                        title={isSelf ? 'You cannot change your own role' : undefined}
+                        onChange={e => handleRoleChange(m.id, e.target.value)}
                         style={{
-                          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                          borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
-                          fontSize: '0.75rem',
-                        }}>Remove</button>
-                    )}
-                  </td>
-                </tr>
+                          background: T.bg, border: `1px solid ${T.border}`,
+                          borderRadius: 6, color: isSelf ? T.muted : T.sub,
+                          padding: '4px 8px', fontSize: 12, fontFamily: T.font,
+                          cursor: isSelf ? 'not-allowed' : 'pointer',
+                          opacity: isSelf ? 0.6 : 1,
+                        }}
+                      >
+                        <option value="Admin">Admin</option>
+                        <option value="Agent">Agent</option>
+                        <option value="Viewer">Viewer</option>
+                      </select>
+                    </td>
+                    <td style={{ ...rowTd, color: T.muted }}>
+                      {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
+                    </td>
+                    <td style={{ ...rowTd, textAlign: 'right' }}>
+                      {isSelf ? (
+                        <span style={{ color: T.muted, fontSize: 13 }}>—</span>
+                      ) : confirmDelete === m.id ? (
+                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <span style={{ fontSize: 12, color: T.red }}>Remove?</span>
+                          <button onClick={() => handleDelete(m.id)}
+                            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>Yes</button>
+                          <button onClick={() => setConfirmDelete(null)}
+                            style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>No</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmDelete(m.id)}
+                          style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
+                          Remove
+                        </button>
+                      )}
+                    </td>
+                  </tr>
                 );
               })}
             </tbody>
@@ -363,18 +402,3 @@ export default function TeamPage({ apiFetch, API_URL }) {
     </div>
   );
 }
-
-const inputStyle = {
-  background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.2)',
-  borderRadius: '8px', color: '#e2e8f0', padding: '10px 14px', fontSize: '0.9rem',
-  outline: 'none', width: '100%', boxSizing: 'border-box',
-};
-
-const thStyle = {
-  textAlign: 'left', padding: '10px 12px', color: '#94a3b8',
-  fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px',
-};
-
-const tdStyle = {
-  padding: '12px', color: '#e2e8f0', fontSize: '0.85rem',
-};

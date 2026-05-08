@@ -1,7 +1,41 @@
 import React, { useState, useEffect } from 'react';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', pink: '#ec4899',
+  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
+const thStyle = {
+  padding: '0 0 10px', textAlign: 'left', fontSize: 10, fontWeight: 700,
+  color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em',
+  borderBottom: `1px solid ${T.border}`,
+};
+const tdStyle = {
+  padding: '13px 0', fontSize: 13, color: T.sub,
+  borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
+};
+
+const LANG_NAMES = {
+  hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', en: 'English',
+  ta: 'Tamil', te: 'Telugu', kn: 'Kannada', ml: 'Malayalam',
+  gu: 'Gujarati', pa: 'Punjabi', or: 'Odia', as: 'Assamese',
+};
+
+function ScoreBadge({ score }) {
+  const color = score >= 4 ? T.green : score >= 3 ? T.amber : score > 0 ? T.red : T.muted;
+  return <span style={{ color, fontWeight: 700, fontFamily: T.mono }}>{score > 0 ? score.toFixed(1) : '—'}</span>;
+}
+
 export default function AnalyticsPage({ apiFetch, API_URL }) {
-  const [data, setData] = useState(null);
+  const [data, setData]       = useState(null);
   const [langData, setLangData] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -16,262 +50,271 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
         const lang = await langRes.json();
         setData(dash && typeof dash === 'object' && !Array.isArray(dash) ? dash : null);
         setLangData(Array.isArray(lang) ? lang : []);
-        if (!Array.isArray(lang)) {
-          console.warn('[analytics/languages] expected array, got:', { status: langRes.status, body: lang });
-        }
-      } catch (e) {
-        console.error('Failed to load analytics', e);
-      } finally {
-        setLoading(false);
-      }
+      } catch (e) { console.error('Failed to load analytics', e); }
+      finally { setLoading(false); }
     })();
   }, []);
 
-  if (loading) return <div style={{padding: '3rem', textAlign: 'center', color: '#94a3b8'}}>Loading analytics...</div>;
-  if (!data) return <div style={{padding: '3rem', textAlign: 'center', color: '#94a3b8'}}>Failed to load analytics data.</div>;
+  if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading analytics…</div>;
+  if (!data)   return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Failed to load analytics data.</div>;
 
-  const dailyCalls = data.daily_calls || [];
-  const sentimentBreakdown = data.sentiment_breakdown || { positive: 0, neutral: 0, negative: 0 };
+  const dailyCalls         = data.daily_calls          || [];
+  const sentimentBreakdown = data.sentiment_breakdown  || { positive: 0, neutral: 0, negative: 0 };
   const campaignPerformance = data.campaign_performance || [];
-  const topFailureReasons = data.top_failure_reasons || [];
+  const topFailureReasons  = data.top_failure_reasons  || [];
 
-  const maxDaily = Math.max(...dailyCalls.map(d => d.count), 1);
+  const maxDaily      = Math.max(...dailyCalls.map(d => d.count), 1);
   const sentimentTotal = (sentimentBreakdown.positive + sentimentBreakdown.neutral + sentimentBreakdown.negative) || 1;
 
+  const pickupRate = Math.round((data.pickup_rate || 0) * 100);
+  const apptRate   = Math.round((data.appointment_rate || 0) * 100);
+
+  const statCards = [
+    { label: 'TOTAL CALLS',      value: data.total_calls || 0,                       color: T.text,  suffix: '' },
+    { label: 'CALLS TODAY',      value: data.calls_today || 0,                       color: T.text,  suffix: '' },
+    { label: 'PICKUP RATE',      value: pickupRate,                                  color: pickupRate >= 50 ? T.green : T.red, suffix: '%' },
+    { label: 'APPOINTMENT RATE', value: apptRate,                                    color: apptRate >= 20 ? T.green : T.amber, suffix: '%' },
+    { label: 'AVG DURATION',     value: Math.round(data.avg_call_duration_sec || 0), color: T.accent, suffix: 's' },
+    { label: 'THIS WEEK',        value: data.calls_this_week || 0,                   color: T.text,  suffix: '' },
+  ];
+
+  const handleExportCSV = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/analytics/export/csv`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = res.headers.get('content-disposition')?.split('filename=')[1] || 'callified_report.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { console.error('CSV export failed', e); }
+  };
+
+  const handleExportReport = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/analytics/export/report`);
+      const html = await res.text();
+      const win = window.open('', '_blank');
+      win.document.write(html); win.document.close();
+    } catch (e) { console.error('Report export failed', e); }
+  };
+
   return (
-    <div className="analytics-container">
-      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start'}}>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
         <div>
-          <h3><span style={{color: '#f59e0b'}}>Analytics</span> Dashboard</h3>
-          <p>Real-time metrics from your AI dialer campaigns.</p>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+            <span style={{ color: T.amber }}>Analytics</span> Dashboard
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>Real-time metrics from your AI dialer campaigns.</p>
         </div>
-        <div style={{display: 'flex', gap: '0.5rem', paddingTop: '0.25rem'}}>
-          <button
-            onClick={async () => {
-              try {
-                const res = await apiFetch(`${API_URL}/analytics/export/csv`);
-                const blob = await res.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = res.headers.get('content-disposition')?.split('filename=')[1] || 'callified_report.csv';
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-              } catch (e) { console.error('CSV export failed', e); }
-            }}
-            style={{background: 'rgba(245,158,11,0.15)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)', borderRadius: '8px', padding: '0.5rem 1rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px'}}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={handleExportCSV} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+            background: T.card, border: `1px solid ${T.border}`, color: T.sub,
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Export CSV
           </button>
-          <button
-            onClick={async () => {
-              try {
-                const res = await apiFetch(`${API_URL}/analytics/export/report`);
-                const html = await res.text();
-                const win = window.open('', '_blank');
-                win.document.write(html);
-                win.document.close();
-              } catch (e) { console.error('Report export failed', e); }
-            }}
-            style={{background: 'rgba(34,197,94,0.15)', color: '#22c55e', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', padding: '0.5rem 1rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px'}}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <button onClick={handleExportReport} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+            background: T.accent, border: 'none', color: '#fff',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
             Export Report
           </button>
         </div>
       </div>
 
-      {/* Top Stats Row */}
-      <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', padding: '0 24px', marginBottom: '2rem'}}>
-        <StatCard label="Total Calls" value={data.total_calls || 0} />
-        <StatCard label="Calls Today" value={data.calls_today || 0} />
-        <StatCard label="Pickup Rate" value={`${Math.round((data.pickup_rate || 0) * 100)}%`} color={(data.pickup_rate || 0) >= 0.5 ? '#22c55e' : '#ef4444'} />
-        <StatCard label="Appointment Rate" value={`${Math.round((data.appointment_rate || 0) * 100)}%`} color={(data.appointment_rate || 0) >= 0.2 ? '#22c55e' : '#f59e0b'} />
-        <StatCard label="Avg Duration" value={`${Math.round(data.avg_call_duration_sec || 0)}s`} />
-        <StatCard label="This Week" value={data.calls_this_week || 0} />
+      {/* Stat cards — 4 top row, 2 second row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
+        {statCards.slice(0, 4).map(s => (
+          <div key={s.label} style={{ ...card, padding: '18px 22px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
+            <div style={{ fontSize: 30, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>{s.value}{s.suffix}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+        {statCards.slice(4).map(s => (
+          <div key={s.label} style={{ ...card, padding: '18px 22px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
+            <div style={{ fontSize: 30, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>{s.value}{s.suffix}</div>
+          </div>
+        ))}
       </div>
 
-      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', padding: '0 24px', marginBottom: '2rem'}}>
+      {/* Charts row */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 12, marginBottom: 16 }}>
+
         {/* Daily Calls Bar Chart */}
-        <div className="glass-panel" style={{padding: '1.5rem'}}>
-          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Daily Calls (Last 7 Days)</h4>
-          <div style={{display: 'flex', alignItems: 'flex-end', gap: '8px', height: '160px'}}>
+        <div style={{ ...card, padding: '20px 24px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+            Daily Calls (Last 7 Days)
+          </div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 120 }}>
             {dailyCalls.map((d, i) => {
               const pct = Math.max(4, (d.count / maxDaily) * 100);
-              const dt = new Date(d.date + 'T12:00:00');
-              const weekday = dt.toLocaleDateString('en-US', { weekday: 'short' });
+              const dt  = new Date(d.date + 'T12:00:00');
               const monthDay = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+              const weekday  = dt.toLocaleDateString('en-US', { weekday: 'short' });
+              const isMax = d.count === maxDaily && d.count > 0;
               return (
-                <div key={i} style={{flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end'}}>
-                  <span style={{fontSize: '0.75rem', color: '#e2e8f0', marginBottom: '4px'}}>{d.count}</span>
+                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                  {d.count > 0 && <span style={{ fontSize: 10, color: T.sub, marginBottom: 4, fontFamily: T.mono, fontWeight: 600 }}>{d.count}</span>}
                   <div style={{
-                    width: '100%',
-                    maxWidth: '48px',
+                    width: '100%', borderRadius: '4px 4px 0 0',
                     height: `${pct}%`,
-                    background: 'linear-gradient(180deg, #f59e0b, #d97706)',
-                    borderRadius: '4px 4px 0 0',
-                    transition: 'height 0.3s ease',
+                    background: isMax
+                      ? `linear-gradient(180deg, ${T.accent}, ${T.pink})`
+                      : 'rgba(99,102,241,0.15)',
+                    transition: 'height 0.4s',
                   }} />
-                  <span style={{fontSize: '0.7rem', color: '#94a3b8', marginTop: '6px', fontWeight: 600}}>{monthDay}</span>
-                  <span style={{fontSize: '0.65rem', color: '#64748b'}}>{weekday}</span>
+                  <span style={{ fontSize: 9, color: T.muted, marginTop: 5, fontWeight: 600 }}>{monthDay}</span>
+                  <span style={{ fontSize: 9, color: T.muted }}>{weekday}</span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Sentiment Breakdown */}
-        <div className="glass-panel" style={{padding: '1.5rem'}}>
-          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1.5rem'}}>Customer Sentiment</h4>
-          <div style={{display: 'flex', flexDirection: 'column', gap: '1rem'}}>
-            <SentimentBar label="Positive" count={sentimentBreakdown.positive} total={sentimentTotal} color="#22c55e" />
-            <SentimentBar label="Neutral" count={sentimentBreakdown.neutral} total={sentimentTotal} color="#f59e0b" />
-            <SentimentBar label="Negative" count={sentimentBreakdown.negative} total={sentimentTotal} color="#ef4444" />
+        {/* Customer Sentiment */}
+        <div style={{ ...card, padding: '20px 24px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+            Customer Sentiment
           </div>
-          {sentimentTotal <= 1 && sentimentBreakdown.positive === 0 && (
-            <p style={{color: '#64748b', fontSize: '0.85rem', marginTop: '1rem'}}>No sentiment data yet. Reviews are generated after calls complete.</p>
-          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {[
+              { label: 'Positive', count: sentimentBreakdown.positive, color: T.green },
+              { label: 'Neutral',  count: sentimentBreakdown.neutral,  color: T.amber },
+              { label: 'Negative', count: sentimentBreakdown.negative, color: T.red   },
+            ].map(s => {
+              const pct = Math.round((s.count / sentimentTotal) * 100);
+              return (
+                <div key={s.label}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, fontSize: 13 }}>
+                    <span style={{ color: T.sub, fontWeight: 500 }}>{s.label}</span>
+                    <span style={{ color: T.muted, fontFamily: T.mono, fontSize: 12 }}>{s.count} ({pct}%)</span>
+                  </div>
+                  <div style={{ height: 6, background: T.border, borderRadius: 3, overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${pct}%`, background: s.color, borderRadius: 3, transition: 'width 0.4s' }} />
+                  </div>
+                </div>
+              );
+            })}
+            {sentimentTotal <= 1 && sentimentBreakdown.positive === 0 && (
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 8 }}>No sentiment data yet.</p>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Campaign Performance Table */}
-      <div style={{padding: '0 24px', marginBottom: '2rem'}}>
-        <div className="glass-panel" style={{padding: '1.5rem'}}>
-          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Campaign Performance</h4>
-          {campaignPerformance.length === 0 ? (
-            <p style={{color: '#64748b', fontSize: '0.9rem'}}>No campaigns found.</p>
-          ) : (
-            <div style={{overflowX: 'auto'}}>
-              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem'}}>
-                <thead>
-                  <tr style={{borderBottom: '1px solid rgba(255,255,255,0.1)'}}>
-                    <th style={thStyle}>Campaign</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Calls</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Appointments</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Avg Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {campaignPerformance.map((c) => (
-                    <tr key={c.campaign_id} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
-                      <td style={tdStyle}>{c.name}</td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>{c.calls}</td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>
-                        <span style={{color: c.appointments > 0 ? '#22c55e' : '#64748b'}}>{c.appointments}</span>
-                      </td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>
-                        <ScoreBadge score={c.avg_score} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* Campaign Performance */}
+      <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
+          Campaign Performance
         </div>
+        {campaignPerformance.length === 0 ? (
+          <p style={{ color: T.muted, fontSize: 13 }}>No campaigns found.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Campaign</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Calls</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Appointments</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Avg Score</th>
+              </tr>
+            </thead>
+            <tbody>
+              {campaignPerformance.map((c, i) => {
+                const isLast = i === campaignPerformance.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                return (
+                  <tr key={c.campaign_id}>
+                    <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>{c.name}</td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>{c.calls}</td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>
+                      <span style={{ color: c.appointments > 0 ? T.green : T.muted }}>{c.appointments}</span>
+                    </td>
+                    <td style={{ ...rowTd, textAlign: 'center' }}>
+                      <ScoreBadge score={c.avg_score} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {/* Top Failure Reasons */}
       {topFailureReasons.length > 0 && (
-        <div style={{padding: '0 24px', marginBottom: '2rem'}}>
-          <div className="glass-panel" style={{padding: '1.5rem'}}>
-            <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Top Failure Reasons</h4>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem'}}>
-              {topFailureReasons.map((r, i) => (
-                <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
-                  <span style={{color: '#e2e8f0', fontSize: '0.85rem'}}>{r.reason}</span>
-                  <span style={{color: '#ef4444', fontWeight: 600, fontSize: '0.85rem'}}>{r.count}</span>
-                </div>
-              ))}
-            </div>
+        <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
+            Top Failure Reasons
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {topFailureReasons.map((r, i) => (
+              <div key={i} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '11px 0',
+                borderBottom: i < topFailureReasons.length - 1 ? `1px solid ${T.border}` : 'none',
+              }}>
+                <span style={{ fontSize: 13, color: T.sub }}>{r.reason}</span>
+                <span style={{ fontSize: 13, color: T.red, fontWeight: 700, fontFamily: T.mono }}>{r.count}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
       {/* Language Performance */}
-      <div style={{padding: '0 24px', marginBottom: '2rem'}}>
-        <div className="glass-panel" style={{padding: '1.5rem'}}>
-          <h4 style={{marginTop: 0, color: '#94a3b8', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1rem'}}>Language Performance</h4>
-          {langData.length === 0 ? (
-            <p style={{color: '#64748b', fontSize: '0.9rem'}}>No language data yet. Calls need campaign language settings to appear here.</p>
-          ) : (
-            <div style={{overflowX: 'auto'}}>
-              <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem'}}>
-                <thead>
-                  <tr style={{borderBottom: '1px solid rgba(255,255,255,0.1)'}}>
-                    <th style={thStyle}>Language</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Total Calls</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Appointments</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Conversion Rate</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Avg Quality</th>
-                    <th style={{...thStyle, textAlign: 'center'}}>Avg Duration</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {langData.map((row) => (
-                    <tr key={row.language} style={{borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
-                      <td style={tdStyle}>{LANG_NAMES[row.language] || row.language}</td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>{row.total_calls}</td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>
-                        <span style={{color: row.appointments > 0 ? '#22c55e' : '#64748b'}}>{row.appointments}</span>
-                      </td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>{row.conversion_rate}%</td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>
-                        <ScoreBadge score={row.avg_score} />
-                      </td>
-                      <td style={{...tdStyle, textAlign: 'center'}}>{Math.round(row.avg_duration)}s</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
+          Language Performance
         </div>
+        {langData.length === 0 ? (
+          <p style={{ color: T.muted, fontSize: 13 }}>No language data yet.</p>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Language</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Total Calls</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Appointments</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Conversion Rate</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Avg Quality</th>
+                <th style={{ ...thStyle, textAlign: 'center' }}>Avg Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {langData.map((row, i) => {
+                const isLast = i === langData.length - 1;
+                const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                return (
+                  <tr key={row.language}>
+                    <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>{LANG_NAMES[row.language] || row.language}</td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>{row.total_calls}</td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>
+                      <span style={{ color: row.appointments > 0 ? T.green : T.muted }}>{row.appointments}</span>
+                    </td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>{row.conversion_rate}%</td>
+                    <td style={{ ...rowTd, textAlign: 'center' }}><ScoreBadge score={row.avg_score} /></td>
+                    <td style={{ ...rowTd, textAlign: 'center', fontFamily: T.mono }}>{Math.round(row.avg_duration)}s</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
+
     </div>
   );
 }
-
-function StatCard({ label, value, color }) {
-  return (
-    <div className="glass-panel" style={{padding: '1.25rem', textAlign: 'center'}}>
-      <div style={{fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '0.5rem'}}>{label}</div>
-      <div style={{fontSize: '1.75rem', fontWeight: 700, color: color || '#e2e8f0'}}>{value}</div>
-    </div>
-  );
-}
-
-function SentimentBar({ label, count, total, color }) {
-  const pct = Math.round((count / total) * 100);
-  return (
-    <div>
-      <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontSize: '0.85rem'}}>
-        <span style={{color: '#e2e8f0'}}>{label}</span>
-        <span style={{color: '#94a3b8'}}>{count} ({pct}%)</span>
-      </div>
-      <div style={{height: '8px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px', overflow: 'hidden'}}>
-        <div style={{height: '100%', width: `${pct}%`, background: color, borderRadius: '4px', transition: 'width 0.3s ease'}} />
-      </div>
-    </div>
-  );
-}
-
-function ScoreBadge({ score }) {
-  let color = '#64748b';
-  if (score >= 4) color = '#22c55e';
-  else if (score >= 3) color = '#f59e0b';
-  else if (score > 0) color = '#ef4444';
-  return <span style={{color, fontWeight: 600}}>{score > 0 ? score.toFixed(1) : '--'}</span>;
-}
-
-const LANG_NAMES = {
-  hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', en: 'English',
-  ta: 'Tamil', te: 'Telugu', kn: 'Kannada', ml: 'Malayalam',
-  gu: 'Gujarati', pa: 'Punjabi', or: 'Odia', as: 'Assamese',
-};
-
-const thStyle = { padding: '0.75rem 1rem', textAlign: 'left', color: '#94a3b8', fontWeight: 600, fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.5px' };
-const tdStyle = { padding: '0.75rem 1rem', color: '#e2e8f0' };

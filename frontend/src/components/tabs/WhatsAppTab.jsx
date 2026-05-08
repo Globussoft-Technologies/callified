@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime, formatTime } from '../../utils/dateFormat';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+  wa: '#25D366',
+};
+
 const PROVIDERS = [
   { value: 'gupshup', label: 'Gupshup' },
   { value: 'wati', label: 'Wati' },
@@ -10,14 +18,6 @@ const PROVIDERS = [
   { value: 'wasender', label: 'WaSender' },
 ];
 
-// Field `key` values are the JSON keys posted to /api/wa/config; backend
-// reads body.Credentials["api_key" / "app_id" / "phone_number" / "webhook_url"]
-// and maps each into its own column. The user-facing `label` stays
-// human-readable; only the wire-format key matches the backend's expected
-// names. Renaming `app_name` → `app_id` and `source_phone` → `phone_number`
-// closes the silent persistence gap where users filled the form, hit Save,
-// reloaded, and watched their values disappear because no one was reading
-// those keys server-side.
 const PROVIDER_FIELDS = {
   gupshup: [
     { key: 'api_key', label: 'API Key', type: 'password' },
@@ -47,13 +47,12 @@ const PROVIDER_FIELDS = {
   ],
 };
 
-/* ─── Secret input with show/hide toggle ─── */
-// Used for any credential field (API key, bearer token, app secret). Masks
-// the value by default to prevent shoulder-surfing during screen-share, with
-// an eye toggle for the user to verify what they pasted. autoComplete and
-// the data-* attributes opt out of browser/password-manager autofill so the
-// user's personal saved logins don't accidentally get suggested into a
-// third-party API-key field.
+const inputBase = {
+  width: '100%', boxSizing: 'border-box', padding: '9px 13px', borderRadius: 8,
+  border: `1px solid ${T.border}`, background: '#f9fafb',
+  color: T.text, fontSize: 13, outline: 'none', fontFamily: T.font,
+};
+
 function SecretField({ value, onChange, placeholder }) {
   const [reveal, setReveal] = useState(false);
   return (
@@ -67,16 +66,16 @@ function SecretField({ value, onChange, placeholder }) {
         spellCheck={false}
         data-1p-ignore
         data-lpignore="true"
-        style={{ ...inputStyle, paddingRight: '52px' }}
+        style={{ ...inputBase, paddingRight: 52 }}
       />
       <button
         type="button"
         onClick={() => setReveal(!reveal)}
         aria-label={reveal ? 'Hide value' : 'Show value'}
         style={{
-          position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
-          background: 'none', border: 'none', color: '#94a3b8',
-          cursor: 'pointer', fontSize: '0.75rem', padding: '4px 8px',
+          position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+          background: 'none', border: 'none', color: T.accent,
+          cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: '2px 6px', fontFamily: T.font,
         }}>
         {reveal ? 'Hide' : 'Show'}
       </button>
@@ -84,7 +83,6 @@ function SecretField({ value, onChange, placeholder }) {
   );
 }
 
-/* ─── Config Modal ─── */
 function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOrg }) {
   const [provider, setProvider] = useState('gupshup');
   const [creds, setCreds] = useState({});
@@ -111,19 +109,13 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
       .catch(() => setLoaded(true));
   }, [show, selectedOrg]);
 
-  // Required = every field shown for the current provider. The list in
-  // PROVIDER_FIELDS is intentionally minimal (no optional fields) so any blank
-  // entry in the modal means the provider integration won't actually work.
   const fields = PROVIDER_FIELDS[provider] || [];
   const missingField = fields.find(f => !(creds[f.key] || '').trim());
   const canSave = !saving && fields.length > 0 && !missingField;
 
   const handleSave = async () => {
     setError('');
-    if (missingField) {
-      setError(`${missingField.label} is required`);
-      return;
-    }
+    if (missingField) { setError(`${missingField.label} is required`); return; }
     setSaving(true);
     try {
       const res = await apiFetch(`${API_URL}/wa/config`, {
@@ -134,77 +126,77 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
       if (!res.ok) {
         let msg = `Save failed (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
-        setError(msg);
-        setSaving(false);
-        return;
+        setError(msg); setSaving(false); return;
       }
       onClose();
-    } catch (e) {
-      setError('Network error — could not reach server');
-    }
+    } catch (e) { setError('Network error — could not reach server'); }
     setSaving(false);
   };
 
   if (!show) return null;
 
   const webhookUrl = `https://test.callified.ai/wa/webhook/${provider}`;
+  const labelSt = { display: 'block', color: T.sub, fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 12, fontFamily: T.font };
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div className="glass-panel" style={modalStyle} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
-          <h3 style={{ margin: 0, color: '#e2e8f0' }}>WhatsApp Channel Config</h3>
-          <button onClick={onClose} style={closeBtnStyle}>&times;</button>
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+      <div style={{
+        background: T.card, border: `1px solid ${T.border}`, borderRadius: 16,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.12)', padding: '28px 32px',
+        width: 480, maxHeight: '85vh', overflowY: 'auto', overflowX: 'hidden',
+        boxSizing: 'border-box', fontFamily: T.font,
+      }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>WhatsApp Channel Config</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: T.muted, fontSize: 22, cursor: 'pointer', padding: '0 4px' }}>&times;</button>
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem' }}>
+          <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: T.red, fontSize: 13 }}>
             {error}
           </div>
         )}
 
-        <label style={labelStyle}>Provider</label>
-        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); setError(''); }} style={selectStyle}>
+        <label style={labelSt}>Provider</label>
+        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); setError(''); }}
+          style={{ ...inputBase, cursor: 'pointer', appearance: 'auto', WebkitAppearance: 'menulist' }}>
           {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
 
         {fields.map(f => (
           <div key={f.key}>
-            <label style={labelStyle}>{f.label}</label>
+            <label style={labelSt}>{f.label}</label>
             {f.type === 'password' ? (
-              <SecretField
-                value={creds[f.key] || ''}
-                onChange={(v) => { setCreds({ ...creds, [f.key]: v }); if (error) setError(''); }}
-                placeholder={f.label}
-              />
+              <SecretField value={creds[f.key] || ''} onChange={(v) => { setCreds({ ...creds, [f.key]: v }); if (error) setError(''); }} placeholder={f.label} />
             ) : (
               <input type={f.type} value={creds[f.key] || ''}
                 onChange={e => { setCreds({ ...creds, [f.key]: e.target.value }); if (error) setError(''); }}
-                style={inputStyle} placeholder={f.label} />
+                style={inputBase} placeholder={f.label} />
             )}
           </div>
         ))}
 
-        <label style={labelStyle}>Default Product</label>
-        <select value={defaultProduct} onChange={e => setDefaultProduct(e.target.value)} style={selectStyle}>
+        <label style={labelSt}>Default Product</label>
+        <select value={defaultProduct} onChange={e => setDefaultProduct(e.target.value)}
+          style={{ ...inputBase, cursor: 'pointer', appearance: 'auto', WebkitAppearance: 'menulist' }}>
           <option value="">— None —</option>
           {(orgProducts || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '1rem 0' }}>
-          <label style={{ ...labelStyle, margin: 0 }}>Auto-Reply</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0' }}>
+          <label style={{ ...labelSt, margin: 0 }}>Auto-Reply</label>
           <button onClick={() => setAutoReply(!autoReply)}
-            style={{ ...toggleStyle, background: autoReply ? '#25D366' : '#4a5568' }}>
+            style={{ border: 'none', borderRadius: 12, cursor: 'pointer', padding: '4px 14px', fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: T.font, background: autoReply ? T.wa : T.muted }}>
             {autoReply ? 'ON' : 'OFF'}
           </button>
         </div>
 
-        <div style={{ background: 'rgba(37,211,102,0.08)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem' }}>
-          <label style={{ ...labelStyle, fontSize: '0.7rem', color: '#25D366' }}>Webhook URL — configure in your provider dashboard</label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <code style={{ flex: 1, color: '#e2e8f0', fontSize: '0.78rem', wordBreak: 'break-all' }}>{webhookUrl}</code>
+        <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          <label style={{ ...labelSt, marginTop: 0, fontSize: 11, color: T.wa }}>Webhook URL — configure in your provider dashboard</label>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <code style={{ flex: 1, color: T.sub, fontSize: 12, wordBreak: 'break-all', fontFamily: T.mono }}>{webhookUrl}</code>
             <button onClick={() => navigator.clipboard.writeText(webhookUrl)}
-              style={{ ...btnSmallStyle, background: 'rgba(37,211,102,0.15)', color: '#25D366', border: '1px solid rgba(37,211,102,0.3)' }}>
+              style={{ border: '1px solid rgba(37,211,102,0.3)', borderRadius: 6, background: 'rgba(37,211,102,0.1)', color: T.wa, padding: '4px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
               Copy
             </button>
           </div>
@@ -212,8 +204,11 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
 
         <button onClick={handleSave} disabled={!canSave}
           title={missingField ? `${missingField.label} is required` : ''}
-          style={{ ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700,
-            opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'not-allowed' }}>
+          style={{
+            width: '100%', border: 'none', borderRadius: 10, padding: '12px 18px',
+            background: T.wa, color: '#fff', fontWeight: 700, fontSize: 14, fontFamily: T.font,
+            opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'not-allowed',
+          }}>
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
       </div>
@@ -221,7 +216,6 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
   );
 }
 
-/* ─── Main Component ─── */
 export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOrg, orgTimezone }) {
   const [conversations, setConversations] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState(null);
@@ -234,7 +228,6 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
 
-  /* ── Fetch conversations ── */
   const fetchConversations = useCallback(async () => {
     try {
       const res = await apiFetch(`${API_URL}/wa/conversations`);
@@ -242,7 +235,6 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         const data = await res.json();
         const convos = Array.isArray(data) ? data : (data.conversations || []);
         setConversations(convos);
-        // Build AI-enabled map
         const map = {};
         convos.forEach(c => { map[c.phone || c.contact_phone] = c.ai_active !== false; });
         setAiEnabled(map);
@@ -252,21 +244,19 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
 
-  /* ── Fetch messages for selected conversation ── */
   const fetchMessages = useCallback(async () => {
     if (!selectedPhone) return;
     try {
       const res = await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(selectedPhone)}/messages`);
       if (res.ok) {
-          const data = await res.json();
-          setMessages(Array.isArray(data) ? data : (data.messages || []));
-        }
+        const data = await res.json();
+        setMessages(Array.isArray(data) ? data : (data.messages || []));
+      }
     } catch (e) { console.error('Failed to fetch messages', e); }
   }, [apiFetch, API_URL, selectedPhone]);
 
   useEffect(() => { fetchMessages(); }, [fetchMessages]);
 
-  /* ── Poll every 5s ── */
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
@@ -276,12 +266,10 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     return () => clearInterval(pollRef.current);
   }, [fetchConversations, fetchMessages, selectedPhone]);
 
-  /* ── Auto-scroll ── */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  /* ── Send message ── */
   const handleSend = async () => {
     if (!messageText.trim() || !selectedPhone || sending) return;
     setSending(true);
@@ -298,7 +286,6 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     setSending(false);
   };
 
-  /* ── Toggle AI ── */
   const toggleAi = async () => {
     if (!selectedPhone) return;
     const current = aiEnabled[selectedPhone] !== false;
@@ -312,7 +299,6 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     } catch (e) { console.error(e); }
   };
 
-  /* ── Filter conversations ── */
   const filtered = conversations.filter(c => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -323,61 +309,70 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
   const aiActive = selectedPhone ? aiEnabled[selectedPhone] !== false : false;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 140px)', gap: '0' }}>
-      {/* ── LEFT PANEL: Conversation List ── */}
-      <div className="glass-panel" style={leftPanelStyle}>
+    <div style={{ display: 'flex', height: 'calc(100vh - 56px)', fontFamily: T.font }}>
+
+      {/* LEFT: Conversation list */}
+      <div style={{
+        width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column',
+        background: T.card, borderRight: `1px solid ${T.border}`,
+      }}>
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-          <h3 style={{ margin: 0, color: '#25D366', fontSize: '1rem' }}>
-            <span style={{ marginRight: '6px' }}>💬</span>WhatsApp Inbox
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: `1px solid ${T.border}` }}>
+          <h3 style={{ margin: 0, color: T.wa, fontSize: 14, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+            💬 WhatsApp Inbox
           </h3>
           <button onClick={() => setShowConfig(true)}
-            style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
-            title="Channel Configuration">
+            title="Channel Configuration"
+            style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.muted, padding: '4px 8px', cursor: 'pointer', fontSize: 14 }}>
             ⚙️
           </button>
         </div>
 
         {/* Search */}
-        <div style={{ padding: '0.5rem 0.75rem' }}>
-          <input type="text" placeholder="Search by name or phone..." value={search} onChange={e => setSearch(e.target.value)}
-            style={{ ...inputStyle, margin: 0, fontSize: '0.8rem', padding: '6px 10px' }} />
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${T.border}` }}>
+          <input type="text" placeholder="Search by name or phone..." value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ ...inputBase, fontSize: 12, padding: '7px 10px' }} />
         </div>
 
         {/* Conversations */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: T.muted, fontSize: 13 }}>
               No WhatsApp conversations yet
             </div>
           ) : filtered.map(conv => (
             <div key={conv.phone} onClick={() => setSelectedPhone(conv.phone)}
               style={{
-                padding: '0.7rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)',
-                background: selectedPhone === conv.phone ? 'rgba(37,211,102,0.08)' : 'transparent',
+                padding: '10px 14px', cursor: 'pointer', borderBottom: `1px solid ${T.border}`,
+                background: selectedPhone === conv.phone ? 'rgba(37,211,102,0.06)' : 'transparent',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={e => { if (selectedPhone !== conv.phone) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+              onMouseEnter={e => { if (selectedPhone !== conv.phone) e.currentTarget.style.background = T.bg; }}
               onMouseLeave={e => { if (selectedPhone !== conv.phone) e.currentTarget.style.background = 'transparent'; }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                  {conv.ai_active && <span style={greenDotStyle} title="AI Auto-Reply active" />}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+                  {conv.ai_active && (
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: T.wa, display: 'inline-block', flexShrink: 0 }} title="AI Auto-Reply active" />
+                  )}
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ color: T.text, fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {conv.name || conv.phone}
                     </div>
-                    <div style={{ fontFamily: 'monospace', color: '#64748b', fontSize: '0.72rem' }}>{conv.phone}</div>
+                    <div style={{ fontFamily: T.mono, color: T.muted, fontSize: 11 }}>{conv.phone}</div>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '8px' }}>
-                  <div style={{ color: '#64748b', fontSize: '0.68rem' }}>{formatTime(conv.last_message_at, orgTimezone)}</div>
+                <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 8 }}>
+                  <div style={{ color: T.muted, fontSize: 11 }}>{formatTime(conv.last_message_at, orgTimezone)}</div>
                   {conv.unread_count > 0 && (
-                    <span style={unreadBadgeStyle}>{conv.unread_count}</span>
+                    <span style={{ display: 'inline-block', background: T.wa, color: '#fff', borderRadius: 10, padding: '1px 7px', fontSize: 11, fontWeight: 700, marginTop: 2 }}>
+                      {conv.unread_count}
+                    </span>
                   )}
                 </div>
               </div>
               {conv.last_message && (
-                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ color: T.muted, fontSize: 12, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {conv.last_message.length > 40 ? conv.last_message.substring(0, 40) + '...' : conv.last_message}
                 </div>
               )}
@@ -386,29 +381,27 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         </div>
       </div>
 
-      {/* ── RIGHT PANEL: Chat Window ── */}
-      <div style={rightPanelStyle}>
+      {/* RIGHT: Chat window */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: T.bg }}>
         {!selectedPhone ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '0.95rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: T.muted, fontSize: 14 }}>
             Select a conversation to start chatting
           </div>
         ) : (
           <>
-            {/* Chat Header */}
-            <div className="glass-panel" style={chatHeaderStyle}>
+            {/* Chat header */}
+            <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', background: T.card, borderBottom: `1px solid ${T.border}` }}>
               <div style={{ flex: 1 }}>
-                <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: '0.95rem' }}>
-                  {selectedConv?.name || selectedPhone}
-                </div>
-                <div style={{ fontFamily: 'monospace', color: '#64748b', fontSize: '0.78rem' }}>{selectedPhone}</div>
+                <div style={{ color: T.text, fontWeight: 700, fontSize: 14 }}>{selectedConv?.name || selectedPhone}</div>
+                <div style={{ fontFamily: T.mono, color: T.muted, fontSize: 12 }}>{selectedPhone}</div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>AI Auto-Reply</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: T.muted, fontSize: 12 }}>AI Auto-Reply</span>
                 <button onClick={toggleAi}
                   style={{
-                    ...toggleStyle,
-                    background: aiActive ? '#25D366' : '#ef4444',
-                    minWidth: '48px',
+                    border: 'none', borderRadius: 12, cursor: 'pointer',
+                    padding: '4px 14px', fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: T.font,
+                    background: aiActive ? T.wa : T.red, minWidth: 48,
                   }}>
                   {aiActive ? 'ON' : 'OFF'}
                 </button>
@@ -416,24 +409,26 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
             </div>
 
             {/* Messages */}
-            <div style={messagesAreaStyle}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               {messages.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#64748b', marginTop: '3rem', fontSize: '0.85rem' }}>No messages yet</div>
+                <div style={{ textAlign: 'center', color: T.muted, marginTop: '3rem', fontSize: 13 }}>No messages yet</div>
               ) : messages.map((msg, i) => {
                 const isOutbound = msg.direction === 'outbound';
                 return (
-                  <div key={msg.id || i} style={{ display: 'flex', justifyContent: isOutbound ? 'flex-end' : 'flex-start', marginBottom: '8px' }}>
+                  <div key={msg.id || i} style={{ display: 'flex', justifyContent: isOutbound ? 'flex-end' : 'flex-start' }}>
                     <div style={{
-                      maxWidth: '70%', padding: '8px 12px', borderRadius: '12px',
-                      background: isOutbound ? '#25D366' : '#2d3748',
-                      color: isOutbound ? '#fff' : '#e2e8f0',
-                      fontSize: '0.85rem', lineHeight: '1.45',
-                      borderTopRightRadius: isOutbound ? '4px' : '12px',
-                      borderTopLeftRadius: isOutbound ? '12px' : '4px',
+                      maxWidth: '70%', padding: '9px 13px', borderRadius: 14, lineHeight: 1.45,
+                      background: isOutbound ? T.wa : T.card,
+                      color: isOutbound ? '#fff' : T.text,
+                      fontSize: 13,
+                      border: isOutbound ? 'none' : `1px solid ${T.border}`,
+                      boxShadow: isOutbound ? 'none' : '0 1px 2px rgba(0,0,0,0.04)',
+                      borderTopRightRadius: isOutbound ? 4 : 14,
+                      borderTopLeftRadius: isOutbound ? 14 : 4,
                     }}>
-                      {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}>🤖</span>}
+                      {msg.ai_generated && <span title="AI-generated" style={{ marginRight: 4 }}>🤖</span>}
                       <span>{msg.text || msg.body}</span>
-                      <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', marginTop: '4px', textAlign: 'right' }}>
+                      <div style={{ fontSize: 11, color: isOutbound ? 'rgba(255,255,255,0.7)' : T.muted, marginTop: 4, textAlign: 'right' }}>
                         {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
                       </div>
                     </div>
@@ -443,17 +438,19 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Bar */}
-            <div style={inputBarStyle}>
+            {/* Input bar */}
+            <div style={{ display: 'flex', gap: 8, padding: '12px 16px', background: T.card, borderTop: `1px solid ${T.border}` }}>
               <input type="text" value={messageText}
                 onChange={e => setMessageText(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                 placeholder="Type a message..."
-                style={{ ...inputStyle, flex: 1, margin: 0, fontSize: '0.85rem', padding: '10px 14px' }} />
+                style={{ ...inputBase, flex: 1, fontSize: 13, padding: '10px 14px' }} />
               <button onClick={handleSend} disabled={sending || !messageText.trim()}
                 style={{
-                  ...btnStyle, background: '#25D366', color: '#fff', fontWeight: 700,
-                  opacity: (sending || !messageText.trim()) ? 0.5 : 1, padding: '10px 20px',
+                  border: 'none', borderRadius: 10, padding: '10px 22px',
+                  background: T.wa, color: '#fff', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                  opacity: (sending || !messageText.trim()) ? 0.5 : 1,
+                  cursor: (sending || !messageText.trim()) ? 'not-allowed' : 'pointer',
                 }}>
                 {sending ? '...' : 'Send'}
               </button>
@@ -462,102 +459,8 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         )}
       </div>
 
-      {/* Config Modal */}
       <ConfigModal show={showConfig} onClose={() => setShowConfig(false)}
         apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} />
     </div>
   );
 }
-
-/* ─── Inline Styles ─── */
-const leftPanelStyle = {
-  width: '30%', minWidth: '280px', display: 'flex', flexDirection: 'column',
-  borderRadius: '12px 0 0 12px', overflow: 'hidden',
-};
-
-const rightPanelStyle = {
-  flex: 1, display: 'flex', flexDirection: 'column',
-  background: 'rgba(255,255,255,0.01)', borderRadius: '0 12px 12px 0',
-  border: '1px solid rgba(255,255,255,0.06)', borderLeft: 'none',
-};
-
-const chatHeaderStyle = {
-  display: 'flex', alignItems: 'center', padding: '0.75rem 1rem',
-  borderRadius: 0, borderBottom: '1px solid rgba(255,255,255,0.06)',
-  margin: 0,
-};
-
-const messagesAreaStyle = {
-  flex: 1, overflowY: 'auto', padding: '1rem',
-  background: 'rgba(0,0,0,0.15)',
-};
-
-const inputBarStyle = {
-  display: 'flex', gap: '8px', padding: '0.75rem 1rem',
-  borderTop: '1px solid rgba(255,255,255,0.06)',
-  background: 'rgba(255,255,255,0.02)',
-};
-
-const inputStyle = {
-  width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
-  border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b',
-  color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',
-};
-
-const selectStyle = {
-  ...inputStyle,
-  appearance: 'auto',
-  WebkitAppearance: 'menulist',
-  cursor: 'pointer',
-};
-
-const labelStyle = {
-  display: 'block', color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600,
-  marginBottom: '4px', marginTop: '0.75rem',
-};
-
-const btnStyle = {
-  border: 'none', borderRadius: '8px', cursor: 'pointer',
-  padding: '8px 16px', fontSize: '0.85rem', transition: 'opacity 0.15s',
-};
-
-const btnSmallStyle = {
-  border: 'none', borderRadius: '6px', cursor: 'pointer',
-  padding: '4px 10px', fontSize: '0.75rem',
-};
-
-const toggleStyle = {
-  border: 'none', borderRadius: '12px', cursor: 'pointer',
-  padding: '4px 12px', fontSize: '0.72rem', fontWeight: 700, color: '#fff',
-  transition: 'background 0.2s',
-};
-
-const greenDotStyle = {
-  width: '8px', height: '8px', borderRadius: '50%', background: '#25D366',
-  display: 'inline-block', flexShrink: 0,
-};
-
-const unreadBadgeStyle = {
-  display: 'inline-block', background: '#25D366', color: '#fff',
-  borderRadius: '10px', padding: '1px 7px', fontSize: '0.68rem', fontWeight: 700,
-  marginTop: '2px',
-};
-
-const overlayStyle = {
-  position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-  background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-  zIndex: 1000,
-};
-
-const modalStyle = {
-  // overflowX: 'hidden' is a defence-in-depth in case any future field still
-  // overflows the content area; the box-sizing fix on inputStyle is the
-  // primary cause of the historical horizontal scrollbar.
-  width: '480px', maxHeight: '85vh', overflowY: 'auto', overflowX: 'hidden',
-  padding: '1.5rem', borderRadius: '12px', boxSizing: 'border-box',
-};
-
-const closeBtnStyle = {
-  background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.4rem',
-  cursor: 'pointer', padding: '0 4px',
-};
