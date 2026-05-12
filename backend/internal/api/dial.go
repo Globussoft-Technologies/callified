@@ -15,6 +15,31 @@ import (
 	"github.com/globussoft/callified-backend/internal/dial"
 )
 
+// resolveDialVoice picks the TTS provider / voice / language to use for an
+// outbound dial. Campaign-level settings win when populated; the fall-back
+// is Sarvam aditya in English so a brand-new org with no campaign config
+// still gets an intelligible outbound call instead of silence.
+func (s *Server) resolveDialVoice(campaignID int64) (provider, voiceID, language string) {
+	provider, voiceID, language = "sarvam", "aditya", "en"
+	if campaignID <= 0 {
+		return
+	}
+	vs, err := s.db.GetCampaignVoiceSettings(campaignID)
+	if err != nil {
+		return
+	}
+	if vs.TTSProvider != "" {
+		provider = vs.TTSProvider
+	}
+	if vs.TTSVoiceID != "" {
+		voiceID = vs.TTSVoiceID
+	}
+	if vs.TTSLanguage != "" {
+		language = vs.TTSLanguage
+	}
+	return
+}
+
 // dialErrorStatus maps a dial.Initiator error to the right HTTP status code
 // so the frontend can distinguish "billing problem — show recharge prompt"
 // from a generic provider failure. Sentinel errors live in package dial.
@@ -49,8 +74,8 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	vs, _ := s.db.GetCampaignVoiceSettings(body.CampaignID)
 	ac := getAuth(r)
+	provider, voiceID, language := s.resolveDialVoice(body.CampaignID)
 
 	data := dial.CallData{
 		LeadID:      lead.ID,
@@ -59,9 +84,9 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		CampaignID:  body.CampaignID,
 		OrgID:       ac.OrgID,
 		Interest:    lead.Interest,
-		TTSProvider: vs.TTSProvider,
-		TTSVoiceID:  vs.TTSVoiceID,
-		TTSLanguage: vs.TTSLanguage,
+		TTSProvider: provider,
+		TTSVoiceID:  voiceID,
+		TTSLanguage: language,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -93,8 +118,8 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 	ac := getAuth(r)
+	provider, voiceID, language := s.resolveDialVoice(campaignID)
 
 	data := dial.CallData{
 		LeadID:      lead.ID,
@@ -103,9 +128,9 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		CampaignID:  campaignID,
 		OrgID:       ac.OrgID,
 		Interest:    lead.Interest,
-		TTSProvider: vs.TTSProvider,
-		TTSVoiceID:  vs.TTSVoiceID,
-		TTSLanguage: vs.TTSLanguage,
+		TTSProvider: provider,
+		TTSVoiceID:  voiceID,
+		TTSLanguage: language,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -168,8 +193,8 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 	ac := getAuth(r)
+	provider, voiceID, language := s.resolveDialVoice(campaignID)
 
 	// Detach from the HTTP request's context — the queue runs for minutes
 	// after the HTTP response returns. Using r.Context() would cancel every
@@ -184,9 +209,9 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 			CampaignID:  campaignID,
 			OrgID:       ac.OrgID,
 			Interest:    l.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
+			TTSProvider: provider,
+			TTSVoiceID:  voiceID,
+			TTSLanguage: language,
 		})
 	}
 
@@ -265,8 +290,8 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 	ac := getAuth(r)
+	provider, voiceID, language := s.resolveDialVoice(campaignID)
 
 	// Copy slice into a simple, independently-owned value before handing it
 	// to the background goroutine — r.Context() cancels when this handler
@@ -281,9 +306,9 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 			CampaignID:  campaignID,
 			OrgID:       ac.OrgID,
 			Interest:    lead.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
+			TTSProvider: provider,
+			TTSVoiceID:  voiceID,
+			TTSLanguage: language,
 		})
 	}
 

@@ -24,7 +24,7 @@ func newTestHandler(t *testing.T) *Handler {
 	log := zap.NewNop()
 	cfg := &config.Config{Port: 8001, GRPCAddr: "localhost:50051"}
 	store := rstore.New("", log) // empty URL → pure in-memory fallback
-	return New(cfg, nil, nil, store, log)
+	return New(cfg, nil, nil, store, nil, log)
 }
 
 // dialWS connects a test WebSocket client to the given httptest server URL + path.
@@ -163,14 +163,24 @@ func TestBinaryFrameAccepted(t *testing.T) {
 
 // ─── Session unit tests ──────────────────────────────────────────────────────
 
-// TestMaxTokensByLanguage verifies Marathi gets 400 tokens, others 250.
+// TestMaxTokensByLanguage verifies the per-language token caps that the
+// session uses for LLM output. Hindi/Bengali get a shorter cap to curb
+// monologues; Marathi/English are roomier; everything else falls back
+// to the default. Numbers must match session.go MaxTokens().
 func TestMaxTokensByLanguage(t *testing.T) {
-	for _, lang := range []string{"hi", "en", "ta", "te", ""} {
-		sess := &CallSession{Language: lang}
-		assert.Equal(t, int32(250), sess.MaxTokens(), "lang=%q should be 250", lang)
+	cases := map[string]int32{
+		"hi": 80,  // chatty languages get a tight cap
+		"bn": 80,
+		"mr": 300,
+		"en": 400,
+		"ta": 250,
+		"te": 250,
+		"":   250, // default
 	}
-	sess := &CallSession{Language: "mr"}
-	assert.Equal(t, int32(400), sess.MaxTokens())
+	for lang, want := range cases {
+		sess := &CallSession{Language: lang}
+		assert.Equal(t, want, sess.MaxTokens(), "lang=%q", lang)
+	}
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).

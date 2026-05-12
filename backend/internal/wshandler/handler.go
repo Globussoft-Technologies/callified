@@ -443,6 +443,22 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					sess.TTSLanguage = info.TTSLanguage
 					sess.Language = info.TTSLanguage
 				}
+				// Real outbound dials must always run sarvam/aditya/English
+				// regardless of what the campaign or initial initializeCall
+				// computed from org defaults. The earlier initializeCall ran
+				// with all-zero IDs and silently picked the org's default voice
+				// (often Hindi/mithali), which then leaked into the rebuilt
+				// system prompt and greeting below — making every dial speak
+				// Hindi. Web-sim calls never go through this Redis hydration
+				// path, so they keep whatever language the Sandbox picked.
+				sess.TTSProvider = "sarvam"
+				sess.TTSVoiceID = "aditya"
+				sess.TTSLanguage = "en"
+				sess.Language = "en"
+				h.log.Info("dial: forcing sarvam/aditya/en for outbound call",
+					zap.String("call_sid", callSid),
+					zap.Int64("lead_id", sess.LeadID),
+					zap.Int64("campaign_id", sess.CampaignID))
 				// Rebuild SystemPrompt and GreetingText now that we know the
 				// real campaign/org/lead. The initial initializeCall ran
 				// before the start event with all-zero IDs (Exotel's Passthru
