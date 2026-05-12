@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -100,6 +101,23 @@ type Config struct {
 	SSOIssuer       string `env:"SSO_ISSUER"`
 	SSOAudience     string `env:"SSO_AUDIENCE"`
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
+
+	// Developer dashboard allowlist. Comma-separated emails permitted to
+	// reach /api/dev/* and impersonate any user. Unset/empty → feature off
+	// (every /api/dev/* request 404s). DeveloperEmails is populated at
+	// Load() from DeveloperEmailsRaw; callers should use IsDeveloper().
+	DeveloperEmailsRaw string              `env:"DEVELOPER_EMAILS"`
+	DeveloperEmails    map[string]struct{} `env:"-"`
+}
+
+// IsDeveloper reports whether email is in the developer allowlist.
+// Email is normalised (trim + lower-case) before comparison.
+func (c *Config) IsDeveloper(email string) bool {
+	if len(c.DeveloperEmails) == 0 {
+		return false
+	}
+	_, ok := c.DeveloperEmails[strings.ToLower(strings.TrimSpace(email))]
+	return ok
 }
 
 // DSN returns a MySQL DSN string for database/sql.
@@ -114,5 +132,17 @@ func Load() (*Config, error) {
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
+	cfg.DeveloperEmails = parseEmailSet(cfg.DeveloperEmailsRaw)
 	return cfg, nil
+}
+
+func parseEmailSet(raw string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, part := range strings.Split(raw, ",") {
+		e := strings.ToLower(strings.TrimSpace(part))
+		if e != "" {
+			out[e] = struct{}{}
+		}
+	}
+	return out
 }

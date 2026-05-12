@@ -109,6 +109,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// not by our own middleware. See internal/api/sso.go for the flow.
 	mux.HandleFunc("GET /api/auth/sso/jwt", s.ssoJWT)
 
+	// ── Developer dashboard ──────────────────────────────────────────────────
+	// Allowlist-gated by DEVELOPER_EMAILS env. List endpoints + impersonation
+	// mint require a developer JWT; exchange is public but guarded by an
+	// opaque single-use 60s key. See internal/api/dev.go.
+	mux.HandleFunc("GET /api/dev/users", s.requireDeveloper(s.handleDevListUsers))
+	mux.HandleFunc("POST /api/dev/impersonate", s.requireDeveloper(s.handleDevImpersonate))
+	mux.HandleFunc("POST /api/dev/impersonate/exchange", s.handleDevExchange)
+
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux
 	// resolves /export and /search as exact matches, not lead IDs.

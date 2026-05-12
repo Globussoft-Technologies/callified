@@ -37,6 +37,20 @@ const MORE_ADMIN_TABS = [
   { id: 'receptionist', label: '🩺 Receptionist',     path: '/receptionist', testid: 'tab-receptionist' },
 ];
 
+// Developer dashboard nav link. Only rendered when the current user's email is
+// in VITE_DEVELOPER_EMAILS (build-time env, comma-separated). This is a UX
+// gate only — the real authority is the backend's DEVELOPER_EMAILS check on
+// /api/dev/*. A stale frontend bundle cannot grant access.
+const DEV_EMAILS = new Set(
+  ((import.meta.env?.VITE_DEVELOPER_EMAILS || '').split(','))
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+function isDeveloper(email) {
+  if (!email) return false;
+  return DEV_EMAILS.has(String(email).trim().toLowerCase());
+}
+
 export default function TopHeader({
   userRole,
   currentUser,
@@ -50,6 +64,25 @@ export default function TopHeader({
   const [moreOpen, setMoreOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
+
+  const devAllowed = isDeveloper(currentUser?.email);
+  // Inspector toggle for the dev's own (non-impersonation) session. Persisted
+  // in localStorage so it survives reloads. Impersonation tabs render the
+  // overlay regardless via sessionStorage.authMode.
+  const [inspectorOn, setInspectorOn] = useState(() => {
+    try { return localStorage.getItem('devInspector') === 'on'; } catch { return false; }
+  });
+  const toggleInspector = () => {
+    const next = !inspectorOn;
+    setInspectorOn(next);
+    try {
+      if (next) localStorage.setItem('devInspector', 'on');
+      else localStorage.removeItem('devInspector');
+    } catch {}
+    // Force a remount of the conditional panel by reloading. Cheap and avoids
+    // wiring a global event bus for a developer-only toggle.
+    window.location.reload();
+  };
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -141,6 +174,40 @@ export default function TopHeader({
         )}
 
         <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
+          {devAllowed && (
+            <>
+              <button
+                data-testid="tab-dev"
+                onClick={() => navigate('/dev')}
+                title="Developer dashboard — list and impersonate users"
+                style={{
+                  height: '38px', display: 'inline-flex', alignItems: 'center',
+                  padding: '0 12px',
+                  background: activeTab === 'dev' ? 'rgba(244,114,182,0.18)' : 'rgba(244,114,182,0.08)',
+                  border: '1px solid rgba(244,114,182,0.35)',
+                  borderRadius: '8px', color: '#f9a8d4',
+                  cursor: 'pointer', fontWeight: 700, fontSize: '0.78rem',
+                  whiteSpace: 'nowrap',
+                }}>
+                🛠️ Dev
+              </button>
+              <button
+                onClick={toggleInspector}
+                title={inspectorOn ? 'Inspector overlay is ON — click to disable' : 'Enable Inspector overlay for this session'}
+                style={{
+                  height: '38px', display: 'inline-flex', alignItems: 'center',
+                  padding: '0 10px',
+                  background: inspectorOn ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${inspectorOn ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.08)'}`,
+                  borderRadius: '8px',
+                  color: inspectorOn ? '#86efac' : '#94a3b8',
+                  cursor: 'pointer', fontWeight: 600, fontSize: '0.78rem',
+                  whiteSpace: 'nowrap',
+                }}>
+                🔍 Inspector
+              </button>
+            </>
+          )}
           {callingStatus && (
             <span style={{
               height: '38px',

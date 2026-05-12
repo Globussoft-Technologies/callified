@@ -14,9 +14,10 @@ type ctxKey struct{}
 
 // AuthClaims holds the fields extracted from a validated JWT.
 type AuthClaims struct {
-	Email string
-	OrgID int64
-	Role  string
+	Email    string
+	OrgID    int64
+	Role     string
+	DevActor string // non-empty when this JWT was minted by /api/dev/impersonate; the impersonator's email
 }
 
 // jwtClaims maps the Python-issued JWT payload.
@@ -26,11 +27,17 @@ type AuthClaims struct {
 // short-lived ticket minted by /api/sse/ticket — the SSE-specific auth path
 // rejects anything except kind="sse" so a leaked auth JWT can't be
 // downgraded into a query-string ticket. (issue #80)
+//
+// DevActor is set on impersonation tokens minted by /api/dev/impersonate; it
+// records the developer's email so every API call from an impersonated session
+// is traceable back to the human who initiated the impersonation. Absent on
+// regular login JWTs.
 type jwtClaims struct {
 	jwt.RegisteredClaims
-	OrgID int64  `json:"org_id"`
-	Role  string `json:"role"`
-	Kind  string `json:"kind,omitempty"`
+	OrgID    int64  `json:"org_id"`
+	Role     string `json:"role"`
+	Kind     string `json:"kind,omitempty"`
+	DevActor string `json:"dev_actor,omitempty"`
 }
 
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
@@ -55,9 +62,10 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		ac := AuthClaims{
-			Email: claims.Subject, // Python sets sub = email
-			OrgID: claims.OrgID,
-			Role:  claims.Role,
+			Email:    claims.Subject, // Python sets sub = email
+			OrgID:    claims.OrgID,
+			Role:     claims.Role,
+			DevActor: claims.DevActor,
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, ac)
 		next.ServeHTTP(w, r.WithContext(ctx))

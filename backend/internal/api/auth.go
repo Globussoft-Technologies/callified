@@ -159,7 +159,14 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, userResponse(s, user))
+	resp := userResponse(s, user)
+	// Surface the impersonation actor (if any) so the frontend inspector
+	// panel can render "Acting as <target> on behalf of <dev>". Empty for
+	// regular login sessions.
+	if ac.DevActor != "" {
+		resp["dev_actor"] = ac.DevActor
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // userResponse builds the user-profile object returned by /auth/me, login,

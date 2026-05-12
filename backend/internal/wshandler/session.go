@@ -25,6 +25,17 @@ type CallSession struct {
 	CallSid    string
 	IsExotel   bool
 	IsWebSim   bool
+	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
+	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
+	// snake_case ("stream_sid").
+	//
+	//   ulaw + camelCase  → Twilio / old Exotel Stream/Passthru applet
+	//   PCM-16 + snake_case → Exotel Voicebot applet + browser web-sim
+	//
+	// Default at session creation = IsExotel (preserves legacy behaviour
+	// when no start frame has arrived yet). Re-evaluated in handleStartEvent
+	// from the casing of the start envelope's stream-id key.
+	UseUlaw    bool
 	LeadName   string
 	LeadPhone  string
 	Interest   string
@@ -129,6 +140,8 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		StreamSid:       streamSid,
 		IsExotel:        isExotel,
 		IsWebSim:        isWebSim,
+		UseUlaw:         isExotel, // legacy default; overridden by start-frame casing detection
+
 		WS:              ws,
 		Log:             log,
 		AudioIn:         make(chan []byte, 512),

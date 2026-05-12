@@ -1,15 +1,32 @@
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
 import { API_URL } from '../constants/api';
+import { INDIAN_VOICES } from '../constants/voices';
 import { useAuth } from './AuthContext';
 import { useOrg } from './OrgContext';
 import { useVoice } from './VoiceContext';
+
+// resolveVoiceName turns a (provider, voiceId) pair into a human-readable
+// label by looking it up in INDIAN_VOICES. Falls back to `fallback` (or the
+// voiceId itself if no fallback). Used by the dial-intent recorder so the
+// Inspector panel shows the actual voice name that was sent in the URL,
+// not the active VoiceContext's savedVoiceName which can be a different
+// org-default voice.
+function resolveVoiceName(provider, voiceId, fallback) {
+  if (!voiceId) return fallback || '';
+  const list = INDIAN_VOICES?.[provider];
+  if (Array.isArray(list)) {
+    const hit = list.find(v => v.id === voiceId);
+    if (hit?.name) return hit.name;
+  }
+  return fallback || voiceId;
+}
 
 const CallContext = createContext(null);
 
 export function CallProvider({ children }) {
   const { apiFetch } = useAuth();
-  const { orgProducts } = useOrg();
-  const { activeVoiceProvider, activeVoiceId, activeLanguage } = useVoice();
+  const { orgProducts, selectedOrg } = useOrg();
+  const { activeVoiceProvider, activeVoiceId, activeLanguage, savedVoiceName } = useVoice();
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
@@ -21,8 +38,29 @@ export function CallProvider({ children }) {
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
 
+  // lastDialIntents is a 10-entry ring buffer of every dial click in the
+  // current tab. The developer inspector panel reads it to show "what was
+  // fired off when I clicked Dial / Sim Web Call". Pure client-side state;
+  // no API. Regular users never observe it because the panel never mounts.
+  const [lastDialIntents, setLastDialIntents] = useState([]);
+  const recordDialIntent = useCallback((intent) => {
+    setLastDialIntents(prev => [{ ts: Date.now(), ...intent }, ...prev].slice(0, 10));
+  }, []);
+
   const handleDial = useCallback(async (lead) => {
     setDialingId(lead.id);
+    recordDialIntent({
+      kind: 'dial',
+      voiceProvider: activeVoiceProvider,
+      voiceId: activeVoiceId,
+      voiceName: resolveVoiceName(activeVoiceProvider, activeVoiceId, savedVoiceName),
+      language: activeLanguage,
+      leadId: lead?.id,
+      leadName: lead?.first_name || lead?.name || '',
+      leadPhone: lead?.phone || '',
+      campaignId: null,
+      orgId: selectedOrg,
+    });
     try {
       const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
@@ -40,7 +78,7 @@ export function CallProvider({ children }) {
       alert("Failed to hit the dialer API. Check console.");
     }
     setTimeout(() => setDialingId(null), 10000);
-  }, [apiFetch]);
+  }, [apiFetch, recordDialIntent, activeVoiceProvider, activeVoiceId, savedVoiceName, activeLanguage, selectedOrg]);
 
   const handleWebCall = useCallback(async (lead) => {
     if (webCallActive === lead.id) {
@@ -50,6 +88,19 @@ export function CallProvider({ children }) {
       setWebCallActive(null);
       return;
     }
+
+    recordDialIntent({
+      kind: 'sim-web-call',
+      voiceProvider: activeVoiceProvider,
+      voiceId: activeVoiceId,
+      voiceName: resolveVoiceName(activeVoiceProvider, activeVoiceId, savedVoiceName),
+      language: activeLanguage,
+      leadId: lead?.id,
+      leadName: lead?.first_name || lead?.name || '',
+      leadPhone: lead?.phone || '',
+      campaignId: null,
+      orgId: selectedOrg,
+    });
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -203,10 +254,33 @@ export function CallProvider({ children }) {
       console.error(e);
       setWebCallActive(null);
     }
-  }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
+  }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage, recordDialIntent, savedVoiceName, selectedOrg]);
 
   const handleCampaignDial = useCallback(async (lead, campaignId) => {
     setDialingId(lead.id);
+    // Fetch the campaign-stored voice settings up front so the Inspector
+    // panel's "Last dial intent" reflects what the backend will actually
+    // use, not the (potentially different) active VoiceContext.
+    let campVoice = {};
+    try {
+      const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
+      if (vRes.ok) campVoice = await vRes.json();
+    } catch (e) { /* best-effort — fall through to active */ }
+    const cvProvider = campVoice.tts_provider || activeVoiceProvider;
+    const cvVoiceId  = campVoice.tts_voice_id || activeVoiceId;
+    const cvLanguage = campVoice.tts_language || activeLanguage;
+    recordDialIntent({
+      kind: 'campaign-dial',
+      voiceProvider: cvProvider,
+      voiceId: cvVoiceId,
+      voiceName: resolveVoiceName(cvProvider, cvVoiceId, savedVoiceName),
+      language: cvLanguage,
+      leadId: lead?.id,
+      leadName: lead?.first_name || lead?.name || '',
+      leadPhone: lead?.phone || '',
+      campaignId,
+      orgId: selectedOrg,
+    });
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
       if (!res.ok) {
@@ -226,7 +300,7 @@ export function CallProvider({ children }) {
       alert('Network error: ' + (e?.message || 'unknown'));
     }
     setTimeout(() => setDialingId(null), 10000);
-  }, [apiFetch]);
+  }, [apiFetch, recordDialIntent, activeVoiceProvider, activeVoiceId, savedVoiceName, activeLanguage, selectedOrg]);
 
   const handleCampaignWebCall = useCallback(async (lead, campaignId) => {
     if (webCallActive === lead.id) {
@@ -241,6 +315,27 @@ export function CallProvider({ children }) {
       const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
       campVoice = await vRes.json();
     } catch(e) {}
+
+    {
+      const cvProvider = campVoice.tts_provider || activeVoiceProvider;
+      const cvVoiceId  = campVoice.tts_voice_id || activeVoiceId;
+      recordDialIntent({
+        kind: 'campaign-sim',
+        voiceProvider: cvProvider,
+        voiceId: cvVoiceId,
+        // Look up the human name from INDIAN_VOICES so the panel shows the
+        // actual voice ("Amit – Professional ♂") instead of falling back to
+        // the org-default active voice ("Kabir – Bold ♂") just because the
+        // API doesn't return a tts_voice_name field.
+        voiceName: resolveVoiceName(cvProvider, cvVoiceId, savedVoiceName),
+        language: campVoice.tts_language || activeLanguage,
+        leadId: lead?.id,
+        leadName: lead?.first_name || lead?.name || '',
+        leadPhone: lead?.phone || '',
+        campaignId,
+        orgId: selectedOrg,
+      });
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -387,14 +482,15 @@ export function CallProvider({ children }) {
       console.error(e);
       setWebCallActive(null);
     }
-  }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
+  }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage, recordDialIntent, savedVoiceName, selectedOrg]);
 
   return (
     <CallContext.Provider value={{
       dialingId, setDialingId,
       webCallActive, setWebCallActive,
       handleDial, handleWebCall,
-      handleCampaignDial, handleCampaignWebCall
+      handleCampaignDial, handleCampaignWebCall,
+      lastDialIntents,
     }}>
       {children}
       {rechargePrompt && (

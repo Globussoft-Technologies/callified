@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -42,6 +43,103 @@ func (d *DB) CreateUser(email, passwordHash, fullName, role string, orgID int64)
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// UserListRow is the row shape returned by ListAllUsers (developer dashboard).
+// Joins organizations so org_name doesn't require a second round-trip per row.
+type UserListRow struct {
+	ID        int64  `json:"id"`
+	Email     string `json:"email"`
+	FullName  string `json:"full_name"`
+	Role      string `json:"role"`
+	OrgID     int64  `json:"org_id"`
+	OrgName   string `json:"org_name"`
+	CreatedAt string `json:"created_at"`
+	Status    string `json:"status"` // "active" if password_hash <> '' else "inactive"
+}
+
+// ListAllUsers returns paginated users across all orgs with optional search/status filter.
+// search matches email or full_name (LIKE %s%); status is "" / "active" / "inactive".
+// Returns (rows, total, error).
+func (d *DB) ListAllUsers(search, status string, limit, offset int) ([]UserListRow, int, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	likeArg := ""
+	hasSearch := strings.TrimSpace(search) != ""
+	if hasSearch {
+		likeArg = "%" + strings.TrimSpace(search) + "%"
+	}
+
+	where := []string{}
+	args := []any{}
+	if hasSearch {
+		where = append(where, "(u.email LIKE ? OR COALESCE(u.full_name,'') LIKE ?)")
+		args = append(args, likeArg, likeArg)
+	}
+	switch status {
+	case "active":
+		where = append(where, "u.password_hash <> ''")
+	case "inactive":
+		where = append(where, "u.password_hash = ''")
+	}
+	whereSQL := ""
+	if len(where) > 0 {
+		whereSQL = " WHERE " + strings.Join(where, " AND ")
+	}
+
+	// COUNT(*) for pagination metadata
+	var total int
+	countQuery := "SELECT COUNT(*) FROM users u" + whereSQL
+	if err := d.pool.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("ListAllUsers count: %w", err)
+	}
+
+	listQuery := `SELECT u.id, u.email, COALESCE(u.full_name,''), COALESCE(u.role,'Admin'),
+	                     COALESCE(u.org_id,0), COALESCE(o.name,''),
+	                     COALESCE(DATE_FORMAT(u.created_at, '%Y-%m-%dT%H:%i:%sZ'),''),
+	                     CASE WHEN u.password_hash <> '' THEN 'active' ELSE 'inactive' END
+	              FROM users u LEFT JOIN organizations o ON o.id = u.org_id` +
+		whereSQL +
+		" ORDER BY u.id DESC LIMIT ? OFFSET ?"
+
+	args = append(args, limit, offset)
+	rows, err := d.pool.Query(listQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ListAllUsers query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]UserListRow, 0, limit)
+	for rows.Next() {
+		var r UserListRow
+		if err := rows.Scan(&r.ID, &r.Email, &r.FullName, &r.Role,
+			&r.OrgID, &r.OrgName, &r.CreatedAt, &r.Status); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
+}
+
+// GetUserByID fetches any user by primary key (no org scoping). Used by the
+// developer impersonation endpoint, which is itself gated by IsDeveloper().
+func (d *DB) GetUserByID(userID int64) (*User, error) {
+	row := d.pool.QueryRow(
+		`SELECT id, COALESCE(org_id,0), email, password_hash, COALESCE(full_name,''), COALESCE(role,'Admin')
+		 FROM users WHERE id = ?`, userID)
+	u := &User{}
+	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return u, err
 }
 
 // GetTeamMembers returns all users belonging to the given org.

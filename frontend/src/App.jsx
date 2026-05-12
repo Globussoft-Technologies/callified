@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
+import SsoExchange from './pages/SsoExchange';
+import DevPage from './pages/DevPage';
+import DevInspectorPanel from './components/DevInspectorPanel';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -88,6 +91,12 @@ export default function App() {
   if (location.pathname === '/accept-invite') {
     return <AcceptInvitePage />;
   }
+  // /sso/exchange is the developer-impersonation handoff page. Must be
+  // reachable without an existing session so the just-opened impersonation
+  // tab can POST its opaque key for the JWT and self-authenticate.
+  if (location.pathname === '/sso/exchange') {
+    return <SsoExchange />;
+  }
 
   // ─── AUTH PAGES (after all hooks) ───
   if (!authToken || !currentUser) {
@@ -109,6 +118,8 @@ export default function App() {
         userRole={userRole} currentUser={currentUser}
         handleLogout={logout}
       />
+
+      <DevInspectorMount />
 
       <main className="main-content">
       <Routes>
@@ -167,6 +178,7 @@ export default function App() {
         <Route path="/dnd" element={<DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/dev" element={<DevPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/receptionist" element={<ReceptionistPage />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>
@@ -174,4 +186,17 @@ export default function App() {
 
     </div>
   );
+}
+
+// DevInspectorMount checks tab/local storage to decide whether to render the
+// developer overlay. Reads at mount time so the panel appears on the very
+// first paint of an impersonation tab. Regular user tabs never enter the
+// truthy branch, so the panel and its dependencies are never created.
+function DevInspectorMount() {
+  let show = false;
+  try {
+    show = sessionStorage.getItem('authMode') === 'impersonation'
+        || localStorage.getItem('devInspector') === 'on';
+  } catch { /* private mode etc — never mount */ }
+  return show ? <DevInspectorPanel /> : null;
 }

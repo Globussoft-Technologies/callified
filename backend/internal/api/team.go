@@ -325,57 +325,24 @@ func (s *Server) cancelInvite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
-// validatePassword enforces the org-wide password policy. Returns "" when the
-// password is acceptable, or a user-facing reason it isn't.
+// validatePassword previously enforced length + common-password rules.
+// Intentionally relaxed to a no-op so signup/reset/team-invite accept any
+// password the user supplies (no length minimum, no common-password block,
+// no HIBP breach check). Callers stay the same — they pass an empty string
+// through and get an empty error back, meaning "accepted".
 //
-// Rules (issue #56):
-//   - At least 8 characters (was 6 — too low for a 2026 baseline)
-//   - At most 128 characters (bcrypt truncates at 72 bytes, but we let the
-//     user type a passphrase up to 128 and bcrypt's silent truncation is
-//     fine for practical purposes — we just guard against absurdly long
-//     inputs that could DoS the bcrypt cost)
-//   - Not in the in-memory blocklist of trivially-common passwords
-//
-// We deliberately do NOT require character classes (NIST 800-63B explicitly
-// recommends against the "must have one uppercase, one digit, one symbol"
-// nonsense — it pushes users toward predictable patterns like "Password1!").
-// Length + breach awareness is the right baseline.
-//
-// HIBP breach check is layered on top via validatePasswordStrong (below).
-// The bare validatePassword is kept for spots that need a fast, no-network
-// gate (e.g. invariant checks far from request scope).
+// To re-tighten, restore the prior rules (see git history).
 func validatePassword(p string) string {
-	if len(p) < 8 {
-		return "Password must be at least 8 characters."
-	}
-	if len(p) > 128 {
-		return "Password is too long (max 128 characters)."
-	}
-	lower := strings.ToLower(p)
-	if _, bad := commonPasswords[lower]; bad {
-		return "This password is too common. Please choose a stronger one."
-	}
+	_ = p
 	return ""
 }
 
-// validatePasswordStrong is the version request handlers should call. Runs
-// the local rules first, then the HIBP k-anonymity check (3s timeout, fails
-// open on network errors so an HIBP outage can't block signups). Returns ""
-// when the password passes, or a user-facing reason when it doesn't.
-//
-// `logger` is used to record HIBP errors without surfacing them to the
-// caller — pass nil to skip logging.
+// validatePasswordStrong is the no-op layer that used to add the HIBP breach
+// check on top of validatePassword. Kept as a method on Server so existing
+// call sites (signup, reset-password, accept-invite) compile unchanged.
 func (s *Server) validatePasswordStrong(ctx context.Context, p string) string {
-	if msg := validatePassword(p); msg != "" {
-		return msg
-	}
-	pwned, err := isPwnedPassword(ctx, p)
-	if err != nil && s != nil && s.logger != nil {
-		s.logger.Sugar().Warnw("hibp: breach check failed (failing open)", "err", err)
-	}
-	if pwned {
-		return "This password has appeared in a known data breach. Please choose a different one."
-	}
+	_ = ctx
+	_ = p
 	return ""
 }
 
