@@ -101,10 +101,15 @@ func (s *Server) toggleWAAI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ai_enabled": body.Enabled})
 }
 
-// GET /api/wa/conversations
+// GET /api/wa/conversations  (?archived=1 includes archived rows)
+//
+// The dashboard inbox calls this with no query string (default = hide
+// archived). Toggling "Show archived" in the UI sets ?archived=1 to
+// surface them so the operator can unarchive or review.
 func (s *Server) listWAConversations(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	convs, err := s.db.GetWAConversationsList(ac.OrgID, 50)
+	includeArchived := r.URL.Query().Get("archived") == "1"
+	convs, err := s.db.GetWAConversationsList(ac.OrgID, 50, includeArchived)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -154,7 +159,20 @@ func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Pick the *active* config — there may be multiple historical rows
+	// from when the operator switched providers (each save upserts on
+	// (org_id, provider) so the loser stays in the table). Prefer
+	// is_active=1 first, then fall back to highest id (most recently
+	// inserted). This makes the modal reflect the LAST saved state,
+	// not the first historical one — and matches what the send path
+	// will actually use.
 	cfg := configs[0]
+	for _, c := range configs {
+		if c.IsActive {
+			cfg = c
+			break
+		}
+	}
 	// Merge the JSON credentials column with the legacy flat columns so any
 	// provider's full field set surfaces. Flat columns win on conflict for
 	// backwards-compatibility with rows written before the JSON column was
@@ -174,11 +192,21 @@ func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 	if cfg.PhoneNumber != "" {
 		creds["phone_number"] = cfg.PhoneNumber
 	}
+	// Pre-fill the webhook secret in the modal so the operator can see
+	// they have one set without re-pasting it. Frontend treats empty as
+	// "leave alone" on save (matches the COALESCE in UpsertWA).
+	if cfg.WebhookSecret != "" {
+		creds["webhook_secret"] = cfg.WebhookSecret
+	}
+	var defaultProd interface{}
+	if cfg.DefaultProductID > 0 {
+		defaultProd = cfg.DefaultProductID
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":                 cfg.ID,
 		"provider":           cfg.Provider,
 		"credentials":        creds,
-		"default_product_id": nil, // column exists but not wired through Go struct yet
+		"default_product_id": defaultProd,
 		"auto_reply":         cfg.AIEnabled,
 	})
 }
@@ -188,7 +216,7 @@ func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 // we never try to render a webhook URL or persist a config for a typo'd
 // provider name that no provider-specific code path would ever read.
 var validWAProviders = map[string]bool{
-	"gupshup": true, "wati": true, "aisensei": true, "interakt": true, "meta": true,
+	"gupshup": true, "wati": true, "aisensei": true, "interakt": true, "meta": true, "wasender": true,
 }
 
 // POST /api/wa/config — upsert the org's single WA channel config. The
@@ -235,13 +263,29 @@ func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 	appID := body.Credentials["app_id"]
 	phone := body.Credentials["phone_number"]
 	webhookURL := body.Credentials["webhook_url"]
+	// webhook_secret is the shared-secret WaSender (and other providers
+	// using a similar scheme) sends in X-Webhook-Signature on every
+	// inbound delivery. Stored separately from the JSON credentials blob
+	// so the webhook handler can read it cheaply without parsing JSON
+	// per request. Empty value means "don't verify" (backwards-compat
+	// for configs saved before this column existed).
+	webhookSecret := body.Credentials["webhook_secret"]
 
 	// UNIQUE(org_id, provider) turns this INSERT into an upsert. Avoids the
 	// need for a separate update path + lookup.
-	if _, err := s.db.UpsertWAChannelConfig(ac.OrgID, body.Provider, phone, apiKey, appID, webhookURL, body.Credentials, body.AutoReply); err != nil {
+	if _, err := s.db.UpsertWAChannelConfig(ac.OrgID, body.Provider, phone, apiKey, appID, webhookURL, webhookSecret, body.Credentials, body.AutoReply, body.DefaultProductID); err != nil {
 		s.logger.Sugar().Errorw("saveWAConfig", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	// One active provider per org. When the operator switches providers,
+	// the new row gets upserted above and the OTHER provider rows for
+	// the same org get deactivated here. Without this, sends would keep
+	// going through whichever historical row had a lower id — leading
+	// to "I saved WaSender but messages still go through Meta" surprises.
+	if err := s.db.DeactivateOtherWAChannelConfigs(ac.OrgID, body.Provider); err != nil {
+		s.logger.Sugar().Warnw("saveWAConfig: deactivate others failed", "err", err)
+		// non-fatal — the save itself succeeded
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
 }
@@ -293,16 +337,30 @@ func (s *Server) toggleWAAIByPhone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ai_enabled": body.Enabled})
 }
 
-// POST /api/wa/send
+// POST /api/wa/send sends a manual outbound WhatsApp message and persists
+// it to the conversation history. Accepts either {to_phone,message} (the
+// original API shape) or {contact_phone,text} (what the dashboard chat
+// composer posts) so we don't have to fork the frontend just to rename
+// fields. Creates the conversation row on first use, so this endpoint
+// also doubles as "start a new chat" when the operator opens a chat with
+// a number that's never messaged us before.
 func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
-		ChannelID int64  `json:"channel_id"`
-		ToPhone   string `json:"to_phone"`
-		Message   string `json:"message"`
+		ChannelID    int64  `json:"channel_id"`
+		ToPhone      string `json:"to_phone"`
+		ContactPhone string `json:"contact_phone"`
+		Message      string `json:"message"`
+		Text         string `json:"text"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ToPhone == "" || body.Message == "" {
-		writeError(w, http.StatusBadRequest, "to_phone and message required")
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	phone := strings.TrimSpace(firstNonEmpty(body.ToPhone, body.ContactPhone))
+	text := strings.TrimSpace(firstNonEmpty(body.Message, body.Text))
+	if phone == "" || text == "" {
+		writeError(w, http.StatusBadRequest, "phone and text required")
 		return
 	}
 
@@ -312,7 +370,18 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pick the *active* config — matches the getWAConfig logic so the
+	// modal and the send path agree about which provider is in use.
+	// Without this filter, the send path would always use the lowest-id
+	// row (probably an old provider the operator already switched away
+	// from), causing "I saved WaSender but messages go via Meta" surprises.
 	cfg := settings[0]
+	for _, c := range settings {
+		if c.IsActive {
+			cfg = c
+			break
+		}
+	}
 	if body.ChannelID > 0 {
 		for _, c := range settings {
 			if c.ID == body.ChannelID {
@@ -322,10 +391,165 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	channelCfg := s.waChannelConfig(cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID)
-	if err := s.waSender.SendText(r.Context(), channelCfg, body.ToPhone, body.Message); err != nil {
-		writeError(w, http.StatusBadGateway, "send failed: "+err.Error())
+	channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID)
+	if err := s.waSender.SendText(r.Context(), channelCfg, phone, text); err != nil {
+		// Surface the provider's actual error so the frontend can display
+		// it instead of a misleading "HTTP 502". Most provider errors are
+		// auth/quota/allow-list issues the operator can fix immediately
+		// (rotate the token, add the recipient to allow-list, top up the
+		// account). Hiding them behind 502 made the dashboard useless for
+		// diagnosing real provider failures. Status code stays 502 — the
+		// upstream did fail — but the body carries the readable detail.
+		s.logger.Sugar().Warnw("wa send failed", "provider", cfg.Provider, "to", phone, "err", err.Error())
+		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"sent": true})
+
+	// Persist the outbound message so it appears in the dashboard chat
+	// view immediately. Strip the leading + when storing — the inbox
+	// stores phones without it, and we want to match against any future
+	// inbound from the same number for conversation continuity.
+	storedPhone := strings.TrimPrefix(phone, "+")
+	convID, err := s.db.GetOrCreateWAConversation(cfg.OrgID, storedPhone, cfg.Provider)
+	if err == nil && convID > 0 {
+		_, _ = s.db.SaveWAMessage(convID, "outbound", text, "text", "")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "conversation_id": convID, "phone": storedPhone})
+}
+
+// firstNonEmpty returns the first argument that's not the empty string.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// POST /api/wa/conversations/ensure — idempotently creates an empty
+// conversation row for the given phone so it shows up in the inbox.
+// Used by the dashboard after a successful WaSender QR scan, so the
+// linked device's own number appears in the left-side list as an empty
+// thread (giving the operator a starting point and visible confirmation
+// that the link worked). GetOrCreateWAConversation is a no-op when a row
+// already exists for (org, phone), so calling this on every scan event
+// is safe.
+func (s *Server) ensureWAConversation(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	var body struct {
+		Phone    string `json:"phone"`
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	phone := strings.TrimPrefix(strings.TrimSpace(body.Phone), "+")
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	provider := strings.TrimSpace(body.Provider)
+	if provider == "" {
+		// Fall back to the org's first configured provider so the
+		// caller doesn't need to know which one was set up.
+		if cfgs, _ := s.db.GetWAChannelConfigsByOrg(ac.OrgID); len(cfgs) > 0 {
+			provider = cfgs[0].Provider
+		} else {
+			provider = "wasender" // last-resort default
+		}
+	}
+	convID, err := s.db.GetOrCreateWAConversation(ac.OrgID, phone, provider)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"conversation_id": convID, "phone": phone})
+}
+
+// ─── Conversation management endpoints ───
+// All four resolve the phone from the URL path, scope the DB write by
+// (org_id, phone) so a malicious client can't reach into another org's
+// data, and return a tiny JSON ack the dashboard polls before
+// re-rendering the inbox.
+
+// normalizePathPhone strips an optional leading + from a phone path
+// segment. The dashboard sometimes URL-encodes the +, sometimes drops
+// it; the DB stores phones without it. Always normalise here so the
+// handlers don't have to care which shape they received.
+func normalizePathPhone(raw string) string {
+	return strings.TrimPrefix(strings.TrimSpace(raw), "+")
+}
+
+// POST /api/wa/conversations/{phone}/mute
+// Body: {"muted": bool}. Suppresses AI auto-reply for one thread.
+func (s *Server) muteWAConversation(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := normalizePathPhone(r.PathValue("phone"))
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	var body struct {
+		Muted bool `json:"muted"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := s.db.SetWAConversationMuted(ac.OrgID, phone, body.Muted); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"muted": body.Muted})
+}
+
+// POST /api/wa/conversations/{phone}/archive
+// Body: {"archived": bool}. Hides/shows the thread in the default inbox.
+func (s *Server) archiveWAConversation(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := normalizePathPhone(r.PathValue("phone"))
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	var body struct {
+		Archived bool `json:"archived"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := s.db.SetWAConversationArchived(ac.OrgID, phone, body.Archived); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"archived": body.Archived})
+}
+
+// POST /api/wa/conversations/{phone}/clear
+// Wipes message history but keeps the conversation row + flags.
+func (s *Server) clearWAConversation(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := normalizePathPhone(r.PathValue("phone"))
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	if err := s.db.ClearWAConversationMessages(ac.OrgID, phone); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"cleared": true})
+}
+
+// DELETE /api/wa/conversations/{phone}
+// Removes conversation row + all its messages. Irreversible.
+func (s *Server) deleteWAConversation(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	phone := normalizePathPhone(r.PathValue("phone"))
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone required")
+		return
+	}
+	if err := s.db.DeleteWAConversation(ac.OrgID, phone); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }

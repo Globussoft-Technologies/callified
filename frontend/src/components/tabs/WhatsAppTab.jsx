@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import { formatDateTime, formatTime } from '../../utils/dateFormat';
 
 const PROVIDERS = [
@@ -43,7 +44,14 @@ const PROVIDER_FIELDS = {
   ],
   wasender: [
     { key: 'api_key', label: 'API Key', type: 'password' },
-    { key: 'base_url', label: 'Base URL (optional)', type: 'text' },
+    { key: 'phone_number', label: 'Source Phone', type: 'text' },
+    // webhook_secret is the shared secret WaSender echoes in the
+    // X-Webhook-Signature header on every inbound delivery. Backend
+    // rejects mismatched hits when set, so leaving it blank keeps the
+    // legacy "accept anything" behaviour. Marked optional so the Save
+    // button doesn't gate on it.
+    { key: 'webhook_secret', label: 'Webhook Secret (recommended)', type: 'password', optional: true },
+    { key: 'base_url', label: 'Base URL (optional)', type: 'text', optional: true },
   ],
 };
 
@@ -115,7 +123,7 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
   // PROVIDER_FIELDS is intentionally minimal (no optional fields) so any blank
   // entry in the modal means the provider integration won't actually work.
   const fields = PROVIDER_FIELDS[provider] || [];
-  const missingField = fields.find(f => !(creds[f.key] || '').trim());
+  const missingField = fields.find(f => !f.optional && !(creds[f.key] || '').trim());
   const canSave = !saving && fields.length > 0 && !missingField;
 
   const handleSave = async () => {
@@ -126,14 +134,15 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
     }
     setSaving(true);
     try {
+      const productID = defaultProduct ? Number(defaultProduct) : null;
       const res = await apiFetch(`${API_URL}/wa/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, credentials: creds, default_product_id: defaultProduct || null, auto_reply: autoReply }),
+        body: JSON.stringify({ provider, credentials: creds, default_product_id: productID, auto_reply: autoReply }),
       });
       if (!res.ok) {
         let msg = `Save failed (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) { }
         setError(msg);
         setSaving(false);
         return;
@@ -147,7 +156,7 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
 
   if (!show) return null;
 
-  const webhookUrl = `https://test.callified.ai/wa/webhook/${provider}`;
+  const webhookUrl = `https://testgo1.callified.ai/wa/webhook/${provider}`;
 
   return (
     <div style={overlayStyle} onClick={onClose}>
@@ -212,10 +221,475 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
 
         <button onClick={handleSave} disabled={!canSave}
           title={missingField ? `${missingField.label} is required` : ''}
-          style={{ ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700,
-            opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'not-allowed' }}>
+          style={{
+            ...btnStyle, width: '100%', background: '#25D366', color: '#fff', fontWeight: 700,
+            opacity: canSave ? 1 : 0.5, cursor: canSave ? 'pointer' : 'not-allowed'
+          }}>
           {saving ? 'Saving...' : 'Save Configuration'}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// Lower-case "connected" check. WaSender has flipped between "Connected"
+// and "connected" historically; case-insensitive matching avoids the
+// dashboard getting stuck on "Connecting…" because of capitalization.
+const isWaConnected = (s) => (s || '').toLowerCase() === 'connected';
+
+/* ─── useWASession ───
+   Shared session-status hook. Polls /api/wa/session at a steady cadence
+   so the inbox header and the SessionPanel agree without double-polling.
+   Returns the first session (we only support one WaSender session per
+   org today; if that changes, callers will need a selector).
+
+   Pacing: 4s while not connected (user is mid-scan, wants snappy
+   feedback); 15s while connected (just keeping the badge fresh, no
+   reason to hammer WaSender). */
+function useWASession(apiFetch, API_URL) {
+  const [session, setSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const timerRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/wa/session`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.error || data?.message || `Failed to load session (HTTP ${res.status})`);
+        setSession(null);
+        return;
+      }
+      setError('');
+      setSession(Array.isArray(data.data) ? (data.data[0] || null) : null);
+    } catch (e) {
+      setError('Network error: ' + (e.message || String(e)));
+    } finally {
+      setLoading(false);
+    }
+  }, [apiFetch, API_URL]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    const interval = isWaConnected(session?.status) ? 15000 : 4000;
+    timerRef.current = setInterval(load, interval);
+    return () => clearInterval(timerRef.current);
+  }, [session?.status, load]);
+
+  return { session, loading, error, reload: load };
+}
+
+/* ─── WhatsApp Session Panel (right column) ───
+   Shows the user's WaSender session: phone, status, and a scannable QR
+   when not connected. PAT lives server-side; we never see it here. The
+   panel reuses the shared useWASession hook so polling stays in one
+   place. QR refreshing remains local because it's only relevant when
+   this panel is open. */
+function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hookError, reloadSession }) {
+  const [qr, setQr] = useState('');             // raw QR string from WaSender
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);      // suppress overlapping clicks
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false); // themed confirm
+  const qrTimerRef = useRef(null);
+
+  const isConnected = isWaConnected;
+
+  // disconnect forces WaSender to drop the current link. Used to recover
+  // from stale "connected" state where the user has unlinked the device
+  // from their phone but WaSender hasn't noticed yet (force-quit, network
+  // loss, unclean logout). After this fires, status flips to NEED_SCAN
+  // and the QR-flow path takes over for re-scanning.
+  //
+  // The button click only opens the themed confirmation modal; the
+  // actual API call lives in confirmDisconnectAction below. This avoids
+  // the jarring native browser confirm() dialog and keeps the UI on
+  // theme.
+  const confirmDisconnectAction = async () => {
+    setConfirmDisconnect(false);
+    if (!session?.id || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiFetch(`${API_URL}/wa/session/${session.id}/disconnect`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.message || `Disconnect failed (HTTP ${res.status})`);
+        return;
+      }
+      setQr(''); // clear stale QR if any
+      reloadSession();
+    } catch (e) {
+      setError('Network error: ' + (e.message || String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Connect kicks off the WaSender session and returns the first QR in
+  // the same response. Used by the "Connect / Generate QR" button.
+  const connect = async () => {
+    if (!session?.id || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiFetch(`${API_URL}/wa/session/${session.id}/connect`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        setError(data?.message || `Connect failed (HTTP ${res.status})`);
+        return;
+      }
+      if (data?.data?.qrCode) setQr(data.data.qrCode);
+      // Nudge the shared hook to re-poll so the status badge updates
+      // from "logged_out" to whatever WaSender now reports (NEED_SCAN,
+      // connecting, …). Without this the inbox header would lag a few
+      // seconds behind the panel's own state.
+      reloadSession();
+    } catch (e) {
+      setError('Network error: ' + (e.message || String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // refreshQR is the polling-friendly variant. WaSender QR codes expire
+  // after 45s; we re-fetch every 30s so the displayed code is always
+  // scannable. Errors here are silent — a stale QR is better than a
+  // dashboard full of red banners.
+  const refreshQR = useCallback(async () => {
+    if (!session?.id) return;
+    try {
+      const res = await apiFetch(`${API_URL}/wa/session/${session.id}/qr`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success && data?.data?.qrCode) {
+        setQr(data.data.qrCode);
+      }
+    } catch (_) { /* ignore — next tick retries */ }
+  }, [session?.id, apiFetch, API_URL]);
+
+  // QR-only polling: while we're showing a QR (i.e. session is not yet
+  // connected), refresh it every 30s so it never goes stale before the
+  // user scans. Stops the moment status flips to connected. Status
+  // polling itself is handled by the shared useWASession hook.
+  useEffect(() => {
+    clearInterval(qrTimerRef.current);
+    if (!session || isConnected(session.status)) { setQr(''); return; }
+    qrTimerRef.current = setInterval(refreshQR, 30000);
+    return () => clearInterval(qrTimerRef.current);
+  }, [session?.id, session?.status, refreshQR]);
+
+  // Surface hook-level fetch errors inline on the panel — but treat
+  // "personal access token required" as a soft state rather than an
+  // error: many WaSender plans only ship a per-session key (good for
+  // sending) and don't expose a PAT (needed for the session/QR
+  // management endpoints). The dashboard still works without it; we
+  // just hide the QR/management UI and tell the user clearly instead
+  // of dumping a red banner.
+  const needsPAT = (hookError || '').toLowerCase().includes('personal access token');
+  useEffect(() => {
+    if (needsPAT) { setError(''); return; }
+    setError(hookError || '');
+  }, [hookError, needsPAT]);
+
+  return (
+    <div style={sessionPanelStyle}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <h3 style={{ margin: 0, color: '#25D366', fontSize: '0.95rem' }}>📱 WhatsApp Session</h3>
+        <button onClick={onClose} style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }} title="Close">×</button>
+      </div>
+      <div style={{ padding: '1rem', flex: 1, overflowY: 'auto' }}>
+        {loading && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Loading…</div>}
+
+        {error && (
+          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.8rem' }}>
+            {error}
+          </div>
+        )}
+
+        {!loading && needsPAT && (
+          // Friendly fallback for accounts that only have a per-session
+          // API key (good for sending) but no PAT (required for QR /
+          // session-management endpoints). Sending and inbound webhooks
+          // still work — only the in-dashboard scan flow is unavailable.
+          <div style={{
+            background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.25)',
+            borderRadius: '8px', padding: '12px', color: '#a5b4fc', fontSize: '0.82rem', lineHeight: 1.5,
+          }}>
+            <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: '6px' }}>📱 Session view unavailable</div>
+            Your WaSender plan exposes a per-session API key (used for sending) but not a Personal Access Token (needed to fetch QR codes from this dashboard).
+            <div style={{ marginTop: '8px' }}>
+              You can still scan and manage sessions on <a href="https://wasenderapi.com" target="_blank" rel="noreferrer" style={{ color: '#a5b4fc', textDecoration: 'underline' }}>wasenderapi.com</a> — and inbound/outbound messages will work normally here.
+            </div>
+          </div>
+        )}
+
+        {!loading && !session && !error && !needsPAT && (
+          <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+            No WhatsApp session found. Open WhatsApp Channel Config (gear icon) and save your WaSender API token first.
+          </div>
+        )}
+
+        {session && isConnected(session.status) && (
+          // Connected: a "Linked Device" confirmation card. The phone is
+          // the headline (largest text) since that's what the user wants
+          // to confirm — "yes, my number is here". The session name is
+          // secondary metadata for users who run multiple WaSender
+          // sessions later. Followed by a thin help banner explaining
+          // what the connection enables.
+          <>
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(37,211,102,0.18) 0%, rgba(37,211,102,0.06) 100%)',
+              border: '1px solid rgba(37,211,102,0.4)', borderRadius: '12px',
+              padding: '1rem', textAlign: 'center', marginBottom: '0.75rem',
+            }}>
+              <div style={{ fontSize: '2rem', lineHeight: 1, marginBottom: '0.5rem' }}>📱</div>
+              <div style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>Linked Device</div>
+              <div style={{ color: '#fff', fontSize: '1.15rem', fontWeight: 700, fontFamily: 'monospace', marginBottom: '6px' }}>
+                {session.phone_number || '—'}
+              </div>
+              <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '10px' }}>
+                {session.name || `Session #${session.id}`}
+              </div>
+              <span style={{
+                display: 'inline-block', padding: '4px 12px', borderRadius: '12px',
+                fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em',
+                background: 'rgba(37,211,102,0.25)', color: '#25D366',
+              }}>
+                ● CONNECTED
+              </span>
+            </div>
+            <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '8px', padding: '0.6rem 0.75rem', color: '#bbf7d0', fontSize: '0.78rem', lineHeight: 1.5 }}>
+              ✅ Send and receive WhatsApp messages. New incoming chats will appear in the inbox automatically.
+            </div>
+            {/* Disconnect button — recovers from stale "connected" state
+                where the phone unlinked but WaSender hasn't caught up.
+                Opens a themed confirmation modal (rendered below) so the
+                user can't fat-finger this irreversible action. */}
+            <button onClick={() => setConfirmDisconnect(true)} disabled={busy}
+              style={{
+                width: '100%', marginTop: '0.6rem',
+                background: 'transparent', color: '#fbbf24',
+                border: '1px solid rgba(234,179,8,0.4)', borderRadius: '8px',
+                padding: '8px', fontSize: '0.78rem', fontWeight: 600,
+                cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
+              }}>
+              {busy ? 'Disconnecting…' : 'Disconnect & Re-scan'}
+            </button>
+          </>
+        )}
+
+        {session && !isConnected(session.status) && (
+          // Not connected: surface the QR + scan instructions. Keep the
+          // lighter info rows here too, so the user has a status line
+          // with the "need_scan" / "logged_out" badge for context.
+          <>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Session</div>
+              <div style={{ color: '#e2e8f0', fontSize: '0.9rem', fontWeight: 600 }}>{session.name || `#${session.id}`}</div>
+            </div>
+            <div style={{ marginBottom: '0.75rem' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone</div>
+              <div style={{ color: '#e2e8f0', fontSize: '0.85rem', fontFamily: 'monospace' }}>{session.phone_number || '—'}</div>
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
+              <div>
+                <span style={{
+                  display: 'inline-block', padding: '3px 10px', borderRadius: '10px',
+                  fontSize: '0.72rem', fontWeight: 700,
+                  background: 'rgba(234,179,8,0.18)', color: '#fbbf24',
+                }}>
+                  {session.status || 'unknown'}
+                </span>
+              </div>
+            </div>
+            {qr ? (
+              <div style={{ background: '#fff', padding: '12px', borderRadius: '8px', textAlign: 'center', marginBottom: '0.75rem' }}>
+                <QRCodeSVG value={qr} size={220} level="M" />
+              </div>
+            ) : (
+              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: '8px', padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+                Click "Generate QR" to start the scan.
+              </div>
+            )}
+            <button onClick={connect} disabled={busy}
+              style={{
+                width: '100%', background: '#25D366', color: '#fff',
+                border: 'none', borderRadius: '8px', padding: '10px',
+                fontWeight: 700, fontSize: '0.85rem',
+                cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1,
+                marginBottom: '0.5rem',
+              }}>
+              {busy ? 'Working…' : (qr ? 'Refresh QR' : 'Generate QR')}
+            </button>
+            <div style={{ color: '#64748b', fontSize: '0.72rem', textAlign: 'center' }}>
+              Open WhatsApp on your phone → Settings → Linked Devices → Link a Device → scan this code.
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Themed confirm: replaces window.confirm() so the prompt sits in
+          the same dark-glass aesthetic as the rest of the dashboard.
+          Click on the overlay or Cancel dismisses without action; OK
+          fires the disconnect API call. Uses an opaque solid panel
+          (not the page-glass class) plus a heavier overlay so the
+          background content fully fades out — otherwise the
+          translucent "Select a conversation…" hint bleeds through and
+          looks broken. */}
+      {confirmDisconnect && (
+        <div
+          style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+          onClick={() => setConfirmDisconnect(false)}
+        >
+          <div
+            style={{
+              ...modalStyle, maxWidth: '380px',
+              background: '#1a2236',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 0.75rem 0', color: '#e2e8f0' }}>Disconnect WhatsApp?</h3>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
+              This will drop the link to <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{session?.phone_number || 'this device'}</span>. You'll need to scan a fresh QR code to reconnect.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDisconnect(false)}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
+                  border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                  padding: '8px 16px', fontSize: '0.85rem', fontWeight: 600,
+                  cursor: 'pointer',
+                }}>
+                Cancel
+              </button>
+              <button onClick={confirmDisconnectAction}
+                style={{
+                  background: 'rgba(234,179,8,0.18)', color: '#fbbf24',
+                  border: '1px solid rgba(234,179,8,0.4)', borderRadius: '8px',
+                  padding: '8px 16px', fontSize: '0.85rem', fontWeight: 700,
+                  cursor: 'pointer',
+                }}>
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── New Chat Modal ─── */
+// Lets the operator start a conversation with a number that has never
+// messaged us before. Phone normalisation matches the rest of the app:
+// strip everything but digits, then require country code (no implicit
+// India default — too easy to dial the wrong country silently). On
+// submit we send the first message via /api/wa/send, which also creates
+// the conversation row server-side, then jump the parent into that
+// conversation so the operator can keep typing.
+function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
+  const [phone, setPhone] = useState('');
+  const [name, setName] = useState('');
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  // Reset every time the modal opens so previous (failed) input doesn't
+  // leak back in if the user cancelled and reopened.
+  useEffect(() => {
+    if (!show) return;
+    setPhone(''); setName(''); setText(''); setError(''); setBusy(false);
+  }, [show]);
+
+  if (!show) return null;
+
+  // Normalize: keep digits + leading +. WaSender's API requires E.164
+  // with the +, so we add it if missing — but ONLY when the input has at
+  // least 11 digits (country code + national number). Shorter inputs
+  // probably mean the user forgot a digit, so we surface that as an
+  // error instead of silently mangling the number.
+  const normalizePhone = (raw) => {
+    const digits = (raw || '').replace(/[^\d]/g, '');
+    if (digits.length < 10) return null;
+    return digits.startsWith('+') ? raw.trim() : '+' + digits;
+  };
+
+  const submit = async () => {
+    setError('');
+    const normalized = normalizePhone(phone);
+    if (!normalized) { setError('Enter a valid phone with country code (e.g. +919876543210)'); return; }
+    if (!text.trim()) { setError('First message is required'); return; }
+    setBusy(true);
+    try {
+      const res = await apiFetch(`${API_URL}/wa/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact_phone: normalized, text: text.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.sent !== true) {
+        setError(data?.error || data?.detail || `Send failed (HTTP ${res.status})`);
+        setBusy(false);
+        return;
+      }
+      // Use the phone shape the server stored (no leading +), so the
+      // parent's selectedPhone matches what the conversations list will
+      // emit on its next poll.
+      const stored = data.phone || normalized.replace(/^\+/, '');
+      onStarted(stored, name.trim());
+      onClose();
+    } catch (e) {
+      setError('Network error — could not reach server');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div className="glass-panel" style={{ ...modalStyle, maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0, color: '#e2e8f0' }}>Start New Chat</h3>
+          <button onClick={onClose} style={closeBtnStyle}>&times;</button>
+        </div>
+
+        {error && (
+          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem' }}>
+            {error}
+          </div>
+        )}
+
+        <label style={labelStyle}>Phone (with country code)</label>
+        <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+          placeholder="+919876543210" style={inputStyle} autoFocus />
+
+        <label style={labelStyle}>Name (optional)</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)}
+          placeholder="Acme Corp" style={inputStyle} />
+
+        <label style={labelStyle}>First message</label>
+        <textarea value={text} onChange={e => setText(e.target.value)}
+          placeholder="Hi! Thanks for your interest in EmpMonitor..."
+          rows={3}
+          style={{ ...inputStyle, resize: 'vertical', minHeight: '70px', fontFamily: 'inherit' }} />
+
+        <button onClick={submit} disabled={busy}
+          style={{
+            width: '100%', background: '#25D366', color: '#fff',
+            border: 'none', borderRadius: '8px', padding: '10px',
+            fontWeight: 700, fontSize: '0.9rem',
+            cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1,
+            marginTop: '0.5rem',
+          }}>
+          {busy ? 'Sending…' : 'Start Chat'}
+        </button>
+
+        <div style={{ marginTop: '0.75rem', color: '#64748b', fontSize: '0.7rem', lineHeight: 1.5 }}>
+          Note: WhatsApp's policy discourages messaging users who haven't opted in. Use this for warm leads or replying to known contacts.
+        </div>
       </div>
     </div>
   );
@@ -230,14 +704,70 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const [showSession, setShowSession] = useState(false);
+  const [showNewChat, setShowNewChat] = useState(false);
   const [aiEnabled, setAiEnabled] = useState({});
+  // Conversation management state. openMenu holds the phone whose
+  // kebab dropdown is currently open (only one at a time). showArchived
+  // flips the inbox listing to include is_archived rows so the operator
+  // can review or unarchive them. confirmAction is the in-app modal
+  // payload for destructive ops (clear / delete) — null while idle.
+  const [openMenu, setOpenMenu] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
   const messagesEndRef = useRef(null);
   const pollRef = useRef(null);
 
-  /* ── Fetch conversations ── */
+  // Shared session state. Drives the SessionPanel content and the
+  // post-scan auto-actions below.
+  const sessionState = useWASession(apiFetch, API_URL);
+  const sessionConnected = isWaConnected(sessionState.session?.status);
+  const sessionPhone = sessionState.session?.phone_number || '';
+  // ensuredPhonesRef tracks which phones we've already auto-created
+  // conversations for in this browser session, so we don't hammer the
+  // backend on every render — but the server-side handler is idempotent
+  // either way, so a stale ref is harmless.
+  const ensuredPhonesRef = useRef(new Set());
+
+  // Post-scan effect: whenever we have a connected session with a known
+  // phone, ensure a conversation row exists for it so the operator sees
+  // their linked number in the left-side inbox immediately. Idempotent
+  // on both sides — the server uses GetOrCreateWAConversation, and we
+  // memoize per-phone here so subsequent renders are no-ops.
+  useEffect(() => {
+    if (!sessionConnected || !sessionPhone) return;
+    const key = sessionPhone.replace(/^\+/, '');
+    if (ensuredPhonesRef.current.has(key)) return;
+    ensuredPhonesRef.current.add(key);
+
+    setShowSession(true);
+    apiFetch(`${API_URL}/wa/conversations/ensure`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: sessionPhone, provider: 'wasender' }),
+    }).then(() => {
+      // Refresh inbox list so the new empty conversation appears
+      // without waiting for the next poll tick.
+      fetchConversations?.();
+    }).catch(() => {
+      // On failure, allow a retry next render so a transient network
+      // hiccup doesn't permanently block the auto-create.
+      ensuredPhonesRef.current.delete(key);
+    });
+    // fetchConversations is intentionally omitted from deps — using it
+    // would cycle the effect on every poll-driven re-render. The
+    // optional-chain call below tolerates first-mount ordering.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionConnected, sessionPhone, apiFetch, API_URL]);
+
+  /* ── Fetch conversations ──
+     `archived=1` flips the backend filter so archived rows surface for
+     the "Show archived" view. Both views poll on the same 5s cadence —
+     the toggle just changes which set is currently rendered. */
   const fetchConversations = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_URL}/wa/conversations`);
+      const url = `${API_URL}/wa/conversations${showArchived ? '?archived=1' : ''}`;
+      const res = await apiFetch(url);
       if (res.ok) {
         const data = await res.json();
         const convos = Array.isArray(data) ? data : (data.conversations || []);
@@ -248,7 +778,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         setAiEnabled(map);
       }
     } catch (e) { console.error('Failed to fetch conversations', e); }
-  }, [apiFetch, API_URL]);
+  }, [apiFetch, API_URL, showArchived]);
 
   useEffect(() => { fetchConversations(); }, [fetchConversations]);
 
@@ -258,9 +788,9 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     try {
       const res = await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(selectedPhone)}/messages`);
       if (res.ok) {
-          const data = await res.json();
-          setMessages(Array.isArray(data) ? data : (data.messages || []));
-        }
+        const data = await res.json();
+        setMessages(Array.isArray(data) ? data : (data.messages || []));
+      }
     } catch (e) { console.error('Failed to fetch messages', e); }
   }, [apiFetch, API_URL, selectedPhone]);
 
@@ -281,6 +811,18 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  /* ── Close kebab menu when the user clicks anywhere else ──
+     Without this the menu would stay open as the user navigates around
+     the inbox, which is confusing and lets accidental presses on hidden
+     items fire. We listen at the document level and close on any click
+     not handled by the menu's own stopPropagation. */
+  useEffect(() => {
+    if (!openMenu) return;
+    const close = () => setOpenMenu(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [openMenu]);
+
   /* ── Send message ── */
   const handleSend = async () => {
     if (!messageText.trim() || !selectedPhone || sending) return;
@@ -298,6 +840,53 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     setSending(false);
   };
 
+  /* ── Conversation management actions ──
+     All four scope by phone (URL-encoded so a leading + survives the
+     hop). After each action, refresh the inbox list so the UI catches
+     up to the new state without waiting for the 5s poll. Clicking the
+     active conversation's row out (e.g. after delete) prevents stale
+     selection lingering in the right pane. */
+  const muteConv = async (phone, muted) => {
+    setOpenMenu(null);
+    try {
+      await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(phone)}/mute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ muted }),
+      });
+      fetchConversations();
+    } catch (e) { console.error(e); }
+  };
+  const archiveConv = async (phone, archived) => {
+    setOpenMenu(null);
+    try {
+      await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(phone)}/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived }),
+      });
+      // Archive flips visibility — drop selection if the archived row
+      // is currently open, so the right pane doesn't show a thread the
+      // user can no longer see in the list.
+      if (archived && selectedPhone === phone) setSelectedPhone(null);
+      fetchConversations();
+    } catch (e) { console.error(e); }
+  };
+  const clearConv = async (phone) => {
+    try {
+      await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(phone)}/clear`, { method: 'POST' });
+      if (selectedPhone === phone) fetchMessages();
+      fetchConversations();
+    } catch (e) { console.error(e); }
+  };
+  const deleteConv = async (phone) => {
+    try {
+      await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+      if (selectedPhone === phone) setSelectedPhone(null);
+      fetchConversations();
+    } catch (e) { console.error(e); }
+  };
+
   /* ── Toggle AI ── */
   const toggleAi = async () => {
     if (!selectedPhone) return;
@@ -312,11 +901,20 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     } catch (e) { console.error(e); }
   };
 
-  /* ── Filter conversations ── */
+  /* ── Filter conversations ──
+     Three stages: (1) drop rows whose phone is missing/empty — these
+     are usually orphaned from a malformed webhook event (presence
+     update, status ack, etc.) and aren't real chats; backend skips
+     them now but we filter here too so existing rows in the DB don't
+     keep showing in the inbox. (2) hide archived rows when the
+     showArchived toggle is off; (3) text search by name or phone. */
   const filtered = conversations.filter(c => {
+    const phone = (c.phone || '').trim();
+    if (!phone) return false;
+    if (!showArchived && c.is_archived) return false;
     if (!search) return true;
     const q = search.toLowerCase();
-    return (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q);
+    return (c.name || '').toLowerCase().includes(q) || phone.includes(q);
   });
 
   const selectedConv = conversations.find(c => c.phone === selectedPhone);
@@ -331,17 +929,42 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
           <h3 style={{ margin: 0, color: '#25D366', fontSize: '1rem' }}>
             <span style={{ marginRight: '6px' }}>💬</span>WhatsApp Inbox
           </h3>
-          <button onClick={() => setShowConfig(true)}
-            style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
-            title="Channel Configuration">
-            ⚙️
-          </button>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button onClick={() => setShowNewChat(true)}
+              style={{ ...btnSmallStyle, background: 'rgba(37,211,102,0.18)', color: '#25D366', border: '1px solid rgba(37,211,102,0.3)', fontWeight: 700 }}
+              title="Start a new chat">
+              + New
+            </button>
+            <button onClick={() => setShowSession(s => !s)}
+              style={{ ...btnSmallStyle, background: showSession ? 'rgba(37,211,102,0.18)' : 'rgba(255,255,255,0.06)', color: showSession ? '#25D366' : '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
+              title="WhatsApp Session / QR">
+              📱
+            </button>
+            <button onClick={() => setShowConfig(true)}
+              style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
+              title="Channel Configuration">
+              ⚙️
+            </button>
+          </div>
         </div>
 
-        {/* Search */}
-        <div style={{ padding: '0.5rem 0.75rem' }}>
+        {/* Search + Show archived toggle.
+            The toggle sits on the same row as the search so it doesn't
+            steal vertical space; clicking it flips the list between
+            "active" and "archived" — same poll, different filter. */}
+        <div style={{ padding: '0.5rem 0.75rem', display: 'flex', gap: '6px', alignItems: 'center' }}>
           <input type="text" placeholder="Search by name or phone..." value={search} onChange={e => setSearch(e.target.value)}
-            style={{ ...inputStyle, margin: 0, fontSize: '0.8rem', padding: '6px 10px' }} />
+            style={{ ...inputStyle, margin: 0, fontSize: '0.8rem', padding: '6px 10px', flex: 1 }} />
+          <button onClick={() => setShowArchived(v => !v)}
+            title={showArchived ? 'Showing archived — click to show active' : 'Show archived conversations'}
+            style={{
+              ...btnSmallStyle, flexShrink: 0,
+              background: showArchived ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.06)',
+              color: showArchived ? '#a5b4fc' : '#94a3b8',
+              border: '1px solid rgba(255,255,255,0.1)',
+            }}>
+            {showArchived ? '📂' : '📁'}
+          </button>
         </div>
 
         {/* Conversations */}
@@ -350,7 +973,19 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
             <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
               No WhatsApp conversations yet
             </div>
-          ) : filtered.map(conv => (
+          ) : filtered.map(conv => {
+            // Mark linked-device rows so the operator can tell their own
+            // scanned phones apart from inbound customer chats. A conv
+            // is "linked" when it matches the currently-active session
+            // phone, OR when our local memo says we ensured a row for
+            // that phone in this browser session (covers previously-
+            // linked devices that have since been replaced by a new
+            // scan, so their entry stays distinguishable from customers).
+            const noPlus = (conv.phone || '').replace(/^\+/, '');
+            const linkedNow = sessionPhone && noPlus === sessionPhone.replace(/^\+/, '');
+            const everLinked = ensuredPhonesRef.current.has(noPlus);
+            const isLinkedDevice = linkedNow || everLinked;
+            return (
             <div key={conv.phone} onClick={() => setSelectedPhone(conv.phone)}
               style={{
                 padding: '0.7rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)',
@@ -361,18 +996,74 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
               onMouseLeave={e => { if (selectedPhone !== conv.phone) e.currentTarget.style.background = 'transparent'; }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                  {conv.ai_active && <span style={greenDotStyle} title="AI Auto-Reply active" />}
+                  {isLinkedDevice && <span title={linkedNow ? 'Currently linked WhatsApp device' : 'Previously linked device'} style={{ fontSize: '0.85rem', flexShrink: 0 }}>📱</span>}
+                  {!isLinkedDevice && conv.ai_active && <span style={greenDotStyle} title="AI Auto-Reply active" />}
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {conv.name || conv.phone}
+                      {linkedNow && <span style={{ marginLeft: '6px', fontSize: '0.62rem', color: '#25D366', fontWeight: 700, letterSpacing: '0.05em' }}>● LIVE</span>}
                     </div>
                     <div style={{ fontFamily: 'monospace', color: '#64748b', fontSize: '0.72rem' }}>{conv.phone}</div>
                   </div>
                 </div>
-                <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '8px' }}>
-                  <div style={{ color: '#64748b', fontSize: '0.68rem' }}>{formatTime(conv.last_message_at, orgTimezone)}</div>
+                <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '8px', position: 'relative' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                    {conv.is_muted && <span title="Muted — AI auto-reply skipped" style={{ fontSize: '0.7rem' }}>🔇</span>}
+                    {conv.is_archived && <span title="Archived" style={{ fontSize: '0.7rem' }}>📂</span>}
+                    {/* Timestamp uses updated_at (the API field that
+                        actually exists on whatsapp_conversations); the
+                        old code referenced last_message_at which is
+                        always undefined, so formatTime returned "—".
+                        Skip the render entirely when no timestamp is
+                        available — a row with no activity yet shouldn't
+                        flaunt a placeholder dash. */}
+                    {(conv.updated_at || conv.last_message_at) && (
+                      <div style={{ color: '#64748b', fontSize: '0.68rem' }}>
+                        {formatTime(conv.updated_at || conv.last_message_at, orgTimezone)}
+                      </div>
+                    )}
+                  </div>
                   {conv.unread_count > 0 && (
                     <span style={unreadBadgeStyle}>{conv.unread_count}</span>
+                  )}
+                  {/* Kebab opens the per-conversation action menu.
+                      stopPropagation prevents the row click from also
+                      firing (which would jump into the chat). The menu
+                      itself is absolutely-positioned so it overlays
+                      neighbouring rows without disturbing layout. */}
+                  <button onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === conv.phone ? null : conv.phone); }}
+                    title="More actions"
+                    style={{
+                      marginTop: '4px', background: 'transparent', border: 'none',
+                      color: '#94a3b8', cursor: 'pointer', fontSize: '1.1rem',
+                      padding: '0 4px', lineHeight: 1,
+                    }}>
+                    ⋮
+                  </button>
+                  {openMenu === conv.phone && (
+                    <div onClick={(e) => e.stopPropagation()}
+                      style={{
+                        position: 'absolute', top: '100%', right: 0, marginTop: '4px',
+                        background: '#1a2236', border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                        minWidth: '160px', zIndex: 50,
+                        padding: '4px',
+                      }}>
+                      <button onClick={() => muteConv(conv.phone, !conv.is_muted)} style={menuItemStyle}>
+                        {conv.is_muted ? '🔊 Unmute' : '🔇 Mute'}
+                      </button>
+                      <button onClick={() => archiveConv(conv.phone, !conv.is_archived)} style={menuItemStyle}>
+                        {conv.is_archived ? '📥 Unarchive' : '📂 Archive'}
+                      </button>
+                      <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'clear', phone: conv.phone, name: conv.name || conv.phone }); }} style={menuItemStyle}>
+                        🧹 Clear chat
+                      </button>
+                      <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+                      <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'delete', phone: conv.phone, name: conv.name || conv.phone }); }}
+                        style={{ ...menuItemStyle, color: '#fca5a5' }}>
+                        🗑 Delete
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -382,7 +1073,8 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -432,7 +1124,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                       borderTopLeftRadius: isOutbound ? '12px' : '4px',
                     }}>
                       {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}>🤖</span>}
-                      <span>{msg.text || msg.body}</span>
+                      <span>{msg.message_text || msg.text || msg.body || msg.content}</span>
                       <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', marginTop: '4px', textAlign: 'right' }}>
                         {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
                       </div>
@@ -462,9 +1154,86 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         )}
       </div>
 
+      {/* ── SESSION PANEL: QR + status (toggle via 📱 button) ── */}
+      {showSession && (
+        <SessionPanel
+          apiFetch={apiFetch} API_URL={API_URL}
+          onClose={() => setShowSession(false)}
+          session={sessionState.session} loading={sessionState.loading}
+          error={sessionState.error} reloadSession={sessionState.reload} />
+      )}
+
       {/* Config Modal */}
       <ConfigModal show={showConfig} onClose={() => setShowConfig(false)}
         apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} />
+
+      {/* New Chat Modal — onStarted jumps the inbox to the new
+          conversation so the operator can keep typing without finding it
+          in the list. fetchConversations refreshes the list so the new
+          row shows up on the next poll tick (or immediately). */}
+      <NewChatModal show={showNewChat} onClose={() => setShowNewChat(false)}
+        apiFetch={apiFetch} API_URL={API_URL}
+        onStarted={(phone /*, name */) => {
+          setSelectedPhone(phone);
+          fetchConversations();
+        }} />
+
+      {/* Themed confirm for destructive conversation actions (clear/
+          delete). Shared between both because the dialog shape is
+          identical — only the title/body/action differs. Solid bg with
+          backdrop blur so the inbox underneath fades out cleanly. */}
+      {confirmAction && (
+        <div
+          style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+          onClick={() => setConfirmAction(null)}
+        >
+          <div
+            style={{
+              ...modalStyle, maxWidth: '400px',
+              background: '#1a2236',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 0.75rem 0', color: '#e2e8f0' }}>
+              {confirmAction.type === 'clear' ? 'Clear chat history?' : 'Delete conversation?'}
+            </h3>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
+              {confirmAction.type === 'clear' ? (
+                <>This will permanently delete all messages with <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{confirmAction.name}</span>. The conversation row stays so they can message you again, but the history cannot be recovered.</>
+              ) : (
+                <>This will permanently delete the conversation with <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{confirmAction.name}</span> and all its messages. This cannot be undone.</>
+              )}
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmAction(null)}
+                style={{
+                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
+                  border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                  padding: '8px 16px', fontSize: '0.85rem', fontWeight: 600,
+                  cursor: 'pointer',
+                }}>
+                Cancel
+              </button>
+              <button onClick={() => {
+                  const a = confirmAction;
+                  setConfirmAction(null);
+                  if (a.type === 'clear') clearConv(a.phone);
+                  else deleteConv(a.phone);
+                }}
+                style={{
+                  background: 'rgba(239,68,68,0.18)', color: '#fca5a5',
+                  border: '1px solid rgba(239,68,68,0.4)', borderRadius: '8px',
+                  padding: '8px 16px', fontSize: '0.85rem', fontWeight: 700,
+                  cursor: 'pointer',
+                }}>
+                {confirmAction.type === 'clear' ? 'Clear' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -479,6 +1248,30 @@ const rightPanelStyle = {
   flex: 1, display: 'flex', flexDirection: 'column',
   background: 'rgba(255,255,255,0.01)', borderRadius: '0 12px 12px 0',
   border: '1px solid rgba(255,255,255,0.06)', borderLeft: 'none',
+};
+
+// Conversation kebab-menu items. Inline so we can override per-item
+// (the destructive Delete uses red text, the rest neutral). Hover is
+// handled via onMouseEnter/Leave inline at use sites — keeps this
+// constant cheap and CSS-class-free for consistency with the rest of
+// the file's styling approach.
+const menuItemStyle = {
+  display: 'block', width: '100%', textAlign: 'left',
+  background: 'transparent', border: 'none', color: '#e2e8f0',
+  padding: '8px 12px', borderRadius: '6px', cursor: 'pointer',
+  fontSize: '0.82rem',
+};
+
+// Optional third column shown when the user clicks the 📱 button. Fixed
+// width so it doesn't squeeze the chat too aggressively; collapses to
+// nothing when toggled off.
+const sessionPanelStyle = {
+  width: '320px', flexShrink: 0,
+  display: 'flex', flexDirection: 'column',
+  background: 'rgba(255,255,255,0.02)',
+  border: '1px solid rgba(255,255,255,0.06)', borderLeft: 'none',
+  borderRadius: '0 12px 12px 0',
+  marginLeft: '-12px', // sit flush against the chat panel rather than gap
 };
 
 const chatHeaderStyle = {
