@@ -133,6 +133,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Same idea but matched by first/last name. Groups results per lead since
 	// a name can match multiple records in one org.
 	mux.HandleFunc("GET /api/leads/by-name/{name}/calls", auth(s.getLeadCallsByName))
+	// Bulk export for partner / integration teams: every campaign in the
+	// caller's org, with leads and transcripts (and Gemini conclusions)
+	// nested. Supports ?campaign_id= to scope to a single campaign when
+	// the org has too much data for one response. JWT auth — partner
+	// logs in once via /api/login and reuses the token.
+	mux.HandleFunc("GET /api/external/transcripts", auth(s.getExternalTranscripts))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
 	// Admin-only across the board. The React route guard already redirects
