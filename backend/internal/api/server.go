@@ -53,8 +53,8 @@ func (waSend) SendText(ctx context.Context, cfg wa.ChannelConfig, toPhone, text 
 }
 
 // waChannelConfig converts DB config to wa.ChannelConfig.
-func (s *Server) waChannelConfig(provider, phone, apiKey, appID string) wa.ChannelConfig {
-	return wa.ChannelConfig{Provider: provider, PhoneNumber: phone, APIKey: apiKey, AppID: appID}
+func (s *Server) waChannelConfig(orgID int64, provider, phone, apiKey, appID string) wa.ChannelConfig {
+	return wa.ChannelConfig{OrgID: orgID, Provider: provider, PhoneNumber: phone, APIKey: apiKey, AppID: appID}
 }
 
 // New creates a new API server.
@@ -130,6 +130,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// in one fetch. Org-scoped at the DB layer so cross-tenant leakage is
 	// impossible. Useful for external integrations that only have the phone.
 	mux.HandleFunc("GET /api/leads/by-phone/{phone}/calls", auth(s.getLeadCallsByPhone))
+	// Same idea but matched by first/last name. Groups results per lead since
+	// a name can match multiple records in one org.
+	mux.HandleFunc("GET /api/leads/by-name/{name}/calls", auth(s.getLeadCallsByName))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
 	// Admin-only across the board. The React route guard already redirects
@@ -371,6 +374,19 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", adminAuth(s.getWAMessagesByPhone))
 	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", adminAuth(s.toggleWAAIByPhone))
 	mux.HandleFunc("POST /api/wa/send", adminAuth(s.sendWAMessage))
+	mux.HandleFunc("POST /api/wa/conversations/ensure", adminAuth(s.ensureWAConversation))
+	mux.HandleFunc("POST /api/wa/conversations/{phone}/mute", adminAuth(s.muteWAConversation))
+	mux.HandleFunc("POST /api/wa/conversations/{phone}/archive", adminAuth(s.archiveWAConversation))
+	mux.HandleFunc("POST /api/wa/conversations/{phone}/clear", adminAuth(s.clearWAConversation))
+	mux.HandleFunc("DELETE /api/wa/conversations/{phone}", adminAuth(s.deleteWAConversation))
+
+	// WaSender session-management proxy: list sessions, kick off a
+	// connection (returns first QR), refresh QR after expiry. The PAT
+	// stays server-side; the frontend only sees session info + QR strings.
+	mux.HandleFunc("GET /api/wa/session", adminAuth(s.waListSessions))
+	mux.HandleFunc("POST /api/wa/session/{id}/connect", adminAuth(s.waConnectSession))
+	mux.HandleFunc("GET /api/wa/session/{id}/qr", adminAuth(s.waSessionQR))
+	mux.HandleFunc("POST /api/wa/session/{id}/disconnect", adminAuth(s.waDisconnectSession))
 
 	// ── WhatsApp Provider Webhooks (Phase 3C) ─────────────────────────────────
 	mux.HandleFunc("POST /wa/webhook/gupshup", s.waWebhookGupshup)

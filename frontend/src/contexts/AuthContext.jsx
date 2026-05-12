@@ -32,7 +32,14 @@ export function AuthProvider({ children }) {
       ...options,
       headers: { ...options.headers, 'Authorization': `Bearer ${authToken}` }
     });
-    if (res.status === 401) {
+    // 401 handling: only clear the session when the failing call was
+    // on OUR auth surface (login, /me, sse ticket). 401s from
+    // third-party proxy endpoints — WaSender session/QR, CRM
+    // connectors, anything that forwards a remote service's response —
+    // mean the third party rejected OUR proxied call, not that the
+    // user's dashboard session is bad. Conflating the two used to log
+    // the user out the instant a misconfigured WhatsApp PAT was polled.
+    if (res.status === 401 && /\/api\/(auth\b|sse\/ticket)/.test(url)) {
       clearSession();
       throw new Error('Session expired');
     }

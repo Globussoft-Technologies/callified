@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast, usePrompt, useConfirm } from '../contexts/UIContext';
 
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
+  const toast = useToast();
+  const promptInline = usePrompt();
+  const confirmDialog = useConfirm();
   const [members, setMembers] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -11,8 +15,6 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null);
-  const [confirmCancelInvite, setConfirmCancelInvite] = useState(null);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
 
   useEffect(() => { fetchTeam(); }, []);
@@ -67,34 +69,47 @@ export default function TeamPage({ apiFetch, API_URL }) {
       const res = await apiFetch(`${API_URL}/team/invites/${inviteId}/link`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.error || data.detail || 'Failed to fetch invite link');
+        toast(data.error || data.detail || 'Failed to fetch invite link', 'error');
         return;
       }
       // navigator.clipboard requires a secure context (https / localhost),
-      // which both dev and prod satisfy. Fall back to a prompt() if it
-      // throws (e.g. permission denied / non-secure origin).
+      // which both dev and prod satisfy. Fall back to a read-only inline
+      // prompt if it throws (e.g. permission denied / non-secure origin).
       try {
         await navigator.clipboard.writeText(data.invite_link);
         setCopiedInviteId(inviteId);
         setTimeout(() => setCopiedInviteId(prev => prev === inviteId ? null : prev), 2000);
       } catch (_) {
-        prompt('Copy this invite link:', data.invite_link);
+        await promptInline({
+          title: 'Copy invite link',
+          message: 'Select and copy the link below — clipboard access was blocked.',
+          defaultValue: data.invite_link,
+          okText: 'Done',
+          cancelText: 'Close',
+        });
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
-  const handleCancelInvite = async (inviteId) => {
+  const handleCancelInvite = async (invite) => {
+    const ok = await confirmDialog({
+      title: 'Cancel invite',
+      message: `Cancel the invite for ${invite.email}? They won't be able to use the link anymore.`,
+      okText: 'Cancel invite',
+      cancelText: 'Keep it',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await apiFetch(`${API_URL}/team/invites/${inviteId}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_URL}/team/invites/${invite.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setConfirmCancelInvite(null);
         fetchTeam();
       } else {
         let msg = `Failed to cancel invite (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
-        alert(msg);
+        toast(msg, 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
   const handleRoleChange = async (userId, newRole) => {
@@ -107,23 +122,30 @@ export default function TeamPage({ apiFetch, API_URL }) {
       if (res.ok) fetchTeam();
       else {
         const data = await res.json();
-        alert(data.detail || 'Failed to update role');
+        toast(data.detail || 'Failed to update role', 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
-  const handleDelete = async (userId) => {
+  const handleDelete = async (member) => {
+    const label = member.full_name || member.email;
+    const ok = await confirmDialog({
+      title: 'Remove team member',
+      message: `Remove ${label} from the team? They'll lose access immediately.`,
+      okText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await apiFetch(`${API_URL}/team/${userId}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_URL}/team/${member.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setConfirmDelete(null);
         fetchTeam();
       } else {
         let msg = `Failed to remove user (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
-        alert(msg);
+        toast(msg, 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
   const roleBadge = (role) => {
@@ -242,27 +264,17 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     {inv.expires_at ? new Date(inv.expires_at).toLocaleString() : '-'}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    {confirmCancelInvite === inv.id ? (
-                      <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Cancel?</span>
-                        <button onClick={() => handleCancelInvite(inv.id)}
-                          style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>Yes</button>
-                        <button onClick={() => setConfirmCancelInvite(null)}
-                          style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>No</button>
-                      </span>
-                    ) : (
-                      <span style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
-                        <button onClick={() => handleCopyInviteLink(inv.id)}
-                          title="Copy invite link to clipboard — useful when SMTP isn't configured or to resend out-of-band"
-                          style={{ background: copiedInviteId === inv.id ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.1)', border: `1px solid ${copiedInviteId === inv.id ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.25)'}`, borderRadius: '4px', color: copiedInviteId === inv.id ? '#86efac' : '#a5b4fc', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
-                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
-                        </button>
-                        <button onClick={() => setConfirmCancelInvite(inv.id)}
-                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
-                          Cancel Invite
-                        </button>
-                      </span>
-                    )}
+                    <span style={{ display: 'inline-flex', gap: '6px', justifyContent: 'flex-end' }}>
+                      <button onClick={() => handleCopyInviteLink(inv.id)}
+                        title="Copy invite link to clipboard — useful when SMTP isn't configured or to resend out-of-band"
+                        style={{ background: copiedInviteId === inv.id ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.1)', border: `1px solid ${copiedInviteId === inv.id ? 'rgba(34,197,94,0.4)' : 'rgba(99,102,241,0.25)'}`, borderRadius: '4px', color: copiedInviteId === inv.id ? '#86efac' : '#a5b4fc', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                        {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                      </button>
+                      <button onClick={() => handleCancelInvite(inv)}
+                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
+                        Cancel Invite
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -328,24 +340,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       // they're the only admin). Backend rejects it anyway.
                       // Issue #54.
                       <span style={{ color: '#64748b', fontSize: '0.75rem' }}>—</span>
-                    ) : confirmDelete === m.id ? (
-                      <span style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#fca5a5' }}>Remove?</span>
-                        <button onClick={() => handleDelete(m.id)}
-                          style={{
-                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)',
-                            borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
-                            fontSize: '0.75rem', fontWeight: 600,
-                          }}>Yes</button>
-                        <button onClick={() => setConfirmDelete(null)}
-                          style={{
-                            background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)',
-                            borderRadius: '4px', color: '#94a3b8', padding: '3px 10px', cursor: 'pointer',
-                            fontSize: '0.75rem',
-                          }}>No</button>
-                      </span>
                     ) : (
-                      <button onClick={() => setConfirmDelete(m.id)}
+                      <button onClick={() => handleDelete(m)}
                         style={{
                           background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
                           borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',

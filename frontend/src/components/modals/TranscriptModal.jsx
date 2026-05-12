@@ -1,6 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
+import { useAuth } from '../../contexts/AuthContext';
+import { API_URL } from '../../constants/api';
 
 // Language code → display name. Covers the 10 languages the dialer supports.
 // We show this as a small badge on each call header so you can tell at a
@@ -51,6 +53,144 @@ function extractAgentName(turns) {
     }
   }
   return 'AI';
+}
+
+const SENTIMENT_STYLE = {
+  positive: { color: '#4ade80', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', emoji: '😊', label: 'positive' },
+  neutral:  { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐', label: 'neutral' },
+  negative: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)', emoji: '☹️', label: 'negative' },
+  annoyed:  { color: '#fb923c', bg: 'rgba(251,146,60,0.12)', border: 'rgba(251,146,60,0.3)', emoji: '😤', label: 'annoyed' },
+};
+
+// Render the conclusion card for a single call.
+//
+// Rules:
+// - If the call had no real interaction (zero user turns OR duration < 10s),
+//   render nothing. A one-sided greeting or hang-up has no signal worth
+//   summarizing, and any Gemini score on it is misleading.
+// - If the saved review has no real Gemini commentary (no summary text, no
+//   went-well/wrong, no failure reason, no insight), render nothing rather
+//   than show a half-empty card with just badges.
+// - Sentiment + emoji are shown only when Gemini actually returned a
+//   sentiment. No score-derived fallback — if the model didn't say "positive"
+//   we don't pretend it did.
+// - Stars clamp to 0–5 defensively in case the DB still has legacy
+//   out-of-range values (Gemini has historically returned 7, 8, 10).
+function ConclusionCard({ transcriptId, turns, durationS }) {
+  const { apiFetch } = useAuth();
+  const [state, setState] = useState({ status: 'loading', review: null });
+
+  // Count user turns from the rendered transcript itself — that way we can
+  // hide the card for legacy one-sided rows even when the backend still
+  // returns them. Source of truth for "did interaction happen" is the
+  // transcript, not the review row's score.
+  const userTurnCount = (Array.isArray(turns) ? turns : []).reduce((n, t) => {
+    const role = (t && t.role ? String(t.role) : '').toLowerCase();
+    return role === 'user' ? n + 1 : n;
+  }, 0);
+  const interactionHappened = userTurnCount >= 1 && (!durationS || durationS >= 10);
+
+  useEffect(() => {
+    if (!transcriptId || !interactionHappened) return;
+    let cancelled = false;
+    setState({ status: 'loading', review: null });
+    apiFetch(`${API_URL}/transcripts/${transcriptId}/review`)
+      .then(async (res) => {
+        if (cancelled) return;
+        if (res.status === 404 || !res.ok) {
+          setState({ status: 'hidden', review: null });
+          return;
+        }
+        const review = await res.json();
+        setState({ status: 'ready', review });
+      })
+      .catch(() => { if (!cancelled) setState({ status: 'hidden', review: null }); });
+    return () => { cancelled = true; };
+  }, [apiFetch, transcriptId, interactionHappened]);
+
+  // No interaction → no conclusion. Hard rule.
+  if (!interactionHappened) return null;
+  if (state.status === 'hidden') return null;
+
+  const wrap = (children) => (
+    <div style={{
+      marginTop: '1rem', padding: '12px 14px', borderRadius: '10px',
+      background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.2)',
+    }}>
+      <div style={{fontSize: '0.78rem', fontWeight: 700, color: '#a78bfa', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
+        ✨ AI Conclusion <span style={{fontSize: '0.65rem', fontWeight: 500, color: '#64748b'}}>(Gemini)</span>
+      </div>
+      {children}
+    </div>
+  );
+
+  if (state.status === 'loading') {
+    return wrap(<div style={{color: '#64748b', fontSize: '0.85rem'}}>Loading analysis…</div>);
+  }
+
+  const r = state.review || {};
+  const summary = (r.summary || '').trim();
+  const wentWell = (r.what_went_well || '').trim();
+  const wentWrong = (r.what_went_wrong || '').trim();
+  const failureReason = (r.failure_reason || '').trim();
+  const suggestion = (r.prompt_improvement_suggestion || '').trim();
+  const insights = (r.insights || '').trim();
+  const hasAnyText = !!(summary || wentWell || wentWrong || failureReason || suggestion || insights);
+
+  // Don't render an empty card with only badges — if Gemini gave no prose, the
+  // conclusion isn't informative. Hide entirely.
+  if (!hasAnyText) return null;
+
+  const score = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
+  const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
+
+  const rawSent = (r.customer_sentiment || r.sentiment || '').toLowerCase();
+  const sStyle = SENTIMENT_STYLE[rawSent] || null;
+
+  return wrap(
+    <div style={{display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.85rem', color: '#cbd5e1', lineHeight: 1.5}}>
+      <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center'}}>
+        {score > 0 && (
+          <span className="badge" style={{background: 'rgba(234,179,8,0.12)', color: '#facc15', border: '1px solid rgba(234,179,8,0.3)', fontSize: '0.75rem'}}>
+            {stars} {score}/5
+          </span>
+        )}
+        {sStyle && (
+          <span className="badge" style={{background: sStyle.bg, color: sStyle.color, border: `1px solid ${sStyle.border}`, fontSize: '0.75rem'}}>
+            {sStyle.emoji} {rawSent}
+          </span>
+        )}
+        <span className="badge" style={{
+          background: r.appointment_booked ? 'rgba(34,197,94,0.12)' : 'rgba(148,163,184,0.12)',
+          color: r.appointment_booked ? '#4ade80' : '#94a3b8',
+          border: `1px solid ${r.appointment_booked ? 'rgba(34,197,94,0.3)' : 'rgba(148,163,184,0.3)'}`,
+          fontSize: '0.75rem',
+        }}>
+          {r.appointment_booked ? '✅ Appointment booked' : '❌ No appointment'}
+        </span>
+      </div>
+      {summary && (
+        <div style={{color: '#e2e8f0'}}>
+          <span style={{color: '#a78bfa', fontWeight: 600}}>Summary: </span>{summary}
+        </div>
+      )}
+      {wentWell && (
+        <div><span style={{color: '#4ade80', fontWeight: 600}}>What went well: </span>{wentWell}</div>
+      )}
+      {wentWrong && (
+        <div><span style={{color: '#f87171', fontWeight: 600}}>What went wrong: </span>{wentWrong}</div>
+      )}
+      {failureReason && !r.appointment_booked && (
+        <div><span style={{color: '#fb923c', fontWeight: 600}}>Failure reason: </span>{failureReason}</div>
+      )}
+      {suggestion && (
+        <div><span style={{color: '#a78bfa', fontWeight: 600}}>Suggested fix: </span>{suggestion}</div>
+      )}
+      {!suggestion && insights && (
+        <div><span style={{color: '#a78bfa', fontWeight: 600}}>Coaching insight: </span>{insights}</div>
+      )}
+    </div>
+  );
 }
 
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
@@ -166,6 +306,14 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     </div>
                   ))}
                 </div>
+
+                {t.id && (
+                  <ConclusionCard
+                    transcriptId={t.id}
+                    turns={Array.isArray(t.transcript) ? t.transcript : []}
+                    durationS={Number(t.call_duration_s) || 0}
+                  />
+                )}
               </div>
             );
             })

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import CheckInTab from '../components/tabs/CheckInTab';
+import { useToast } from '../contexts/UIContext';
 
 export default function CheckInPage({ apiFetch, API_URL }) {
+  const toast = useToast();
   const [fieldOpsData, setFieldOpsData] = useState({ agent_name: '', site_id: '' });
   const [punchStatus, setPunchStatus] = useState(null);
   const [punching, setPunching] = useState(false);
@@ -22,13 +24,13 @@ export default function CheckInPage({ apiFetch, API_URL }) {
 
   const handlePunchIn = () => {
     if (!fieldOpsData.agent_name || !fieldOpsData.site_id) {
-      alert("Please enter your name and select a site.");
+      toast('Please enter your name and select a site.', 'warn');
       return;
     }
     setPunching(true);
     setPunchStatus(null);
     if (!navigator.geolocation) {
-      alert("Geolocation is not supported by your browser");
+      toast('Geolocation is not supported by your browser', 'error');
       setPunching(false);
       return;
     }
@@ -52,7 +54,7 @@ export default function CheckInPage({ apiFetch, API_URL }) {
         setPunching(false);
       }
     }, (error) => {
-      alert(`Error fetching location: ${error.message}`);
+      toast(`Error fetching location: ${error.message}`, 'error');
       setPunching(false);
     });
   };

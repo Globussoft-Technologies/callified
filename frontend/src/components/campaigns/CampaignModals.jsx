@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -24,6 +25,7 @@ export default function CampaignModals({
   handleSaveEditCampaign,
   setCreateError,
 }) {
+  const toast = useToast();
   const [nameTouched, setNameTouched] = useState(false);
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
@@ -367,7 +369,7 @@ export default function CampaignModals({
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
-                if (!/^\d{10}$/.test(editForm.phone || '')) { alert('Phone must be exactly 10 digits'); return; }
+                if (!/^\d{10}$/.test(editForm.phone || '')) { toast('Phone must be exactly 10 digits', 'warn'); return; }
                 handleSaveEdit();
               }}>Save</button>
             </div>

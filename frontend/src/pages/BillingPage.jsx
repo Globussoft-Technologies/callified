@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useConfirm } from '../contexts/UIContext';
 
 // Predefined top-up amounts (rupees). Shown as quick-pick buttons in the
 // modal; the user can also type a custom value. Kept aligned with the ₹5/min
@@ -7,6 +8,8 @@ import React, { useState, useEffect, useRef } from 'react';
 const TOPUP_PRESETS = [100, 500, 1000, 5000];
 
 export default function BillingPage({ apiFetch, API_URL }) {
+  const toast = useToast();
+  const confirmDialog = useConfirm();
   const [plans, setPlans] = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage] = useState(null);
@@ -75,7 +78,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert('Top-up failed: ' + (body.error || `HTTP ${res.status}`));
+        toast('Top-up failed: ' + (body.error || `HTTP ${res.status}`), 'error');
         setTopupBusy(false);
         return;
       }
@@ -85,10 +88,10 @@ export default function BillingPage({ apiFetch, API_URL }) {
       } else {
         // Razorpay not configured (dev) — surface a clear message instead of
         // silently succeeding. Production has key_id set in .env.
-        alert('Razorpay is not configured on the server. Top-ups are disabled until RAZORPAY_KEY_ID is set.');
+        toast('Razorpay is not configured on the server. Top-ups are disabled until RAZORPAY_KEY_ID is set.', 'error');
       }
     } catch(e) {
-      alert('Top-up failed: ' + e.message);
+      toast('Top-up failed: ' + e.message, 'error');
     } finally {
       setTopupBusy(false);
     }
@@ -116,7 +119,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
           fetchAll();
         } else {
           const body = await verifyRes.json().catch(() => ({}));
-          alert('Payment verification failed: ' + (body.error || 'unknown'));
+          toast('Payment verification failed: ' + (body.error || 'unknown'), 'error');
         }
       },
       modal: { ondismiss: () => setTopupBusy(false) },
@@ -156,7 +159,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
           body: JSON.stringify({ plan_id: planId }),
         });
         if (subRes.ok) { fetchAll(); }
-      } catch(e2) { alert('Failed to subscribe: ' + e2.message); }
+      } catch(e2) { toast('Failed to subscribe: ' + e2.message, 'error'); }
     }
   };
 
@@ -187,14 +190,21 @@ export default function BillingPage({ apiFetch, API_URL }) {
   };
 
   const handleCancel = async () => {
-    if (!confirm('Are you sure you want to cancel your subscription?')) return;
+    const ok = await confirmDialog({
+      title: 'Cancel subscription',
+      message: 'Are you sure you want to cancel your subscription? You\'ll lose access at the end of the current billing period.',
+      okText: 'Cancel subscription',
+      cancelText: 'Keep it',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await apiFetch(`${API_URL}/billing/cancel`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ reason: 'User cancelled' }),
       });
       fetchAll();
-    } catch(e) { alert('Failed to cancel'); }
+    } catch(e) { toast('Failed to cancel', 'error'); }
   };
 
   if (loading) return <div className="page-container"><div className="glass-panel" style={{padding: '2rem', textAlign: 'center'}}>Loading billing...</div></div>;
@@ -508,14 +518,14 @@ export default function BillingPage({ apiFetch, API_URL }) {
                       try {
                         const res = await apiFetch(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download`);
                         if (!res.ok) {
-                          alert(`Invoice fetch failed (HTTP ${res.status})`);
+                          toast(`Invoice fetch failed (HTTP ${res.status})`, 'error');
                           return;
                         }
                         const blob = await res.blob();
                         const objURL = URL.createObjectURL(blob);
                         setViewingInvoice({ number: inv.invoice_number || inv.id, blobUrl: objURL });
                       } catch (e) {
-                        alert('Invoice fetch failed: ' + (e?.message || 'network error'));
+                        toast('Invoice fetch failed: ' + (e?.message || 'network error'), 'error');
                       } finally {
                         setInvoiceLoading(false);
                       }
@@ -568,7 +578,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
                   // contentWindow.print() scopes the dialog to the iframe's
                   // document so the user gets a clean printable page.
                   try { invoiceFrameRef.current?.contentWindow?.print(); }
-                  catch (e) { alert('Print failed: ' + (e?.message || 'unknown')); }
+                  catch (e) { toast('Print failed: ' + (e?.message || 'unknown'), 'error'); }
                 }} style={{
                   padding: '6px 14px', borderRadius: '6px', cursor: 'pointer',
                   background: 'linear-gradient(135deg, #6366f1, #22d3ee)',

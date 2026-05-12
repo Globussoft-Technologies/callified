@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useToast } from './contexts/UIContext';
 
 const VOICE_OPTIONS = {
   elevenlabs: {
@@ -35,6 +36,7 @@ const VOICE_OPTIONS = {
 };
 
 export default function Sandbox({ apiUrl }) {
+  const toast = useToast();
   const [recording, setRecording] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [provider, setProvider] = useState('elevenlabs');
@@ -170,7 +172,7 @@ export default function Sandbox({ apiUrl }) {
       ws.onclose = () => setRecording(false);
     } catch (e) {
       console.error("Sandbox failed", e);
-      alert("Microphone access required. Please allow and retry.");
+      toast('Microphone access required. Please allow and retry.', 'error');
     }
   };
 

@@ -3,6 +3,7 @@ import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast, useConfirm } from '../../contexts/UIContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
@@ -14,6 +15,8 @@ export default function CampaignsTab({
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket } = useAuth();
+  const toast = useToast();
+  const confirmDialog = useConfirm();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -31,10 +34,10 @@ export default function CampaignsTab({
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
-  // ID of the campaign whose row is currently showing the inline "Delete? Yes No"
-  // prompt. Null when no row is in confirm mode.
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-  const [deleting, setDeleting] = useState(false);
+  // Tracks which campaign is currently being deleted (so we can show a
+  // disabled spinner state on the row). Modal confirm fires off a single
+  // delete, so this just gates concurrent clicks.
+  const [deletingId, setDeletingId] = useState(null);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
   const eventSourceRef = React.useRef(null);
@@ -249,17 +252,24 @@ export default function CampaignsTab({
     }
   };
 
-  const confirmDeleteCampaign = async (campaignId) => {
-    if (deleting) return;
-    setDeleting(true);
+  const handleDeleteCampaign = async (campaign) => {
+    if (deletingId) return;
+    const ok = await confirmDialog({
+      title: 'Delete campaign',
+      message: `Delete campaign "${campaign.name}"? This removes all associated leads from the campaign and cannot be undone.`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    setDeletingId(campaign.id);
     try {
-      await apiFetch(`${API_URL}/campaigns/${campaignId}`, { method: 'DELETE' });
-      setDeleteConfirmId(null);
+      await apiFetch(`${API_URL}/campaigns/${campaign.id}`, { method: 'DELETE' });
       fetchCampaigns();
     } catch (e) {
       console.error(e);
+      toast('Failed to delete campaign', 'error');
     } finally {
-      setDeleting(false);
+      setDeletingId(null);
     }
   };
 
@@ -337,11 +347,27 @@ export default function CampaignsTab({
   };
 
   const handleRemoveLead = async (leadId) => {
+    // Look up the lead by id so the confirm dialog can name them — falling
+    // back to the bare id when the row hasn't loaded yet (rare).
+    const lead = campaignLeads.find(l => l.id === leadId);
+    const label = lead
+      ? `${[lead.first_name, lead.last_name].filter(Boolean).join(' ').trim() || 'this lead'}${lead.phone ? ` (${lead.phone})` : ''}`
+      : 'this lead';
+    const ok = await confirmDialog({
+      title: 'Remove from campaign',
+      message: `Remove ${label} from this campaign? They'll stay in the CRM but won't be dialed.`,
+      okText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads/${leadId}`, { method: 'DELETE' });
       fetchCampaignLeads(selectedCampaign.id);
       fetchCampaigns();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast('Failed to remove lead', 'error');
+    }
   };
 
   const handleEditLead = (lead) => {
@@ -358,7 +384,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch (e) { alert('Save failed'); }
+    } catch (e) { toast('Save failed', 'error'); }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -411,7 +437,10 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      alert(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      toast(
+        `Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`,
+        data.errors?.length ? 'warn' : 'success'
+      );
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);
@@ -548,47 +577,24 @@ export default function CampaignsTab({
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {deleteConfirmId === campaign.id ? (
-                      <>
-                        <span style={{color: '#fca5a5', fontSize: '0.75rem'}}>Delete?</span>
-                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id); }}
-                          disabled={deleting}
-                          style={{
-                            background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)',
-                            color: '#fca5a5', borderRadius: '6px', padding: '4px 10px',
-                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem', fontWeight: 600,
-                            opacity: deleting ? 0.6 : 1,
-                          }}>
-                          {deleting ? '…' : 'Yes'}
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
-                          disabled={deleting}
-                          style={{
-                            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-                            color: '#cbd5e1', borderRadius: '6px', padding: '4px 10px',
-                            cursor: deleting ? 'not-allowed' : 'pointer', fontSize: '0.7rem',
-                          }}>
-                          No
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                          style={{
-                            background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-                            color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                          }}>
-                          Edit
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(campaign.id); }}
-                          style={{
-                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                            color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
-                          }}>
-                          Delete
-                        </button>
-                      </>
-                    )}
+                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                      style={{
+                        background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
+                        color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem'
+                      }}>
+                      Edit
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteCampaign(campaign); }}
+                      disabled={deletingId === campaign.id}
+                      style={{
+                        background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                        color: '#fca5a5', borderRadius: '6px', padding: '4px 8px',
+                        cursor: deletingId === campaign.id ? 'not-allowed' : 'pointer',
+                        fontSize: '0.7rem',
+                        opacity: deletingId === campaign.id ? 0.5 : 1,
+                      }}>
+                      {deletingId === campaign.id ? 'Deleting…' : 'Delete'}
+                    </button>
                   </div>
                 </div>
 

@@ -84,6 +84,28 @@ func (d *DB) SearchLeads(query string, orgID int64) ([]Lead, error) {
 	return queryLeads(d.pool, q, args...)
 }
 
+// SearchLeadsByNameOrg matches leads by first/last name only (no phone)
+// inside one org. Used by the "fetch all transcripts by user name" API
+// so a numeric-looking name like "9177" doesn't accidentally pull leads
+// matching that phone substring. LIKE %name% — case-insensitive in
+// utf8mb4_general_ci collations (MySQL default) so the caller doesn't
+// have to worry about casing. Matches on either first or last name so
+// the operator can pass "Harsha" OR "Vardhan" and find the right leads.
+func (d *DB) SearchLeadsByNameOrg(name string, orgID int64) ([]Lead, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, nil
+	}
+	like := "%" + name + "%"
+	q := `SELECT ` + leadCols + ` FROM leads WHERE (first_name LIKE ? OR last_name LIKE ?)`
+	args := []any{like, like}
+	if orgID != 0 {
+		q += ` AND org_id = ?`
+		args = append(args, orgID)
+	}
+	q += ` ORDER BY created_at DESC LIMIT 100`
+	return queryLeads(d.pool, q, args...)
+}
+
 // GetLeadByID fetches one lead. Returns nil when not found.
 func (d *DB) GetLeadByID(id int64) (*Lead, error) {
 	row := d.pool.QueryRow(`SELECT `+leadCols+` FROM leads WHERE id = ?`, id)
@@ -260,6 +282,28 @@ type Transcript struct {
 	TTSLanguage   string          `json:"tts_language"`
 	CallDurationS float64         `json:"call_duration_s"`
 	CreatedAt     string          `json:"created_at"`
+}
+
+// GetTranscriptByID fetches a single transcript row by id. Returns nil when
+// not found. Used by the regenerate-review endpoint so the API can re-run
+// Gemini against the stored chat history without depending on the original
+// websocket session being alive.
+func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
+	row := d.pool.QueryRow(
+		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		        COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		        COALESCE(tts_language,''),
+		        COALESCE(call_duration_s,0),
+		        DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		 FROM call_transcripts WHERE id=?`, id)
+	var t Transcript
+	if err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // GetTranscriptsByLead returns all transcripts for a lead.

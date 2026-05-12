@@ -1,12 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import { useToast, useConfirm } from './contexts/UIContext';
 
 export default function KnowledgeBase({ apiUrl }) {
   const { apiFetch } = useAuth();
+  const toast = useToast();
+  const confirmDialog = useConfirm();
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
+  // statusMsg is shown inline below the form and kept terse — only the
+  // mid-upload progress text. Outcome (success / error) goes through the
+  // toast system so it doesn't stick around after the user moves on.
   const [statusMsg, setStatusMsg] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  // hasFile gates the submit button: no file picked → button disabled.
+  // Browsers don't fire onChange when the input is reset, so we also
+  // toggle this back to false after a successful upload.
+  const [hasFile, setHasFile] = useState(false);
   const fileInputRef = useRef(null);
 
   const fetchFiles = async () => {
@@ -48,19 +57,34 @@ export default function KnowledgeBase({ apiUrl }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        setStatusMsg(`✅ File uploaded! Background worker is currently extracting and mapping chunks.`);
+        // Outcome is ephemeral — toast it instead of pinning to the form.
+        // The Active Vector Memory list (refreshed below) is the durable
+        // record of what's been uploaded.
+        toast('File uploaded — background worker is extracting chunks now.', 'success');
+        setStatusMsg('');
         fetchFiles();
         if (fileInputRef.current) fileInputRef.current.value = "";
+        setHasFile(false);
       } else {
-        setStatusMsg(`❌ Error: ${data.message || data.detail}`);
+        const msg = data.message || data.detail || 'Upload failed';
+        toast(msg, 'error');
+        setStatusMsg('');
       }
     } catch (e) {
-      setStatusMsg(`❌ Upload failed: ${e.message}`);
+      toast('Upload failed: ' + e.message, 'error');
+      setStatusMsg('');
     }
     setUploading(false);
   };
 
   const handleDelete = async (fileId, filename) => {
+    const ok = await confirmDialog({
+      title: 'Delete document',
+      message: `Delete "${filename}" from the knowledge base? This removes its FAISS chunks too.`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       const authToken = localStorage.getItem('authToken');
       await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
@@ -80,18 +104,27 @@ export default function KnowledgeBase({ apiUrl }) {
         <div style={{flex: '1 1 300px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '1.5rem', height: 'fit-content'}}>
           <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Upload Document</h3>
           <form onSubmit={handleUpload} style={{display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem'}}>
-            <input 
-              type="file" 
-              accept=".pdf" 
-              ref={fileInputRef} 
-              className="form-input" 
+            <input
+              type="file"
+              accept=".pdf"
+              ref={fileInputRef}
+              className="form-input"
               style={{background: 'rgba(0,0,0,0.3)', color: '#94a3b8', padding: '10px'}}
+              onChange={(e) => setHasFile(!!e.target.files?.length)}
               required
             />
-            <button type="submit" className="btn-primary" disabled={uploading}>
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={uploading || !hasFile}
+              style={{
+                opacity: (uploading || !hasFile) ? 0.5 : 1,
+                cursor: (uploading || !hasFile) ? 'not-allowed' : 'pointer',
+              }}
+            >
               {uploading ? 'Processing Vector Embeddings...' : '☁️ Upload & Embed PDF'}
             </button>
-            {statusMsg && <p style={{fontSize: '0.9rem', color: statusMsg.includes('❌') ? '#ef4444' : '#4ade80'}}>{statusMsg}</p>}
+            {statusMsg && <p style={{fontSize: '0.9rem', color: '#4ade80'}}>{statusMsg}</p>}
           </form>
         </div>
 
@@ -110,13 +143,13 @@ export default function KnowledgeBase({ apiUrl }) {
                     e.preventDefault();
                     try {
                       const res = await apiFetch(`${apiUrl}/knowledge/${f.id}/download`);
-                      if (!res.ok) { alert(`Download failed (HTTP ${res.status})`); return; }
+                      if (!res.ok) { toast(`Download failed (HTTP ${res.status})`, 'error'); return; }
                       const blob = await res.blob();
                       const objURL = URL.createObjectURL(blob);
                       window.open(objURL, '_blank', 'noopener,noreferrer');
                       // Revoke after a beat so the new tab can finish loading.
                       setTimeout(() => URL.revokeObjectURL(objURL), 60_000);
-                    } catch (err) { alert('Download failed: ' + (err?.message || 'network error')); }
+                    } catch (err) { toast('Download failed: ' + (err?.message || 'network error'), 'error'); }
                   };
                   return (
                   <li key={i} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
@@ -135,21 +168,11 @@ export default function KnowledgeBase({ apiUrl }) {
                         </div>
                       </div>
                     </div>
-                    {confirmDeleteId === f.id ? (
-                      <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-                        <span style={{color: '#fbbf24', fontSize: '0.78rem'}}>Delete?</span>
-                        <button onClick={() => { setConfirmDeleteId(null); handleDelete(f.id, f.filename); }}
-                          style={{background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)', color: '#ef4444', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>
-                          Confirm
-                        </button>
-                        <button onClick={() => setConfirmDeleteId(null)}
-                          style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setConfirmDeleteId(f.id)} style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}} title="Delete">🗑️</button>
-                    )}
+                    <button
+                      onClick={() => handleDelete(f.id, f.filename)}
+                      style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}}
+                      title="Delete"
+                    >🗑️</button>
                   </li>
                   );
                 })}

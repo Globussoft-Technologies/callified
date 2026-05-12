@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
+import { useToast } from '../contexts/UIContext';
 
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
+  const toast = useToast();
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState(null);
@@ -21,7 +23,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
     try {
       await apiFetch(`${API_URL}/scheduled-calls/${id}`, { method: 'DELETE' });
       fetchScheduledCalls();
-    } catch (e) { alert('Failed to cancel'); }
+    } catch (e) { toast('Failed to cancel', 'error'); }
   };
 
   const statusStyle = (status) => {

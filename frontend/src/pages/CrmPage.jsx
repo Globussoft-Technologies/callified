@@ -5,6 +5,7 @@ import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
 import TranscriptModal from '../components/modals/TranscriptModal';
 import EmailDraftModal from '../components/modals/EmailDraftModal';
+import { useToast, useConfirm } from '../contexts/UIContext';
 
 export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
@@ -19,6 +20,8 @@ export default function CrmPage({
   userRole, authToken
 }) {
   const navigate = useNavigate();
+  const toast = useToast();
+  const confirm = useConfirm();
   // Lead State
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -141,14 +144,20 @@ export default function CrmPage({
       setEditingLead(null);
       fetchLeads();
     } catch (e) {
-      alert(e.message);
+      toast(e.message, 'error');
       console.error('Error updating lead', e);
     }
     setLoading(false);
   };
 
   const handleDeleteLead = async (lead) => {
-    if (!window.confirm(`Are you sure you want to delete ${lead.first_name} ${lead.last_name}?`)) return;
+    const ok = await confirm({
+      title: 'Delete lead',
+      message: `Delete ${lead.first_name} ${lead.last_name}? This cannot be undone.`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await apiFetch(`${API_URL}/leads/${lead.id}`, { method: 'DELETE' });
       fetchLeads();
@@ -186,7 +195,7 @@ export default function CrmPage({
   const handleSaveNote = async () => {
     if (!noteLead) return;
     const trimmed = noteText.trim();
-    if (!trimmed) { alert('Note cannot be empty'); return; }
+    if (!trimmed) { toast('Note cannot be empty', 'warn'); return; }
     setNoteSaving(true);
     try {
       const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
@@ -197,14 +206,14 @@ export default function CrmPage({
       if (!res.ok) {
         let msg = `Failed to save note (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch(_) {}
-        alert(msg);
+        toast(msg, 'error');
         return;
       }
       fetchLeads();
       setNoteLead(null);
       setNoteText('');
     } catch(e) {
-      alert('Failed to save note: ' + (e?.message || 'network error'));
+      toast('Failed to save note: ' + (e?.message || 'network error'), 'error');
     } finally {
       setNoteSaving(false);
     }

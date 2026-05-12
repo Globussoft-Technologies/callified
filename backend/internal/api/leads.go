@@ -471,8 +471,20 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "review not found")
 		return
 	}
+	// Hide legacy degenerate rows (score 0 AND no commentary text at all).
+	// Those render as a misleading "0/5 neutral / no appointment" card with no
+	// real analysis underneath; treat them as not-yet-analyzed so the UI hides
+	// the card and the user can click 🔄 Regenerate to produce a real one.
+	if review.QualityScore <= 0 &&
+		review.WhatWentWell == "" && review.WhatWentWrong == "" &&
+		review.FailureReason == "" && review.PromptImprovementSuggestion == "" &&
+		review.Summary == "" && review.Insights == "" {
+		writeError(w, http.StatusNotFound, "no usable review")
+		return
+	}
 	writeJSON(w, http.StatusOK, review)
 }
+
 
 // ── GET /api/leads/{id}/transcripts ───────────────────────────────────────────
 
@@ -572,6 +584,89 @@ func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
 			"created_at":    t.CreatedAt,
 			"recording_url": t.RecordingURL,
 			"transcript":    turns,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ── GET /api/leads/by-name/{name}/calls ──────────────────────────────────────
+//
+// Like getLeadCallsByPhone but matches by first/last name. A name can match
+// multiple leads (think two Harshas in the same org), so the response groups
+// calls under each matched lead instead of flattening — otherwise a caller
+// can't tell whose transcript is whose.
+//
+// Response shape:
+//
+//	[
+//	  {
+//	    "lead_id":   2,
+//	    "lead_name": "Harsha",
+//	    "phone":     "9177007429",
+//	    "calls": [
+//	      { "id": 259, "duration_s": 3.98, "tts_language": "te",
+//	        "created_at": "...", "recording_url": "...",
+//	        "transcript": [ {"role":"agent","text":"..."}, ... ] },
+//	      ...
+//	    ]
+//	  },
+//	  ...
+//	]
+//
+// Org-scoped — only matches leads in the caller's org. Empty array (200 OK)
+// when no name matches, same as a matched lead with no calls.
+func (s *Server) getLeadCallsByName(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name required")
+		return
+	}
+
+	ac := getAuth(r)
+	leads, err := s.db.SearchLeadsByNameOrg(name, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getLeadCallsByName: lookup", "err", err, "name", name)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if len(leads) == 0 {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+
+	out := make([]map[string]any, 0, len(leads))
+	for _, lead := range leads {
+		transcripts, err := s.db.GetTranscriptsByLead(lead.ID)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLeadCallsByName: transcripts", "err", err, "lead_id", lead.ID)
+			continue
+		}
+		leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+		calls := make([]map[string]any, 0, len(transcripts))
+		for _, t := range transcripts {
+			var turns []map[string]any
+			if len(t.Transcript) > 0 {
+				if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+					turns = []map[string]any{}
+				}
+			}
+			if turns == nil {
+				turns = []map[string]any{}
+			}
+			calls = append(calls, map[string]any{
+				"id":            t.ID,
+				"duration_s":    t.CallDurationS,
+				"tts_language":  t.TTSLanguage,
+				"created_at":    t.CreatedAt,
+				"recording_url": t.RecordingURL,
+				"transcript":    turns,
+			})
+		}
+		out = append(out, map[string]any{
+			"lead_id":   lead.ID,
+			"lead_name": leadName,
+			"phone":     lead.Phone,
+			"calls":     calls,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

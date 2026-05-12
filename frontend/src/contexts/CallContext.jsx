@@ -3,6 +3,7 @@ import { API_URL } from '../constants/api';
 import { useAuth } from './AuthContext';
 import { useOrg } from './OrgContext';
 import { useVoice } from './VoiceContext';
+import { useToast } from './UIContext';
 
 const CallContext = createContext(null);
 
@@ -10,6 +11,7 @@ export function CallProvider({ children }) {
   const { apiFetch } = useAuth();
   const { orgProducts } = useOrg();
   const { activeVoiceProvider, activeVoiceId, activeLanguage } = useVoice();
+  const toast = useToast();
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
@@ -31,13 +33,13 @@ export function CallProvider({ children }) {
         if (res.status === 402) {
           setRechargePrompt(msg);
         } else {
-          alert(msg);
+          toast(msg, 'error');
         }
       } else {
-        alert(`Status: ${data.message || 'Connecting call...'}`);
+        toast(`Status: ${data.message || 'Connecting call...'}`, 'info');
       }
     } catch(e) {
-      alert("Failed to hit the dialer API. Check console.");
+      toast('Failed to hit the dialer API. Check console.', 'error');
     }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
@@ -199,7 +201,7 @@ export function CallProvider({ children }) {
         };
       };
     } catch (e) {
-      alert("Microphone access denied or connection to WebSockets failed.");
+      toast('Microphone access denied or connection to WebSockets failed.', 'error');
       console.error(e);
       setWebCallActive(null);
     }
@@ -223,11 +225,11 @@ export function CallProvider({ children }) {
           // badge on the row + a transient flash from handleDialClick.
           // The native alert() here was duplicate noise — drop it silently.
         } else {
-          alert(msg);
+          toast(msg, 'error');
         }
       }
     } catch(e) {
-      alert('Network error: ' + (e?.message || 'unknown'));
+      toast('Network error: ' + (e?.message || 'unknown'), 'error');
     }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
@@ -387,7 +389,7 @@ export function CallProvider({ children }) {
         };
       };
     } catch (e) {
-      alert("Microphone access denied or connection to WebSockets failed.");
+      toast('Microphone access denied or connection to WebSockets failed.', 'error');
       console.error(e);
       setWebCallActive(null);
     }

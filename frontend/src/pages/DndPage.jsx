@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useConfirm } from '../contexts/UIContext';
 
 export default function DndPage({ apiFetch, API_URL }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [numbers, setNumbers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -75,11 +78,17 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   const handleRemove = async (phone) => {
-    if (!window.confirm(`Remove ${phone} from DND list?`)) return;
+    const ok = await confirm({
+      title: 'Remove from DND',
+      message: `Remove ${phone} from the DND list?`,
+      okText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await apiFetch(`${API_URL}/dnd/${encodeURIComponent(phone)}`, { method: 'DELETE' });
       fetchNumbers(page);
-    } catch (e) { alert('Failed to remove: ' + e.message); }
+    } catch (e) { toast('Failed to remove: ' + e.message, 'error'); }
   };
 
   const handleCheck = async () => {
