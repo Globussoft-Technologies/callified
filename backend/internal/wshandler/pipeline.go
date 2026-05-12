@@ -300,18 +300,23 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	// Feed echo canceller (ulaw representation)
 	sess.EchoCanceller.FeedTTS(audio.PCMToUlaw(pcm8k))
 
-	// Encode audio
+	// Encode audio. The codec choice is decoupled from sess.IsExotel because
+	// the Voicebot applet — although carrier-served — speaks PCM-16 LE just
+	// like the browser web-sim. See handleStartEvent for the per-call
+	// detection that sets UseUlaw.
 	var audioBytes []byte
-	if sess.IsExotel {
+	if sess.UseUlaw {
 		audioBytes = audio.PCMToUlaw(pcm8k)
 	} else {
 		audioBytes = pcm8k
 	}
 	sess.PlaybackTracker.AddBytes(len(audioBytes))
 
-	// JSON key differs between Exotel (camelCase) and web sim (snake_case)
+	// JSON envelope casing follows the same split: μ-law (Twilio/Stream
+	// Passthru) uses camelCase streamSid; PCM-16 (Voicebot/web-sim) uses
+	// snake_case stream_sid.
 	var frameKey string
-	if sess.IsExotel {
+	if sess.UseUlaw {
 		frameKey = "streamSid"
 	} else {
 		frameKey = "stream_sid"
@@ -329,7 +334,7 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	// external consumers can render / play back what the AI is saying.
 	if sess.hasMonitors() {
 		format := "pcm16_8k"
-		if sess.IsExotel {
+		if sess.UseUlaw {
 			format = "ulaw_8k"
 		}
 		sess.BroadcastAudio("agent", payloadB64, format)

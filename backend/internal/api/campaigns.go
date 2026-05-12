@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -329,6 +330,27 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Invalidate the per-lead voice cache for every lead in this campaign.
+	// Without this, a freshly-saved campaign voice would be silently
+	// overridden by the lead_voice:{id} Redis key (90-day TTL) the next
+	// time a real Dial is made to a lead this campaign has called before.
+	// Best-effort: log on error but still report Save success — the cache
+	// has a 90-day expiry, so worst case the user retries later.
+	if s.store != nil {
+		ids, listErr := s.db.ListCampaignLeadIDs(id)
+		if listErr != nil {
+			s.logger.Sugar().Warnw("saveCampaignVoiceSettings: ListCampaignLeadIDs failed; cache not invalidated",
+				"campaign_id", id, "err", listErr)
+		} else {
+			for _, leadID := range ids {
+				s.store.DeleteRaw(r.Context(), fmt.Sprintf("lead_voice:%d", leadID))
+			}
+			s.logger.Sugar().Infow("saveCampaignVoiceSettings: invalidated lead_voice cache",
+				"campaign_id", id, "lead_count", len(ids))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
 }
 

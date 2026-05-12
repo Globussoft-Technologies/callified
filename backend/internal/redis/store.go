@@ -439,22 +439,31 @@ func (s *Store) SetRaw(ctx context.Context, k, v string, ttl time.Duration) {
 	}
 }
 
+// DeleteRaw removes a single Redis key. Best-effort: errors are logged, not
+// returned, because the caller (cache invalidation) can tolerate a miss.
+func (s *Store) DeleteRaw(ctx context.Context, k string) {
+	if s.rdb == nil {
+		return
+	}
+	if err := s.rdb.Del(ctx, k).Err(); err != nil && s.log != nil {
+		s.log.Warn("redis: DeleteRaw failed", zap.String("key", k), zap.Error(err))
+	}
+}
+
 // LeadVoiceTTL is how long the per-lead voice override is remembered.
 // Mirrors ws_handler.py 4aa3fa3: 90 days, so a lead reliably hears the same
 // agent voice across follow-up calls.
 const LeadVoiceTTL = 90 * 24 * time.Hour
 
 // ResolveLeadVoice returns the voice ID to use for a call to leadID. If a
-// previously-used voice is cached for this provider, it wins (consistency over
-// campaign default). Otherwise currentVoice is cached for next time.
+// previously-used voice is cached, it wins (consistency over campaign default).
+// Otherwise currentVoice is cached for next time.
 // leadID == 0 disables the cache. Returns (voiceID, fromCache).
-// provider is included in the key so ElevenLabs and Sarvam voice IDs never
-// cross-contaminate when a campaign's TTS provider changes.
-func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, provider, currentVoice string) (string, bool) {
+func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, currentVoice string) (string, bool) {
 	if leadID == 0 || currentVoice == "" {
 		return currentVoice, false
 	}
-	k := fmt.Sprintf("lead_voice:%s:%d", provider, leadID)
+	k := fmt.Sprintf("lead_voice:%d", leadID)
 	if cached, ok := s.GetRaw(ctx, k); ok && cached != "" {
 		// Refresh TTL on hit so active leads don't expire.
 		s.SetRaw(ctx, k, cached, LeadVoiceTTL)

@@ -115,6 +115,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if id := q.Get("campaign_id"); id != "" {
 		fmt.Sscanf(id, "%d", &sess.CampaignID)
 	}
+	// Snapshot whether the URL explicitly carried a language BEFORE
+	// initializeCall has a chance to populate sess.Language from a platform-
+	// default fallback (GetOrganizationVoiceSettings(0) returns "en" when no
+	// org row is matched). The immediate STT+greeting fire path below keys
+	// off this snapshot, not sess.Language, so that Voicebot real-Dial (URL
+	// is empty until the start frame lands) correctly defers to
+	// handleStartEvent's Redis-hydration path instead of firing a greeting
+	// in the platform-default English/Aditya combo.
+	langFromQuery := q.Get("tts_language") != ""
 	if l := q.Get("tts_language"); l != "" {
 		sess.Language = l
 		sess.TTSLanguage = l
@@ -161,8 +170,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// --- Voice consistency cache (lead_voice:{id}, 90-day TTL) ---
 	// Same lead reliably hears the same agent voice across calls (ported from
 	// main-branch ws_handler.py 4aa3fa3). Best-effort: errors are swallowed.
-	if h.store != nil && sess.LeadID != 0 && sess.TTSVoiceID != "" {
-		voice, fromCache := h.store.ResolveLeadVoice(ctx, sess.LeadID, sess.TTSProvider, sess.TTSVoiceID)
+	//
+	// Skip the cache for web-sim streams: Sim Web Call is a testing tool. When
+	// the operator changes a campaign's voice and hits Sim, they expect to
+	// hear the freshly-saved voice — having a stale 90-day per-lead cache
+	// silently override it is exactly the trap we want to avoid here.
+	isSim := strings.HasPrefix(streamSid, "web_sim_")
+	if !isSim && h.store != nil && sess.LeadID != 0 && sess.TTSVoiceID != "" {
+		voice, fromCache := h.store.ResolveLeadVoice(ctx, sess.LeadID, sess.TTSVoiceID)
 		if fromCache && voice != sess.TTSVoiceID {
 			h.log.Info("voice cache: using cached voice",
 				zap.Int64("lead_id", sess.LeadID),
@@ -326,12 +341,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.SendGreeting = sendGreeting
 
-	// For web-sim the URL params have already given us the language, voice,
-	// and lead context — start STT and send the greeting now. For Exotel the
-	// URL is empty until the "start" event lands; handleStartEvent will fire
-	// these once Redis hydration has populated sess.Language / TTSInstance().
-	hasLanguage := sess.Language != ""
-	if hasLanguage {
+	// For web-sim and direct API calls the URL carries the language, voice,
+	// and lead context — start STT and send the greeting now. For Exotel
+	// Voicebot the URL is empty until the "start" event lands so we defer
+	// here and let handleStartEvent fire these after Redis hydration.
+	//
+	// The gate is `langFromQuery`, NOT `sess.Language != ""` — `initializeCall`
+	// may have populated sess.Language from the platform-default fallback
+	// when orgID/campaignID/leadID were all zero (the case for Voicebot at
+	// connect time). Without this snapshot we'd fire a greeting in the
+	// fallback English/Aditya combo, then handleStartEvent's deferred
+	// sendGreeting would no-op because TrySetGreeting was already consumed
+	// — exactly the "Hello. I'm Aditya..." regression seen in transcript #334.
+	if langFromQuery {
 		startSTT()
 		sendGreeting()
 	}
@@ -358,11 +380,58 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // messageLoop reads WebSocket frames until the connection closes or a "stop"
 // event is received. Returns true on clean stop, false on error.
 func (h *Handler) messageLoop(ctx context.Context, sess *CallSession) bool {
+	// One-shot frame-shape diagnostic — captures the first 5 inbound frames
+	// per session so we can see exactly what protocol the WS opener is
+	// speaking (Exotel Voicebot direct-WSS vs Stream/Passthru applet vs
+	// browser web-sim).
+	framesLogged := 0
 	for {
 		msgType, msg, err := sess.WS.ReadMessage()
 		if err != nil {
 			return false
 		}
+
+		if framesLogged < 5 {
+			framesLogged++
+			switch msgType {
+			case websocket.TextMessage:
+				preview := string(msg)
+				if len(preview) > 200 {
+					preview = preview[:200]
+				}
+				var probe map[string]interface{}
+				_ = json.Unmarshal(msg, &probe)
+				h.log.Info("ws frame probe",
+					zap.String("stream_sid", sess.StreamSid),
+					zap.Int("seq", framesLogged),
+					zap.String("type", "text"),
+					zap.Int("bytes", len(msg)),
+					zap.Any("event_field", probe["event"]),
+					zap.Strings("top_keys", topKeys(probe)),
+					zap.String("preview", preview),
+				)
+			case websocket.BinaryMessage:
+				n := len(msg)
+				if n > 16 {
+					n = 16
+				}
+				h.log.Info("ws frame probe",
+					zap.String("stream_sid", sess.StreamSid),
+					zap.Int("seq", framesLogged),
+					zap.String("type", "binary"),
+					zap.Int("bytes", len(msg)),
+					zap.String("first16_hex", fmt.Sprintf("%x", msg[:n])),
+				)
+			default:
+				h.log.Info("ws frame probe",
+					zap.String("stream_sid", sess.StreamSid),
+					zap.Int("seq", framesLogged),
+					zap.Int("ws_msg_type", msgType),
+					zap.Int("bytes", len(msg)),
+				)
+			}
+		}
+
 		switch msgType {
 		case websocket.BinaryMessage:
 			h.handleBinaryFrame(sess, msg)
@@ -374,20 +443,33 @@ func (h *Handler) messageLoop(ctx context.Context, sess *CallSession) bool {
 	}
 }
 
+// topKeys returns the top-level keys of a parsed JSON object — handy in the
+// frame-shape diagnostic so we can see whether a "start"-like envelope uses
+// our expected shape without logging the full payload.
+func topKeys(m map[string]interface{}) []string {
+	if m == nil {
+		return nil
+	}
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	if sess.HangupRequested() {
 		return
 	}
 	var pcm []byte
-	if sess.IsExotel {
-		// Echo cancellation: check ulaw frame before decoding
+	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(data) {
 			metrics.EchoSuppressions.Inc()
 			return
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
-		pcm = data // web sim sends PCM directly
+		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	sess.AppendMicChunk(pcm)
 	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
@@ -436,6 +518,28 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			sess.StreamSid = sid
 			sess.UpdateStreamType()
 		}
+
+		// Codec / envelope-shape detection from the start envelope's key
+		// casing. Voicebot applet and browser web-sim both use snake_case
+		// `stream_sid` and PCM-16 LE. Twilio and the older Exotel Stream/
+		// Passthru applet use camelCase `streamSid` and μ-law. Without this
+		// per-call detection, Voicebot calls get μ-law decode/encode applied
+		// to PCM-16 bytes → garbled noise in both directions.
+		_, hasSnake := startData["stream_sid"]
+		_, hasCamel := startData["streamSid"]
+		switch {
+		case hasSnake && !hasCamel:
+			sess.UseUlaw = false
+		case hasCamel && !hasSnake:
+			sess.UseUlaw = true
+		}
+		h.log.Info("ws codec detected",
+			zap.String("stream_sid", sess.StreamSid),
+			zap.Bool("is_exotel", sess.IsExotel),
+			zap.Bool("use_ulaw", sess.UseUlaw),
+			zap.Bool("start_has_snake", hasSnake),
+			zap.Bool("start_has_camel", hasCamel),
+		)
 		if callSid := pickStr(startData, "callSid", "call_sid", "CallSid"); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
@@ -443,15 +547,30 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			//   1) under the carrier-issued call_sid (set by dial.Initiator)
 			//   2) under "phone:<E164>" (set by manual-call web-sim mode)
 			//   3) under "latest" (last-resort fallback)
+			hitKey := ""
 			info, ok := h.store.GetPendingCall(ctx, callSid)
+			if ok {
+				hitKey = "call_sid"
+			}
 			if !ok {
 				if phone := pickStr(startData, "from", "From", "to", "To"); phone != "" {
 					info, ok = h.store.GetPendingCall(ctx, "phone:"+phone)
+					if ok {
+						hitKey = "phone"
+					}
 				}
 			}
 			if !ok {
 				info, ok = h.store.GetPendingCall(ctx, "latest")
+				if ok {
+					hitKey = "latest"
+				}
 			}
+			h.log.Info("ws redis hydration lookup",
+				zap.String("call_sid", callSid),
+				zap.String("hit_key", hitKey),
+				zap.Bool("ok", ok),
+			)
 			if ok {
 				// Only overwrite when Redis has something — otherwise we wipe
 				// good values (e.g. set from query params on web-sim) with
@@ -643,13 +762,17 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	}
 
 	var pcm []byte
-	if sess.IsExotel {
+	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(raw) {
 			metrics.EchoSuppressions.Inc()
 			return
 		}
 		pcm = audio.UlawToPCM(raw)
 	} else {
+		// PCM-16 LE — Voicebot applet, browser web-sim. The echo canceller
+		// is currently μ-law-keyed, so it's skipped here; AI-vs-user
+		// overlap is bounded by the mic-muting logic in the client and the
+		// nextPlayTime arithmetic on the synthesis side.
 		pcm = raw
 	}
 	sess.AppendMicChunk(pcm)
@@ -671,7 +794,7 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	// Relay a copy of the caller's inbound audio to any attached monitors.
 	if sess.hasMonitors() {
 		format := "pcm16_8k"
-		if sess.IsExotel {
+		if sess.UseUlaw {
 			format = "ulaw_8k"
 		}
 		sess.BroadcastAudio("user", payload, format)
@@ -703,7 +826,17 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	if sess.TTSVoiceID == "" && callCtx.TTSVoiceID != "" {
 		sess.TTSVoiceID = callCtx.TTSVoiceID
 	}
-	if sess.TTSLanguage == "" && callCtx.TTSLanguage != "" {
+	// Only adopt callCtx.TTSLanguage when we had real context (an org or a
+	// campaign). With orgID=0 && campaignID=0 — the Voicebot-at-connect case
+	// before handleStartEvent has hydrated from Redis — BuildCallContext
+	// falls through to GetOrganizationVoiceSettings(0) which returns the
+	// platform-default English. Promoting that to sess.Language would make
+	// the immediate-fire gate in ServeHTTP think "we know the language" and
+	// fire a greeting in English/Aditya before Redis hydration runs. Keep
+	// sess.Language empty so handleStartEvent's deferred path is the only
+	// one that gets to set it.
+	hasRealContext := sess.OrgID != 0 || sess.CampaignID != 0
+	if hasRealContext && sess.TTSLanguage == "" && callCtx.TTSLanguage != "" {
 		sess.TTSLanguage = callCtx.TTSLanguage
 		sess.Language = callCtx.TTSLanguage // drives Deepgram language + LLM prompt language
 	}

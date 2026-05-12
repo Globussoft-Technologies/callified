@@ -428,6 +428,25 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 	return d.GetOrganizationVoiceSettings(orgID)
 }
 
+// ListCampaignLeadIDs returns the IDs of all leads assigned to a campaign.
+func (d *DB) ListCampaignLeadIDs(campaignID int64) ([]int64, error) {
+	rows, err := d.pool.Query(
+		`SELECT lead_id FROM campaign_leads WHERE campaign_id=?`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // SaveCampaignVoiceSettings updates the tts_* columns on a campaign.
 func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error {
 	_, err := d.pool.Exec(
