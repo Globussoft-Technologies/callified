@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/db"
@@ -398,51 +401,45 @@ func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch website (20s timeout, max 500KB)
-	fetchCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	// Crawl homepage + up to 5 key sub-pages (60s total budget)
+	crawlCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	req2, _ := http.NewRequestWithContext(fetchCtx, http.MethodGet, product.WebsiteURL, nil)
-	req2.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req2.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req2.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	resp, err := http.DefaultClient.Do(req2)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to fetch website: "+err.Error())
-		return
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 500_000))
-	pageText := extractPageText(string(raw))
+	allText := crawlSite(crawlCtx, product.WebsiteURL, 6)
 
-	if len(strings.TrimSpace(pageText)) < 50 {
+	if len(strings.TrimSpace(allText)) < 50 {
 		writeError(w, http.StatusBadGateway, "could not extract readable text from website")
 		return
 	}
 
-	// Trim to 10000 chars for LLM context
-	text := pageText
-	if len(text) > 10000 {
-		text = text[:10000]
+	// Trim to 20000 chars for LLM context
+	text := allText
+	if len(text) > 20000 {
+		text = text[:20000]
 	}
 
-	// Ask LLM to extract product info
-	prompt := fmt.Sprintf(`You are analyzing a company website to extract product/service information for a sales AI agent.
+	// Ask LLM to extract detailed product info from all crawled pages
+	prompt := fmt.Sprintf(`You are analyzing a company website (multiple pages) to build a detailed product brief for a sales AI agent.
 
-Extract and summarize:
-1. What the product/service is (1-2 sentences)
-2. Key features and benefits (bullet points)
-3. Target customers / use cases
-4. Pricing or plans (if mentioned)
-5. Company name and any unique selling points
+Extract and summarize ALL of the following — use only information present on the pages:
 
-Be factual and concise (max 300 words). Only include information present on the page.
+1. Company name and one-line tagline
+2. What the product/service does (2-3 sentences)
+3. Key features and benefits (bullet points, be thorough)
+4. Target customers / ideal use cases
+5. Pricing, plans, or packages (exact details if visible)
+6. How it works / onboarding steps
+7. Unique selling points vs competitors (if mentioned)
+8. Social proof: testimonials, customers, case studies, stats
+9. Contact info / support channels
+
+Be factual and detailed (max 600 words). Clearly label each section.
 
 Website URL: %s
-Page content:
+Crawled page content:
 %s`, product.WebsiteURL, text)
 
 	s.logger.Sugar().Infow("scrapeProduct: calling LLM", "product_id", id, "textLen", len(text))
-	scraped, err := s.llmProvider.GenerateText(r.Context(), prompt, "Extract product info from this website", 2048)
+	scraped, err := s.llmProvider.GenerateText(r.Context(), prompt, "Extract product info from this website", 3000)
 	if err != nil {
 		s.logger.Sugar().Errorw("scrapeProduct: LLM error", "err", err, "product_id", id)
 		writeError(w, http.StatusInternalServerError, "LLM error: "+err.Error())
@@ -628,6 +625,154 @@ Write it in second person ("You are..."). Max 400 words.`
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// fetchRawHTML fetches a URL and returns raw HTML bytes (up to 300KB).
+func fetchRawHTML(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(io.LimitReader(resp.Body, 300_000))
+}
+
+// extractInternalLinks parses href attributes from html and returns same-host URLs.
+func extractInternalLinks(baseURL, html string) []string {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return nil
+	}
+	lower := strings.ToLower(html)
+	seen := map[string]bool{baseURL: true}
+	var links []string
+	pos := 0
+	for {
+		idx := strings.Index(lower[pos:], "href=")
+		if idx < 0 {
+			break
+		}
+		pos += idx + 5
+		if pos >= len(lower) {
+			break
+		}
+		quote := lower[pos]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		pos++
+		end := strings.IndexByte(lower[pos:], byte(quote))
+		if end < 0 {
+			break
+		}
+		href := html[pos : pos+end]
+		pos += end + 1
+		lhref := strings.ToLower(href)
+		if strings.HasPrefix(lhref, "#") || strings.HasPrefix(lhref, "mailto:") ||
+			strings.HasPrefix(lhref, "javascript:") || strings.HasPrefix(lhref, "tel:") {
+			continue
+		}
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		resolved := base.ResolveReference(parsed)
+		resolved.Fragment = ""
+		resolved.RawQuery = ""
+		if resolved.Host != base.Host {
+			continue
+		}
+		key := resolved.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		links = append(links, key)
+	}
+	return links
+}
+
+// pagePriority scores a URL higher if it likely contains useful product info.
+func pagePriority(link string) int {
+	lower := strings.ToLower(link)
+	priorities := []struct {
+		score    int
+		keywords []string
+	}{
+		{10, []string{"pricing", "price", "plans", "plan"}},
+		{9, []string{"feature", "product", "solution", "service"}},
+		{8, []string{"about", "why", "how-it-works", "how_it_works", "overview"}},
+		{7, []string{"contact", "team"}},
+		{6, []string{"blog", "case-study", "customer", "testimonial"}},
+	}
+	for _, p := range priorities {
+		for _, kw := range p.keywords {
+			if strings.Contains(lower, kw) {
+				return p.score
+			}
+		}
+	}
+	return 0
+}
+
+// crawlSite fetches the homepage plus up to (maxPages-1) prioritized internal pages
+// and returns their combined clean text, each section labelled by URL.
+func crawlSite(ctx context.Context, baseURL string, maxPages int) string {
+	raw, err := fetchRawHTML(ctx, baseURL)
+	if err != nil {
+		return ""
+	}
+	homeText := extractPageText(string(raw))
+
+	links := extractInternalLinks(baseURL, string(raw))
+	sort.Slice(links, func(i, j int) bool {
+		return pagePriority(links[i]) > pagePriority(links[j])
+	})
+	if len(links) > maxPages-1 {
+		links = links[:maxPages-1]
+	}
+
+	type pageResult struct {
+		pageURL string
+		text    string
+	}
+	results := make([]pageResult, len(links))
+	var wg sync.WaitGroup
+	for i, link := range links {
+		wg.Add(1)
+		go func(i int, link string) {
+			defer wg.Done()
+			pageCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			b, err := fetchRawHTML(pageCtx, link)
+			if err == nil {
+				results[i] = pageResult{pageURL: link, text: extractPageText(string(b))}
+			}
+		}(i, link)
+	}
+	wg.Wait()
+
+	var sb strings.Builder
+	sb.WriteString("=== Homepage: ")
+	sb.WriteString(baseURL)
+	sb.WriteString(" ===\n")
+	sb.WriteString(homeText)
+	for _, r := range results {
+		if r.text != "" {
+			sb.WriteString("\n\n=== Page: ")
+			sb.WriteString(r.pageURL)
+			sb.WriteString(" ===\n")
+			sb.WriteString(r.text)
+		}
+	}
+	return sb.String()
+}
+
 // extractPageText extracts human-readable text from HTML, skipping script/style/comment blocks.
 // It prioritises title, meta description, and heading/paragraph content.
 func extractPageText(html string) string {
@@ -671,7 +816,7 @@ func extractPageText(html string) string {
 	// 3. Skip script/style/noscript/svg blocks, then extract readable text
 	skipTags := []string{"script", "style", "noscript", "svg", "iframe", "canvas", "code", "pre"}
 	pos := 0
-	llen := len(lower)
+	llen := min(len(html), len(lower))
 
 	for pos < llen {
 		// Check for HTML comment
