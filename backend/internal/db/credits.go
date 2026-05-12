@@ -205,6 +205,18 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 	return chargePaise, balanceAfter, nil
 }
 
+// HasCallDeductions returns true if the org has ever been billed for a call.
+// Used by the dial credit gate: an org with balance=0 but no deduction history
+// has never topped up – block only if they've previously consumed credits and
+// run out, not just because they're a new org with a fresh zero balance.
+func (d *DB) HasCallDeductions(orgID int64) (bool, error) {
+	var count int
+	err := d.pool.QueryRow(
+		`SELECT COUNT(*) FROM credit_transactions WHERE org_id=? AND type='call_deduction' LIMIT 1`,
+		orgID).Scan(&count)
+	return count > 0, err
+}
+
 // GetCreditTransactions returns the most-recent N entries for an org
 // (newest first). Used by the Billing page ledger view.
 func (d *DB) GetCreditTransactions(orgID int64, limit int) ([]CreditTransaction, error) {

@@ -102,10 +102,26 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if ocErr != nil {
 			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
 		} else if oc != nil && oc.BalancePaise <= 0 {
-			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
-			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
-				"failed", "insufficient credits — recharge to continue")
-			return "", ErrInsufficientCredits
+			// Three passes before blocking:
+			// 1. Active subscription → always allow.
+			// 2. No deduction history → org is new / never topped up; allow so
+			//    fresh orgs and test environments aren't dead-on-arrival.
+			// 3. Has prior deductions and balance=0 → genuinely exhausted.
+			sub, _ := i.db.GetSubscriptionByOrg(data.OrgID)
+			if sub != nil {
+				i.log.Info("dial: zero balance but active subscription – allowing call",
+					zap.Int64("org_id", data.OrgID), zap.String("plan", sub.PlanName))
+			} else {
+				hasHistory, _ := i.db.HasCallDeductions(data.OrgID)
+				if hasHistory {
+					_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
+					i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
+						"failed", "insufficient credits – recharge to continue")
+					return "", ErrInsufficientCredits
+				}
+				i.log.Info("dial: zero balance, no prior deductions – allowing call (new org)",
+					zap.Int64("org_id", data.OrgID))
+			}
 		}
 	}
 
