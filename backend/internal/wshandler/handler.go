@@ -435,8 +435,15 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	if sess.HangupRequested() {
 		return
 	}
+	// Decode/echo-suppress based on the per-call codec detection
+	// (UseUlaw), not IsExotel: Voicebot real-Dial is IsExotel=true but
+	// speaks PCM-16 LE just like web-sim. The text-frame path at
+	// handleMediaEvent already uses UseUlaw — mirror that here so the
+	// binary fallback (some carriers send raw μ-law as binary frames) is
+	// consistent. Without this, a Voicebot binary frame would be UlawToPCM'd
+	// into noise → STT silent → no user turns in the transcript.
 	var pcm []byte
-	if sess.IsExotel {
+	if sess.UseUlaw {
 		// Echo cancellation: check ulaw frame before decoding
 		if sess.EchoCanceller.IsEcho(data) {
 			metrics.EchoSuppressions.Inc()
@@ -444,7 +451,7 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
-		pcm = data // web sim sends PCM directly
+		pcm = data // PCM-16 LE — Voicebot and web-sim
 	}
 	sess.AppendMicChunk(pcm)
 	select {

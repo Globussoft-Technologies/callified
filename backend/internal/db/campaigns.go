@@ -406,6 +406,21 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 
 // GetCampaignVoiceSettings returns TTS settings, falling back to org defaults.
 func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
+	// Direct-dial paths can call this with campaignID=0 (no campaign context),
+	// in which case there's no row to read — fall straight through to the
+	// platform default. Without this the caller (dial.Initiator) ends up with
+	// an all-empty VoiceSettings, writes empty strings to the Redis pending
+	// call, and the WS handler then never starts STT (which it gates on
+	// `sess.Language != ""` post-Redis hydration). The phone audibly rings,
+	// the user says hello, no transcripts get recorded. Returning the
+	// platform default keeps the call functional.
+	if campaignID <= 0 {
+		return VoiceSettings{
+			TTSProvider: DefaultTTSProvider,
+			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage: DefaultTTSLanguage,
+		}, nil
+	}
 	var orgID int64
 	var provider, voiceID, lang sql.NullString
 	err := d.pool.QueryRow(
@@ -413,7 +428,14 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 		FROM campaigns WHERE id=?`, campaignID,
 	).Scan(&provider, &voiceID, &lang, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return VoiceSettings{}, nil
+		// Same reasoning as the campaignID<=0 branch: a missing campaign row
+		// must still produce a usable language so STT can start. Without this
+		// fallback the dial succeeds but the transcript comes back empty.
+		return VoiceSettings{
+			TTSProvider: DefaultTTSProvider,
+			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage: DefaultTTSLanguage,
+		}, nil
 	}
 	if err != nil {
 		return VoiceSettings{}, err
