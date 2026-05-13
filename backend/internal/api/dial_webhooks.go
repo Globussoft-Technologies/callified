@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/dial"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 )
 
 // ── GET /webhook/twilio ───────────────────────────────────────────────────────
@@ -64,25 +65,96 @@ func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	s.logger.Info("exotelXML: Exotel fetched ExoML",
-		zap.String("lead_id", q.Get("lead_id")),
-		zap.String("campaign_id", q.Get("campaign_id")),
-		zap.String("phone", q.Get("phone")),
-		zap.String("remote_addr", r.RemoteAddr),
-		zap.String("user_agent", r.Header.Get("User-Agent")),
-	)
+
+	// Look up the campaign-resolved voice settings + lead context that
+	// dial.Initiator stashed in Redis at the moment we asked Exotel to dial.
+	// Doing the lookup here (one hop earlier than the WS-handler's
+	// handleStartEvent) lets us bake everything into the stream URL so the
+	// WS opens with the same full context a Sim Web Call does — no race
+	// between STT init and Redis hydration. The WS handler's existing
+	// hydration block stays as a safety net if this lookup misses.
+	callSid := firstNonEmptyStr(q.Get("CallSid"), q.Get("call_sid"))
+	phone := firstNonEmptyStr(q.Get("From"), q.Get("CallFrom"), q.Get("phone"))
+
+	var pending rstore.PendingCallInfo
+	var hitKey string
+	if callSid != "" {
+		if p, ok := s.store.GetPendingCall(r.Context(), callSid); ok {
+			pending = p
+			hitKey = "call_sid"
+		}
+	}
+	if pending.LeadID == 0 && phone != "" {
+		if p, ok := s.store.GetPendingCall(r.Context(), "phone:"+phone); ok {
+			pending = p
+			hitKey = "phone"
+		}
+	}
+	if pending.LeadID == 0 {
+		if p, ok := s.store.GetPendingCall(r.Context(), "latest"); ok {
+			pending = p
+			hitKey = "latest"
+		}
+	}
+
+	// Fall back to whatever the Passthru applet happened to forward when
+	// Redis didn't have a record. (Empty values just produce empty query
+	// params — the WS handler's handleStartEvent still backfills from
+	// Redis after the start frame arrives, so this is best-effort.)
+	pickInt64 := func(redisVal int64, qKey string) int64 {
+		if redisVal != 0 {
+			return redisVal
+		}
+		var n int64
+		fmt.Sscanf(q.Get(qKey), "%d", &n)
+		return n
+	}
+	pickStr := func(redisVal string, qKey string) string {
+		if redisVal != "" {
+			return redisVal
+		}
+		return q.Get(qKey)
+	}
+
+	name := pickStr(pending.Name, "name")
+	interest := pickStr(pending.Interest, "interest")
+	phoneOut := pickStr(pending.Phone, "phone")
+	leadID := pickInt64(pending.LeadID, "lead_id")
+	campaignID := pickInt64(pending.CampaignID, "campaign_id")
+	orgID := pickInt64(pending.OrgID, "org_id")
+	ttsProvider := pending.TTSProvider
+	ttsVoiceID := pending.TTSVoiceID
+	ttsLanguage := pending.TTSLanguage
+
 	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = fmt.Sprintf("%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%s&campaign_id=%s&org_id=%s",
+	wsURL = fmt.Sprintf(
+		"%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%d&campaign_id=%d&org_id=%d&tts_provider=%s&voice=%s&tts_language=%s",
 		wsURL,
-		url.QueryEscape(q.Get("name")),
-		url.QueryEscape(q.Get("interest")),
-		url.QueryEscape(q.Get("phone")),
-		url.QueryEscape(q.Get("lead_id")),
-		url.QueryEscape(q.Get("campaign_id")),
-		url.QueryEscape(q.Get("org_id")),
+		url.QueryEscape(name),
+		url.QueryEscape(interest),
+		url.QueryEscape(phoneOut),
+		leadID,
+		campaignID,
+		orgID,
+		url.QueryEscape(ttsProvider),
+		url.QueryEscape(ttsVoiceID),
+		url.QueryEscape(ttsLanguage),
 	)
-	s.logger.Info("exotelXML: serving ExoML with stream URL", zap.String("ws_url", wsURL))
+
+	s.logger.Info("exotelXML: serving ExoML",
+		zap.String("call_sid", callSid),
+		zap.String("redis_hit", hitKey),
+		zap.Int64("lead_id", leadID),
+		zap.Int64("campaign_id", campaignID),
+		zap.Int64("org_id", orgID),
+		zap.String("tts_provider", ttsProvider),
+		zap.String("tts_voice_id", ttsVoiceID),
+		zap.String("tts_language", ttsLanguage),
+		zap.String("ws_url", wsURL),
+		zap.String("remote_addr", r.RemoteAddr),
+	)
+
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
@@ -92,6 +164,17 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(xml))
+}
+
+// firstNonEmptyStr returns the first non-empty value in vals, or "" if none.
+// Local helper because wshandler.firstNonEmpty isn't exported.
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ── POST /webhook/twilio/status ───────────────────────────────────────────────

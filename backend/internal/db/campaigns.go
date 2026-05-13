@@ -436,6 +436,28 @@ func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error
 	return err
 }
 
+// ListCampaignLeadIDs returns just the lead IDs in a campaign — used by the
+// voice-settings save handler to invalidate the per-lead voice cache in Redis
+// so a freshly-saved campaign voice takes effect on the next call instead of
+// being overridden by the 90-day cache.
+func (d *DB) ListCampaignLeadIDs(campaignID int64) ([]int64, error) {
+	rows, err := d.pool.Query(
+		`SELECT lead_id FROM campaign_leads WHERE campaign_id=?`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func coalesceStr(s, def string) string {
 	if s == "" {
 		return def

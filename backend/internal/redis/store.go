@@ -439,6 +439,18 @@ func (s *Store) SetRaw(ctx context.Context, k, v string, ttl time.Duration) {
 	}
 }
 
+// DeleteRaw removes key k. No-op when Redis is absent or k is missing.
+// Used by single-use handoff keys (dev impersonation) where the first read
+// must atomically invalidate the key.
+func (s *Store) DeleteRaw(ctx context.Context, k string) {
+	if s.rdb == nil {
+		return
+	}
+	if err := s.rdb.Del(ctx, k).Err(); err != nil && s.log != nil {
+		s.log.Warn("redis: DeleteRaw failed", zap.String("key", k), zap.Error(err))
+	}
+}
+
 // LeadVoiceTTL is how long the per-lead voice override is remembered.
 // Mirrors ws_handler.py 4aa3fa3: 90 days, so a lead reliably hears the same
 // agent voice across follow-up calls.
