@@ -185,7 +185,7 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		if s.waAgent == nil {
 			return
 		}
-		channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID)
+		channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
 		reply, err := s.waAgent.ProcessIncoming(bgCtx, channelCfg, msg)
 		if err != nil {
 			s.logger.Warn("waWebhook: agent failed",

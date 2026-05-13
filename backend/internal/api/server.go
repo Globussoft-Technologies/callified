@@ -53,8 +53,8 @@ func (waSend) SendText(ctx context.Context, cfg wa.ChannelConfig, toPhone, text 
 }
 
 // waChannelConfig converts DB config to wa.ChannelConfig.
-func (s *Server) waChannelConfig(orgID int64, provider, phone, apiKey, appID string) wa.ChannelConfig {
-	return wa.ChannelConfig{OrgID: orgID, Provider: provider, PhoneNumber: phone, APIKey: apiKey, AppID: appID}
+func (s *Server) waChannelConfig(orgID int64, provider, phone, apiKey, appID string, defaultProductID int64) wa.ChannelConfig {
+	return wa.ChannelConfig{OrgID: orgID, Provider: provider, PhoneNumber: phone, APIKey: apiKey, AppID: appID, DefaultProductID: defaultProductID}
 }
 
 // New creates a new API server.

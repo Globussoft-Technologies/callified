@@ -17,10 +17,10 @@ const pauseKey = "wa:pause:" // Redis key prefix for pause flag
 
 // Agent processes inbound WhatsApp messages and generates AI replies.
 type Agent struct {
-	db       *db.DB
-	llm      *llm.Provider
+	db        *db.DB
+	llm       *llm.Provider
 	ragClient *rag.Client
-	log      *zap.Logger
+	log       *zap.Logger
 }
 
 // NewAgent creates a WA Agent.
@@ -36,11 +36,6 @@ func NewAgent(database *db.DB, llmProvider *llm.Provider, ragClient *rag.Client,
 // ProcessIncoming handles one inbound WA message and returns the reply text.
 // Returns ("", nil) if no reply should be sent (e.g. human takeover active).
 func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *IncomingMessage) (string, error) {
-	// Dedup is handled by the webhook handler (see handleWAWebhook): it
-	// saves the inbound message once before invoking the agent and skips
-	// the agent path if a row with this provider_msg_id already exists.
-	// The agent here only needs the conversation id to read history and
-	// write the AI reply.
 	convID, err := a.db.GetOrCreateWAConversation(cfg.OrgID, msg.FromPhone, msg.Provider)
 	if err != nil {
 		return "", fmt.Errorf("GetOrCreateWAConversation: %w", err)
@@ -50,7 +45,7 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		return "", nil // media-only message, no AI response
 	}
 
-	// 4. Get recent chat history (last 10 messages)
+	// Get recent chat history (last 10 messages)
 	history, _ := a.db.GetWAChatHistory(convID, 10)
 	var chatHistory []llm.ChatMessage
 	for i := len(history) - 1; i >= 0; i-- {
@@ -62,23 +57,23 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		chatHistory = append(chatHistory, llm.ChatMessage{Role: role, Text: h.MessageText})
 	}
 
-	// 5. Retrieve RAG context if available
+	// Retrieve RAG context if available
 	ragContext := ""
 	if a.ragClient != nil {
 		ragContext, _ = a.ragClient.RetrieveContext(ctx, msg.Text, 0, 3)
 	}
 
-	// 6. Build system prompt
-	systemPrompt := buildWASystemPrompt(ragContext)
+	// Build system prompt from the configured product; fall back to generic.
+	systemPrompt := a.buildSystemPrompt(cfg.DefaultProductID, ragContext)
 
-	// 7. Generate AI response
+	// Generate AI response
 	reply, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 200)
 	if err != nil {
 		a.log.Warn("wa agent: LLM failed", zap.Error(err))
 		return "", nil
 	}
 
-	// 8. Check for human takeover signal
+	// Check for human takeover signal
 	if strings.Contains(reply, humanTakeover) {
 		reply = strings.ReplaceAll(reply, humanTakeover, "")
 		reply = strings.TrimSpace(reply)
@@ -93,13 +88,48 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 	return reply, nil
 }
 
-func buildWASystemPrompt(ragContext string) string {
-	base := `You are a helpful WhatsApp sales assistant. Be concise, friendly, and professional.
-Keep responses under 3 sentences unless the user asks a detailed question.
-If you cannot help, say so briefly and offer to connect them with a human agent by saying ` + humanTakeover + `.`
+// buildSystemPrompt constructs the system prompt for the AI. When a product
+// is configured, its agent_persona, call_flow_instructions, manual_notes, and
+// scraped_info are injected so the AI speaks as that product's sales agent.
+// Falls back to a generic WhatsApp assistant prompt when no product is set.
+func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
+	var prompt string
+
+	if productID > 0 {
+		product, err := a.db.GetProductByID(productID)
+		if err == nil && product != nil {
+			var parts []string
+
+			if product.AgentPersona != "" {
+				parts = append(parts, "## Agent Persona\n"+product.AgentPersona)
+			}
+			if product.CallFlowInstructions != "" {
+				parts = append(parts, "## Instructions\n"+product.CallFlowInstructions)
+			}
+			if product.ManualNotes != "" {
+				parts = append(parts, "## Product Notes\n"+product.ManualNotes)
+			}
+			if product.ScrapedInfo != "" {
+				parts = append(parts, "## Product Information\n"+product.ScrapedInfo)
+			}
+
+			if len(parts) > 0 {
+				prompt = "You are a WhatsApp sales assistant. Be concise and friendly — keep replies under 3 sentences unless the customer asks for details. Reply in the same language the customer uses.\n\n" +
+					strings.Join(parts, "\n\n")
+			}
+		}
+	}
+
+	if prompt == "" {
+		prompt = "You are a helpful WhatsApp sales assistant. Be concise, friendly, and professional. " +
+			"Keep responses under 3 sentences unless the user asks a detailed question."
+	}
+
+	prompt += "\n\nIf you cannot help, offer to connect the customer with a human agent by saying " + humanTakeover + "."
 
 	if ragContext != "" {
-		base += "\n\nRelevant context from knowledge base:\n" + ragContext
+		prompt += "\n\n## Relevant Knowledge Base Context\n" + ragContext
 	}
-	return base
+
+	return prompt
 }

@@ -14,11 +14,12 @@ import (
 
 // ChannelConfig holds the credentials needed to send via a provider.
 type ChannelConfig struct {
-	OrgID       int64
-	Provider    string
-	PhoneNumber string
-	APIKey      string
-	AppID       string // Gupshup source phone / Wati API URL prefix
+	OrgID            int64
+	Provider         string
+	PhoneNumber      string
+	APIKey           string
+	AppID            string // Gupshup source phone / Wati API URL prefix
+	DefaultProductID int64  // product whose prompt the AI agent uses; 0 = fallback generic
 }
 
 var httpClient = &http.Client{Timeout: 15 * time.Second}

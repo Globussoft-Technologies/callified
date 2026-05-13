@@ -73,19 +73,9 @@ func (s *Server) proxyToWaSender(w http.ResponseWriter, r *http.Request, method,
 		return
 	}
 	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	w.Header().Set("Content-Type", "application/json")
-	// Remap upstream 401/403 → 400 so the browser's apiFetch doesn't
-	// mistake a WaSender "bad PAT" rejection for a Callified auth failure
-	// and log the operator out. A 400 surfaces as an error in the UI
-	// (session panel shows "invalid token") without clearing the session.
-	status := resp.StatusCode
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		status = http.StatusBadRequest
-	}
-	w.WriteHeader(status)
-	_, _ = w.Write(respBody)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // GET /api/wa/session — list sessions for the org's configured PAT.

@@ -396,7 +396,7 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID)
+	channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
 	if err := s.waSender.SendText(r.Context(), channelCfg, phone, text); err != nil {
 		// Surface the provider's actual error so the frontend can display
 		// it instead of a misleading "HTTP 502". Most provider errors are
