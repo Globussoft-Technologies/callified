@@ -36,23 +36,14 @@ func NewAgent(database *db.DB, llmProvider *llm.Provider, ragClient *rag.Client,
 // ProcessIncoming handles one inbound WA message and returns the reply text.
 // Returns ("", nil) if no reply should be sent (e.g. human takeover active).
 func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *IncomingMessage) (string, error) {
-	// 1. Dedup: skip if we already processed this provider_msg_id
-	if msg.ProviderMsgID != "" {
-		existing, _ := a.db.GetWAMessageByProviderID(msg.ProviderMsgID)
-		if existing != nil {
-			return "", nil
-		}
-	}
-
-	// 2. Get or create conversation
-	convID, err := a.db.GetOrCreateWAConversation(0, msg.FromPhone, msg.Provider)
+	// Dedup is handled by the webhook handler (see handleWAWebhook): it
+	// saves the inbound message once before invoking the agent and skips
+	// the agent path if a row with this provider_msg_id already exists.
+	// The agent here only needs the conversation id to read history and
+	// write the AI reply.
+	convID, err := a.db.GetOrCreateWAConversation(cfg.OrgID, msg.FromPhone, msg.Provider)
 	if err != nil {
 		return "", fmt.Errorf("GetOrCreateWAConversation: %w", err)
-	}
-
-	// 3. Save inbound message
-	if _, err := a.db.SaveWAMessage(convID, "inbound", msg.Text, msg.MessageType, msg.ProviderMsgID); err != nil {
-		a.log.Warn("wa agent: SaveWAMessage inbound", zap.Error(err))
 	}
 
 	if msg.Text == "" {
@@ -66,7 +57,7 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		h := history[i]
 		role := "user"
 		if h.Direction == "outbound" {
-			role = "assistant"
+			role = "model" // Gemini expects "model", not "assistant"
 		}
 		chatHistory = append(chatHistory, llm.ChatMessage{Role: role, Text: h.MessageText})
 	}
@@ -97,11 +88,6 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 	reply = strings.TrimSpace(reply)
 	if reply == "" {
 		return "", nil
-	}
-
-	// 9. Save outbound message
-	if _, err := a.db.SaveWAMessage(convID, "outbound", reply, "text", ""); err != nil {
-		a.log.Warn("wa agent: SaveWAMessage outbound", zap.Error(err))
 	}
 
 	return reply, nil

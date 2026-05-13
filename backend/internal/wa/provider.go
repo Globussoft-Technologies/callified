@@ -145,40 +145,74 @@ func ParseAiSensei(body []byte) (*IncomingMessage, error) {
 }
 
 // ParseWaSender parses an inbound WaSender webhook payload.
+//
+// WaSender wraps the message under data.messages (not data directly):
+//
+//	{"event":"messages.upsert","data":{"messages":{"key":{...},"message":{...},"messageBody":"..."}}}
+//
+// Only processes messages.upsert / messages.received events with fromMe=false
+// so that echoes of our own sent messages and status-ack events are dropped
+// before they create spurious conversation rows in the DB.
 func ParseWaSender(body []byte) (*IncomingMessage, error) {
 	var p struct {
 		Event string `json:"event"`
 		Data  struct {
-			Key struct {
-				RemoteJid string `json:"remoteJid"`
-				FromMe    bool   `json:"fromMe"`
-				ID        string `json:"id"`
-			} `json:"key"`
-			Message struct {
-				Conversation        string `json:"conversation"`
-				ExtendedTextMessage struct {
-					Text string `json:"text"`
-				} `json:"extendedTextMessage"`
-			} `json:"message"`
-			MessageType string `json:"messageType"`
+			Messages struct {
+				Key struct {
+					RemoteJid      string `json:"remoteJid"`
+					FromMe         bool   `json:"fromMe"`
+					ID             string `json:"id"`
+					SenderPn       string `json:"senderPn"`       // e.g. "919019781278@s.whatsapp.net"
+					CleanedSenderPn string `json:"cleanedSenderPn"` // e.g. "919019781278"
+				} `json:"key"`
+				Message struct {
+					Conversation        string `json:"conversation"`
+					ExtendedTextMessage struct {
+						Text string `json:"text"`
+					} `json:"extendedTextMessage"`
+				} `json:"message"`
+				MessageBody string `json:"messageBody"` // flat copy WaSender also sends
+				MessageType string `json:"messageType"`
+			} `json:"messages"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
 	}
-	if p.Data.Key.FromMe {
+	// Only handle inbound message events. WaSender also delivers
+	// connection.update, qr.update, messages.update (status acks for
+	// delivered/read), and presence.update — none of those carry a
+	// customer message. Both messages.upsert and messages.received
+	// can carry an actual inbound text depending on WaSender version.
+	if p.Event != "messages.upsert" && p.Event != "messages.received" {
+		return nil, nil
+	}
+	if p.Data.Messages.Key.FromMe {
 		return nil, nil // skip echo of our own sent messages
 	}
-	text := p.Data.Message.Conversation
+	// Prefer the nested message body, fall back to the flat messageBody field.
+	text := p.Data.Messages.Message.Conversation
 	if text == "" {
-		text = p.Data.Message.ExtendedTextMessage.Text
+		text = p.Data.Messages.Message.ExtendedTextMessage.Text
 	}
-	from := strings.TrimSuffix(p.Data.Key.RemoteJid, "@s.whatsapp.net")
+	if text == "" {
+		text = p.Data.Messages.MessageBody
+	}
+	// Derive the from-phone. WaSender uses two JID formats:
+	//   - "917795740488@s.whatsapp.net" → strip suffix → phone
+	//   - "157737388404946@lid"         → LID (no phone) → use cleanedSenderPn
+	// cleanedSenderPn is the actual phone without domain, available on all
+	// inbound messages regardless of addressingMode.
+	from := p.Data.Messages.Key.CleanedSenderPn
+	if from == "" {
+		from = strings.TrimSuffix(p.Data.Messages.Key.RemoteJid, "@s.whatsapp.net")
+		from = strings.TrimSuffix(from, "@lid") // drop LID suffix if cleanedSenderPn absent
+	}
 	return &IncomingMessage{
-		ProviderMsgID: p.Data.Key.ID,
+		ProviderMsgID: p.Data.Messages.Key.ID,
 		FromPhone:     from,
 		Text:          text,
-		MessageType:   coalesce(p.Data.MessageType, "text"),
+		MessageType:   coalesce(p.Data.Messages.MessageType, "text"),
 		Provider:      "wasender",
 	}, nil
 }

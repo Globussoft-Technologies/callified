@@ -29,6 +29,7 @@ type AuthClaims struct {
 type jwtClaims struct {
 	jwt.RegisteredClaims
 	OrgID int64  `json:"org_id"`
+	
 	Role  string `json:"role"`
 	Kind  string `json:"kind,omitempty"`
 }

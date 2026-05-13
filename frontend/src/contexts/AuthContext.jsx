@@ -19,10 +19,16 @@ export function AuthProvider({ children }) {
   // refresh — no login-page flash, no loading splash. /auth/me revalidates in
   // the background and clears the session if the token is no longer good.
   const [currentUser, setCurrentUser] = useState(loadCachedUser);
+  // authReady becomes true once /auth/me has run (or when there's no token).
+  // apiFetch only calls clearSession on 401 after authReady=true to avoid a
+  // race where a component's first fetch clears a stale-but-not-yet-validated
+  // token before /auth/me gets a chance to do it cleanly.
+  const [authReady, setAuthReady] = useState(!localStorage.getItem('authToken'));
 
   const clearSession = useCallback(() => {
     setAuthToken(null);
     setCurrentUser(null);
+    setAuthReady(true);
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
   }, []);
@@ -33,11 +39,11 @@ export function AuthProvider({ children }) {
       headers: { ...options.headers, 'Authorization': `Bearer ${authToken}` }
     });
     if (res.status === 401) {
-      clearSession();
+      if (authReady) clearSession();
       throw new Error('Session expired');
     }
     return res;
-  }, [authToken, clearSession]);
+  }, [authToken, clearSession, authReady]);
 
   // Mints a 60-second SSE ticket via Authorization header, returning the
   // ticket string. Callers append it as ?ticket=… to EventSource URLs so the
@@ -48,16 +54,21 @@ export function AuthProvider({ children }) {
     const data = await res.json();
     return data.ticket;
   }, [apiFetch]);
+  
 
   // Background revalidation: if we have a token, verify it's still valid.
   // Runs without blocking the UI — dashboard is already on-screen.
+  // Sets authReady=true when done so apiFetch knows it's safe to clear the
+  // session on 401 (rather than racing with this check on first render).
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken) { setAuthReady(true); return; }
+    setAuthReady(false);
     fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(u => {
         setCurrentUser(u);
         localStorage.setItem('currentUser', JSON.stringify(u));
+        setAuthReady(true);
       })
       .catch(() => clearSession());
   }, [authToken, clearSession]);
@@ -113,7 +124,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken }}>
       {children}
     </AuthContext.Provider>
   );
