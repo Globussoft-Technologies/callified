@@ -279,51 +279,62 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 }
 
 // sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
-// Handles ulaw conversion for Exotel and JSON framing differences.
+//
+// Codec choice (μ-law vs PCM-16) is driven by sess.UseUlaw, which is set in
+// handleStartEvent from the start-envelope key casing — not by sess.IsExotel.
+// Voicebot real-Dial is IsExotel=true but speaks PCM-16 like web-sim.
+//
+// μ-law paths additionally need 20ms frame pacing. Exotel's Stream/Passthru
+// applet feeds the carrier's jitter buffer, which expects 160-byte μ-law
+// frames sent at wallclock pace (~20ms @ 8 kHz). Bursting the whole utterance
+// in a single WS frame renders as garbled / chipmunk audio at the phone —
+// the "voice not audible properly" symptom. PCM-16 paths (Voicebot, web-sim)
+// don't care about pacing: the browser handles its own playback queue, and
+// the Voicebot applet decodes the WS payload directly into its outbound RTP
+// stream without a jitter buffer in between.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	// Record for server-side stereo WAV
 	sess.AppendTTSChunk(pcm8k)
 	// Feed echo canceller (ulaw representation)
 	sess.EchoCanceller.FeedTTS(audio.PCMToUlaw(pcm8k))
 
-	// Encode audio. The codec choice is decoupled from sess.IsExotel because
-	// the Voicebot applet — although carrier-served — speaks PCM-16 LE just
-	// like the browser web-sim. See handleStartEvent for the per-call
-	// detection that sets UseUlaw.
-	var audioBytes []byte
 	if sess.UseUlaw {
-		audioBytes = audio.PCMToUlaw(pcm8k)
-	} else {
-		audioBytes = pcm8k
+		// μ-law: encode then slice into 20ms frames and pace.
+		ulaw := audio.PCMToUlaw(pcm8k)
+		sess.PlaybackTracker.AddBytes(len(ulaw))
+		const frameBytes = 160 // 160 bytes µ-law = 20ms @ 8 kHz
+		for off := 0; off < len(ulaw); off += frameBytes {
+			end := off + frameBytes
+			if end > len(ulaw) {
+				end = len(ulaw)
+			}
+			payloadB64 := base64.StdEncoding.EncodeToString(ulaw[off:end])
+			frame, _ := json.Marshal(map[string]interface{}{
+				"event":     "media",
+				"streamSid": sess.StreamSid,
+				"media":     map[string]string{"payload": payloadB64},
+			})
+			_ = sess.SendText(frame)
+			if sess.hasMonitors() {
+				sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return
 	}
-	sess.PlaybackTracker.AddBytes(len(audioBytes))
 
-	// JSON envelope casing follows the same split: μ-law (Twilio/Stream
-	// Passthru) uses camelCase streamSid; PCM-16 (Voicebot/web-sim) uses
-	// snake_case stream_sid.
-	var frameKey string
-	if sess.UseUlaw {
-		frameKey = "streamSid"
-	} else {
-		frameKey = "stream_sid"
-	}
-
-	payloadB64 := base64.StdEncoding.EncodeToString(audioBytes)
+	// PCM-16 path: Voicebot / web-sim. One frame per utterance, snake_case key,
+	// raw PCM payload. No pacing — the consumer queues the audio itself.
+	sess.PlaybackTracker.AddBytes(len(pcm8k))
+	payloadB64 := base64.StdEncoding.EncodeToString(pcm8k)
 	frame, _ := json.Marshal(map[string]interface{}{
-		"event":   "media",
-		frameKey:  sess.StreamSid,
-		"media":   map[string]string{"payload": payloadB64},
+		"event":     "media",
+		"stream_sid": sess.StreamSid,
+		"media":     map[string]string{"payload": payloadB64},
 	})
 	_ = sess.SendText(frame)
-
-	// Relay a copy of the agent's outbound audio to any attached monitors so
-	// external consumers can render / play back what the AI is saying.
 	if sess.hasMonitors() {
-		format := "pcm16_8k"
-		if sess.UseUlaw {
-			format = "ulaw_8k"
-		}
-		sess.BroadcastAudio("agent", payloadB64, format)
+		sess.BroadcastAudio("agent", payloadB64, "pcm16_8k")
 	}
 }
 
