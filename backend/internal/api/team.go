@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/db"
@@ -356,9 +357,28 @@ func validatePassword(p string) string {
 // validatePasswordStrong is the version request handlers should call.
 // Disabled on testgo1 — passwords are accepted as-is. See validatePassword
 // for the rationale and how to re-enable.
-func (s *Server) validatePasswordStrong(ctx context.Context, p string) string {
-	_ = ctx
-	_ = p
+func (s *Server) validatePasswordStrong(_ context.Context, p string) string {
+	if len(p) < 8 {
+		return "password must be at least 8 characters"
+	}
+	if len(p) > 128 {
+		return "password must be 128 characters or fewer"
+	}
+	if _, bad := commonPasswords[strings.ToLower(p)]; bad {
+		return "password is too common — choose something harder to guess"
+	}
+	var hasLetter, hasDigit bool
+	for _, r := range p {
+		if unicode.IsLetter(r) {
+			hasLetter = true
+		}
+		if unicode.IsDigit(r) {
+			hasDigit = true
+		}
+	}
+	if !hasLetter || !hasDigit {
+		return "password must contain at least one letter and one number"
+	}
 	return ""
 }
 

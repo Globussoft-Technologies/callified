@@ -52,10 +52,9 @@ func (waSend) SendText(ctx context.Context, cfg wa.ChannelConfig, toPhone, text 
 	return wa.SendText(ctx, cfg, toPhone, text)
 }
 
-// waChannelConfig converts DB config to wa.ChannelConfig.
-func (s *Server) waChannelConfig(orgID int64, provider, phone, apiKey, appID string, defaultProductID int64) wa.ChannelConfig {
-	return wa.ChannelConfig{OrgID: orgID, Provider: provider, PhoneNumber: phone, APIKey: apiKey, AppID: appID, DefaultProductID: defaultProductID}
-}
+
+
+
 
 // New creates a new API server.
 func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Initiator, llmProvider *llm.Provider, logger *zap.Logger) *Server {
@@ -82,6 +81,18 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 // SetWAAgent wires the WhatsApp AI agent after construction.
 func (s *Server) SetWAAgent(agent *wa.Agent) {
 	s.waAgent = agent
+}
+
+// waChannelConfig constructs a wa.ChannelConfig from individual fields.
+func (s *Server) waChannelConfig(orgID int64, provider, phoneNumber, apiKey, appID string, defaultProductID int64) wa.ChannelConfig {
+	return wa.ChannelConfig{
+		OrgID:            orgID,
+		Provider:         provider,
+		PhoneNumber:      phoneNumber,
+		APIKey:           apiKey,
+		AppID:            appID,
+		DefaultProductID: defaultProductID,
+	}
 }
 
 // RegisterRoutes mounts all REST handlers onto the given mux.

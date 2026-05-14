@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -32,6 +32,7 @@ export default function ProductsTab({
   const [productPrompts, setProductPrompts] = React.useState({});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
+  const [nameError, setNameError] = useState('');
 
   React.useEffect(() => {
     if (!orgProducts || orgProducts.length === 0) return;
@@ -161,22 +162,26 @@ export default function ProductsTab({
                   fontSize: 13, fontFamily: T.font, cursor: 'pointer',
                 }}>+ Add Product</button>
             ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input data-testid="product-name-input" autoFocus
                   placeholder="Product name (e.g. AdsGPT)..."
-                  value={newProductName} onChange={e => setNewProductName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddProduct()}
-                  style={{ ...inputStyle, width: 220, height: 36 }} />
-                <button onClick={handleAddProduct} style={{
+                  value={newProductName}
+                  onChange={e => { setNewProductName(e.target.value); if (nameError) setNameError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { if (!newProductName.trim()) { setNameError('Product name is required'); return; } setNameError(''); handleAddProduct(); } }}
+                  style={{ ...inputStyle, width: 220, height: 36, border: nameError ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+                <button onClick={() => { if (!newProductName.trim()) { setNameError('Product name is required'); return; } setNameError(''); handleAddProduct(); }} style={{
                   padding: '0 14px', height: 36, borderRadius: 8, border: 'none',
                   background: T.green, color: '#fff', fontWeight: 600, fontSize: 13,
                   fontFamily: T.font, cursor: 'pointer',
                 }}>Add</button>
-                <button onClick={() => { setShowProductInput(false); setNewProductName(''); }} style={{
+                <button onClick={() => { setShowProductInput(false); setNewProductName(''); setNameError(''); }} style={{
                   padding: '0 10px', height: 36, borderRadius: 8,
                   border: `1px solid ${T.border}`, background: T.card,
                   color: T.muted, fontSize: 13, cursor: 'pointer', fontFamily: T.font,
                 }}>✕</button>
+              </div>
+              {nameError && <span style={{ color: T.red, fontSize: '0.72rem', marginLeft: 2 }}>{nameError}</span>}
               </div>
             )}
           </div>

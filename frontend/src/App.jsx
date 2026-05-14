@@ -168,6 +168,8 @@ export default function App() {
         <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/receptionist" element={<ReceptionistPage />} />
+        <Route path="/rag" element={<Navigate to="/knowledge" replace />} />
+        <Route path="/livelogs" element={<Navigate to="/logs" replace />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />
       </Routes>
       </main>

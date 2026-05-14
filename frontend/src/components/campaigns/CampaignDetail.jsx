@@ -482,9 +482,14 @@ export default function CampaignDetail({
           <input className="form-input" placeholder="Phone (10 digits)" value={qaPhone}
             inputMode="numeric" maxLength={10} pattern="\d{10}"
             onChange={e => {
-              const v = e.target.value.replace(/\D/g, '').slice(0, 10);
+              const raw = e.target.value;
+              const v = raw.replace(/\D/g, '').slice(0, 10);
               setQaPhone(v);
-              if (qaPhoneErr) setQaPhoneErr('');
+              if (/\D/.test(raw)) {
+                setQaPhoneErr('Only digits are accepted');
+              } else if (qaPhoneErr) {
+                setQaPhoneErr('');
+              }
             }}
             style={{ ...inputStyle, width: 160, height: 32, border: qaPhoneErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
           {qaPhoneErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaPhoneErr}</span>}

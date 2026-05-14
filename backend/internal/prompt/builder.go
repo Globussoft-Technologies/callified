@@ -199,6 +199,17 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		systemPrompt = buildDefaultPrompt(pc)
 	}
 
+	// Append pronunciation guide so the LLM uses phonetic forms directly in its
+	// responses, which lets the TTS engine synthesise them correctly.
+	if prons, err := b.db.GetAllPronunciations(); err == nil && len(prons) > 0 {
+		var pb strings.Builder
+		pb.WriteString("\n\n## PRONUNCIATION\nWhen saying these words, use the phonetic spelling shown:\n")
+		for _, p := range prons {
+			fmt.Fprintf(&pb, "- Say %q as %q\n", p.Word, p.Phonetic)
+		}
+		systemPrompt += pb.String()
+	}
+
 	greeting := buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang)
 
 	return &CallContext{
