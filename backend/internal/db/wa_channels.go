@@ -86,14 +86,17 @@ func (d *DB) GetWAChannelConfigByPhone(provider, phone string) (*WAChannelSettin
 		SELECT id, org_id, COALESCE(provider,''), COALESCE(phone_number,''),
 		COALESCE(api_key,''), COALESCE(app_id,''), COALESCE(webhook_url,''),
 		COALESCE(webhook_secret,''),
+		COALESCE(credentials,'{}'), COALESCE(default_product_id,0),
 		COALESCE(is_active,1), COALESCE(ai_enabled,0),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM wa_channel_configs WHERE provider=? AND phone_number=? AND is_active=1
 		LIMIT 1`, provider, phone)
 	var c WAChannelSettings
 	var active, aiEnabled int
+	var credsJSON string
 	err := row.Scan(&c.ID, &c.OrgID, &c.Provider, &c.PhoneNumber,
 		&c.APIKey, &c.AppID, &c.WebhookURL, &c.WebhookSecret,
+		&credsJSON, &c.DefaultProductID,
 		&active, &aiEnabled, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -101,6 +104,8 @@ func (d *DB) GetWAChannelConfigByPhone(provider, phone string) (*WAChannelSettin
 	if err != nil {
 		return nil, err
 	}
+	c.Credentials = map[string]string{}
+	_ = json.Unmarshal([]byte(credsJSON), &c.Credentials)
 	c.IsActive = active == 1
 	c.AIEnabled = aiEnabled == 1
 	return &c, nil
@@ -116,6 +121,7 @@ func (d *DB) GetSingleActiveWAChannelConfig(provider string) (*WAChannelSettings
 		SELECT id, org_id, COALESCE(provider,''), COALESCE(phone_number,''),
 		COALESCE(api_key,''), COALESCE(app_id,''), COALESCE(webhook_url,''),
 		COALESCE(webhook_secret,''),
+		COALESCE(credentials,'{}'), COALESCE(default_product_id,0),
 		COALESCE(is_active,1), COALESCE(ai_enabled,0),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM wa_channel_configs WHERE provider=? AND is_active=1
@@ -132,11 +138,15 @@ func (d *DB) GetSingleActiveWAChannelConfig(provider string) (*WAChannelSettings
 		}
 		var c WAChannelSettings
 		var active, aiEnabled int
+		var credsJSON string
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Provider, &c.PhoneNumber,
 			&c.APIKey, &c.AppID, &c.WebhookURL, &c.WebhookSecret,
+			&credsJSON, &c.DefaultProductID,
 			&active, &aiEnabled, &c.CreatedAt); err != nil {
 			return nil, err
 		}
+		c.Credentials = map[string]string{}
+		_ = json.Unmarshal([]byte(credsJSON), &c.Credentials)
 		c.IsActive = active == 1
 		c.AIEnabled = aiEnabled == 1
 		found = &c

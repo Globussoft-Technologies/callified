@@ -195,6 +195,43 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
           {(orgProducts || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
 
+        {/* Product knowledge preview — shown when a product is selected */}
+        {defaultProduct && (() => {
+          const prod = (orgProducts || []).find(p => String(p.id) === String(defaultProduct));
+          if (!prod) return null;
+          const hasInfo = prod.scraped_info || prod.manual_notes || prod.agent_persona;
+          return (
+            <div style={{ margin: '8px 0 4px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', padding: '10px 12px' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6366f1', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                AI will chat as: {prod.name}
+              </div>
+              {prod.agent_persona ? (
+                <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: 1.5, marginBottom: prod.scraped_info || prod.manual_notes ? '6px' : 0 }}>
+                  <span style={{ fontWeight: 600, color: '#64748b' }}>Persona: </span>{prod.agent_persona.slice(0, 160)}{prod.agent_persona.length > 160 ? '…' : ''}
+                </div>
+              ) : null}
+              {(prod.scraped_info || prod.manual_notes) ? (
+                <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                  {prod.scraped_info ? '✅ Product info available' : ''}
+                  {prod.scraped_info && prod.manual_notes ? ' · ' : ''}
+                  {prod.manual_notes ? '📝 Manual notes available' : ''}
+                </div>
+              ) : (
+                !prod.agent_persona && (
+                  <div style={{ fontSize: '0.78rem', color: '#b45309' }}>
+                    No product info yet — go to Product Knowledge tab to add details.
+                  </div>
+                )
+              )}
+              {!hasInfo && (
+                <div style={{ fontSize: '0.78rem', color: '#b45309', marginTop: '2px' }}>
+                  No product details yet — add scraped info or manual notes in the Product Knowledge tab.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '1rem 0' }}>
           <label style={{ ...labelStyle, margin: 0 }}>Auto-Reply</label>
           <button onClick={() => setAutoReply(!autoReply)}
@@ -781,9 +818,10 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         const data = await res.json();
         const convos = Array.isArray(data) ? data : (data.conversations || []);
         setConversations(convos);
-        // Build AI-enabled map
+        // AI is "on" when conversation is NOT muted — is_muted is the actual
+        // gate checked by the webhook handler.
         const map = {};
-        convos.forEach(c => { map[c.phone || c.contact_phone] = c.ai_active !== false; });
+        convos.forEach(c => { map[c.phone || c.contact_phone] = !c.is_muted; });
         setAiEnabled(map);
       }
     } catch (e) { console.error('Failed to fetch conversations', e); }
@@ -863,6 +901,8 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ muted }),
       });
+      // Keep aiEnabled state in sync so the chat header toggle reflects immediately
+      setAiEnabled(prev => ({ ...prev, [phone]: !muted }));
       fetchConversations();
     } catch (e) { console.error(e); }
   };
@@ -896,18 +936,25 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     } catch (e) { console.error(e); }
   };
 
-  /* ── Toggle AI ── */
+  /* ── Toggle AI (per-conversation) ──
+     Uses the mute endpoint — the webhook handler checks is_muted to gate
+     AI replies, so muted=true means AI off and muted=false means AI on.
+     The old toggle-ai endpoint updated a different column that was never
+     checked, so we route through mute here for correctness. */
   const toggleAi = async () => {
     if (!selectedPhone) return;
-    
-    const current = aiEnabled[selectedPhone] !== false;
+    const aiOn = aiEnabled[selectedPhone] !== false;
+    const newMuted = aiOn; // turning AI off = muting
     try {
-      await apiFetch(`${API_URL}/wa/toggle-ai/${encodeURIComponent(selectedPhone)}`, {
+      await apiFetch(`${API_URL}/wa/conversations/${encodeURIComponent(selectedPhone)}/mute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: !current }),
+        body: JSON.stringify({ muted: newMuted }),
       });
-      setAiEnabled(prev => ({ ...prev, [selectedPhone]: !current }));
+      setAiEnabled(prev => ({ ...prev, [selectedPhone]: !aiOn }));
+      setConversations(prev => prev.map(c =>
+        c.phone === selectedPhone ? { ...c, is_muted: newMuted } : c
+      ));
     } catch (e) { console.error(e); }
   };
 

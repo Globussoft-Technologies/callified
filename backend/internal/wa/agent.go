@@ -45,8 +45,11 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		return "", nil // media-only message, no AI response
 	}
 
-	// Get recent chat history (last 10 messages)
-	history, _ := a.db.GetWAChatHistory(convID, 10)
+	// Get recent chat history (last 4 messages = ~2 exchanges). Keeping this
+	// short prevents old AI messages — generated before a product was configured
+	// — from polluting the context and causing the model to hallucinate the
+	// wrong product category.
+	history, _ := a.db.GetWAChatHistory(convID, 4)
 	var chatHistory []llm.ChatMessage
 	for i := len(history) - 1; i >= 0; i-- {
 		h := history[i]
@@ -57,17 +60,17 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		chatHistory = append(chatHistory, llm.ChatMessage{Role: role, Text: h.MessageText})
 	}
 
-	// Retrieve RAG context if available
+	// Retrieve RAG context scoped to this org.
 	ragContext := ""
 	if a.ragClient != nil {
-		ragContext, _ = a.ragClient.RetrieveContext(ctx, msg.Text, 0, 3)
+		ragContext, _ = a.ragClient.RetrieveContext(ctx, msg.Text, cfg.OrgID, 3)
 	}
 
 	// Build system prompt from the configured product; fall back to generic.
 	systemPrompt := a.buildSystemPrompt(cfg.DefaultProductID, ragContext)
 
 	// Generate AI response
-	reply, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 200)
+	reply, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 300)
 	if err != nil {
 		a.log.Warn("wa agent: LLM failed", zap.Error(err))
 		return "", nil
@@ -89,10 +92,13 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 }
 
 // buildSystemPrompt constructs the system prompt for the AI. When a product
-// is configured, its agent_persona, call_flow_instructions, manual_notes, and
-// scraped_info are injected so the AI speaks as that product's sales agent.
-// Falls back to a generic WhatsApp assistant prompt when no product is set.
+// is configured, the product's agent_persona becomes the AI's core identity,
+// its scraped_info and manual_notes provide product knowledge, and
+// call_flow_instructions guide the conversation. Falls back to a generic
+// WhatsApp assistant when no product is set.
 func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
+	const chatRules = "Be concise and friendly — keep replies under 3 sentences unless the customer asks for details. Reply in the same language the customer uses. Do not mention call scripts or phone steps; this is a WhatsApp chat."
+
 	var prompt string
 
 	if productID > 0 {
@@ -100,35 +106,48 @@ func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
 		if err == nil && product != nil {
 			var parts []string
 
+			// Hard constraint first so Gemini cannot hallucinate unrelated
+			// products, even when the conversation history contains prior AI
+			// messages that mentioned the wrong products. Those prior messages
+			// were generated before the product was configured and must be
+			// disregarded completely.
+			parts = append(parts, "CRITICAL INSTRUCTION: You are exclusively a representative of "+product.Name+
+				". Disregard ANY prior AI messages in this conversation that mention products, "+
+				"categories, or services not related to "+product.Name+
+				" — those were sent in error. Never claim to sell electronics, home goods, "+
+				"apparel, or anything not described in the product information below. "+
+				"If asked about unrelated products, clearly state that you only represent "+product.Name+".")
+
+			// Agent persona is the AI's identity after the constraint.
 			if product.AgentPersona != "" {
-				parts = append(parts, "## Agent Persona\n"+product.AgentPersona)
-			}
-			if product.CallFlowInstructions != "" {
-				parts = append(parts, "## Instructions\n"+product.CallFlowInstructions)
-			}
-			if product.ManualNotes != "" {
-				parts = append(parts, "## Product Notes\n"+product.ManualNotes)
-			}
-			if product.ScrapedInfo != "" {
-				parts = append(parts, "## Product Information\n"+product.ScrapedInfo)
+				parts = append(parts, product.AgentPersona)
 			}
 
-			if len(parts) > 0 {
-				prompt = "You are a WhatsApp sales assistant. Be concise and friendly — keep replies under 3 sentences unless the customer asks for details. Reply in the same language the customer uses.\n\n" +
-					strings.Join(parts, "\n\n")
+			// Product knowledge the AI can draw on to answer questions.
+			if product.ScrapedInfo != "" {
+				parts = append(parts, "## About "+product.Name+"\n"+product.ScrapedInfo)
 			}
+			if product.ManualNotes != "" {
+				parts = append(parts, "## Additional Notes\n"+product.ManualNotes)
+			}
+
+			// Conversation guide (call-flow adapted for chat).
+			if product.CallFlowInstructions != "" {
+				parts = append(parts, "## Conversation Guide\n"+product.CallFlowInstructions)
+			}
+
+			prompt = strings.Join(parts, "\n\n") + "\n\n" + chatRules
 		}
 	}
 
 	if prompt == "" {
-		prompt = "You are a helpful WhatsApp sales assistant. Be concise, friendly, and professional. " +
-			"Keep responses under 3 sentences unless the user asks a detailed question."
+		prompt = "You are a helpful WhatsApp sales assistant. " + chatRules
 	}
 
-	prompt += "\n\nIf you cannot help, offer to connect the customer with a human agent by saying " + humanTakeover + "."
+	prompt += "\n\nIf you cannot help the customer, offer to connect them with a human agent by saying " + humanTakeover + "."
 
 	if ragContext != "" {
-		prompt += "\n\n## Relevant Knowledge Base Context\n" + ragContext
+		prompt += "\n\n## Relevant Knowledge Base\n" + ragContext
 	}
 
 	return prompt
