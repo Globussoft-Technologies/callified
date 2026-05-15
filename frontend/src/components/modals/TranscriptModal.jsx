@@ -56,76 +56,96 @@ function extractAgentName(turns) {
 }
 
 const SENTIMENT_STYLE = {
-  positive: { color: '#4ade80', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', emoji: '😊', label: 'positive' },
-  neutral:  { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐', label: 'neutral' },
-  negative: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)', emoji: '☹️', label: 'negative' },
-  annoyed:  { color: '#fb923c', bg: 'rgba(251,146,60,0.12)', border: 'rgba(251,146,60,0.3)', emoji: '😤', label: 'annoyed' },
+  positive: { color: '#4ade80', bg: 'rgba(34,197,94,0.12)', border: 'rgba(34,197,94,0.3)', emoji: '😊' },
+  neutral:  { color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐' },
+  negative: { color: '#f87171', bg: 'rgba(248,113,113,0.12)', border: 'rgba(248,113,113,0.3)', emoji: '☹️' },
+  annoyed:  { color: '#fb923c', bg: 'rgba(251,146,60,0.12)', border: 'rgba(251,146,60,0.3)', emoji: '😤' },
 };
 
-// Render the conclusion card for a single call.
+// Render the AI conclusion for a single call.
 //
-// Rules:
-// - If the call had no real interaction (zero user turns OR duration < 10s),
-//   render nothing. A one-sided greeting or hang-up has no signal worth
-//   summarizing, and any Gemini score on it is misleading.
-// - If the saved review has no real Gemini commentary (no summary text, no
-//   went-well/wrong, no failure reason, no insight), render nothing rather
-//   than show a half-empty card with just badges.
-// - Sentiment + emoji are shown only when Gemini actually returned a
-//   sentiment. No score-derived fallback — if the model didn't say "positive"
-//   we don't pretend it did.
-// - Stars clamp to 0–5 defensively in case the DB still has legacy
-//   out-of-range values (Gemini has historically returned 7, 8, 10).
-function ConclusionCard({ transcriptId, turns, durationS }) {
+// New design (user request: "after complete of interaction need to get,
+// generate conclusion properly"):
+// - ALWAYS shows the card when the call had at least one transcript turn
+//   (no 10-second floor, no "skip one-sided" gate — every call gets a
+//   conclusion).
+// - Calls POST /api/transcripts/{id}/conclusion which returns the cached
+//   review if present, otherwise asks Gemini fresh. The user can hit the
+//   ↻ button to force a regenerate.
+// - Renders a friendly multi-section breakdown: summary, customer
+//   sentiment, what went well/wrong, suggested next step. Empty fields
+//   are quietly skipped so a partial response still looks clean.
+function ConclusionCard({ transcriptId, turns }) {
   const { apiFetch } = useAuth();
-  const [state, setState] = useState({ status: 'loading', review: null });
+  const [state, setState] = useState({ status: 'idle', review: null, error: '' });
 
-  // Count user turns from the rendered transcript itself — that way we can
-  // hide the card for legacy one-sided rows even when the backend still
-  // returns them. Source of truth for "did interaction happen" is the
-  // transcript, not the review row's score.
-  const userTurnCount = (Array.isArray(turns) ? turns : []).reduce((n, t) => {
-    const role = (t && t.role ? String(t.role) : '').toLowerCase();
-    return role === 'user' ? n + 1 : n;
-  }, 0);
-  const interactionHappened = userTurnCount >= 1 && (!durationS || durationS >= 10);
+  const turnCount = Array.isArray(turns) ? turns.length : 0;
+  const interactionHappened = turnCount >= 1;
+
+  const fetchConclusion = React.useCallback((force = false) => {
+    if (!transcriptId) return;
+    setState((s) => ({ ...s, status: 'loading', error: '' }));
+    const qs = force ? '?force=1' : '';
+    apiFetch(`${API_URL}/transcripts/${transcriptId}/conclusion${qs}`, { method: 'POST' })
+      .then(async (res) => {
+        if (res.status === 204) {
+          setState({ status: 'empty', review: null, error: '' });
+          return;
+        }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setState({ status: 'error', review: null, error: body?.error || `HTTP ${res.status}` });
+          return;
+        }
+        setState({ status: 'ready', review: body, error: '' });
+      })
+      .catch((e) => {
+        setState({ status: 'error', review: null, error: e?.message || 'network error' });
+      });
+  }, [apiFetch, transcriptId]);
 
   useEffect(() => {
     if (!transcriptId || !interactionHappened) return;
-    let cancelled = false;
-    setState({ status: 'loading', review: null });
-    apiFetch(`${API_URL}/transcripts/${transcriptId}/review`)
-      .then(async (res) => {
-        if (cancelled) return;
-        if (res.status === 404 || !res.ok) {
-          setState({ status: 'hidden', review: null });
-          return;
-        }
-        const review = await res.json();
-        setState({ status: 'ready', review });
-      })
-      .catch(() => { if (!cancelled) setState({ status: 'hidden', review: null }); });
-    return () => { cancelled = true; };
-  }, [apiFetch, transcriptId, interactionHappened]);
+    fetchConclusion(false);
+  }, [fetchConclusion, transcriptId, interactionHappened]);
 
-  // No interaction → no conclusion. Hard rule.
   if (!interactionHappened) return null;
-  if (state.status === 'hidden') return null;
 
-  const wrap = (children) => (
+  const wrap = (children, headerExtra = null) => (
     <div style={{
       marginTop: '1rem', padding: '12px 14px', borderRadius: '10px',
       background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.2)',
     }}>
-      <div style={{fontSize: '0.78rem', fontWeight: 700, color: '#a78bfa', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px'}}>
-        ✨ AI Conclusion <span style={{fontSize: '0.65rem', fontWeight: 500, color: '#64748b'}}>(Gemini)</span>
+      <div style={{fontSize: '0.78rem', fontWeight: 700, color: '#a78bfa', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px'}}>
+        <span style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+          ✨ AI Conclusion
+          <span style={{fontSize: '0.65rem', fontWeight: 500, color: '#64748b'}}>(Gemini)</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => fetchConclusion(true)}
+          disabled={state.status === 'loading'}
+          title="Regenerate"
+          style={{
+            background: 'transparent', border: '1px solid rgba(167,139,250,0.3)',
+            color: '#a78bfa', borderRadius: '6px', padding: '2px 8px',
+            fontSize: '0.7rem', cursor: state.status === 'loading' ? 'wait' : 'pointer',
+          }}
+        >↻ Regenerate</button>
       </div>
+      {headerExtra}
       {children}
     </div>
   );
 
-  if (state.status === 'loading') {
-    return wrap(<div style={{color: '#64748b', fontSize: '0.85rem'}}>Loading analysis…</div>);
+  if (state.status === 'loading' || state.status === 'idle') {
+    return wrap(<div style={{color: '#64748b', fontSize: '0.85rem'}}>Generating conclusion…</div>);
+  }
+  if (state.status === 'error') {
+    return wrap(<div style={{color: '#fca5a5', fontSize: '0.8rem'}}>Could not generate conclusion: {state.error}</div>);
+  }
+  if (state.status === 'empty') {
+    return wrap(<div style={{color: '#64748b', fontSize: '0.85rem'}}>No transcript turns to analyse.</div>);
   }
 
   const r = state.review || {};
@@ -135,15 +155,9 @@ function ConclusionCard({ transcriptId, turns, durationS }) {
   const failureReason = (r.failure_reason || '').trim();
   const suggestion = (r.prompt_improvement_suggestion || '').trim();
   const insights = (r.insights || '').trim();
-  const hasAnyText = !!(summary || wentWell || wentWrong || failureReason || suggestion || insights);
-
-  // Don't render an empty card with only badges — if Gemini gave no prose, the
-  // conclusion isn't informative. Hide entirely.
-  if (!hasAnyText) return null;
 
   const score = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
   const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
-
   const rawSent = (r.customer_sentiment || r.sentiment || '').toLowerCase();
   const sStyle = SENTIMENT_STYLE[rawSent] || null;
 
@@ -181,10 +195,10 @@ function ConclusionCard({ transcriptId, turns, durationS }) {
         <div><span style={{color: '#f87171', fontWeight: 600}}>What went wrong: </span>{wentWrong}</div>
       )}
       {failureReason && !r.appointment_booked && (
-        <div><span style={{color: '#fb923c', fontWeight: 600}}>Failure reason: </span>{failureReason}</div>
+        <div><span style={{color: '#fb923c', fontWeight: 600}}>Why no booking: </span>{failureReason}</div>
       )}
       {suggestion && (
-        <div><span style={{color: '#a78bfa', fontWeight: 600}}>Suggested fix: </span>{suggestion}</div>
+        <div><span style={{color: '#a78bfa', fontWeight: 600}}>Suggested next step: </span>{suggestion}</div>
       )}
       {!suggestion && insights && (
         <div><span style={{color: '#a78bfa', fontWeight: 600}}>Coaching insight: </span>{insights}</div>
@@ -311,7 +325,6 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                   <ConclusionCard
                     transcriptId={t.id}
                     turns={Array.isArray(t.transcript) ? t.transcript : []}
-                    durationS={Number(t.call_duration_s) || 0}
                   />
                 )}
               </div>

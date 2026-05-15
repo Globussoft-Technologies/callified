@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -98,6 +99,12 @@ func (s *Server) waListSessions(w http.ResponseWriter, r *http.Request) {
 // raw string (e.g. "2@DTMUH…"); the frontend turns it into an image with
 // qrcode.react. The QR expires after 45s — clients should call the qr
 // endpoint below to refresh.
+//
+// Side-effect: we also push our webhook URL up to WaSender (best-effort)
+// so the moment the user finishes the QR scan, inbound messages start
+// flowing back to this backend. Sync failures don't block the connect
+// response — the operator can still scan, and the explicit sync-webhook
+// button surfaces the error if it fails.
 func (s *Server) waConnectSession(w http.ResponseWriter, r *http.Request) {
 	pat := s.waSessionPAT(w, r)
 	if pat == "" {
@@ -107,6 +114,12 @@ func (s *Server) waConnectSession(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "session id required")
 		return
+	}
+	ac := getAuth(r)
+	if err := s.syncWaSenderWebhook(r.Context(), ac.OrgID, id, pat); err != nil {
+		// Logged but non-fatal — see comment above.
+		s.logger.Sugar().Warnw("wa connect: webhook sync failed (continuing)",
+			"session", id, "err", err.Error())
 	}
 	s.proxyToWaSender(w, r, http.MethodPost,
 		fmt.Sprintf("/api/whatsapp-sessions/%s/connect", id), pat, nil)
@@ -127,6 +140,85 @@ func (s *Server) waSessionQR(w http.ResponseWriter, r *http.Request) {
 	}
 	s.proxyToWaSender(w, r, http.MethodGet,
 		fmt.Sprintf("/api/whatsapp-sessions/%s/qrcode", id), pat, nil)
+}
+
+// POST /api/wa/session/{id}/sync-webhook — push our public webhook URL +
+// secret to WaSender for this session. Without this step, WaSender never
+// learns where to POST inbound messages, so the AI agent never sees a
+// customer's "hlo" arriving on real WhatsApp.
+//
+// Idempotent: safe to call repeatedly. Also invoked automatically after a
+// successful connect (see waConnectSession below) so the operator never
+// has to think about it. We derive the URL from cfg.PublicServerURL so
+// the same code works on testgo / testgo1 / local-ngrok without a
+// per-env override.
+func (s *Server) waSyncWebhook(w http.ResponseWriter, r *http.Request) {
+	pat := s.waSessionPAT(w, r)
+	if pat == "" {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "session id required")
+		return
+	}
+	ac := getAuth(r)
+	if err := s.syncWaSenderWebhook(r.Context(), ac.OrgID, id, pat); err != nil {
+		writeError(w, http.StatusBadGateway, "sync to WaSender failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"synced":      true,
+		"webhook_url": s.cfg.PublicServerURL + "/wa/webhook/wasender",
+	})
+}
+
+// syncWaSenderWebhook PUTs our public webhook URL and stored secret to
+// WaSender's session-update endpoint. Used by the explicit sync-webhook
+// route and by the post-connect auto-sync. Returns nil on 2xx, otherwise
+// the WaSender error body so the operator can see what went wrong.
+func (s *Server) syncWaSenderWebhook(ctx context.Context, orgID int64, sessionID, pat string) error {
+	publicURL := strings.TrimRight(s.cfg.PublicServerURL, "/")
+	if publicURL == "" || strings.HasPrefix(publicURL, "http://localhost") {
+		return fmt.Errorf("PUBLIC_SERVER_URL must be a public HTTPS URL — got %q", publicURL)
+	}
+	webhookURL := publicURL + "/wa/webhook/wasender"
+
+	// Look up the stored secret so WaSender signs every inbound with the
+	// same value our verifier expects. If the org never set one, we send
+	// an empty string — WaSender accepts this and the verifier falls back
+	// to legacy "accept anything" mode (see verifyWaSenderSignature).
+	secret := ""
+	if cfg, _ := s.db.GetSingleActiveWAChannelConfig("wasender"); cfg != nil {
+		secret = cfg.WebhookSecret
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"webhook_url":     webhookURL,
+		"webhook_enabled": true,
+		"webhook_events":  []string{"messages.received", "session.status"},
+		"webhook_secret":  secret,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		wasenderBaseURL+"/api/whatsapp-sessions/"+sessionID, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+pat)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := waSenderHTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(buf))
+	}
+	s.logger.Sugar().Infow("wa session: synced webhook to WaSender",
+		"org", orgID, "session", sessionID, "webhook_url", webhookURL)
+	return nil
 }
 
 // POST /api/wa/session/{id}/disconnect — force WaSender to drop the
@@ -150,10 +242,3 @@ func (s *Server) waDisconnectSession(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("/api/whatsapp-sessions/%s/disconnect", id), pat, nil)
 }
 
-// fmtQuery is a tiny helper for forwarding query strings unchanged. Not
-// currently needed (none of the session endpoints take query params),
-// kept as a placeholder so the proxy structure stays consistent if we
-// later add /api/whatsapp-sessions?status=connected etc. The blank-import
-// avoids "imported and not used" while leaving the helper visible.
-var _ = strings.TrimSpace
-var _ = json.Marshal

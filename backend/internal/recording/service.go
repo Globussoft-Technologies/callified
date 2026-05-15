@@ -97,12 +97,28 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		zap.Float32("duration_s", req.DurationS))
 
 	// 4. Run Gemini analysis (non-critical — log and continue on failure).
+	//
+	// Skip analysis entirely for very short / one-sided calls: a 2-3 second
+	// hang-up or a no-reply greeting has nothing meaningful to analyze, and
+	// asking Gemini to score it tends to produce inflated 4/5 + positive
+	// because Gemini judges the agent's intro instead of the call outcome.
+	// Skipping means no call_reviews row is saved, so the UI's conclusion
+	// card naturally stays hidden for these calls.
+	userTurns := 0
+	for _, m := range req.ChatHistory {
+		if strings.EqualFold(m.Role, "user") {
+			userTurns++
+		}
+	}
+	shouldAnalyze := s.llm != nil && len(req.ChatHistory) > 0 && req.DurationS >= 10 && userTurns >= 1
+
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
 		OrgID:        req.OrgID,
 		Sentiment:    "neutral",
 	}
-	if s.llm != nil && len(req.ChatHistory) > 0 {
+	analyzed := false
+	if shouldAnalyze {
 		if a, err := s.analyzeCall(ctx, req.ChatHistory); err != nil {
 			s.log.Warn("recording: Gemini analysis failed", zap.Error(err))
 		} else {
@@ -114,12 +130,23 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.WhatWentWrong = a.WhatWentWrong
 			review.Summary = a.Summary
 			review.Insights = a.Insights
+			review.PromptImprovementSuggestion = a.PromptImprovementSuggestion
+			analyzed = true
 		}
+	} else {
+		s.log.Info("recording: skipping Gemini analysis (short/one-sided)",
+			zap.Int64("transcript_id", transcriptID),
+			zap.Float32("duration_s", req.DurationS),
+			zap.Int("user_turns", userTurns))
 	}
 
-	// 5. Save call review.
-	if err := s.database.SaveCallReview(review); err != nil {
-		s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+	// 5. Save call review only when Gemini actually produced commentary.
+	// Saving an empty-default row would render in the UI as a misleading
+	// "0/5 neutral / no appointment" card with no real conclusion.
+	if analyzed {
+		if err := s.database.SaveCallReview(review); err != nil {
+			s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+		}
 	}
 
 	// 5b. Deduct call duration from the org's prepaid credit balance.
@@ -196,26 +223,64 @@ func (s *Service) saveWAV(streamSid string, data []byte) string {
 // ── Gemini analysis ───────────────────────────────────────────────────────────
 
 type analysis struct {
-	QualityScore      float64 `json:"quality_score"`
-	Sentiment         string  `json:"sentiment"`
-	AppointmentBooked bool    `json:"appointment_booked"`
-	FailureReason     string  `json:"failure_reason"`
-	WhatWentWell      string  `json:"what_went_well"`
-	WhatWentWrong     string  `json:"what_went_wrong"`
-	Summary           string  `json:"summary"`
-	Insights          string  `json:"insights"`
+	QualityScore                float64 `json:"quality_score"`
+	Sentiment                   string  `json:"sentiment"`
+	AppointmentBooked           bool    `json:"appointment_booked"`
+	FailureReason               string  `json:"failure_reason"`
+	WhatWentWell                string  `json:"what_went_well"`
+	WhatWentWrong               string  `json:"what_went_wrong"`
+	Summary                     string  `json:"summary"`
+	Insights                    string  `json:"insights"`
+	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
-const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the provided transcript and return ONLY a JSON object with these exact keys:
-- "quality_score": float 0-5 (overall agent quality, where 5 is excellent)
-- "sentiment": "positive", "neutral", or "negative" (customer sentiment at end)
-- "appointment_booked": true or false
-- "failure_reason": string (why the call didn't convert, empty string if it did)
-- "what_went_well": string (1 sentence on what the agent did well)
-- "what_went_wrong": string (1 sentence on what the agent could improve)
-- "summary": string (1-2 sentence call summary)
-- "insights": string (key coaching insight for the agent)
-Return ONLY valid JSON. No markdown, no explanation. Keep each string under 200 chars.`
+// Analysis is the exported view of the LLM scoring output. Mirrors `analysis`
+// so the API layer can call AnalyzeCall on demand (for the Transcript modal's
+// "regenerate conclusion" flow) without importing internal types.
+type Analysis = analysis
+
+// AnalyzeCall is the public wrapper around analyzeCall. Used by the API
+// layer to (re)generate a call conclusion on demand when the post-call
+// pipeline skipped it (short/one-sided call) or the operator hits a
+// "Regenerate" button. Keeps the same prompt and parsing as the post-call
+// path so the conclusion card stays consistent regardless of who triggered it.
+func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
+	return s.analyzeCall(ctx, history)
+}
+
+// Strict prompt: every prose field MUST be populated (never empty, never
+// omitted), score MUST be an integer 1-5, and the analysis is always written
+// in English regardless of the transcript language.
+//
+// Crucially, the score must reflect CALL OUTCOME (did the customer engage and
+// move toward an appointment?), not just agent technique. A 3-second one-sided
+// greeting where the customer never spoke is a FAILED call and must score
+// 1-2 with neutral sentiment — regardless of how well the AI delivered its
+// intro. Previously Gemini was scoring these 4/5 + positive because it judged
+// the agent's performance instead of the call outcome.
+const analysisSystemPrompt = `You are a sales call quality analyst scoring CALL OUTCOME, not agent technique. Analyze the provided transcript and return ONLY a JSON object with EVERY field populated in English (no nulls, no empty strings, no omitted keys):
+
+SCORING RULES — apply STRICTLY:
+- If the customer never spoke (0 user turns / only the AI delivered a greeting): "quality_score" must be 1 or 2, "sentiment" must be "neutral", "appointment_booked" must be false. The customer's silence is the call outcome — never call this "positive" no matter how well the agent introduced themselves.
+- If the customer spoke only 1-2 short words ("hello", "yes", "ok") and the call ended: score 2. Sentiment "neutral".
+- If the customer engaged but refused or pushed back: score 2-3. Sentiment "negative" or "annoyed" depending on tone.
+- If the customer engaged and the conversation progressed but no booking happened: score 3-4. Sentiment based on customer's actual tone.
+- Only score 5 when an appointment was booked AND the customer sounded positive.
+
+FIELDS:
+- "quality_score": integer 1-5 only (NEVER outside 1-5)
+- "sentiment": "positive" | "neutral" | "negative" | "annoyed" — measure the CUSTOMER's tone, not the agent's
+- "appointment_booked": true or false (true only if a specific date/time was confirmed)
+- "failure_reason": 1 sentence in English on why the call didn't convert; if it did, write "N/A — appointment booked". For no-reply calls, write e.g. "Customer did not respond after greeting — likely hung up or wrong number"
+- "what_went_well": 1-2 sentences in English on what the agent did right. If nothing meaningful happened (no reply), say "Agent delivered greeting clearly but had no chance to engage the customer"
+- "what_went_wrong": 1-2 sentences on what the agent could improve. For no-reply calls, say "No opportunity to engage — call ended before any customer interaction"
+- "summary": 1-2 sentence summary referencing what specifically happened in THIS transcript
+- "insights": 1 coaching insight in English for next time
+- "prompt_improvement_suggestion": 1 specific, actionable instruction to add to the AI system prompt to improve future calls of this kind
+
+The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language. Reference specific things from THIS transcript — never write generic filler.
+
+Return ONLY valid JSON. No markdown, no explanation. Keep each string under 240 chars.`
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)

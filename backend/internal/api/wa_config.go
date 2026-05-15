@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/globussoft/callified-backend/internal/wa"
 )
 
 // GET /api/wa/channels
@@ -415,6 +419,87 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		_, _ = s.db.SaveWAMessage(convID, "outbound", text, "text", "")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "conversation_id": convID, "phone": storedPhone})
+}
+
+// POST /api/wa/send-ai is the composer's "AI ON" path. The operator's text
+// is saved as inbound (simulating the customer), the WA agent runs to
+// generate a reply, and the reply is saved as outbound. Nothing is sent
+// through the real WhatsApp provider — this is for in-dashboard AI testing
+// only. Accepts the same body shape as /api/wa/send so the frontend can
+// switch endpoints based on the AI toggle without reshaping the request.
+func (s *Server) sendWAMessageAI(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	var body struct {
+		ToPhone      string `json:"to_phone"`
+		ContactPhone string `json:"contact_phone"`
+		Message      string `json:"message"`
+		Text         string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	phone := strings.TrimPrefix(strings.TrimSpace(firstNonEmpty(body.ToPhone, body.ContactPhone)), "+")
+	text := strings.TrimSpace(firstNonEmpty(body.Message, body.Text))
+	if phone == "" || text == "" {
+		writeError(w, http.StatusBadRequest, "phone and text required")
+		return
+	}
+	if s.waAgent == nil {
+		writeError(w, http.StatusServiceUnavailable, "AI agent not configured")
+		return
+	}
+
+	// Pick the active provider for this org so the conversation row's
+	// provider column stays consistent with the rest of the inbox. Falls
+	// back to "wasender" only when the org hasn't configured any provider
+	// yet — keeps the test path usable for first-time setup demos.
+	cfgs, _ := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
+	provider := "wasender"
+	for _, c := range cfgs {
+		if c.IsActive {
+			provider = c.Provider
+			break
+		}
+	}
+
+	convID, err := s.db.GetOrCreateWAConversation(ac.OrgID, phone, provider)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create conversation")
+		return
+	}
+	if _, err := s.db.SaveWAMessage(convID, "inbound", text, "text", ""); err != nil {
+		s.logger.Sugar().Warnw("sendWAMessageAI: save inbound", "err", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	channelCfg := wa.ChannelConfig{OrgID: ac.OrgID, Provider: provider}
+	msg := &wa.IncomingMessage{
+		FromPhone:   phone,
+		Text:        text,
+		MessageType: "text",
+		Provider:    provider,
+	}
+	reply, err := s.waAgent.ProcessIncoming(ctx, channelCfg, msg)
+	if err != nil {
+		s.logger.Sugar().Warnw("sendWAMessageAI: agent failed", "err", err)
+		writeError(w, http.StatusBadGateway, "AI generation failed")
+		return
+	}
+	// The agent no longer auto-saves the outbound — the webhook flow
+	// gates the save on a successful provider send. This dashboard test
+	// path skips the provider entirely, so we save the reply directly
+	// here when there's something to show.
+	if strings.TrimSpace(reply) != "" {
+		_, _ = s.db.SaveWAMessage(convID, "outbound", reply, "text", "")
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sent":            true,
+		"conversation_id": convID,
+		"phone":           phone,
+		"reply":           reply,
+	})
 }
 
 // firstNonEmpty returns the first argument that's not the empty string.

@@ -86,22 +86,35 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 	}
 
 	reply = strings.TrimSpace(reply)
+	// Fallback: if the LLM returned only the takeover marker (which we
+	// stripped above), still send a friendly default so the customer
+	// gets *something* on WhatsApp instead of a silent drop. The takeover
+	// itself is already logged for operator follow-up.
 	if reply == "" {
-		return "", nil
+		reply = "Hi! Thanks for reaching out. I've notified a team member who'll get back to you shortly."
 	}
 
-	// 9. Save outbound message
-	if _, err := a.db.SaveWAMessage(convID, "outbound", reply, "text", ""); err != nil {
-		a.log.Warn("wa agent: SaveWAMessage outbound", zap.Error(err))
-	}
+	// Note: the OUTBOUND row is saved by the caller (webhook handler) only
+	// AFTER the provider actually accepts the send. Saving it here meant
+	// a WaSender 200-but-success:false (session disconnected, invalid JID)
+	// left a phantom bubble in the inbox for a message that never went
+	// out — confusing the operator.
+	_ = convID
 
 	return reply, nil
 }
 
 func buildWASystemPrompt(ragContext string) string {
+	// Always answer greetings/small-talk yourself — do NOT escalate to a
+	// human for "hi", "hello", or simple questions. Earlier prompt was too
+	// eager: every greeting came back as just "[HUMAN_TAKEOVER]" which
+	// produced an empty reply and the customer thought the bot was dead.
 	base := `You are a helpful WhatsApp sales assistant. Be concise, friendly, and professional.
 Keep responses under 3 sentences unless the user asks a detailed question.
-If you cannot help, say so briefly and offer to connect them with a human agent by saying ` + humanTakeover + `.`
+Always greet back and try to help yourself first.
+Only include ` + humanTakeover + ` (as the LAST line, after your normal reply) if the user
+explicitly asks for a human agent OR you genuinely cannot answer their question.
+Never reply with just ` + humanTakeover + ` alone — you must always send a friendly text reply too.`
 
 	if ragContext != "" {
 		base += "\n\nRelevant context from knowledge base:\n" + ragContext

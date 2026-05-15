@@ -486,6 +486,141 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 }
 
 
+// ── POST /api/transcripts/{id}/conclusion ────────────────────────────────────
+//
+// (Re)generates the AI conclusion for a single transcript on demand and
+// returns the full CallReview row. Unlike the post-call pipeline this path
+// runs for EVERY interaction with at least one turn — no 10-second floor,
+// no "skip one-sided calls" gate. The UI now wants a visible conclusion on
+// every call (operator request: "after complete of interaction need to get,
+// generate conclusion properly"), so the gating moved here.
+//
+// Idempotent: if a review already exists with prose, it's returned as-is
+// unless the caller passes ?force=1. On regenerate, the row is UPSERTed via
+// SaveCallReview (UNIQUE on transcript_id).
+//
+// Returns 204 when there's truly nothing to analyze (empty turns array and
+// no recording) — the modal will hide the card in that case.
+func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+
+	if s.recordingSvc == nil || s.llmProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "conclusion generation not available on this server")
+		return
+	}
+
+	t, err := s.db.GetTranscriptByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("postTranscriptConclusion: load transcript", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if t == nil {
+		writeError(w, http.StatusNotFound, "transcript not found")
+		return
+	}
+
+	// Return the existing review unchanged unless force=1. This makes the
+	// endpoint cheap to call on every modal open — only the first open
+	// pays the LLM cost.
+	if !force {
+		if existing, _ := s.db.GetCallReviewByTranscript(id); existing != nil &&
+			(existing.Summary != "" || existing.WhatWentWell != "" || existing.WhatWentWrong != "" ||
+				existing.FailureReason != "" || existing.Insights != "") {
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+	}
+
+	// Convert stored transcript JSON ([{role,text},...]) into the llm.ChatMessage
+	// shape AnalyzeCall expects. Role mapping is the inverse of
+	// recording.historyToTranscript: "AI" → "model", anything else → "user".
+	var turns []struct {
+		Role string `json:"role"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+		// Some legacy rows store {"Role","Text"} (capitalised). Try a second
+		// shape so we don't 500 on those.
+		var altTurns []struct {
+			Role string `json:"Role"`
+			Text string `json:"Text"`
+		}
+		if err2 := json.Unmarshal(t.Transcript, &altTurns); err2 != nil {
+			writeError(w, http.StatusUnprocessableEntity, "transcript is not valid JSON turns")
+			return
+		}
+		for _, a := range altTurns {
+			turns = append(turns, struct {
+				Role string `json:"role"`
+				Text string `json:"text"`
+			}{Role: a.Role, Text: a.Text})
+		}
+	}
+
+	if len(turns) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	history := make([]llm.ChatMessage, 0, len(turns))
+	for _, tn := range turns {
+		role := "user"
+		if strings.EqualFold(tn.Role, "AI") || strings.EqualFold(tn.Role, "model") || strings.EqualFold(tn.Role, "agent") {
+			role = "model"
+		}
+		history = append(history, llm.ChatMessage{Role: role, Text: tn.Text})
+	}
+
+	a, err := s.recordingSvc.AnalyzeCall(r.Context(), history)
+	if err != nil {
+		s.logger.Sugar().Warnw("postTranscriptConclusion: LLM analysis failed", "id", id, "err", err)
+		writeError(w, http.StatusBadGateway, "AI analysis failed: "+err.Error())
+		return
+	}
+
+	// Look up org_id from the lead so the review row is correctly tenanted.
+	// Failing to read the org is non-fatal — saves with 0 and the analytics
+	// queries that org-scope will just exclude it.
+	var orgID int64
+	if t.LeadID > 0 {
+		if ld, _ := s.db.GetLeadByID(t.LeadID); ld != nil {
+			orgID = ld.OrgID
+		}
+	}
+	review := &db.CallReview{
+		TranscriptID:                id,
+		OrgID:                       orgID,
+		QualityScore:                a.QualityScore,
+		Sentiment:                   a.Sentiment,
+		AppointmentBooked:           a.AppointmentBooked,
+		FailureReason:               a.FailureReason,
+		WhatWentWell:                a.WhatWentWell,
+		WhatWentWrong:               a.WhatWentWrong,
+		Summary:                     a.Summary,
+		Insights:                    a.Insights,
+		PromptImprovementSuggestion: a.PromptImprovementSuggestion,
+	}
+	if err := s.db.SaveCallReview(review); err != nil {
+		s.logger.Sugar().Warnw("postTranscriptConclusion: save review failed", "id", id, "err", err)
+		// Still return the freshly-computed review so the UI can render
+		// the conclusion even if the persist failed; next reload will
+		// re-trigger the same LLM call, which is fine.
+	}
+	// Re-read so the response contains the canonical row (including any
+	// COALESCEd defaults from the GET path).
+	if saved, _ := s.db.GetCallReviewByTranscript(id); saved != nil {
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	writeJSON(w, http.StatusOK, review)
+}
+
 // ── GET /api/leads/{id}/transcripts ───────────────────────────────────────────
 
 func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {

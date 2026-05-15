@@ -1580,7 +1580,29 @@ def delete_knowledge_file(fid: int, org_id: int):
 # --- CALL REVIEWS ---
 
 def save_call_review(transcript_id: int, campaign_id: int, lead_id: int, analysis: dict):
-    """Save a Gemini-generated call quality review."""
+    """Save a Gemini-generated call quality review.
+
+    Refuses to persist a degenerate analysis (no score AND no commentary) — a
+    half-filled row would render in the UI as "0/5 neutral / no fields" and
+    mislead the user into thinking Gemini actually analyzed the call.
+    Returning None lets the caller log + move on; the UI naturally shows no
+    conclusion card for that transcript.
+    """
+    raw_score = analysis.get('quality_score') or 0
+    try:
+        raw_score = int(raw_score)
+    except (TypeError, ValueError):
+        raw_score = 0
+    # Gemini occasionally returns out-of-range scores (e.g. 7, 8, 10) despite the
+    # 1-5 instruction in the prompt. Clamp here so the stored value never breaks
+    # the "N/5" rendering in the UI.
+    score = max(0, min(5, raw_score))
+    has_text = any(analysis.get(k) for k in (
+        'what_went_well', 'what_went_wrong', 'failure_reason', 'prompt_improvement_suggestion'
+    ))
+    if score <= 0 and not has_text:
+        return None
+
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute('''
@@ -1591,7 +1613,7 @@ def save_call_review(transcript_id: int, campaign_id: int, lead_id: int, analysi
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ''', (
         transcript_id, campaign_id, lead_id,
-        analysis.get('quality_score', 0),
+        score,
         analysis.get('appointment_booked', False),
         analysis.get('customer_sentiment', 'neutral'),
         analysis.get('failure_reason'),
@@ -1626,6 +1648,27 @@ def get_call_review_by_transcript(transcript_id: int) -> Optional[Dict]:
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM call_reviews WHERE transcript_id = %s", (transcript_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def delete_call_review_by_transcript(transcript_id: int) -> int:
+    """Remove any existing review for a transcript. Used by the regenerate
+    endpoint so the new Gemini pass writes a fresh row instead of duplicating."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM call_reviews WHERE transcript_id = %s", (transcript_id,))
+    n = cursor.rowcount
+    conn.close()
+    return n
+
+
+def get_transcript_by_id(transcript_id: int) -> Optional[Dict]:
+    """Fetch a single transcript row (id, lead_id, campaign_id, transcript JSON, etc.)."""
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM call_transcripts WHERE id = %s", (transcript_id,))
     row = cursor.fetchone()
     conn.close()
     return row

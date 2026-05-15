@@ -40,6 +40,7 @@ from database import (
     get_campaign_call_log,
     get_product_prompt, update_product_prompt,
     save_call_review, get_call_reviews_by_campaign, get_call_review_by_transcript,
+    delete_call_review_by_transcript, get_transcript_by_id,
     create_demo_request, get_all_demo_requests,
     create_scheduled_call, get_scheduled_calls_by_org, update_scheduled_call_status,
     get_retries_by_campaign,
@@ -1356,7 +1357,59 @@ def api_get_transcript_review(transcript_id: int, current_user: dict = Depends(g
     review = get_call_review_by_transcript(transcript_id)
     if not review:
         raise HTTPException(status_code=404, detail="No review found for this transcript")
+    # Hide legacy degenerate rows (score 0 AND no commentary at all). These were
+    # written before save_call_review learned to reject empty Gemini outputs, and
+    # they render as a misleading "0/5 neutral / no appointment" card with no
+    # actual conclusion text. Treat them as not-yet-analyzed.
+    score = review.get('quality_score') or 0
+    has_text = any(review.get(k) for k in (
+        'what_went_well', 'what_went_wrong', 'failure_reason', 'prompt_improvement_suggestion'
+    ))
+    if score <= 0 and not has_text:
+        raise HTTPException(status_code=404, detail="No usable review for this transcript")
     return review
+
+
+@api_router.post("/api/transcripts/{transcript_id}/review/regenerate")
+def api_regenerate_transcript_review(transcript_id: int, current_user: dict = Depends(get_current_user)):
+    """Force a fresh Gemini analysis for a transcript. Overwrites any existing
+    review row. Used by the conclusion card to (a) backfill legacy rows that
+    have a score but no commentary text and (b) let the user re-run analysis."""
+    transcript = get_transcript_by_id(transcript_id)
+    if not transcript:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+
+    raw = transcript.get("transcript")
+    try:
+        turns = json.loads(raw) if isinstance(raw, str) else (raw or [])
+    except (json.JSONDecodeError, TypeError):
+        turns = []
+    if not turns:
+        raise HTTPException(status_code=400, detail="Transcript has no turns to analyze")
+
+    # Same gate as the auto-analysis path — don't burn a Gemini call on a 2-3s
+    # hang-up that produced no real conversation.
+    user_turns = sum(1 for t in turns if (t.get("role") or "").lower() == "user")
+    duration = transcript.get("call_duration_s") or 0
+    if duration < 10 or user_turns < 1:
+        raise HTTPException(status_code=400, detail="Call too short or one-sided — no conclusion possible")
+
+    from recording_service import run_gemini_call_analysis
+    try:
+        analysis = run_gemini_call_analysis(turns)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini analysis failed: {e}")
+
+    delete_call_review_by_transcript(transcript_id)
+    new_id = save_call_review(
+        transcript_id=transcript_id,
+        campaign_id=transcript.get("campaign_id"),
+        lead_id=transcript.get("lead_id"),
+        analysis=analysis,
+    )
+    if not new_id:
+        raise HTTPException(status_code=502, detail="Gemini returned empty analysis; nothing saved")
+    return get_call_review_by_transcript(transcript_id)
 
 @api_router.get("/api/campaigns/{campaign_id}/call-insights")
 def api_get_campaign_call_insights(campaign_id: int, current_user: dict = Depends(get_current_user)):

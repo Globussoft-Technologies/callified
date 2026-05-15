@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
+import SsoReturn from './pages/SsoReturn';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -87,6 +88,13 @@ export default function App() {
   }
   if (location.pathname === '/accept-invite') {
     return <AcceptInvitePage />;
+  }
+  // SSO landing must run BEFORE the auth gate — the user arrives here
+  // without a token (the token is in the query string), so the gate would
+  // otherwise bounce them to the login page. SsoReturn stores the token,
+  // hydrates the user, then navigates to ?next=/crm.
+  if (location.pathname === '/sso/return') {
+    return <SsoReturn />;
   }
 
   // ─── AUTH PAGES (after all hooks) ───

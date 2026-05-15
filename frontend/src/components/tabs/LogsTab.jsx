@@ -83,6 +83,23 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
     return () => { cancelled = true; };
   }, [apiFetch, API_URL]);
 
+  // localStorage key for the per-scope "I clicked Clear at this time"
+  // marker. Stored as unix-ms. SSE onmessage drops events with an older
+  // ts so a refresh after Clear stays empty even though the backend
+  // still replays the last 20 history items on connect. Keyed per
+  // scope ("all" or a campaign id) so clearing the firehose doesn't
+  // hide events on the per-campaign detail page (which is a different
+  // component anyway, but defensive).
+  const clearedAtKey = `logsClearedAt:${campaignFilter || 'all'}`;
+  // Ref so the SSE onmessage closure always reads the latest value
+  // (handleClear writes BOTH the ref and localStorage so live events
+  // arriving right after Clear are also filtered).
+  const clearedAtRef = useRef(0);
+  useEffect(() => {
+    const v = Number(localStorage.getItem(clearedAtKey) || 0);
+    clearedAtRef.current = Number.isFinite(v) ? v : 0;
+  }, [clearedAtKey]);
+
   // Subscribe to per-campaign Redis channel when a campaign is selected;
   // fall back to firehose ("all") when no filter. This pushes the campaign
   // filter down to the source so legacy plain-text events also get filtered
@@ -103,9 +120,22 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
       es.onopen = () => { if (!cancelled) setStreamStatus('connected'); };
       es.onerror = () => { if (!cancelled) setStreamStatus('error'); };
       es.onmessage = (ev) => {
-        if (!paused) {
-          setActivityLogs(prev => [...prev.slice(-ACTIVITY_BUFFER), { arrivedAt: Date.now(), line: ev.data }]);
+        if (paused) return;
+        // Drop events older than the operator's last Clear click. The
+        // backend replays the last ~20 history items on every SSE
+        // connect, so without this filter a refresh after Clear would
+        // visually undo the clear.
+        const cutoff = clearedAtRef.current;
+        if (cutoff > 0) {
+          try {
+            const j = JSON.parse(ev.data);
+            if (j && j.ts) {
+              const tsMs = new Date(j.ts).getTime();
+              if (Number.isFinite(tsMs) && tsMs < cutoff) return;
+            }
+          } catch (_) { /* legacy plain-text — keep so we don't blackhole */ }
         }
+        setActivityLogs(prev => [...prev.slice(-ACTIVITY_BUFFER), { arrivedAt: Date.now(), line: ev.data }]);
       };
       activityEsRef.current = es;
     }).catch(() => { if (!cancelled) setStreamStatus('error'); });
@@ -204,9 +234,35 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
 
   useEffect(() => { setPage(1); }, [statusFilter, campaignFilter, dateFrom, dateTo, search]);
 
-  const handleClear = () => {
+  // Clear wipes BOTH the local view AND the Redis history list on the
+  // backend so a page refresh doesn't replay events the operator just
+  // cleared. Scopes to the currently-filtered campaign when set so we don't
+  // blow away every other campaign's history; passing no campaign_id (or
+  // "all") only clears the global firehose. Local state is cleared
+  // optimistically — even if the network call fails we still wipe the
+  // view, and the worst case is that the next SSE reconnect re-pulls the
+  // un-deleted history.
+  const handleClear = async () => {
     setActivityLogs([]);
     if (verboseRef.current) verboseRef.current.innerHTML = '';
+    // Persist a "cleared at" marker so refresh stays empty even if the
+    // backend still replays history on connect. Stored per scope so
+    // clearing the firehose doesn't hide events on a specific campaign
+    // view. clearedAtRef makes the cutoff visible to the live SSE
+    // onmessage closure too — events arriving in the brief window
+    // between Clear and a manual refresh are also filtered.
+    const nowMs = Date.now();
+    clearedAtRef.current = nowMs;
+    try { localStorage.setItem(clearedAtKey, String(nowMs)); } catch (_) { /* private mode */ }
+    if (!apiFetch) return;
+    const cid = campaignFilter || 'all';
+    try {
+      // Best-effort backend wipe of the Redis history list. Not load-
+      // bearing for the visible result (the client filter above is),
+      // but it keeps Redis from holding events the operator just
+      // cleared, which is tidier for any out-of-band consumer.
+      await apiFetch(`${API_URL}/campaign-events?campaign_id=${cid}`, { method: 'DELETE' });
+    } catch (_) { /* non-fatal */ }
   };
 
   return (
@@ -344,7 +400,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
                   ) : streamStatus === 'connected' ? (
                     <>
                       <div>Connected — no recent campaign activity.</div>
-                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>The last 7 days of events are replayed on connect; new events appear here in real time.</div>
+                      <div style={{fontSize: '0.8rem', marginTop: '8px'}}>New events stream in as dials happen.</div>
                     </>
                   ) : (
                     <>

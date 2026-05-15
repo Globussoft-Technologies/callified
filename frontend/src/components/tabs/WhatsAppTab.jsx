@@ -327,6 +327,36 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
     }
   };
 
+  // syncWebhook pushes this backend's public webhook URL + secret up to
+  // WaSender so the provider knows where to POST inbound messages. The
+  // backend does this automatically inside connect() too — this button
+  // is a manual re-sync for the case where the session was scanned
+  // before the auto-sync existed, or the PUBLIC_SERVER_URL changed.
+  // Without a successful sync, real-WhatsApp messages never reach our
+  // /wa/webhook/wasender endpoint and the AI auto-reply silently doesn't
+  // fire.
+  const [synced, setSynced] = useState(false);
+  const syncWebhook = async () => {
+    if (!session?.id || busy) return;
+    setBusy(true);
+    setError('');
+    setSynced(false);
+    try {
+      const res = await apiFetch(`${API_URL}/wa/session/${session.id}/sync-webhook`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.message || `Sync failed (HTTP ${res.status})`);
+        return;
+      }
+      setSynced(true);
+      setTimeout(() => setSynced(false), 4000);
+    } catch (e) {
+      setError('Network error: ' + (e.message || String(e)));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Connect kicks off the WaSender session and returns the first QR in
   // the same response. Used by the "Connect / Generate QR" button.
   const connect = async () => {
@@ -462,13 +492,28 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
             <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '8px', padding: '0.6rem 0.75rem', color: '#bbf7d0', fontSize: '0.78rem', lineHeight: 1.5 }}>
               ✅ Send and receive WhatsApp messages. New incoming chats will appear in the inbox automatically.
             </div>
+            {/* Sync webhook — tells WaSender to start POSTing inbound
+                messages to this backend. Without it, real-WhatsApp
+                "hlo" never reaches us and AI auto-reply doesn't fire. */}
+            <button onClick={syncWebhook} disabled={busy}
+              style={{
+                width: '100%', marginTop: '0.6rem',
+                background: synced ? 'rgba(37,211,102,0.18)' : 'transparent',
+                color: synced ? '#25D366' : '#a5b4fc',
+                border: `1px solid ${synced ? 'rgba(37,211,102,0.5)' : 'rgba(165,180,252,0.4)'}`,
+                borderRadius: '8px',
+                padding: '8px', fontSize: '0.78rem', fontWeight: 600,
+                cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
+              }}>
+              {busy ? 'Syncing…' : synced ? '✓ Webhook synced' : 'Sync webhook to WaSender'}
+            </button>
             {/* Disconnect button — recovers from stale "connected" state
                 where the phone unlinked but WaSender hasn't caught up.
                 Opens a themed confirmation modal (rendered below) so the
                 user can't fat-finger this irreversible action. */}
             <button onClick={() => setConfirmDisconnect(true)} disabled={busy}
               style={{
-                width: '100%', marginTop: '0.6rem',
+                width: '100%', marginTop: '0.4rem',
                 background: 'transparent', color: '#fbbf24',
                 border: '1px solid rgba(234,179,8,0.4)', borderRadius: '8px',
                 padding: '8px', fontSize: '0.78rem', fontWeight: 600,
@@ -823,12 +868,21 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     return () => document.removeEventListener('click', close);
   }, [openMenu]);
 
-  /* ── Send message ── */
+  /* ── Send message ──
+     The "AI Auto-Reply" toggle above the chat decides what Send does:
+       • ON  → /wa/send-ai. The text is treated as a simulated inbound
+               from the customer and the AI generates an outbound reply.
+               Nothing leaves the system; this is the in-dashboard AI
+               test/preview path.
+       • OFF → /wa/send. Real outbound to the customer via the configured
+               WhatsApp provider — the operator-typing-to-customer flow.
+     Both endpoints save messages so the chat view refreshes the same way. */
   const handleSend = async () => {
     if (!messageText.trim() || !selectedPhone || sending) return;
     setSending(true);
     try {
-      await apiFetch(`${API_URL}/wa/send`, {
+      const endpoint = aiActive ? '/wa/send-ai' : '/wa/send';
+      await apiFetch(`${API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contact_phone: selectedPhone, text: messageText }),

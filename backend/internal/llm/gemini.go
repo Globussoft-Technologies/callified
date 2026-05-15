@@ -151,8 +151,15 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	// Build contents: history + current user utterance
 	contents := make([]geminiContent, 0, len(req.History)+1)
 	for _, msg := range req.History {
+		// Gemini's API rejects role="assistant" (used by OpenAI). Translate
+		// the common synonym so callers built against the OpenAI shape don't
+		// blow up here.
+		role := msg.Role
+		if role == "assistant" {
+			role = "model"
+		}
 		contents = append(contents, geminiContent{
-			Role:  msg.Role, // "user" or "model"
+			Role:  role,
 			Parts: []geminiPart{{Text: msg.Text}},
 		})
 	}

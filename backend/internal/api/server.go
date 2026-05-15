@@ -18,6 +18,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/email"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/rag"
+	"github.com/globussoft/callified-backend/internal/recording"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
@@ -38,6 +39,15 @@ type Server struct {
 	waSender    waSenderIface
 	llmProvider *llm.Provider // Phase 4: Gemini-powered generation endpoints
 	wsHandler   activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
+	recordingSvc callAnalyzer    // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+}
+
+// callAnalyzer is the slice of recording.Service the API needs for on-demand
+// conclusion regeneration. Kept as a tiny interface so the api package
+// doesn't have to import the recording package (which would re-import
+// internal/llm and create a cycle).
+type callAnalyzer interface {
+	AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*recording.Analysis, error)
 }
 
 // waSenderIface allows the WA sender to be nil-safe.
@@ -77,6 +87,14 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 		llmProvider: llmProvider,
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
+}
+
+// SetRecordingService wires the post-call analyzer after construction.
+// Used by the on-demand "regenerate conclusion" endpoint. Nil-safe — the
+// endpoint reports a 503 when this isn't wired (e.g. dev environments
+// where the recording pipeline is disabled).
+func (s *Server) SetRecordingService(svc callAnalyzer) {
+	s.recordingSvc = svc
 }
 
 // SetWAAgent wires the WhatsApp AI agent after construction.
@@ -136,9 +154,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Bulk export for partner / integration teams: every campaign in the
 	// caller's org, with leads and transcripts (and Gemini conclusions)
 	// nested. Supports ?campaign_id= to scope to a single campaign when
-	// the org has too much data for one response. JWT auth — partner
-	// logs in once via /api/login and reuses the token.
-	mux.HandleFunc("GET /api/external/transcripts", auth(s.getExternalTranscripts))
+	// the org has too much data for one response.
+	// Accepts either X-API-Key (issued via Settings → API Keys, used by
+	// the Globussoft CRM and other partners) or a Bearer JWT (used by
+	// our own dashboard). Both paths populate the same org-scoped
+	// AuthClaims so the handler stays auth-mode agnostic.
+	mux.HandleFunc("GET /api/external/transcripts", s.requireAPIKeyOrAuth(s.getExternalTranscripts))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
 	// Admin-only across the board. The React route guard already redirects
@@ -214,6 +235,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
+	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	// /check is a read-only lookup any agent might need before placing a call;
@@ -261,6 +283,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── API keys ──────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/api-keys", adminAuth(s.listAPIKeys))
 	mux.HandleFunc("POST /api/api-keys", adminAuth(s.createAPIKey))
+	mux.HandleFunc("PATCH /api/api-keys/{id}", adminAuth(s.patchAPIKey))
 	mux.HandleFunc("DELETE /api/api-keys/{id}", adminAuth(s.deleteAPIKey))
 
 	// ── Onboarding ────────────────────────────────────────────────────────────
@@ -380,6 +403,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", adminAuth(s.getWAMessagesByPhone))
 	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", adminAuth(s.toggleWAAIByPhone))
 	mux.HandleFunc("POST /api/wa/send", adminAuth(s.sendWAMessage))
+	mux.HandleFunc("POST /api/wa/send-ai", adminAuth(s.sendWAMessageAI))
 	mux.HandleFunc("POST /api/wa/conversations/ensure", adminAuth(s.ensureWAConversation))
 	mux.HandleFunc("POST /api/wa/conversations/{phone}/mute", adminAuth(s.muteWAConversation))
 	mux.HandleFunc("POST /api/wa/conversations/{phone}/archive", adminAuth(s.archiveWAConversation))
@@ -393,6 +417,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/wa/session/{id}/connect", adminAuth(s.waConnectSession))
 	mux.HandleFunc("GET /api/wa/session/{id}/qr", adminAuth(s.waSessionQR))
 	mux.HandleFunc("POST /api/wa/session/{id}/disconnect", adminAuth(s.waDisconnectSession))
+	mux.HandleFunc("POST /api/wa/session/{id}/sync-webhook", adminAuth(s.waSyncWebhook))
 
 	// ── WhatsApp Provider Webhooks (Phase 3C) ─────────────────────────────────
 	mux.HandleFunc("POST /wa/webhook/gupshup", s.waWebhookGupshup)
@@ -427,6 +452,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
 	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
+	// Companion DELETE so the System Logs "Clear logs" button actually
+	// wipes the Redis history list — previously the button only reset local
+	// React state and the next page refresh replayed the same events.
+	// Admin-only because it affects every operator's view on /logs.
+	mux.HandleFunc("DELETE /api/campaign-events", adminAuth(s.clearCampaignEvents))
 
 	// ── Active calls (debug / ops) ────────────────────────────────────────────
 	// Lists every currently-active WS call session with its stream_sid +

@@ -16,20 +16,137 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
+  // API keys keyed by member user_id (we encode that in the key's name as
+  // "team:<user_id>" since the api_keys table has no user_id column). The
+  // map only ever holds the most-recently-issued key per user — if an Admin
+  // generates twice, the older row is left orphaned in the DB but no longer
+  // surfaced in the UI. Showing it would be misleading since the raw secret
+  // for that older row is unrecoverable.
+  const [apiKeysByUser, setApiKeysByUser] = useState({});
+  // After Generate, we hold the raw key in state just long enough for the
+  // Admin to copy it. Cleared as soon as the modal closes.
+  const [newKey, setNewKey] = useState(null); // { user_id, email, key }
+  const [keyBusyUserId, setKeyBusyUserId] = useState(null);
 
   useEffect(() => { fetchTeam(); }, []);
 
   const fetchTeam = async () => {
     setLoading(true);
     try {
-      const [mRes, iRes] = await Promise.all([
+      const [mRes, iRes, kRes] = await Promise.all([
         apiFetch(`${API_URL}/team`),
         apiFetch(`${API_URL}/team/invites`),
+        // /api/api-keys is admin-only; non-admins get 403 here and we just
+        // render "—" in the API Key column. Don't toast — that's expected.
+        apiFetch(`${API_URL}/api-keys`),
       ]);
       if (mRes.ok) setMembers(await mRes.json());
       if (iRes.ok) setPendingInvites(await iRes.json());
+      if (kRes.ok) {
+        const keys = await kRes.json();
+        // Bucket by the embedded user_id. We keep only the highest-id row
+        // per user (most recent) so Generate-after-Delete-after-Generate
+        // doesn't show stale entries.
+        const byUser = {};
+        for (const k of (keys || [])) {
+          const m = /^team:(\d+)/.exec(k.name || '');
+          if (!m) continue;
+          const uid = Number(m[1]);
+          const prev = byUser[uid];
+          if (!prev || k.id > prev.id) byUser[uid] = k;
+        }
+        setApiKeysByUser(byUser);
+      }
     } catch (e) { console.error('Team fetch error:', e); }
     setLoading(false);
+  };
+
+  const isAdminMember = (m) => m && m.role === 'Admin';
+
+  const handleGenerateKey = async (member) => {
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: `team:${member.id}:${member.email}` }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to generate key', 'error');
+        return;
+      }
+      setNewKey({ user_id: member.id, email: member.email, key: data.key });
+      // Re-fetch so the new key appears in the row with its prefix.
+      fetchTeam();
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const handleRevokeKey = async (member, key, makeActive) => {
+    const verb = makeActive ? 'Reactivate' : 'Revoke';
+    const ok = await confirmDialog({
+      title: `${verb} API key`,
+      message: makeActive
+        ? `Reactivate this API key for ${member.email}? It will start accepting requests again.`
+        : `Revoke this API key for ${member.email}? Calls using it will start returning 403 immediately.`,
+      okText: verb,
+      danger: !makeActive,
+    });
+    if (!ok) return;
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys/${key.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: makeActive }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || `Failed to ${verb.toLowerCase()} key`, 'error');
+      } else {
+        fetchTeam();
+      }
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const handleDeleteKey = async (member, key) => {
+    const ok = await confirmDialog({
+      title: 'Delete API key',
+      message: `Permanently delete this API key for ${member.email}? This cannot be undone — generate a new one if you change your mind.`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys/${key.id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to delete key', 'error');
+      } else {
+        fetchTeam();
+      }
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const copyNewKey = async () => {
+    if (!newKey) return;
+    try {
+      await navigator.clipboard.writeText(newKey.key);
+      toast('API key copied to clipboard', 'success');
+    } catch (_) {
+      // Fall back to inline prompt when clipboard write is blocked.
+      await promptInline({
+        title: 'Copy API key',
+        message: 'Select and copy the key — clipboard access was blocked.',
+        defaultValue: newKey.key,
+        okText: 'Done',
+        cancelText: 'Close',
+      });
+    }
   };
 
   const closeInvite = () => {
@@ -283,6 +400,36 @@ export default function TeamPage({ apiFetch, API_URL }) {
         </div>
       )}
 
+      {/* Newly-generated key modal — shown once, never again */}
+      {newKey && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => setNewKey(null)}>
+          <div style={{ ...cardStyle, width: '520px', maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', color: '#f1f5f9' }}>API key for {newKey.email}</h3>
+            <p style={{ margin: '0 0 14px', color: '#fde047', fontSize: '0.8rem' }}>
+              Copy this key now — it cannot be shown again. Use it in the <code>X-API-Key</code> header.
+            </p>
+            <div style={{
+              background: 'rgba(15,23,42,0.9)', border: '1px solid rgba(148,163,184,0.2)',
+              borderRadius: '6px', padding: '10px 12px', color: '#e2e8f0', fontFamily: 'monospace',
+              fontSize: '0.8rem', wordBreak: 'break-all', marginBottom: '14px',
+            }}>{newKey.key}</div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={copyNewKey}
+                style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', borderRadius: '6px', color: '#a5b4fc', padding: '8px 16px', cursor: 'pointer', fontWeight: 600 }}>
+                Copy
+              </button>
+              <button onClick={() => setNewKey(null)}
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600 }}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Team Table */}
       <div style={cardStyle}>
         {loading ? (
@@ -297,12 +444,15 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
                 <th style={thStyle}>Joined</th>
+                <th style={thStyle}>API Key</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {members.map(m => {
                 const isSelf = currentUser && currentUser.id === m.id;
+                const key = apiKeysByUser[m.id];
+                const busy = keyBusyUserId === m.id;
                 return (
                 <tr key={m.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
                   <td style={tdStyle}>
@@ -332,6 +482,68 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   </td>
                   <td style={tdStyle}>
                     {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
+                  </td>
+                  <td style={tdStyle}>
+                    {!isAdminMember(m) ? (
+                      // API keys are intentionally Admin-only. Agents/Viewers
+                      // shouldn't be able to mint org-scoped keys that would
+                      // bypass their own role restrictions when called from a
+                      // partner integration.
+                      <span style={{ color: '#64748b' }}>—</span>
+                    ) : !key ? (
+                      <button
+                        onClick={() => handleGenerateKey(m)}
+                        disabled={busy}
+                        style={{
+                          background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)',
+                          borderRadius: '4px', color: '#a5b4fc', padding: '3px 10px', cursor: busy ? 'wait' : 'pointer',
+                          fontSize: '0.75rem', fontWeight: 600, opacity: busy ? 0.6 : 1,
+                        }}
+                      >
+                        {busy ? 'Generating...' : '+ Generate'}
+                      </button>
+                    ) : (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <code style={{ background: 'rgba(15,23,42,0.7)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: '4px', padding: '2px 6px', color: '#cbd5e1', fontSize: '0.75rem' }}>
+                          {key.key_prefix}…
+                        </code>
+                        {key.is_active ? (
+                          <span style={{ fontSize: '0.7rem', color: '#86efac', fontWeight: 600 }}>active</span>
+                        ) : (
+                          <span style={{ fontSize: '0.7rem', color: '#fca5a5', fontWeight: 600 }}>revoked</span>
+                        )}
+                        {key.is_active ? (
+                          <button
+                            onClick={() => handleRevokeKey(m, key, false)}
+                            disabled={busy}
+                            style={{
+                              background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)',
+                              borderRadius: '4px', color: '#fde047', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                              fontSize: '0.7rem',
+                            }}
+                          >Revoke</button>
+                        ) : (
+                          <button
+                            onClick={() => handleRevokeKey(m, key, true)}
+                            disabled={busy}
+                            style={{
+                              background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
+                              borderRadius: '4px', color: '#86efac', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                              fontSize: '0.7rem',
+                            }}
+                          >Reactivate</button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteKey(m, key)}
+                          disabled={busy}
+                          style={{
+                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
+                            borderRadius: '4px', color: '#fca5a5', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                            fontSize: '0.7rem',
+                          }}
+                        >Delete</button>
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
                     {currentUser && currentUser.id === m.id ? (

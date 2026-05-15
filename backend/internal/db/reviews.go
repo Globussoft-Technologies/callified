@@ -6,19 +6,27 @@ import (
 )
 
 // CallReview mirrors the call_reviews table.
+//
+// JSON shape carries BOTH the legacy field names (`sentiment`, `insights`,
+// `summary`) and the names the conclusion card in TranscriptModal reads
+// (`customer_sentiment`, `prompt_improvement_suggestion`). They alias the same
+// underlying string so the frontend can read either; this keeps old consumers
+// working without a schema migration.
 type CallReview struct {
-	ID                int64   `json:"id"`
-	TranscriptID      int64   `json:"transcript_id"`
-	OrgID             int64   `json:"org_id"`
-	QualityScore      float64 `json:"quality_score"`
-	Sentiment         string  `json:"sentiment"`
-	AppointmentBooked bool    `json:"appointment_booked"`
-	FailureReason     string  `json:"failure_reason"`
-	WhatWentWell      string  `json:"what_went_well"`
-	WhatWentWrong     string  `json:"what_went_wrong"`
-	Summary           string  `json:"summary"`
-	Insights          string  `json:"insights"`
-	CreatedAt         string  `json:"created_at"`
+	ID                          int64   `json:"id"`
+	TranscriptID                int64   `json:"transcript_id"`
+	OrgID                       int64   `json:"org_id"`
+	QualityScore                float64 `json:"quality_score"`
+	Sentiment                   string  `json:"sentiment"`
+	CustomerSentiment           string  `json:"customer_sentiment"`
+	AppointmentBooked           bool    `json:"appointment_booked"`
+	FailureReason               string  `json:"failure_reason"`
+	WhatWentWell                string  `json:"what_went_well"`
+	WhatWentWrong               string  `json:"what_went_wrong"`
+	Summary                     string  `json:"summary"`
+	Insights                    string  `json:"insights"`
+	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
+	CreatedAt                   string  `json:"created_at"`
 }
 
 // CallReviewWithLead enriches a call_reviews row with lead name info and
@@ -190,17 +198,28 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 }
 
 // GetCallReviewByTranscript fetches a single review for a transcript. Returns nil when not found.
+//
+// Selects BOTH the legacy columns (sentiment, summary, insights) and the
+// newer ones (what_went_well, what_went_wrong, prompt_improvement_suggestion)
+// so the conclusion card has real prose to render. Previously this query
+// omitted the newer columns entirely — every review came back with empty
+// commentary even when the DB row had real Gemini analysis, which is why the
+// UI was falling back to the synthesized "Strong call overall…" placeholder.
 func (d *DB) GetCallReviewByTranscript(transcriptID int64) (*CallReview, error) {
 	row := d.pool.QueryRow(`
 		SELECT id, transcript_id, COALESCE(org_id,0), COALESCE(quality_score,0),
 		COALESCE(sentiment,'neutral'), COALESCE(appointment_booked,0),
 		COALESCE(failure_reason,''), COALESCE(summary,''), COALESCE(insights,''),
+		COALESCE(what_went_well,''), COALESCE(what_went_wrong,''),
+		COALESCE(prompt_improvement_suggestion,''),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_reviews WHERE transcript_id=?`, transcriptID)
 	r := &CallReview{}
 	var apptBooked int
 	err := row.Scan(&r.ID, &r.TranscriptID, &r.OrgID, &r.QualityScore, &r.Sentiment,
-		&apptBooked, &r.FailureReason, &r.Summary, &r.Insights, &r.CreatedAt)
+		&apptBooked, &r.FailureReason, &r.Summary, &r.Insights,
+		&r.WhatWentWell, &r.WhatWentWrong, &r.PromptImprovementSuggestion,
+		&r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -208,28 +227,52 @@ func (d *DB) GetCallReviewByTranscript(transcriptID int64) (*CallReview, error) 
 		return nil, err
 	}
 	r.AppointmentBooked = apptBooked == 1
+	// Mirror legacy → modern field names so the frontend can read either.
+	r.CustomerSentiment = r.Sentiment
+	if r.PromptImprovementSuggestion == "" {
+		r.PromptImprovementSuggestion = r.Insights
+	}
+	if r.WhatWentWell == "" {
+		r.WhatWentWell = r.Summary
+	}
 	return r, nil
 }
 
 // SaveCallReview upserts a call review record.
+//
+// Writes both the legacy columns (sentiment, insights, summary) and the modern
+// ones (what_went_well, what_went_wrong, prompt_improvement_suggestion). The
+// quality_score is clamped to [0,5] — Gemini has been observed returning
+// out-of-range numbers (7, 8, 10) despite prompt constraints, which previously
+// surfaced as "8/5" star ratings in the UI.
 func (d *DB) SaveCallReview(r *CallReview) error {
 	apptBooked := 0
 	if r.AppointmentBooked {
 		apptBooked = 1
 	}
+	score := r.QualityScore
+	if score < 0 {
+		score = 0
+	}
+	if score > 5 {
+		score = 5
+	}
 	_, err := d.pool.Exec(`
 		INSERT INTO call_reviews
 		(transcript_id, org_id, quality_score, sentiment, appointment_booked,
-		 failure_reason, what_went_well, what_went_wrong, summary, insights)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+		 failure_reason, what_went_well, what_went_wrong, summary, insights,
+		 prompt_improvement_suggestion)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
 		quality_score=VALUES(quality_score), sentiment=VALUES(sentiment),
 		appointment_booked=VALUES(appointment_booked), failure_reason=VALUES(failure_reason),
 		what_went_well=VALUES(what_went_well), what_went_wrong=VALUES(what_went_wrong),
-		summary=VALUES(summary), insights=VALUES(insights)`,
-		r.TranscriptID, r.OrgID, r.QualityScore, r.Sentiment, apptBooked,
+		summary=VALUES(summary), insights=VALUES(insights),
+		prompt_improvement_suggestion=VALUES(prompt_improvement_suggestion)`,
+		r.TranscriptID, r.OrgID, score, r.Sentiment, apptBooked,
 		nullString(r.FailureReason), nullString(r.WhatWentWell), nullString(r.WhatWentWrong),
-		nullString(r.Summary), nullString(r.Insights))
+		nullString(r.Summary), nullString(r.Insights),
+		nullString(r.PromptImprovementSuggestion))
 	return err
 }
 

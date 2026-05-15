@@ -18,6 +18,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/receptionist/llm"
 	"github.com/globussoft/callified-backend/internal/receptionist/models"
 	"github.com/globussoft/callified-backend/internal/receptionist/recordings"
+	"github.com/globussoft/callified-backend/internal/receptionist/server/wsphone"
 	"github.com/globussoft/callified-backend/internal/receptionist/session"
 )
 
@@ -29,6 +30,7 @@ type Server struct {
 	llmAgent   *llm.Agent
 	manager    *conversation.Manager
 	recordings *recordings.Store
+	phone      *wsphone.Handler // nil when no TTS provider is configured
 }
 
 // New constructs a server with all dependencies wired. The recordings
@@ -53,10 +55,41 @@ func New() *Server {
 		recStore = nil
 	}
 
+	// Phone (Exotel WebSocket) handler. Optional: only constructed when
+	// the env has at least one TTS provider key. The handler itself
+	// works without a recordings store but logs a warning.
+	phoneHandler, err := wsphone.New(wsphone.Deps{
+		Manager:    mgr,
+		ApptSvc:    apptSvc,
+		Recordings: recStore,
+		ElevenLabsKey:     os.Getenv("ELEVENLABS_API_KEY"),
+		ElevenLabsVoiceID: firstNonEmptyEnv("RECEPTIONIST_INBOUND_VOICE_ID", "ELEVENLABS_VOICE_ID_FEMALE", "ELEVENLABS_VOICE_ID"),
+		SmallestKey:       os.Getenv("SMALLEST_API_KEY"),
+		SmallestVoiceID:   firstNonEmptyEnv("SMALLEST_VOICE_ID_FEMALE", "SMALLEST_VOICE_ID"),
+		DeepgramKey:       os.Getenv("DEEPGRAM_API_KEY"),
+	})
+	if err != nil {
+		log.Printf("wsphone: handler unavailable (%v) — /media-stream and /exotel/voice will return 503", err)
+		phoneHandler = nil
+	}
+
 	return &Server{
 		store: store, apptSvc: apptSvc, ambSvc: ambSvc,
 		llmAgent: llmAgent, manager: mgr, recordings: recStore,
+		phone: phoneHandler,
 	}
+}
+
+// firstNonEmptyEnv returns the value of the first env var in keys that
+// has a non-empty value, or "". Used to give the inbound voice picker a
+// fallback chain (specific override → female default → generic).
+func firstNonEmptyEnv(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // Handler returns the root mux with all routes registered.
@@ -96,6 +129,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /twilio/voice", s.twilioVoice)
 	mux.HandleFunc("POST /twilio/gather", s.twilioGather)
 	mux.HandleFunc("POST /twilio/status", s.twilioStatus)
+
+	// Exotel inbound — Passthru applet hits /exotel/voice; that response
+	// connects the carrier to /media-stream where the wsphone pipeline
+	// drives the AI conversation. /exotel/status acks call lifecycle
+	// updates so Exotel doesn't retry them.
+	mux.HandleFunc("GET /exotel/voice", s.exotelVoice)
+	mux.HandleFunc("POST /exotel/voice", s.exotelVoice)
+	mux.HandleFunc("POST /exotel/status", s.exotelStatus)
+	if s.phone != nil {
+		mux.HandleFunc("GET /media-stream", s.phone.ServeMediaStream)
+	} else {
+		mux.HandleFunc("GET /media-stream", func(w http.ResponseWriter, r *http.Request) {
+			writeErr(w, 503, "phone handler not configured (set ELEVENLABS_API_KEY or SMALLEST_API_KEY)")
+		})
+	}
 
 	return cors(mux)
 }

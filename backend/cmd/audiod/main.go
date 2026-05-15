@@ -94,8 +94,20 @@ func main() {
 	var apiServer *api.Server
 	if database != nil {
 		apiServer = api.New(database, cfg, store, initiator, llmProvider, logger)
+		// Wire the recording service into the API so the new
+		// /api/transcripts/{id}/conclusion route can (re)generate the
+		// AI conclusion on demand using the same Gemini prompt as the
+		// post-call pipeline. Nil-safe — the endpoint returns 503 when
+		// recordingSvc is missing (e.g. when LLM_PROVIDER isn't set).
+		if recordingSvc != nil {
+			apiServer.SetRecordingService(recordingSvc)
+		}
 		waAgent := wa.NewAgent(database, llmProvider, ragClient, logger)
 		apiServer.SetWAAgent(waAgent)
+		// Surface WaSender send responses in the audiod log so 200-but-
+		// undelivered failures (invalid JID, session disconnected) show up
+		// in postmortems instead of vanishing silently.
+		wa.SetWaSenderLogger(logger)
 		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")

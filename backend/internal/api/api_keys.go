@@ -53,6 +53,38 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── PATCH /api/api-keys/{id} ──────────────────────────────────────────────────
+//
+// Toggle is_active on a key. Body: {"is_active": false} to revoke,
+// {"is_active": true} to reactivate. Org-scoped so an Admin can only
+// modify their own org's keys.
+func (s *Server) patchAPIKey(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		IsActive *bool `json:"is_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IsActive == nil {
+		writeError(w, http.StatusBadRequest, "is_active required")
+		return
+	}
+	updated, err := s.db.SetAPIKeyActive(ac.OrgID, id, *body.IsActive)
+	if err != nil {
+		s.logger.Sugar().Errorw("patchAPIKey", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "is_active": *body.IsActive})
+}
+
 // ── DELETE /api/api-keys/{id} ─────────────────────────────────────────────────
 
 func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {

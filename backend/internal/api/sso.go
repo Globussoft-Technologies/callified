@@ -124,31 +124,61 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Normalize the claim values once so JIT-create and existing-user-sync
+	// see the same canonical role / org_id.
+	claimRole := s.normalizeRole(claims.Role)
+	claimOrg := s.remapOrgID(claims.OrgID)
+
 	if user == nil {
-		if claims.OrgID <= 0 {
+		if claimOrg <= 0 {
 			s.ssoFail(w, r, next, "org_required_for_jit_create", http.StatusForbidden)
 			return
-		}
-		role := claims.Role
-		if role != "Admin" && role != "Agent" {
-			role = "Agent" // default-deny to least-privilege
 		}
 		// Empty password hash → user can never log in via password; SSO is
 		// the only path. CreateUser is happy with that today; if you want
 		// to enforce at the DB layer, make password_hash NOT NULL with a
 		// per-user random sentinel.
-		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), role, claims.OrgID)
+		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), claimRole, claimOrg)
 		if err != nil {
 			s.logger.Sugar().Errorw("ssoJWT: CreateUser failed", "err", err, "email", email)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		s.logger.Sugar().Infow("ssoJWT: JIT-created user", "id", uid, "email", email, "role", role, "org", claims.OrgID)
+		s.logger.Sugar().Infow("ssoJWT: JIT-created user",
+			"id", uid, "email", email, "role", claimRole, "org", claimOrg,
+			"raw_role", claims.Role, "raw_org", claims.OrgID)
 		user, err = s.db.GetUserByEmail(email)
 		if err != nil || user == nil {
 			s.logger.Sugar().Errorw("ssoJWT: post-create lookup failed", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+	} else {
+		// Existing user: re-sync role / org_id from the JWT each login. The
+		// partner system is the source of truth for "who is this user, what
+		// org do they belong to, what permissions" — without this, fixing a
+		// user via the DB has to happen for every new login because the next
+		// SSO would have re-set the wrong values, and conversely a partner-
+		// side role change wouldn't take effect until we manually touched
+		// the row. Only updates when there's an actual delta so we don't
+		// rewrite every row on every login.
+		if claimRole != "" && (claimRole != user.Role || (claimOrg > 0 && claimOrg != user.OrgID)) {
+			newRole := claimRole
+			newOrg := user.OrgID
+			if claimOrg > 0 {
+				newOrg = claimOrg
+			}
+			if err := s.db.UpdateUserRoleAndOrg(user.ID, newRole, newOrg); err != nil {
+				s.logger.Sugar().Warnw("ssoJWT: UpdateUserRoleAndOrg failed",
+					"err", err, "user_id", user.ID, "email", email)
+			} else {
+				s.logger.Sugar().Infow("ssoJWT: synced role/org from JWT",
+					"user_id", user.ID, "email", email,
+					"from_role", user.Role, "to_role", newRole,
+					"from_org", user.OrgID, "to_org", newOrg)
+				user.Role = newRole
+				user.OrgID = newOrg
+			}
 		}
 	}
 
@@ -223,4 +253,62 @@ func audienceContains(aud jwt.ClaimStrings, want string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeRole accepts any case variant of a known role and returns the
+// canonical capitalised form. Falls back to the configured default (or
+// "Agent") when the input doesn't match a known role. Partner systems mint
+// tokens with "admin" / "ADMIN" / "Owner" inconsistently and we don't want
+// to bounce every new integration over case alone.
+func (s *Server) normalizeRole(raw string) string {
+	r := strings.ToLower(strings.TrimSpace(raw))
+	switch r {
+	case "admin":
+		return "Admin"
+	case "agent":
+		return "Agent"
+	case "viewer":
+		return "Viewer"
+	}
+	fallback := strings.TrimSpace(s.cfg.SSODefaultRole)
+	if fallback == "" {
+		return "Agent"
+	}
+	// Run the fallback through the same switch so a misconfigured env
+	// (e.g. SSO_DEFAULT_ROLE=admin) still produces a valid value.
+	switch strings.ToLower(fallback) {
+	case "admin":
+		return "Admin"
+	case "viewer":
+		return "Viewer"
+	}
+	return "Agent"
+}
+
+// remapOrgID applies SSO_ORG_REMAP rules to the claim's org_id. Format of
+// the env var is "from:to,from:to" — every match-as-source returns the
+// target, otherwise the input is returned unchanged. Parsing is forgiving:
+// malformed pairs are skipped silently so a typo can't take down SSO.
+func (s *Server) remapOrgID(in int64) int64 {
+	raw := strings.TrimSpace(s.cfg.SSOOrgRemap)
+	if raw == "" || in <= 0 {
+		return in
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		fromStr, toStr, ok := strings.Cut(strings.TrimSpace(pair), ":")
+		if !ok {
+			continue
+		}
+		var from, to int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(fromStr), "%d", &from); err != nil {
+			continue
+		}
+		if _, err := fmt.Sscanf(strings.TrimSpace(toStr), "%d", &to); err != nil {
+			continue
+		}
+		if from == in {
+			return to
+		}
+	}
+	return in
 }

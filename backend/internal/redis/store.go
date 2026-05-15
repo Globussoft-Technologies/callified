@@ -334,6 +334,56 @@ func (s *Store) RecentAllCampaignEvents(ctx context.Context, limit int) []string
 	return out
 }
 
+// ClearCampaignEvents wipes the cached campaign-events history. Used by the
+// /logs "Clear logs" button to reset both the per-campaign panel scroll and
+// the global System Logs firehose so a page refresh shows an empty feed
+// instead of replaying the trimmed-50/200 history that was just visually
+// cleared on the client. Pass campaignID=0 to clear only the global
+// firehose; a positive value also clears that campaign's per-campaign list.
+// Errors are swallowed so a Redis hiccup doesn't fail the HTTP handler —
+// the worst case is the next SSE reconnect re-replays the old events, which
+// the operator can clear again.
+func (s *Store) ClearCampaignEvents(ctx context.Context, campaignID int64) {
+	if s.rdb == nil {
+		return
+	}
+	pipe := s.rdb.TxPipeline()
+	pipe.Del(ctx, keyPrefix+"campaign:history:all")
+	if campaignID > 0 {
+		pipe.Del(ctx, fmt.Sprintf("%scampaign:history:%d", keyPrefix, campaignID))
+	}
+	_, _ = pipe.Exec(ctx)
+}
+
+// SetLogsClearedAt records a per-(user, scope) "I cleared this view at
+// this time" marker. scope is "all" for the /logs firehose or a numeric
+// campaign ID like "7" for a campaign detail panel. SSE replay-on-connect
+// reads the marker for the exact scope it's serving and drops historical
+// events with an older ts. Scoping per-scope means clicking Clear on /logs
+// doesn't also blank the per-campaign Live Campaign Activity panel —
+// previously a single per-user key was applied to both replays.
+func (s *Store) SetLogsClearedAt(ctx context.Context, email, scope string, when time.Time) {
+	if s.rdb == nil || email == "" {
+		return
+	}
+	key := fmt.Sprintf("%slogs:clearedAt:%s:%s", keyPrefix, email, scope)
+	_ = s.rdb.Set(ctx, key, when.UTC().Unix(), 7*24*time.Hour).Err()
+}
+
+// GetLogsClearedAt returns the per-(user, scope) clear marker as a unix
+// timestamp, or 0 if no marker exists / Redis is down.
+func (s *Store) GetLogsClearedAt(ctx context.Context, email, scope string) int64 {
+	if s.rdb == nil || email == "" {
+		return 0
+	}
+	key := fmt.Sprintf("%slogs:clearedAt:%s:%s", keyPrefix, email, scope)
+	v, err := s.rdb.Get(ctx, key).Int64()
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 // RecentCampaignEvents returns up to `limit` most-recent campaign events
 // (newest first in the list, but returned in chronological order so the UI
 // renders top-to-bottom matching arrival order).

@@ -87,6 +87,15 @@ func (s *Server) waWebhookMeta(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "meta", wa.ParseMeta)
 }
 
+// truncStr cuts a string at n bytes so logger output stays bounded even
+// when WaSender ships a fat payload. Used by the raw-body fallback log.
+func truncStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…(truncated)"
+}
+
 // handleWAWebhook is the shared handler for all inbound WA provider webhooks.
 func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provider string,
 	parser func([]byte) (*wa.IncomingMessage, error)) {
@@ -99,8 +108,25 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 
 	msg, err := parser(body)
 	if err != nil || msg == nil {
+		// Log the raw body when parsing fails or yields nothing — needed
+		// to see what shape WaSender (or any provider) is actually sending
+		// so we can fix the parser without guessing.
+		s.logger.Sugar().Infow("waWebhook parse-empty",
+			"provider", provider, "body", truncStr(string(body), 1024))
 		w.WriteHeader(http.StatusOK)
 		return
+	}
+	// One-liner so we can verify in logs that the inbound parsed and what
+	// FromPhone we extracted. When FromPhone is empty the parser matched
+	// nothing useful — log the raw body in that case so we can fix it.
+	if msg.FromPhone == "" || msg.Text == "" {
+		s.logger.Sugar().Infow("waWebhook parsed-empty-fields",
+			"provider", provider, "from", msg.FromPhone, "text_len", len(msg.Text),
+			"body", truncStr(string(body), 1024))
+	} else {
+		s.logger.Sugar().Infow("waWebhook inbound",
+			"provider", provider, "from", msg.FromPhone, "to", msg.ToPhone,
+			"text_len", len(msg.Text), "msg_id", msg.ProviderMsgID)
 	}
 
 	// Look up the channel config by provider + destination phone. cfg may be
@@ -166,6 +192,16 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	// Per-conversation AI toggle from the dashboard ("AI Auto-Reply
+	// ON/OFF" chip above the chat). When OFF, treat exactly like mute
+	// — inbound was saved above so the operator sees it in the inbox,
+	// but the AI agent does not run and no outbound is sent.
+	if !s.db.IsWAConversationAIEnabled(cfg.OrgID, msg.FromPhone) {
+		s.logger.Sugar().Infow("waWebhook: AI disabled on conversation, skipping reply",
+			"provider", provider, "from", msg.FromPhone)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// Process with AI agent (async so we return 200 quickly). The goroutine
 	// must NOT inherit r.Context() — that gets canceled the moment we
@@ -192,8 +228,10 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 				zap.String("provider", provider), zap.Error(err))
 			return
 		}
-		// Persist the AI's reply as an outbound message so both sides of the
-		// conversation show up in the inbox.
+		// Persist the outbound row only AFTER the provider accepts the
+		// send. Doing this earlier (e.g. inside the agent) left phantom
+		// bubbles when WaSender returned 200 with success:false because
+		// the linked device was actually disconnected.
 		if convID > 0 {
 			_, _ = s.db.SaveWAMessage(convID, "outbound", reply, "text", "")
 		}

@@ -145,40 +145,88 @@ func ParseAiSensei(body []byte) (*IncomingMessage, error) {
 }
 
 // ParseWaSender parses an inbound WaSender webhook payload.
+//
+// WaSender's payload shape (as of 2026-05): the message lives at
+// data.messages.{key,message,messageType}, not data.{key,…}. For 1:1
+// chats, remoteJid is now "<lid>@lid" instead of "<phone>@s.whatsapp.net"
+// — the actual sender phone shows up in senderPn/cleanedSenderPn instead.
+// Falling back to remoteJid when senderPn is missing keeps us compatible
+// with the older payload shape (and group-chat events, which still use
+// @s.whatsapp.net).
 func ParseWaSender(body []byte) (*IncomingMessage, error) {
+	type wsKey struct {
+		RemoteJid       string `json:"remoteJid"`
+		FromMe          bool   `json:"fromMe"`
+		ID              string `json:"id"`
+		SenderPn        string `json:"senderPn"`
+		CleanedSenderPn string `json:"cleanedSenderPn"`
+	}
+	type wsMessage struct {
+		Conversation        string `json:"conversation"`
+		ExtendedTextMessage struct {
+			Text string `json:"text"`
+		} `json:"extendedTextMessage"`
+	}
 	var p struct {
 		Event string `json:"event"`
 		Data  struct {
-			Key struct {
-				RemoteJid string `json:"remoteJid"`
-				FromMe    bool   `json:"fromMe"`
-				ID        string `json:"id"`
-			} `json:"key"`
-			Message struct {
-				Conversation        string `json:"conversation"`
-				ExtendedTextMessage struct {
-					Text string `json:"text"`
-				} `json:"extendedTextMessage"`
-			} `json:"message"`
-			MessageType string `json:"messageType"`
+			// New shape: { data: { messages: { key, message, messageType } } }
+			Messages *struct {
+				Key         wsKey     `json:"key"`
+				Message     wsMessage `json:"message"`
+				MessageType string    `json:"messageType"`
+			} `json:"messages"`
+			// Legacy shape: { data: { key, message, messageType } }
+			Key         wsKey     `json:"key"`
+			Message     wsMessage `json:"message"`
+			MessageType string    `json:"messageType"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
 		return nil, err
 	}
-	if p.Data.Key.FromMe {
+	// Pick whichever shape matched.
+	var key wsKey
+	var msg wsMessage
+	var msgType string
+	if p.Data.Messages != nil {
+		key = p.Data.Messages.Key
+		msg = p.Data.Messages.Message
+		msgType = p.Data.Messages.MessageType
+	} else {
+		key = p.Data.Key
+		msg = p.Data.Message
+		msgType = p.Data.MessageType
+	}
+
+	if key.FromMe {
 		return nil, nil // skip echo of our own sent messages
 	}
-	text := p.Data.Message.Conversation
+	text := msg.Conversation
 	if text == "" {
-		text = p.Data.Message.ExtendedTextMessage.Text
+		text = msg.ExtendedTextMessage.Text
 	}
-	from := strings.TrimSuffix(p.Data.Key.RemoteJid, "@s.whatsapp.net")
+	// Prefer the cleaned-by-WaSender phone (already pure digits), then
+	// senderPn (digits + @s.whatsapp.net), and only fall back to
+	// remoteJid for older payloads or chats where the LID indirection
+	// isn't applied. Strip both @s.whatsapp.net and @lid (modern 1:1)
+	// and @c.us (legacy) suffixes — never strip leading digits.
+	from := key.CleanedSenderPn
+	if from == "" {
+		from = key.SenderPn
+	}
+	if from == "" {
+		from = key.RemoteJid
+	}
+	from = strings.TrimSuffix(from, "@s.whatsapp.net")
+	from = strings.TrimSuffix(from, "@lid")
+	from = strings.TrimSuffix(from, "@c.us")
+
 	return &IncomingMessage{
-		ProviderMsgID: p.Data.Key.ID,
+		ProviderMsgID: key.ID,
 		FromPhone:     from,
 		Text:          text,
-		MessageType:   coalesce(p.Data.MessageType, "text"),
+		MessageType:   coalesce(msgType, "text"),
 		Provider:      "wasender",
 	}, nil
 }

@@ -60,7 +60,7 @@ type Config struct {
 	ExotelAPIToken   string `env:"EXOTEL_API_TOKEN"`
 	ExotelAccountSID string `env:"EXOTEL_ACCOUNT_SID"`
 	ExotelCallerID   string `env:"EXOTEL_CALLER_ID"`
-	ExotelAppID      string `env:"EXOTEL_APP_ID"     envDefault:"1210468"`
+	ExotelAppID      string `env:"EXOTEL_APP_ID"     envDefault:"1244808"`
 	DefaultProvider  string `env:"DEFAULT_PROVIDER"  envDefault:"exotel"`
 	PublicServerURL  string `env:"PUBLIC_SERVER_URL" envDefault:"http://localhost:8001"`
 
@@ -100,6 +100,21 @@ type Config struct {
 	SSOIssuer       string `env:"SSO_ISSUER"`
 	SSOAudience     string `env:"SSO_AUDIENCE"`
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
+
+	// Partner systems sometimes mint JWTs with role values in unexpected
+	// casing ("admin" instead of "Admin") or with no role at all. Instead
+	// of forcing them to fix their minting code, SSODefaultRole is what
+	// we assign when the claim is missing or doesn't normalize to a known
+	// role. Case-insensitive matching for known roles is handled in sso.go.
+	SSODefaultRole string `env:"SSO_DEFAULT_ROLE" envDefault:"Agent"`
+
+	// SSOOrgRemap maps "alias" org IDs (used by the partner's JWT) to the
+	// canonical org ID in our DB. Format: "from:to,from2:to2". Example:
+	// "1:727" means a JWT with org_id=1 creates / updates a user with
+	// org_id=727. Useful when the partner team hardcodes a placeholder
+	// org_id that doesn't match the org their users should actually land
+	// in. Empty disables remapping (org_id used as-is).
+	SSOOrgRemap string `env:"SSO_ORG_REMAP"`
 }
 
 // DSN returns a MySQL DSN string for database/sql.

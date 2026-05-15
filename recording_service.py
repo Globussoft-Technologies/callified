@@ -214,7 +214,10 @@ async def save_call_recording_and_transcript(
             ws_logger.error(f"[WEBHOOK] call.completed dispatch error: {_wh_err}")
 
         # --- Background call analysis with Gemini ---
-        if transcript_id and _campaign_id and call_duration > 5:
+        # Skip 2-3 second hang-ups and one-sided greetings: no review row gets
+        # written, so the UI's conclusion card stays hidden for those calls.
+        _user_turns = sum(1 for _t in transcript_turns if (_t.get('role') or '').lower() == 'user')
+        if transcript_id and _campaign_id and call_duration >= 10 and _user_turns >= 1:
             asyncio.ensure_future(_analyze_call_transcript(
                 transcript_id=transcript_id,
                 campaign_id=_campaign_id,
@@ -222,6 +225,8 @@ async def save_call_recording_and_transcript(
                 transcript_turns=transcript_turns,
                 logger=ws_logger,
             ))
+        else:
+            ws_logger.info(f"[CALL_ANALYSIS] Skipping analysis for transcript {transcript_id}: duration={call_duration}s, user_turns={_user_turns}")
 
     # --- Auto-retry for short/failed calls ---
     _should_retry = (
@@ -261,52 +266,67 @@ async def save_call_recording_and_transcript(
             ws_logger.error(f"[RETRY] Error queueing retry for lead {_call_lead_id}: {_retry_err}")
 
 
-async def _analyze_call_transcript(transcript_id, campaign_id, lead_id, transcript_turns, logger):
-    """Send transcript to Gemini 2.5 Flash for quality analysis (runs in background)."""
-    try:
-        from google import genai
+def run_gemini_call_analysis(transcript_turns):
+    """Synchronously call Gemini to analyze a transcript. Returns the parsed
+    analysis dict (or raises). Shared between the background auto-analysis path
+    and the on-demand regenerate endpoint so the prompt/parsing stay in sync."""
+    from google import genai
 
-        transcript_text = "\n".join(
-            f"{t['role']}: {t['text']}" for t in transcript_turns
-        )
+    transcript_text = "\n".join(
+        f"{t['role']}: {t['text']}" for t in transcript_turns
+    )
 
-        analysis_prompt = f"""You are a sales call quality analyst. Analyze this AI sales call transcript and return a JSON object:
+    analysis_prompt = f"""You are a sales call quality analyst. Analyze this AI sales call transcript and return a JSON object with EVERY field populated in English (never null, never empty strings, never omitted — even if the call was short, write at least one sentence describing what you observed):
 
 {{
-  "quality_score": 1-5 (1=terrible, 5=perfect),
+  "quality_score": integer 1-5 only (1=terrible, 5=perfect — NEVER return a number outside 1-5),
   "appointment_booked": true/false,
   "customer_sentiment": "positive" | "neutral" | "negative" | "annoyed",
-  "failure_reason": "reason the call failed to book appointment, or null if booked",
-  "what_went_well": "1-2 sentences about what the AI did right",
-  "what_went_wrong": "1-2 sentences about mistakes the AI made",
-  "prompt_improvement_suggestion": "specific instruction to add to the AI prompt to fix the issue"
+  "failure_reason": "reason the call failed to book appointment, or 'N/A' if booked — never null",
+  "what_went_well": "1-2 sentences in English about what the AI did right (if nothing, say 'Limited interaction — AI delivered its greeting clearly' or similar honest observation)",
+  "what_went_wrong": "1-2 sentences in English about mistakes the AI made (if none, say 'No clear mistakes observed' — never null)",
+  "prompt_improvement_suggestion": "1 specific instruction in English to add to the AI prompt to improve future calls (always provide something actionable — never null)"
 }}
+
+The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language.
 
 TRANSCRIPT:
 {transcript_text}
 
 Return ONLY the JSON object, no markdown, no explanation."""
 
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=analysis_prompt,
+    )
+    text = response.text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    if text.startswith("json"):
+        text = text[4:].strip()
+
+    return json.loads(text)
+
+
+async def _analyze_call_transcript(transcript_id, campaign_id, lead_id, transcript_turns, logger):
+    """Send transcript to Gemini 2.5 Flash for quality analysis (runs in background)."""
+    try:
         api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
         if not api_key:
             logger.warning("[CALL_ANALYSIS] No GEMINI_API_KEY set, skipping analysis")
             return
 
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=analysis_prompt,
+        transcript_text = "\n".join(
+            f"{t['role']}: {t['text']}" for t in transcript_turns
         )
-        text = response.text.strip()
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3].strip()
-        if text.startswith("json"):
-            text = text[4:].strip()
-
-        analysis = json.loads(text)
+        analysis = run_gemini_call_analysis(transcript_turns)
         save_call_review(transcript_id, campaign_id, lead_id, analysis)
         logger.info(f"[CALL_ANALYSIS] Saved review for transcript {transcript_id}: score={analysis.get('quality_score')}, sentiment={analysis.get('customer_sentiment')}")
 

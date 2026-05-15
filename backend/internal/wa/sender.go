@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // ChannelConfig holds the credentials needed to send via a provider.
@@ -135,6 +137,19 @@ func sendWaSenderText(ctx context.Context, cfg ChannelConfig, toPhone, text stri
 	if to != "" && !strings.HasPrefix(to, "+") {
 		to = "+" + to
 	}
+	// Guard: never self-send. Replying to our own device number happens
+	// when an inbound payload is malformed (FromPhone == device number)
+	// or a dashboard test seeds a conversation with the device's own
+	// phone. WaSender returns 200 with success:false for these and we'd
+	// otherwise persist a phantom outbound bubble. Cheap to detect here.
+	devicePhone := strings.TrimSpace(cfg.PhoneNumber)
+	if devicePhone != "" && !strings.HasPrefix(devicePhone, "+") {
+		devicePhone = "+" + devicePhone
+	}
+	if to == devicePhone {
+		return fmt.Errorf("refusing to send to our own device number %s", to)
+	}
+
 	body, _ := json.Marshal(map[string]any{
 		"to":   to,
 		"text": text,
@@ -146,8 +161,44 @@ func sendWaSenderText(ctx context.Context, cfg ChannelConfig, toPhone, text stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+sendKey)
-	return doRequest(req)
+	// Use doRequestVerbose so the WaSender response body is captured in
+	// the returned error on non-2xx — and the success body is surfaced via
+	// the diagnostic "wasender send" log line below. Without this we had
+	// no way to tell whether a 200 from WaSender actually delivered (their
+	// API returns 200 even when the JID is unreachable, with the failure
+	// detail inside the JSON body).
+	respBody, err := doRequestVerbose(req)
+	if err != nil {
+		return err
+	}
+	if waSenderLogger != nil {
+		waSenderLogger.Sugar().Infow("wasender send", "to", to, "body", string(respBody))
+	}
+	// WaSender returns HTTP 200 with `{"success":false,"message":"…"}`
+	// for soft failures (session disconnected, invalid JID, rate limit).
+	// Treat these as send errors so the dashboard doesn't persist a
+	// "sent" bubble for a message that never left WaSender.
+	var parsed struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if jsonErr := json.Unmarshal(respBody, &parsed); jsonErr == nil && !parsed.Success {
+		msg := parsed.Message
+		if msg == "" {
+			msg = "WaSender returned success=false"
+		}
+		return fmt.Errorf("WaSender: %s", msg)
+	}
+	return nil
 }
+
+// waSenderLogger is wired from main.go via SetWaSenderLogger so the package
+// can log without taking a logger on every call. nil = no-op.
+var waSenderLogger *zap.Logger
+
+// SetWaSenderLogger lets the bootstrap install a zap logger for WaSender
+// diagnostics. Optional — sender works without it.
+func SetWaSenderLogger(l *zap.Logger) { waSenderLogger = l }
 
 // resolveWaSenderSessionKey looks up the first connected session's
 // per-session api_key by hitting /api/whatsapp-sessions with the saved
@@ -267,6 +318,22 @@ func doRequest(req *http.Request) error {
 		return fmt.Errorf("WA send: HTTP %d — %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// doRequestVerbose is doRequest that also returns the response body on
+// 2xx so callers can log delivery acknowledgements (and diagnose providers
+// like WaSender that return 200 even on unrouteable JIDs).
+func doRequestVerbose(req *http.Request) ([]byte, error) {
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<14))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("WA send: HTTP %d — %s", resp.StatusCode, string(body))
+	}
+	return body, nil
 }
 
 func escapeJSON(s string) string {
