@@ -63,6 +63,25 @@ func (d *DB) GetAllWhatsappLogs(orgID int64) ([]WAConversationRow, error) {
 // destructive (no row resurrection). The handlers in api/wa_config.go
 // gate destructive ones behind a themed confirm modal in the UI.
 
+// IsWAConversationAIEnabled reports whether the dashboard's per-thread
+// "AI Auto-Reply" toggle is ON for this conversation. Defaults to TRUE
+// when the row doesn't exist yet — that matches the dashboard's default
+// display (toggle starts in ON state for new conversations) and means a
+// brand-new inbound from an unknown number still gets an AI reply.
+// Returns false only when the column is explicitly 0.
+func (d *DB) IsWAConversationAIEnabled(orgID int64, phone string) bool {
+	var enabled int
+	err := d.pool.QueryRow(
+		`SELECT COALESCE(ai_enabled,1) FROM whatsapp_conversations
+		 WHERE org_id=? AND phone=? LIMIT 1`, orgID, phone).Scan(&enabled)
+	if err != nil {
+		// No row yet (first inbound) — treat as enabled so the AI
+		// kicks in by default. Operator can flip it off after.
+		return true
+	}
+	return enabled == 1
+}
+
 // IsWAConversationMuted reports whether a thread has the mute flag set.
 // Used by the inbound webhook to skip AI auto-reply on muted threads
 // without breaking the rest of the pipeline (message still gets saved).
