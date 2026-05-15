@@ -36,6 +36,7 @@ var Roster = []DoctorEntry{
 type Record struct {
 	ID           string
 	PatientName  string
+	Phone        string // E.164 or whatever the carrier supplied; "" for browser-demo bookings
 	Doctor       string
 	ScheduledFor time.Time
 	Status       string
@@ -275,8 +276,17 @@ func ParseWhen(dateText, timeText string) (time.Time, error) {
 	return time.Date(year, month, day, hour, minute, 0, 0, time.UTC), nil
 }
 
-// Book creates a new appointment after resolving doctor and parsing time.
+// Book creates a new appointment after resolving doctor and parsing
+// time. Browser-demo callers don't have a phone number, so this remains
+// the simple 4-arg signature; phone-call inbound uses BookWithPhone.
 func (s *Service) Book(patientName, doctorQuery, dateText, timeText string) (*Record, error) {
+	return s.BookWithPhone(patientName, "", doctorQuery, dateText, timeText)
+}
+
+// BookWithPhone is the same as Book but records the caller's phone
+// number on the appointment so a future call from the same number can
+// be greeted by name (the "recall" feature).
+func (s *Service) BookWithPhone(patientName, phone, doctorQuery, dateText, timeText string) (*Record, error) {
 	doctor, err := s.resolveDoctor(doctorQuery)
 	if err != nil {
 		return nil, err
@@ -298,6 +308,7 @@ func (s *Service) Book(patientName, doctorQuery, dateText, timeText string) (*Re
 	rec := &Record{
 		ID:           "APT-" + randHex(3),
 		PatientName:  patientName,
+		Phone:        phone,
 		Doctor:       doctor,
 		ScheduledFor: when,
 		Status:       "confirmed",
@@ -305,6 +316,39 @@ func (s *Service) Book(patientName, doctorQuery, dateText, timeText string) (*Re
 	}
 	s.m[rec.ID] = rec
 	return rec, nil
+}
+
+// FindByPhone returns confirmed appointments for the given phone number,
+// most recent first. Used by the inbound-call flow to personalize the
+// greeting ("Welcome back, Harsha — I see you have an appointment with
+// Dr. Emma on Thursday"). Phone matching is exact: callers should
+// normalize formatting (e.g. add country code) before calling.
+func (s *Service) FindByPhone(phone string) []*Record {
+	if strings.TrimSpace(phone) == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*Record
+	for _, r := range s.m {
+		if r.Status != "confirmed" {
+			continue
+		}
+		if r.Phone == phone {
+			out = append(out, r)
+		}
+	}
+	// Most recent first — newest CreatedAt at index 0. Simple bubble
+	// sort is fine since N is tiny in the in-memory store; if this ever
+	// migrates to MySQL the query handles ordering.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[j].CreatedAt.After(out[i].CreatedAt) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
 }
 
 // Reschedule updates an existing booking's time.
