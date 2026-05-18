@@ -23,12 +23,39 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+// PastConversationSink persists a finished receptionist call into the
+// dashboard's call_transcripts table so the lead's "Past Conversations"
+// view shows it alongside campaign calls.
+//
+// This is intentionally a tiny interface (not the full *db.DB) so the
+// wsphone package stays decoupled from the MySQL schema — implementors
+// live in the cmd/audiod wiring layer.
+//
+//   - phone:           caller's E.164/raw number; persistence looks up the lead
+//   - callSid:         carrier call SID for cross-referencing
+//   - wavBytes:        stereo PCM-16 WAV (caller=L, bot=R) for playback
+//   - transcriptJSON:  [{role:"AI"|"User", text:"…"}…] matching the
+//                      campaign-call schema so the dashboard renderer
+//                      doesn't need a special case
+//   - durationS:       float seconds, ends up in call_transcripts.call_duration_s
+//   - language:        BCP-47 tag (en / hi / mr / …)
+//
+// The implementation is fire-and-forget; errors are logged inside the
+// sink so the call cleanup never blocks on persistence.
+type PastConversationSink interface {
+	SaveReceptionistCall(phone, callSid string, wavBytes []byte, transcriptJSON, language string, durationS float32)
+}
+
 // Deps wires the per-call dependencies the handler needs. Constructed
 // once at server startup and reused across calls.
 type Deps struct {
 	Manager    *conversation.Manager
 	ApptSvc    *appointment.Service
 	Recordings *recordings.Store
+	// PastConversations, when set, receives a copy of every finished call
+	// for persistence into the dashboard's transcript history. Nil-safe —
+	// the receptionist still works standalone without a database.
+	PastConversations PastConversationSink
 	// ElevenLabsKey + Voices come from env; passed in so tests can stub.
 	ElevenLabsKey      string
 	ElevenLabsVoiceID  string // default voice; per-call override possible
