@@ -1,8 +1,6 @@
 import React from 'react';
-import { useToast } from '../../contexts/UIContext';
 
 export default function EmailDraftModal({ emailDraft, setEmailDraft }) {
-  const toast = useToast();
   if (!emailDraft) return null;
 
   return (
@@ -19,7 +17,7 @@ export default function EmailDraftModal({ emailDraft, setEmailDraft }) {
           <button className="btn-secondary" onClick={() => setEmailDraft(null)}>Close</button>
           <button className="btn-primary" style={{background: 'linear-gradient(135deg, #f59e0b, #dc2626)'}} onClick={() => {
             navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
-            toast('Copied to clipboard!', 'success');
+            alert("Copied directly to clipboard!");
           }}>
             📋 Copy to Clipboard
           </button>

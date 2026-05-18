@@ -83,7 +83,7 @@ function SecretField({ value, onChange, placeholder }) {
         aria-label={reveal ? 'Hide value' : 'Show value'}
         style={{
           position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
-          background: 'none', border: 'none', color: '#94a3b8',
+          background: 'none', border: 'none', color: '#6b7280',
           cursor: 'pointer', fontSize: '0.75rem', padding: '4px 8px',
         }}>
         {reveal ? 'Hide' : 'Show'}
@@ -162,12 +162,12 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
     <div style={overlayStyle} onClick={onClose}>
       <div className="glass-panel" style={modalStyle} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
-          <h3 style={{ margin: 0, color: '#e2e8f0' }}>WhatsApp Channel Config</h3>
+          <h3 style={{ margin: 0, color: '#111827' }}>WhatsApp Channel Config</h3>
           <button onClick={onClose} style={closeBtnStyle}>&times;</button>
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem' }}>
+          <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#dc2626', fontSize: '0.85rem' }}>
             {error}
           </div>
         )}
@@ -208,12 +208,12 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts, selectedOr
           </button>
         </div>
 
-        <div style={{ background: 'rgba(37,211,102,0.08)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem' }}>
+        <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem' }}>
           <label style={{ ...labelStyle, fontSize: '0.7rem', color: '#25D366' }}>Webhook URL — configure in your provider dashboard</label>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <code style={{ flex: 1, color: '#e2e8f0', fontSize: '0.78rem', wordBreak: 'break-all' }}>{webhookUrl}</code>
+            <code style={{ flex: 1, color: '#111827', fontSize: '0.78rem', wordBreak: 'break-all' }}>{webhookUrl}</code>
             <button onClick={() => navigator.clipboard.writeText(webhookUrl)}
-              style={{ ...btnSmallStyle, background: 'rgba(37,211,102,0.15)', color: '#25D366', border: '1px solid rgba(37,211,102,0.3)' }}>
+              style={{ ...btnSmallStyle, background: '#dcfce7', color: '#25D366', border: '1px solid #86efac' }}>
               Copy
             </button>
           </div>
@@ -424,15 +424,15 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
 
   return (
     <div style={sessionPanelStyle}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid #e5e7eb' }}>
         <h3 style={{ margin: 0, color: '#25D366', fontSize: '0.95rem' }}>📱 WhatsApp Session</h3>
-        <button onClick={onClose} style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }} title="Close">×</button>
+        <button onClick={onClose} style={{ ...btnSmallStyle, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }} title="Close">×</button>
       </div>
       <div style={{ padding: '1rem', flex: 1, overflowY: 'auto' }}>
-        {loading && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Loading…</div>}
+        {loading && <div style={{ color: '#9ca3af', fontSize: '0.85rem' }}>Loading…</div>}
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.8rem' }}>
+          <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#dc2626', fontSize: '0.8rem' }}>
             {error}
           </div>
         )}
@@ -443,19 +443,19 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
           // session-management endpoints). Sending and inbound webhooks
           // still work — only the in-dashboard scan flow is unavailable.
           <div style={{
-            background: 'rgba(99,102,241,0.10)', border: '1px solid rgba(99,102,241,0.25)',
-            borderRadius: '8px', padding: '12px', color: '#a5b4fc', fontSize: '0.82rem', lineHeight: 1.5,
+            background: '#eef2ff', border: '1px solid #c7d2fe',
+            borderRadius: '8px', padding: '12px', color: '#4f46e5', fontSize: '0.82rem', lineHeight: 1.5,
           }}>
-            <div style={{ fontWeight: 700, color: '#e2e8f0', marginBottom: '6px' }}>📱 Session view unavailable</div>
+            <div style={{ fontWeight: 700, color: '#111827', marginBottom: '6px' }}>📱 Session view unavailable</div>
             Your WaSender plan exposes a per-session API key (used for sending) but not a Personal Access Token (needed to fetch QR codes from this dashboard).
             <div style={{ marginTop: '8px' }}>
-              You can still scan and manage sessions on <a href="https://wasenderapi.com" target="_blank" rel="noreferrer" style={{ color: '#a5b4fc', textDecoration: 'underline' }}>wasenderapi.com</a> — and inbound/outbound messages will work normally here.
+              You can still scan and manage sessions on <a href="https://wasenderapi.com" target="_blank" rel="noreferrer" style={{ color: '#4f46e5', textDecoration: 'underline' }}>wasenderapi.com</a> — and inbound/outbound messages will work normally here.
             </div>
           </div>
         )}
 
         {!loading && !session && !error && !needsPAT && (
-          <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+          <div style={{ color: '#6b7280', fontSize: '0.85rem' }}>
             No WhatsApp session found. Open WhatsApp Channel Config (gear icon) and save your WaSender API token first.
           </div>
         )}
@@ -469,27 +469,27 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
           // what the connection enables.
           <>
             <div style={{
-              background: 'linear-gradient(135deg, rgba(37,211,102,0.18) 0%, rgba(37,211,102,0.06) 100%)',
-              border: '1px solid rgba(37,211,102,0.4)', borderRadius: '12px',
+              background: 'linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%)',
+              border: '1px solid #4ade80', borderRadius: '12px',
               padding: '1rem', textAlign: 'center', marginBottom: '0.75rem',
             }}>
               <div style={{ fontSize: '2rem', lineHeight: 1, marginBottom: '0.5rem' }}>📱</div>
-              <div style={{ color: '#94a3b8', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>Linked Device</div>
+              <div style={{ color: '#6b7280', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>Linked Device</div>
               <div style={{ color: '#fff', fontSize: '1.15rem', fontWeight: 700, fontFamily: 'monospace', marginBottom: '6px' }}>
                 {session.phone_number || '—'}
               </div>
-              <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '10px' }}>
+              <div style={{ color: '#6b7280', fontSize: '0.78rem', marginBottom: '10px' }}>
                 {session.name || `Session #${session.id}`}
               </div>
               <span style={{
                 display: 'inline-block', padding: '4px 12px', borderRadius: '12px',
                 fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.05em',
-                background: 'rgba(37,211,102,0.25)', color: '#25D366',
+                background: '#bbf7d0', color: '#25D366',
               }}>
                 ● CONNECTED
               </span>
             </div>
-            <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '8px', padding: '0.6rem 0.75rem', color: '#bbf7d0', fontSize: '0.78rem', lineHeight: 1.5 }}>
+            <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.6rem 0.75rem', color: '#166534', fontSize: '0.78rem', lineHeight: 1.5 }}>
               ✅ Send and receive WhatsApp messages. New incoming chats will appear in the inbox automatically.
             </div>
             {/* Sync webhook — tells WaSender to start POSTing inbound
@@ -514,8 +514,8 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
             <button onClick={() => setConfirmDisconnect(true)} disabled={busy}
               style={{
                 width: '100%', marginTop: '0.4rem',
-                background: 'transparent', color: '#fbbf24',
-                border: '1px solid rgba(234,179,8,0.4)', borderRadius: '8px',
+                background: 'transparent', color: '#a16207',
+                border: '1px solid #fde047', borderRadius: '8px',
                 padding: '8px', fontSize: '0.78rem', fontWeight: 600,
                 cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.5 : 1,
               }}>
@@ -530,20 +530,20 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
           // with the "need_scan" / "logged_out" badge for context.
           <>
             <div style={{ marginBottom: '0.75rem' }}>
-              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Session</div>
-              <div style={{ color: '#e2e8f0', fontSize: '0.9rem', fontWeight: 600 }}>{session.name || `#${session.id}`}</div>
+              <div style={{ color: '#6b7280', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Session</div>
+              <div style={{ color: '#111827', fontSize: '0.9rem', fontWeight: 600 }}>{session.name || `#${session.id}`}</div>
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
-              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone</div>
-              <div style={{ color: '#e2e8f0', fontSize: '0.85rem', fontFamily: 'monospace' }}>{session.phone_number || '—'}</div>
+              <div style={{ color: '#6b7280', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone</div>
+              <div style={{ color: '#111827', fontSize: '0.85rem', fontFamily: 'monospace' }}>{session.phone_number || '—'}</div>
             </div>
             <div style={{ marginBottom: '1rem' }}>
-              <div style={{ color: '#94a3b8', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
+              <div style={{ color: '#6b7280', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
               <div>
                 <span style={{
                   display: 'inline-block', padding: '3px 10px', borderRadius: '10px',
                   fontSize: '0.72rem', fontWeight: 700,
-                  background: 'rgba(234,179,8,0.18)', color: '#fbbf24',
+                  background: '#fef9c3', color: '#a16207',
                 }}>
                   {session.status || 'unknown'}
                 </span>
@@ -554,7 +554,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
                 <QRCodeSVG value={qr} size={220} level="M" />
               </div>
             ) : (
-              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px dashed rgba(255,255,255,0.12)', borderRadius: '8px', padding: '2rem', textAlign: 'center', color: '#64748b', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+              <div style={{ background: '#f3f4f6', border: '1px dashed #d1d5db', borderRadius: '8px', padding: '2rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
                 Click "Generate QR" to start the scan.
               </div>
             )}
@@ -568,7 +568,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
               }}>
               {busy ? 'Working…' : (qr ? 'Refresh QR' : 'Generate QR')}
             </button>
-            <div style={{ color: '#64748b', fontSize: '0.72rem', textAlign: 'center' }}>
+            <div style={{ color: '#9ca3af', fontSize: '0.72rem', textAlign: 'center' }}>
               Open WhatsApp on your phone → Settings → Linked Devices → Link a Device → scan this code.
             </div>
           </>
@@ -585,27 +585,27 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
           looks broken. */}
       {confirmDisconnect && (
         <div
-          style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+          style={{ ...overlayStyle, background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={() => setConfirmDisconnect(false)}
         >
           <div
             style={{
               ...modalStyle, maxWidth: '380px',
-              background: '#1a2236',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: '#ffffff',
+              border: '1px solid #e5e7eb',
               boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 0.75rem 0', color: '#e2e8f0' }}>Disconnect WhatsApp?</h3>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
-              This will drop the link to <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{session?.phone_number || 'this device'}</span>. You'll need to scan a fresh QR code to reconnect.
+            <h3 style={{ margin: '0 0 0.75rem 0', color: '#111827' }}>Disconnect WhatsApp?</h3>
+            <p style={{ color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
+              This will drop the link to <span style={{ color: '#111827', fontFamily: 'monospace' }}>{session?.phone_number || 'this device'}</span>. You'll need to scan a fresh QR code to reconnect.
             </p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmDisconnect(false)}
                 style={{
-                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
-                  border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                  background: '#f3f4f6', color: '#6b7280',
+                  border: '1px solid #e5e7eb', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '0.85rem', fontWeight: 600,
                   cursor: 'pointer',
                 }}>
@@ -613,8 +613,8 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
               </button>
               <button onClick={confirmDisconnectAction}
                 style={{
-                  background: 'rgba(234,179,8,0.18)', color: '#fbbf24',
-                  border: '1px solid rgba(234,179,8,0.4)', borderRadius: '8px',
+                  background: '#fef9c3', color: '#a16207',
+                  border: '1px solid #fde047', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '0.85rem', fontWeight: 700,
                   cursor: 'pointer',
                 }}>
@@ -697,12 +697,12 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
     <div style={overlayStyle} onClick={onClose}>
       <div className="glass-panel" style={{ ...modalStyle, maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, color: '#e2e8f0' }}>Start New Chat</h3>
+          <h3 style={{ margin: 0, color: '#111827' }}>Start New Chat</h3>
           <button onClick={onClose} style={closeBtnStyle}>&times;</button>
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.85rem' }}>
+          <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#dc2626', fontSize: '0.85rem' }}>
             {error}
           </div>
         )}
@@ -732,7 +732,7 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
           {busy ? 'Sending…' : 'Start Chat'}
         </button>
 
-        <div style={{ marginTop: '0.75rem', color: '#64748b', fontSize: '0.7rem', lineHeight: 1.5 }}>
+        <div style={{ marginTop: '0.75rem', color: '#9ca3af', fontSize: '0.7rem', lineHeight: 1.5 }}>
           Note: WhatsApp's policy discourages messaging users who haven't opted in. Use this for warm leads or replying to known contacts.
         </div>
       </div>
@@ -979,23 +979,23 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
       {/* ── LEFT PANEL: Conversation List ── */}
       <div className="glass-panel" style={leftPanelStyle}>
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid #e5e7eb' }}>
           <h3 style={{ margin: 0, color: '#25D366', fontSize: '1rem' }}>
             <span style={{ marginRight: '6px' }}>💬</span>WhatsApp Inbox
           </h3>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button onClick={() => setShowNewChat(true)}
-              style={{ ...btnSmallStyle, background: 'rgba(37,211,102,0.18)', color: '#25D366', border: '1px solid rgba(37,211,102,0.3)', fontWeight: 700 }}
+              style={{ ...btnSmallStyle, background: '#dcfce7', color: '#25D366', border: '1px solid #86efac', fontWeight: 700 }}
               title="Start a new chat">
               + New
             </button>
             <button onClick={() => setShowSession(s => !s)}
-              style={{ ...btnSmallStyle, background: showSession ? 'rgba(37,211,102,0.18)' : 'rgba(255,255,255,0.06)', color: showSession ? '#25D366' : '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
+              style={{ ...btnSmallStyle, background: showSession ? 'rgba(37,211,102,0.18)' : 'rgba(255,255,255,0.06)', color: showSession ? '#25D366' : '#94a3b8', border: '1px solid #e5e7eb' }}
               title="WhatsApp Session / QR">
               📱
             </button>
             <button onClick={() => setShowConfig(true)}
-              style={{ ...btnSmallStyle, background: 'rgba(255,255,255,0.06)', color: '#94a3b8', border: '1px solid rgba(255,255,255,0.1)' }}
+              style={{ ...btnSmallStyle, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb' }}
               title="Channel Configuration">
               ⚙️
             </button>
@@ -1015,7 +1015,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
               ...btnSmallStyle, flexShrink: 0,
               background: showArchived ? 'rgba(99,102,241,0.18)' : 'rgba(255,255,255,0.06)',
               color: showArchived ? '#a5b4fc' : '#94a3b8',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid #e5e7eb',
             }}>
             {showArchived ? '📂' : '📁'}
           </button>
@@ -1024,7 +1024,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
         {/* Conversations */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#9ca3af', fontSize: '0.85rem' }}>
               No WhatsApp conversations yet
             </div>
           ) : filtered.map(conv => {
@@ -1042,7 +1042,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
             return (
             <div key={conv.phone} onClick={() => setSelectedPhone(conv.phone)}
               style={{
-                padding: '0.7rem 1rem', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.04)',
+                padding: '0.7rem 1rem', cursor: 'pointer', borderBottom: '1px solid #f3f4f6',
                 background: selectedPhone === conv.phone ? 'rgba(37,211,102,0.08)' : 'transparent',
                 transition: 'background 0.15s',
               }}
@@ -1053,11 +1053,11 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                   {isLinkedDevice && <span title={linkedNow ? 'Currently linked WhatsApp device' : 'Previously linked device'} style={{ fontSize: '0.85rem', flexShrink: 0 }}>📱</span>}
                   {!isLinkedDevice && conv.ai_active && <span style={greenDotStyle} title="AI Auto-Reply active" />}
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ color: '#111827', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {conv.name || conv.phone}
                       {linkedNow && <span style={{ marginLeft: '6px', fontSize: '0.62rem', color: '#25D366', fontWeight: 700, letterSpacing: '0.05em' }}>● LIVE</span>}
                     </div>
-                    <div style={{ fontFamily: 'monospace', color: '#64748b', fontSize: '0.72rem' }}>{conv.phone}</div>
+                    <div style={{ fontFamily: 'monospace', color: '#9ca3af', fontSize: '0.72rem' }}>{conv.phone}</div>
                   </div>
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '8px', position: 'relative' }}>
@@ -1072,7 +1072,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                         available — a row with no activity yet shouldn't
                         flaunt a placeholder dash. */}
                     {(conv.updated_at || conv.last_message_at) && (
-                      <div style={{ color: '#64748b', fontSize: '0.68rem' }}>
+                      <div style={{ color: '#9ca3af', fontSize: '0.68rem' }}>
                         {formatTime(conv.updated_at || conv.last_message_at, orgTimezone)}
                       </div>
                     )}
@@ -1089,7 +1089,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                     title="More actions"
                     style={{
                       marginTop: '4px', background: 'transparent', border: 'none',
-                      color: '#94a3b8', cursor: 'pointer', fontSize: '1.1rem',
+                      color: '#6b7280', cursor: 'pointer', fontSize: '1.1rem',
                       padding: '0 4px', lineHeight: 1,
                     }}>
                     ⋮
@@ -1098,7 +1098,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                     <div onClick={(e) => e.stopPropagation()}
                       style={{
                         position: 'absolute', top: '100%', right: 0, marginTop: '4px',
-                        background: '#1a2236', border: '1px solid rgba(255,255,255,0.1)',
+                        background: '#ffffff', border: '1px solid #e5e7eb',
                         borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
                         minWidth: '160px', zIndex: 50,
                         padding: '4px',
@@ -1112,9 +1112,9 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                       <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'clear', phone: conv.phone, name: conv.name || conv.phone }); }} style={menuItemStyle}>
                         🧹 Clear chat
                       </button>
-                      <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '4px 0' }} />
+                      <div style={{ height: '1px', background: '#f3f4f6', margin: '4px 0' }} />
                       <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'delete', phone: conv.phone, name: conv.name || conv.phone }); }}
-                        style={{ ...menuItemStyle, color: '#fca5a5' }}>
+                        style={{ ...menuItemStyle, color: '#dc2626' }}>
                         🗑 Delete
                       </button>
                     </div>
@@ -1122,7 +1122,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                 </div>
               </div>
               {conv.last_message && (
-                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ color: '#6b7280', fontSize: '0.78rem', marginTop: '4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {conv.last_message.length > 40 ? conv.last_message.substring(0, 40) + '...' : conv.last_message}
                 </div>
               )}
@@ -1135,7 +1135,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
       {/* ── RIGHT PANEL: Chat Window ── */}
       <div style={rightPanelStyle}>
         {!selectedPhone ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '0.95rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#9ca3af', fontSize: '0.95rem' }}>
             Select a conversation to start chatting
           </div>
         ) : (
@@ -1143,13 +1143,13 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
             {/* Chat Header */}
             <div className="glass-panel" style={chatHeaderStyle}>
               <div style={{ flex: 1 }}>
-                <div style={{ color: '#e2e8f0', fontWeight: 700, fontSize: '0.95rem' }}>
+                <div style={{ color: '#111827', fontWeight: 700, fontSize: '0.95rem' }}>
                   {selectedConv?.name || selectedPhone}
                 </div>
-                <div style={{ fontFamily: 'monospace', color: '#64748b', fontSize: '0.78rem' }}>{selectedPhone}</div>
+                <div style={{ fontFamily: 'monospace', color: '#9ca3af', fontSize: '0.78rem' }}>{selectedPhone}</div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>AI Auto-Reply</span>
+                <span style={{ color: '#6b7280', fontSize: '0.78rem' }}>AI Auto-Reply</span>
                 <button onClick={toggleAi}
                   style={{
                     ...toggleStyle,
@@ -1164,7 +1164,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
             {/* Messages */}
             <div style={messagesAreaStyle}>
               {messages.length === 0 ? (
-                <div style={{ textAlign: 'center', color: '#64748b', marginTop: '3rem', fontSize: '0.85rem' }}>No messages yet</div>
+                <div style={{ textAlign: 'center', color: '#9ca3af', marginTop: '3rem', fontSize: '0.85rem' }}>No messages yet</div>
               ) : messages.map((msg, i) => {
                 const isOutbound = msg.direction === 'outbound';
                 return (
@@ -1238,33 +1238,33 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
           backdrop blur so the inbox underneath fades out cleanly. */}
       {confirmAction && (
         <div
-          style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
+          style={{ ...overlayStyle, background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={() => setConfirmAction(null)}
         >
           <div
             style={{
               ...modalStyle, maxWidth: '400px',
-              background: '#1a2236',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: '#ffffff',
+              border: '1px solid #e5e7eb',
               boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 0.75rem 0', color: '#e2e8f0' }}>
+            <h3 style={{ margin: '0 0 0.75rem 0', color: '#111827' }}>
               {confirmAction.type === 'clear' ? 'Clear chat history?' : 'Delete conversation?'}
             </h3>
-            <p style={{ color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
+            <p style={{ color: '#6b7280', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
               {confirmAction.type === 'clear' ? (
-                <>This will permanently delete all messages with <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{confirmAction.name}</span>. The conversation row stays so they can message you again, but the history cannot be recovered.</>
+                <>This will permanently delete all messages with <span style={{ color: '#111827', fontFamily: 'monospace' }}>{confirmAction.name}</span>. The conversation row stays so they can message you again, but the history cannot be recovered.</>
               ) : (
-                <>This will permanently delete the conversation with <span style={{ color: '#e2e8f0', fontFamily: 'monospace' }}>{confirmAction.name}</span> and all its messages. This cannot be undone.</>
+                <>This will permanently delete the conversation with <span style={{ color: '#111827', fontFamily: 'monospace' }}>{confirmAction.name}</span> and all its messages. This cannot be undone.</>
               )}
             </p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
               <button onClick={() => setConfirmAction(null)}
                 style={{
-                  background: 'rgba(255,255,255,0.06)', color: '#94a3b8',
-                  border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px',
+                  background: '#f3f4f6', color: '#6b7280',
+                  border: '1px solid #e5e7eb', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '0.85rem', fontWeight: 600,
                   cursor: 'pointer',
                 }}>
@@ -1277,8 +1277,8 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                   else deleteConv(a.phone);
                 }}
                 style={{
-                  background: 'rgba(239,68,68,0.18)', color: '#fca5a5',
-                  border: '1px solid rgba(239,68,68,0.4)', borderRadius: '8px',
+                  background: '#fee2e2', color: '#dc2626',
+                  border: '1px solid #fca5a5', borderRadius: '8px',
                   padding: '8px 16px', fontSize: '0.85rem', fontWeight: 700,
                   cursor: 'pointer',
                 }}>
@@ -1300,8 +1300,8 @@ const leftPanelStyle = {
 
 const rightPanelStyle = {
   flex: 1, display: 'flex', flexDirection: 'column',
-  background: 'rgba(255,255,255,0.01)', borderRadius: '0 12px 12px 0',
-  border: '1px solid rgba(255,255,255,0.06)', borderLeft: 'none',
+  background: '#fafafa', borderRadius: '0 12px 12px 0',
+  border: '1px solid #e5e7eb', borderLeft: 'none',
 };
 
 // Conversation kebab-menu items. Inline so we can override per-item
@@ -1311,7 +1311,7 @@ const rightPanelStyle = {
 // the file's styling approach.
 const menuItemStyle = {
   display: 'block', width: '100%', textAlign: 'left',
-  background: 'transparent', border: 'none', color: '#e2e8f0',
+  background: 'transparent', border: 'none', color: '#111827',
   padding: '8px 12px', borderRadius: '6px', cursor: 'pointer',
   fontSize: '0.82rem',
 };
@@ -1322,33 +1322,33 @@ const menuItemStyle = {
 const sessionPanelStyle = {
   width: '320px', flexShrink: 0,
   display: 'flex', flexDirection: 'column',
-  background: 'rgba(255,255,255,0.02)',
-  border: '1px solid rgba(255,255,255,0.06)', borderLeft: 'none',
+  background: '#f9fafb',
+  border: '1px solid #e5e7eb', borderLeft: 'none',
   borderRadius: '0 12px 12px 0',
   marginLeft: '-12px', // sit flush against the chat panel rather than gap
 };
 
 const chatHeaderStyle = {
   display: 'flex', alignItems: 'center', padding: '0.75rem 1rem',
-  borderRadius: 0, borderBottom: '1px solid rgba(255,255,255,0.06)',
+  borderRadius: 0, borderBottom: '1px solid #e5e7eb',
   margin: 0,
 };
 
 const messagesAreaStyle = {
   flex: 1, overflowY: 'auto', padding: '1rem',
-  background: 'rgba(0,0,0,0.15)',
+  background: 'rgba(17,24,39,0.05)',
 };
 
 const inputBarStyle = {
   display: 'flex', gap: '8px', padding: '0.75rem 1rem',
-  borderTop: '1px solid rgba(255,255,255,0.06)',
-  background: 'rgba(255,255,255,0.02)',
+  borderTop: '1px solid #e5e7eb',
+  background: '#f9fafb',
 };
 
 const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
-  border: '1px solid rgba(255,255,255,0.1)', background: '#1e293b',
-  color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',
+  border: '1px solid #e5e7eb', background: '#ffffff',
+  color: '#111827', fontSize: '0.85rem', outline: 'none',
 };
 
 const selectStyle = {
@@ -1359,7 +1359,7 @@ const selectStyle = {
 };
 
 const labelStyle = {
-  display: 'block', color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600,
+  display: 'block', color: '#6b7280', fontSize: '0.75rem', fontWeight: 600,
   marginBottom: '4px', marginTop: '0.75rem',
 };
 
@@ -1392,7 +1392,7 @@ const unreadBadgeStyle = {
 
 const overlayStyle = {
   position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-  background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: 'rgba(17,24,39,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center',
   zIndex: 1000,
 };
 
@@ -1405,6 +1405,6 @@ const modalStyle = {
 };
 
 const closeBtnStyle = {
-  background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.4rem',
+  background: 'none', border: 'none', color: '#6b7280', fontSize: '1.4rem',
   cursor: 'pointer', padding: '0 4px',
 };

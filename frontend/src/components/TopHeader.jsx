@@ -1,47 +1,49 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-// Tabs that stay visible in the top nav. Everything else collapses into the
-// More ▾ dropdown so the bar doesn't overflow into a horizontal scroll the
-// way the all-flat layout did. Issue #36.
-//
-// AGENT_TABS = the subset Agents are allowed to see alongside CRM. The full
-// PRIMARY_ADMIN_TABS list is for Admin only. Anything an Agent shouldn't be
-// able to mutate (org-wide config, billing, integrations, team mgmt) stays
-// admin-only via PRIMARY_ADMIN_TABS / MORE_ADMIN_TABS below — backend
-// enforces the same split via adminAuth on the write endpoints.
 const AGENT_TABS = [
-  { id: 'campaigns', label: '📢 Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
+  { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
 ];
 
 const PRIMARY_ADMIN_TABS = [
-  { id: 'products',  label: '📦 Products',       path: '/products',  testid: 'tab-products' },
-  { id: 'campaigns', label: '📢 Campaigns',      path: '/campaigns', testid: 'tab-campaigns' },
-  { id: 'ops',       label: '📋 Ops & Tasks',    path: '/ops',       testid: 'tab-ops' },
-  { id: 'analytics', label: '📈 Analytics',      path: '/analytics', testid: 'tab-analytics' },
-  { id: 'whatsapp',  label: '💬 WhatsApp Comms', path: '/whatsapp',  testid: 'tab-whatsapp' },
+  { id: 'products',  label: 'Products',       path: '/products',  testid: 'tab-products' },
+  { id: 'campaigns', label: 'Campaigns',      path: '/campaigns', testid: 'tab-campaigns' },
+  { id: 'ops',       label: 'Ops & Tasks',    path: '/ops',       testid: 'tab-ops' },
+  { id: 'analytics', label: 'Analytics',      path: '/analytics', testid: 'tab-analytics' },
+  { id: 'whatsapp',  label: 'WhatsApp Comms', path: '/whatsapp',  testid: 'tab-whatsapp' },
 ];
 
-// Lower-priority / less-frequently-used admin tabs that move under "More ▾".
 const MORE_ADMIN_TABS = [
-  { id: 'integrations', label: '🔌 Integrations',     path: '/integrations', testid: 'tab-integrations' },
-  { id: 'monitor',      label: '🎙️ Monitor AI Calls', path: '/monitor',      testid: 'tab-monitor' },
-  { id: 'knowledge',    label: '🧠 RAG Knowledge',    path: '/knowledge',    testid: 'tab-rag' },
-  { id: 'sandbox',      label: '🎯 AI Sandbox',       path: '/sandbox',      testid: 'tab-sandbox' },
-  { id: 'scheduled',    label: '📅 Scheduled',        path: '/scheduled',    testid: 'tab-scheduled' },
-  { id: 'billing',      label: '💳 Billing',          path: '/billing',      testid: 'tab-billing' },
-  { id: 'dnd',          label: '🚫 DND',              path: '/dnd',          testid: 'tab-dnd' },
-  { id: 'settings',     label: '⚙️ Settings',         path: '/settings',     testid: 'tab-settings' },
-  { id: 'logs',         label: '📋 Live Logs',        path: '/logs',         testid: 'tab-logs' },
-  { id: 'team',         label: '👥 Team',             path: '/team',         testid: 'tab-team' },
-  { id: 'receptionist', label: '🩺 Receptionist',     path: '/receptionist', testid: 'tab-receptionist' },
+  { id: 'integrations', label: 'Integrations',    path: '/integrations', testid: 'tab-integrations' },
+  { id: 'monitor',      label: 'Monitor AI Calls',path: '/monitor',      testid: 'tab-monitor' },
+  { id: 'knowledge',    label: 'RAG Knowledge',   path: '/knowledge',    testid: 'tab-rag' },
+  { id: 'sandbox',      label: 'AI Sandbox',      path: '/sandbox',      testid: 'tab-sandbox' },
+  { id: 'scheduled',    label: 'Scheduled',       path: '/scheduled',    testid: 'tab-scheduled' },
+  { id: 'billing',      label: 'Billing',         path: '/billing',      testid: 'tab-billing' },
+  { id: 'dnd',          label: 'DND',             path: '/dnd',          testid: 'tab-dnd' },
+  { id: 'settings',     label: 'Settings',        path: '/settings',     testid: 'tab-settings' },
+  { id: 'logs',         label: 'Live Logs',       path: '/logs',         testid: 'tab-logs' },
+  { id: 'team',         label: 'Team',            path: '/team',         testid: 'tab-team' },
+  { id: 'receptionist', label: 'Receptionist',    path: '/receptionist', testid: 'tab-receptionist' },
 ];
 
-export default function TopHeader({
-  userRole,
-  currentUser,
-  handleLogout
-}) {
+const font = "'DM Sans', sans-serif";
+
+// Developer dashboard nav link. Only rendered when the current user's email is
+// in VITE_DEVELOPER_EMAILS (build-time env, comma-separated). This is a UX
+// gate only — the real authority is the backend's DEVELOPER_EMAILS check on
+// /api/dev/*. A stale frontend bundle cannot grant access.
+const DEV_EMAILS = new Set(
+  ((import.meta.env?.VITE_DEVELOPER_EMAILS || '').split(','))
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+function isDeveloper(email) {
+  if (!email) return false;
+  return DEV_EMAILS.has(String(email).trim().toLowerCase());
+}
+
+export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
@@ -50,6 +52,25 @@ export default function TopHeader({
   const [moreOpen, setMoreOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
+
+  const devAllowed = isDeveloper(currentUser?.email);
+  // Inspector toggle for the dev's own (non-impersonation) session. Persisted
+  // in localStorage so it survives reloads. Impersonation tabs render the
+  // overlay regardless via sessionStorage.authMode.
+  const [inspectorOn, setInspectorOn] = useState(() => {
+    try { return localStorage.getItem('devInspector') === 'on'; } catch { return false; }
+  });
+  const toggleInspector = () => {
+    const next = !inspectorOn;
+    setInspectorOn(next);
+    try {
+      if (next) localStorage.setItem('devInspector', 'on');
+      else localStorage.removeItem('devInspector');
+    } catch {}
+    // Force a remount of the conditional panel by reloading. Cheap and avoids
+    // wiring a global event bus for a developer-only toggle.
+    window.location.reload();
+  };
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -65,7 +86,6 @@ export default function TopHeader({
     return () => clearInterval(interval);
   }, []);
 
-  // Close the More dropdown when the user clicks anywhere outside it.
   useEffect(() => {
     if (!moreOpen) return;
     const onDocClick = (e) => {
@@ -75,62 +95,110 @@ export default function TopHeader({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [moreOpen]);
 
-  // Auto-close on route change so the menu doesn't linger after navigating.
   useEffect(() => { setMoreOpen(false); }, [location.pathname]);
 
   const moreActive = MORE_ADMIN_TABS.some(t => t.id === activeTab);
   const goTo = (path) => { setMoreOpen(false); navigate(path); };
 
+  const userName = currentUser?.full_name || currentUser?.email || '';
+  const userInitial = userName.charAt(0).toUpperCase();
+  const orgName = currentUser?.org_name || '';
+
+  const tabBtn = (id, label, path, testid) => {
+    const isActive = activeTab === id;
+    return (
+      <button
+        key={id}
+        data-testid={testid}
+        onClick={() => navigate(path)}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          padding: '6px 10px', borderRadius: 6,
+          fontSize: 13, fontWeight: isActive ? 600 : 500,
+          color: isActive ? '#6366f1' : '#374151',
+          fontFamily: font, whiteSpace: 'nowrap',
+          transition: 'color 0.15s',
+        }}
+        onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#111827'; }}
+        onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#374151'; }}
+      >
+        {label}
+      </button>
+    );
+  };
+
   return (
-    <header className="header">
-      <div className="logo" style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-        <img src="/logo.png" alt="Globussoft Logo" style={{width: '32px', height: '32px', borderRadius: '8px', objectFit: 'contain'}} />
-        Globussoft Generative AI Dialer <span className="badge" style={{background: 'rgba(34, 197, 94, 0.2)', color: '#4ade80', ml: 2}}>LIVE</span>
+    <header style={{
+      display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: '6px',
+      padding: '0 24px', height: 56,
+      background: '#ffffff', borderBottom: '1px solid #e5e7eb',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+      position: 'sticky', top: 0, zIndex: 100,
+      width: '100%', boxSizing: 'border-box',
+    }}>
+
+      {/* Logo */}
+      <div
+        onClick={() => navigate('/crm')}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0, marginRight: 12 }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+          background: 'linear-gradient(135deg, #8b5cf6, #ec4899)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+            <path d="M13 2L4.5 13.5H11.5L11 22L19.5 10.5H12.5L13 2Z" fill="white" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#111827', fontFamily: font }}>
+          Callified
+        </span>
       </div>
 
-      <div className="tab-bar" style={{display: 'flex', gap: '8px', alignItems: 'center', flex: 1, flexWrap: 'nowrap'}}>
-        <button data-testid="tab-crm" className={`tab-btn ${activeTab === 'crm' ? 'active' : ''}`} onClick={() => navigate('/crm')}>📊 CRM</button>
-        {userRole === 'Agent' && AGENT_TABS.map(t => (
-          <button key={t.id} data-testid={t.testid}
-            className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-            onClick={() => navigate(t.path)}>
-            {t.label}
-          </button>
-        ))}
-        {userRole === 'Admin' && PRIMARY_ADMIN_TABS.map(t => (
-          <button key={t.id} data-testid={t.testid}
-            className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-            onClick={() => navigate(t.path)}>
-            {t.label}
-          </button>
-        ))}
+      {/* Tabs */}
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'nowrap', overflow: 'visible' }}>
+        {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
+
+        {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {userRole === 'Admin' && PRIMARY_ADMIN_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+
         {userRole === 'Admin' && (
-          <div ref={moreRef} style={{position: 'relative'}}>
-            <button data-testid="tab-more"
-              className={`tab-btn ${moreActive ? 'active' : ''}`}
+          <div ref={moreRef} style={{ position: 'relative' }}>
+            <button
+              data-testid="tab-more"
               onClick={() => setMoreOpen(o => !o)}
               aria-haspopup="true"
-              aria-expanded={moreOpen}>
-              More <span style={{fontSize: '0.7em', marginLeft: '4px'}}>▾</span>
+              aria-expanded={moreOpen}
+              style={{
+                background: moreActive ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)',
+                border: '1px solid rgba(99,102,241,0.2)',
+                borderRadius: 20, cursor: 'pointer',
+                padding: '5px 14px', fontSize: 13,
+                fontWeight: 600, color: '#6366f1',
+                fontFamily: font, whiteSpace: 'nowrap',
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}>
+              More <span style={{ fontSize: '0.7em' }}>▾</span>
             </button>
             {moreOpen && (
               <div role="menu" style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '220px',
-                background: 'rgba(15,23,42,0.98)', border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: '10px', padding: '6px',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.45)', zIndex: 1000,
-                display: 'flex', flexDirection: 'column', gap: '2px',
+                background: '#ffffff', border: '1px solid #e5e7eb',
+                borderRadius: 10, padding: 6,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
+                display: 'flex', flexDirection: 'column', gap: 2,
               }}>
                 {MORE_ADMIN_TABS.map(t => (
                   <button key={t.id} data-testid={t.testid} role="menuitem"
                     onClick={() => goTo(t.path)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '8px',
+                      display: 'flex', alignItems: 'center',
                       padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
-                      background: activeTab === t.id ? 'rgba(99,102,241,0.18)' : 'transparent',
-                      border: 'none', borderRadius: '6px',
-                      color: activeTab === t.id ? '#a5b4fc' : '#cbd5e1',
-                      fontSize: '0.85rem', fontWeight: activeTab === t.id ? 700 : 500,
+                      background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                      border: 'none', borderRadius: 6,
+                      color: activeTab === t.id ? '#6366f1' : '#374151',
+                      fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
+                      fontFamily: font,
                     }}>
                     {t.label}
                   </button>
@@ -139,95 +207,121 @@ export default function TopHeader({
             )}
           </div>
         )}
+      </nav>
 
-        <div className="header-user-info" style={{marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0}}>
-          {callingStatus && (
+      {/* Right side */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 8 }}>
+
+        {/* AI Active status */}
+        {callingStatus && (
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            fontSize: 13, fontWeight: 600, fontFamily: font,
+            color: callingStatus.allowed ? '#10b981' : '#ef4444',
+          }}>
             <span style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px',
-              borderRadius: '8px',
-              background: callingStatus.allowed ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-              border: `1px solid ${callingStatus.allowed ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-              color: callingStatus.allowed ? '#4ade80' : '#fca5a5',
-              fontWeight: 600,
-              fontSize: '0.78rem',
-              whiteSpace: 'nowrap',
-            }}>
-              <span style={{
-                width: '7px', height: '7px', borderRadius: '50%',
-                background: callingStatus.allowed ? '#22c55e' : '#ef4444',
-                flexShrink: 0,
-              }} />
-              {callingStatus.allowed ? 'Calls Active' : 'Calls Paused'}
-            </span>
-          )}
-          {currentUser && (
-            <span style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px',
-              borderRadius: '8px',
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              fontSize: '0.78rem',
-              color: '#94a3b8',
-              whiteSpace: 'nowrap',
-              fontWeight: 600,
-            }}>
-              👤 {currentUser.full_name || currentUser.email}{currentUser.org_name ? ` (${currentUser.org_name})` : ''}
-            </span>
-          )}
-          {confirmLogout ? (
-            <div style={{
-              height: '38px', display: 'inline-flex', alignItems: 'center', gap: '6px',
-              padding: '0 10px', background: 'rgba(239,68,68,0.08)',
-              border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px',
-            }}>
-              <span style={{color: '#fbbf24', fontSize: '0.78rem', whiteSpace: 'nowrap'}}>Log out?</span>
-              <button data-testid="logout-confirm-btn"
-                onClick={() => { setConfirmLogout(false); handleLogout(); }}
-                style={{
-                  background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.45)',
-                  color: '#ef4444', borderRadius: '6px', padding: '4px 10px',
-                  cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap',
-                }}>
-                Confirm
-              </button>
-              <button onClick={() => setConfirmLogout(false)}
-                style={{
-                  background: 'transparent', border: '1px solid rgba(255,255,255,0.15)',
-                  color: '#94a3b8', borderRadius: '6px', padding: '4px 10px',
-                  cursor: 'pointer', fontSize: '0.75rem', whiteSpace: 'nowrap',
-                }}>
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
-              style={{
-                height: '38px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '0 14px',
-                background: 'rgba(239,68,68,0.15)',
-                border: '1px solid rgba(239,68,68,0.3)',
-                borderRadius: '8px',
-                color: '#fca5a5',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '0.82rem',
-                whiteSpace: 'nowrap',
-              }}>
-              🚪 Logout
-            </button>
-          )}
+              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              background: callingStatus.allowed ? '#10b981' : '#ef4444',
+            }} />
+            {callingStatus.allowed ? 'AI Active' : 'AI Paused'}
+          </span>
+        )}
+
+        {/* Bell */}
+        <div style={{ position: 'relative', cursor: 'pointer', width: 22, height: 22 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          <span style={{
+            position: 'absolute', top: -2, right: -2,
+            width: 7, height: 7, borderRadius: '50%',
+            background: '#ef4444', border: '1.5px solid #fff',
+          }} />
         </div>
+
+        {/* Developer-only nav: Dev dashboard + Inspector toggle.
+            Visible only when the current user's email is in
+            VITE_DEVELOPER_EMAILS (build-time). Backend is the real gate;
+            this is purely UX. */}
+        {devAllowed && (
+          <>
+            <button
+              data-testid="tab-dev"
+              onClick={() => navigate('/dev')}
+              title="Developer dashboard — list and impersonate users"
+              style={{
+                background: activeTab === 'dev' ? 'rgba(99,102,241,0.10)' : 'transparent',
+                border: `1px solid ${activeTab === 'dev' ? 'rgba(99,102,241,0.35)' : '#e5e7eb'}`,
+                color: activeTab === 'dev' ? '#6366f1' : '#374151',
+                borderRadius: 8, padding: '5px 12px',
+                cursor: 'pointer',
+                fontWeight: 600, fontSize: 13, fontFamily: font, whiteSpace: 'nowrap',
+              }}>
+              Dev
+            </button>
+            <button
+              onClick={toggleInspector}
+              title={inspectorOn ? 'Inspector overlay is ON — click to disable' : 'Enable Inspector overlay for this session'}
+              style={{
+                background: inspectorOn ? 'rgba(16,185,129,0.10)' : 'transparent',
+                border: `1px solid ${inspectorOn ? 'rgba(16,185,129,0.35)' : '#e5e7eb'}`,
+                color: inspectorOn ? '#10b981' : '#9ca3af',
+                borderRadius: 8, padding: '5px 12px',
+                cursor: 'pointer',
+                fontWeight: 600, fontSize: 13, fontFamily: font, whiteSpace: 'nowrap',
+              }}>
+              Inspector
+            </button>
+          </>
+        )}
+
+        {/* User avatar + name */}
+        {currentUser && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+              background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 700, color: '#fff', fontFamily: font,
+            }}>
+              {userInitial}
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', fontFamily: font, whiteSpace: 'nowrap' }}>
+              {userName}{orgName ? ` (${orgName})` : ''}
+            </span>
+          </div>
+        )}
+
+        {/* Logout */}
+        {confirmLogout ? (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#f59e0b', fontSize: 13, whiteSpace: 'nowrap', fontFamily: font }}>Log out?</span>
+            <button data-testid="logout-confirm-btn"
+              onClick={() => { setConfirmLogout(false); handleLogout(); }}
+              style={{
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                color: '#ef4444', borderRadius: 6, padding: '4px 10px',
+                cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: font, whiteSpace: 'nowrap',
+              }}>Confirm</button>
+            <button onClick={() => setConfirmLogout(false)}
+              style={{
+                background: 'transparent', border: '1px solid #e5e7eb',
+                color: '#9ca3af', borderRadius: 6, padding: '4px 10px',
+                cursor: 'pointer', fontSize: 12, fontFamily: font, whiteSpace: 'nowrap',
+              }}>Cancel</button>
+          </div>
+        ) : (
+          <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
+            style={{
+              background: 'transparent', border: '1px solid #e5e7eb',
+              borderRadius: 8, padding: '6px 14px',
+              color: '#374151', cursor: 'pointer',
+              fontWeight: 600, fontSize: 13, fontFamily: font, whiteSpace: 'nowrap',
+            }}>
+            Logout
+          </button>
+        )}
       </div>
     </header>
   );

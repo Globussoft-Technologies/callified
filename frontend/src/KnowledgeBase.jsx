@@ -1,21 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
-import { useToast, useConfirm } from './contexts/UIContext';
+import { useToast } from './contexts/UIContext';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
 
 export default function KnowledgeBase({ apiUrl }) {
   const { apiFetch } = useAuth();
   const toast = useToast();
-  const confirmDialog = useConfirm();
   const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  // statusMsg is shown inline below the form and kept terse — only the
-  // mid-upload progress text. Outcome (success / error) goes through the
-  // toast system so it doesn't stick around after the user moves on.
   const [statusMsg, setStatusMsg] = useState('');
-  // hasFile gates the submit button: no file picked → button disabled.
-  // Browsers don't fire onChange when the input is reset, so we also
-  // toggle this back to false after a successful upload.
-  const [hasFile, setHasFile] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const fileInputRef = useRef(null);
 
   const fetchFiles = async () => {
@@ -26,14 +31,12 @@ export default function KnowledgeBase({ apiUrl }) {
       });
       const data = await res.json();
       if (Array.isArray(data)) setFiles(data);
-    } catch(e) {
-      console.error(e);
-    }
+    } catch(e) { console.error(e); }
   };
 
   useEffect(() => {
     fetchFiles();
-    // Poll every 5 seconds since FAISS processes in the background!
+    // Poll every 5 seconds since FAISS processes in the background
     const interval = setInterval(fetchFiles, 5000);
     return () => clearInterval(interval);
   }, []);
@@ -42,49 +45,30 @@ export default function KnowledgeBase({ apiUrl }) {
     e.preventDefault();
     const file = fileInputRef.current?.files[0];
     if (!file) return;
-
     const formData = new FormData();
-    formData.append("file", file);
-
+    formData.append('file', file);
     setUploading(true);
     setStatusMsg('Vectorizing and Embedding PDF using internal local FAISS Engine...');
     try {
       const authToken = localStorage.getItem('authToken');
       const res = await fetch(`${apiUrl}/knowledge/upload`, {
-        method: "POST",
+        method: 'POST',
         headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData
       });
       const data = await res.json();
       if (data.status === 'success') {
-        // Outcome is ephemeral — toast it instead of pinning to the form.
-        // The Active Vector Memory list (refreshed below) is the durable
-        // record of what's been uploaded.
-        toast('File uploaded — background worker is extracting chunks now.', 'success');
-        setStatusMsg('');
+        setStatusMsg('✅ File uploaded! Background worker is currently extracting and mapping chunks.');
         fetchFiles();
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        setHasFile(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
-        const msg = data.message || data.detail || 'Upload failed';
-        toast(msg, 'error');
-        setStatusMsg('');
+        setStatusMsg(`❌ Error: ${data.message || data.detail}`);
       }
-    } catch (e) {
-      toast('Upload failed: ' + e.message, 'error');
-      setStatusMsg('');
-    }
+    } catch (e) { setStatusMsg(`❌ Upload failed: ${e.message}`); }
     setUploading(false);
   };
 
   const handleDelete = async (fileId, filename) => {
-    const ok = await confirmDialog({
-      title: 'Delete document',
-      message: `Delete "${filename}" from the knowledge base? This removes its FAISS chunks too.`,
-      okText: 'Delete',
-      danger: true,
-    });
-    if (!ok) return;
     try {
       const authToken = localStorage.getItem('authToken');
       await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
@@ -96,49 +80,59 @@ export default function KnowledgeBase({ apiUrl }) {
   };
 
   return (
-    <div className="glass-panel" style={{padding: '2rem'}}>
-      <h2 style={{marginTop: 0, marginBottom: '0.5rem', color: '#f8fafc'}}>🧠 RAG Knowledge Base</h2>
-      <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Upload company PDFs, product sheets, and manuals. The AI will instantly search and read these during live phone calls to eliminate hallucinations.</p>
-      
-      <div style={{display: 'flex', gap: '2rem', flexWrap: 'wrap'}}>
-        <div style={{flex: '1 1 300px', background: 'rgba(15, 23, 42, 0.6)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px', padding: '1.5rem', height: 'fit-content'}}>
-          <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Upload Document</h3>
-          <form onSubmit={handleUpload} style={{display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem'}}>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Page title */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          🧠 RAG Knowledge Base
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          Upload company PDFs, product sheets, and manuals. The AI will instantly search and read these during live phone calls to eliminate hallucinations.
+        </p>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+
+        {/* Upload card */}
+        <div style={{ ...card, padding: '24px 28px', flex: '1 1 300px' }}>
+          <h3 style={{ margin: '0 0 20px', fontSize: 15, fontWeight: 700, color: T.text }}>Upload Document</h3>
+          <form onSubmit={handleUpload} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <input
-              type="file"
-              accept=".pdf"
-              ref={fileInputRef}
-              className="form-input"
-              style={{background: 'rgba(0,0,0,0.3)', color: '#94a3b8', padding: '10px'}}
-              onChange={(e) => setHasFile(!!e.target.files?.length)}
-              required
-            />
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={uploading || !hasFile}
+              type="file" accept=".pdf" ref={fileInputRef} required
               style={{
-                opacity: (uploading || !hasFile) ? 0.5 : 1,
-                cursor: (uploading || !hasFile) ? 'not-allowed' : 'pointer',
+                padding: '9px 13px', borderRadius: 8, fontSize: 13,
+                border: `1px solid ${T.border}`, background: T.card,
+                color: T.sub, fontFamily: T.font, outline: 'none', cursor: 'pointer',
               }}
-            >
+            />
+            <button type="submit" disabled={uploading} style={{
+              padding: '10px 18px', borderRadius: 8, border: 'none',
+              fontWeight: 600, fontSize: 13, fontFamily: T.font,
+              background: uploading ? T.muted : T.accent,
+              color: '#fff', cursor: uploading ? 'not-allowed' : 'pointer',
+            }}>
               {uploading ? 'Processing Vector Embeddings...' : '☁️ Upload & Embed PDF'}
             </button>
-            {statusMsg && <p style={{fontSize: '0.9rem', color: '#4ade80'}}>{statusMsg}</p>}
+            {statusMsg && (
+              <p style={{ margin: 0, fontSize: 13, color: statusMsg.includes('❌') ? T.red : T.green }}>
+                {statusMsg}
+              </p>
+            )}
           </form>
         </div>
 
-        <div style={{flex: '2 1 400px'}}>
-          <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Active Vector Memory</h3>
-          <div style={{background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '1rem', minHeight: '200px'}}>
+        {/* Active Vector Memory card */}
+        <div style={{ ...card, padding: '24px 28px', flex: '2 1 400px' }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: T.text }}>Active Vector Memory</h3>
+          <div style={{ background: T.bg, borderRadius: 8, padding: '16px', minHeight: 200 }}>
             {files.length === 0 ? (
-              <p style={{color: '#64748b', textAlign: 'center', marginTop: '3rem'}}>No documents in the vector database yet.</p>
+              <p style={{ color: T.muted, textAlign: 'center', marginTop: '3rem', fontSize: 14 }}>
+                No documents in the vector database yet.
+              </p>
             ) : (
-              <ul style={{listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '10px'}}>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {files.map((f, i) => {
-                  // /api/knowledge/{id}/download is auth-gated. We can't put
-                  // the JWT in the URL (issue #80), so fetch as blob via the
-                  // Authorization header and open the resulting object URL.
                   const handleOpen = async (e) => {
                     e.preventDefault();
                     try {
@@ -147,39 +141,61 @@ export default function KnowledgeBase({ apiUrl }) {
                       const blob = await res.blob();
                       const objURL = URL.createObjectURL(blob);
                       window.open(objURL, '_blank', 'noopener,noreferrer');
-                      // Revoke after a beat so the new tab can finish loading.
                       setTimeout(() => URL.revokeObjectURL(objURL), 60_000);
                     } catch (err) { toast('Download failed: ' + (err?.message || 'network error'), 'error'); }
                   };
+                  const isActive = f.status === 'Active';
                   return (
-                  <li key={i} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '6px', borderLeft: f.status === 'Active' ? '3px solid #4ade80' : '3px solid #f59e0b'}}>
-                    <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                      <span style={{fontSize: '1.2rem'}}>📄</span>
-                      <div>
-                        <a href="#" onClick={handleOpen}
-                          style={{color: '#93c5fd', fontWeight: 500, textDecoration: 'none', cursor: 'pointer'}}
-                          onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
-                          onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
-                          title="Open document">
-                          {f.filename}
-                        </a>
-                        <div style={{fontSize: '0.8rem', color: '#94a3b8'}}>
-                          {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
+                    <li key={i} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      background: T.card, padding: '12px 14px', borderRadius: 8,
+                      border: `1px solid ${T.border}`,
+                      borderLeft: `3px solid ${isActive ? T.green : T.amber}`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ fontSize: 18 }}>📄</span>
+                        <div>
+                          <a href="#" onClick={handleOpen}
+                            style={{ color: T.accent, fontWeight: 600, fontSize: 13, textDecoration: 'none', cursor: 'pointer' }}
+                            onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'}
+                            onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}
+                            title="Open document">
+                            {f.filename}
+                          </a>
+                          <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
+                            {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <button
-                      onClick={() => handleDelete(f.id, f.filename)}
-                      style={{background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer'}}
-                      title="Delete"
-                    >🗑️</button>
-                  </li>
+                      {confirmDeleteId === f.id ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: T.amber, fontSize: 12 }}>Delete?</span>
+                          <button onClick={() => { setConfirmDeleteId(null); handleDelete(f.id, f.filename); }}
+                            style={{
+                              background: 'rgba(239,68,68,0.08)', border: `1px solid rgba(239,68,68,0.3)`,
+                              color: T.red, borderRadius: 6, padding: '3px 10px',
+                              cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: T.font,
+                            }}>Confirm</button>
+                          <button onClick={() => setConfirmDeleteId(null)}
+                            style={{
+                              background: T.card, border: `1px solid ${T.border}`,
+                              color: T.muted, borderRadius: 6, padding: '3px 10px',
+                              cursor: 'pointer', fontSize: 11, fontFamily: T.font,
+                            }}>Cancel</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => setConfirmDeleteId(f.id)}
+                          style={{ background: 'transparent', border: 'none', color: T.red, cursor: 'pointer', fontSize: 16 }}
+                          title="Delete">🗑️</button>
+                      )}
+                    </li>
                   );
                 })}
               </ul>
             )}
           </div>
         </div>
+
       </div>
     </div>
   );

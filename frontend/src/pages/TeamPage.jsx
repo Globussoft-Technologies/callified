@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, usePrompt, useConfirm } from '../contexts/UIContext';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif",
+};
+
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
   const toast = useToast();
@@ -267,9 +274,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
   const roleBadge = (role) => {
     const colors = {
-      Admin: { bg: 'rgba(99,102,241,0.2)', color: '#a5b4fc', border: 'rgba(99,102,241,0.4)' },
-      Agent: { bg: 'rgba(34,197,94,0.2)', color: '#4ade80', border: 'rgba(34,197,94,0.4)' },
-      Viewer: { bg: 'rgba(234,179,8,0.2)', color: '#fde047', border: 'rgba(234,179,8,0.4)' },
+      Admin: { bg: 'rgba(99,102,241,0.2)', color: '#4f46e5', border: '#c7d2fe' },
+      Agent: { bg: 'rgba(34,197,94,0.2)', color: '#15803d', border: '#86efac' },
+      Viewer: { bg: 'rgba(234,179,8,0.2)', color: '#a16207', border: '#fde047' },
     };
     const c = colors[role] || colors.Agent;
     return (
@@ -281,20 +288,23 @@ export default function TeamPage({ apiFetch, API_URL }) {
   };
 
   const cardStyle = {
-    background: 'rgba(30,41,59,0.7)', border: '1px solid rgba(148,163,184,0.1)',
-    borderRadius: '12px', padding: '24px',
+    background: T.card, border: `1px solid ${T.border}`,
+    borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+    padding: '24px 28px',
   };
 
   return (
-    <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h2 style={{ margin: 0, color: '#f1f5f9' }}>Team Members</h2>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          <span style={{ color: T.accent }}>Team</span> Members
+        </h2>
         <button
           onClick={() => setShowInvite(true)}
           style={{
             background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-            borderRadius: '8px', color: '#fff', padding: '10px 20px', cursor: 'pointer',
-            fontWeight: 600, fontSize: '0.85rem',
+            borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
+            fontWeight: 700, fontSize: 13, fontFamily: T.font,
           }}
         >+ Invite Member</button>
       </div>
@@ -302,12 +312,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
       {/* Invite Modal */}
       {showInvite && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
+          position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
         }} onClick={closeInvite}>
           <div style={{ ...cardStyle, width: '440px', maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 6px', color: '#f1f5f9' }}>Invite Team Member</h3>
-            <p style={{ margin: '0 0 16px', color: '#94a3b8', fontSize: '0.8rem' }}>
+            <h3 style={{ margin: '0 0 6px', color: '#111827' }}>Invite Team Member</h3>
+            <p style={{ margin: '0 0 16px', color: '#6b7280', fontSize: '0.8rem' }}>
               They'll get an email with a link to set their own password — no password is set here.
             </p>
             <form onSubmit={handleInvite}>
@@ -331,11 +341,11 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   <option value="Agent">Agent</option>
                   <option value="Viewer">Viewer</option>
                 </select>
-                {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
-                {inviteSuccess && <div style={{ color: '#86efac', fontSize: '0.85rem', background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '6px', padding: '8px 12px' }}>{inviteSuccess}</div>}
+                {inviteError && <div style={{ color: '#dc2626', fontSize: '0.85rem' }}>{inviteError}</div>}
+                {inviteSuccess && <div style={{ color: '#15803d', fontSize: '0.85rem', background: '#dcfce7', border: '1px solid #86efac', borderRadius: '6px', padding: '8px 12px' }}>{inviteSuccess}</div>}
                 <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
                   <button type="button" onClick={closeInvite}
-                    style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
+                    style={{ background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', color: '#6b7280', padding: '8px 16px', cursor: 'pointer' }}>
                     {inviteSuccess ? 'Done' : 'Cancel'}
                   </button>
                   <button type="submit" disabled={inviteLoading}
@@ -356,12 +366,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
       {/* Pending Invites */}
       {pendingInvites.length > 0 && (
         <div style={{ ...cardStyle, marginBottom: '20px' }}>
-          <h3 style={{ margin: '0 0 14px', color: '#f1f5f9', fontSize: '1rem' }}>
-            Pending Invites <span style={{ color: '#94a3b8', fontWeight: 400, fontSize: '0.85rem' }}>({pendingInvites.length})</span>
+          <h3 style={{ margin: '0 0 14px', color: '#111827', fontSize: '1rem' }}>
+            Pending Invites <span style={{ color: '#6b7280', fontWeight: 400, fontSize: '0.85rem' }}>({pendingInvites.length})</span>
           </h3>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
@@ -372,7 +382,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
             </thead>
             <tbody>
               {pendingInvites.map(inv => (
-                <tr key={inv.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                <tr key={inv.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={tdStyle}>{inv.full_name || '-'}</td>
                   <td style={tdStyle}>{inv.email}</td>
                   <td style={tdStyle}>{roleBadge(inv.role)}</td>
@@ -388,7 +398,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                         {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
                       </button>
                       <button onClick={() => handleCancelInvite(inv)}
-                        style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
+                        style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '4px', color: '#dc2626', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem' }}>
                         Cancel Invite
                       </button>
                     </span>
@@ -403,22 +413,22 @@ export default function TeamPage({ apiFetch, API_URL }) {
       {/* Newly-generated key modal — shown once, never again */}
       {newKey && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex',
+          position: 'fixed', inset: 0, background: 'rgba(17, 24, 39, 0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
         }} onClick={() => setNewKey(null)}>
           <div style={{ ...cardStyle, width: '520px', maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 6px', color: '#f1f5f9' }}>API key for {newKey.email}</h3>
-            <p style={{ margin: '0 0 14px', color: '#fde047', fontSize: '0.8rem' }}>
+            <h3 style={{ margin: '0 0 6px', color: '#111827' }}>API key for {newKey.email}</h3>
+            <p style={{ margin: '0 0 14px', color: '#a16207', fontSize: '0.8rem' }}>
               Copy this key now — it cannot be shown again. Use it in the <code>X-API-Key</code> header.
             </p>
             <div style={{
-              background: 'rgba(15,23,42,0.9)', border: '1px solid rgba(148,163,184,0.2)',
-              borderRadius: '6px', padding: '10px 12px', color: '#e2e8f0', fontFamily: 'monospace',
+              background: '#f9fafb', border: '1px solid #e5e7eb',
+              borderRadius: '6px', padding: '10px 12px', color: '#111827', fontFamily: 'monospace',
               fontSize: '0.8rem', wordBreak: 'break-all', marginBottom: '14px',
             }}>{newKey.key}</div>
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button onClick={copyNewKey}
-                style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', borderRadius: '6px', color: '#a5b4fc', padding: '8px 16px', cursor: 'pointer', fontWeight: 600 }}>
+                style={{ background: '#e0e7ff', border: '1px solid #c7d2fe', borderRadius: '6px', color: '#4f46e5', padding: '8px 16px', cursor: 'pointer', fontWeight: 600 }}>
                 Copy
               </button>
               <button onClick={() => setNewKey(null)}
@@ -433,13 +443,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
       {/* Team Table */}
       <div style={cardStyle}>
         {loading ? (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>Loading team...</div>
+          <div style={{ textAlign: 'center', color: '#6b7280', padding: '40px' }}>Loading team...</div>
         ) : members.length === 0 ? (
-          <div style={{ textAlign: 'center', color: '#94a3b8', padding: '40px' }}>No team members found.</div>
+          <div style={{ textAlign: 'center', color: '#6b7280', padding: '40px' }}>No team members found.</div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.15)' }}>
+              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
@@ -454,11 +464,11 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 const key = apiKeysByUser[m.id];
                 const busy = keyBusyUserId === m.id;
                 return (
-                <tr key={m.id} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                   <td style={tdStyle}>
                     {m.full_name || '-'}
                     {isSelf && (
-                      <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#a78bfa', fontWeight: 600 }}>(you)</span>
+                      <span style={{ marginLeft: '8px', fontSize: '0.7rem', color: '#7c3aed', fontWeight: 600 }}>(you)</span>
                     )}
                   </td>
                   <td style={tdStyle}>{m.email}</td>
@@ -469,8 +479,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       title={isSelf ? "You cannot change your own role" : undefined}
                       onChange={e => handleRoleChange(m.id, e.target.value)}
                       style={{
-                        background: 'rgba(30,41,59,0.9)', border: '1px solid rgba(148,163,184,0.2)',
-                        borderRadius: '6px', color: isSelf ? '#64748b' : '#e2e8f0', padding: '4px 8px', fontSize: '0.8rem',
+                        background: '#ffffff', border: '1px solid #e5e7eb',
+                        borderRadius: '6px', color: isSelf ? '#9ca3af' : '#4b5563', padding: '6px 10px', fontSize: '0.85rem',
+                        fontWeight: 600,
                         cursor: isSelf ? 'not-allowed' : 'pointer',
                         opacity: isSelf ? 0.6 : 1,
                       }}
@@ -489,14 +500,14 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       // shouldn't be able to mint org-scoped keys that would
                       // bypass their own role restrictions when called from a
                       // partner integration.
-                      <span style={{ color: '#64748b' }}>—</span>
+                      <span style={{ color: '#9ca3af' }}>—</span>
                     ) : !key ? (
                       <button
                         onClick={() => handleGenerateKey(m)}
                         disabled={busy}
                         style={{
-                          background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)',
-                          borderRadius: '4px', color: '#a5b4fc', padding: '3px 10px', cursor: busy ? 'wait' : 'pointer',
+                          background: '#e0e7ff', border: '1px solid #c7d2fe',
+                          borderRadius: '4px', color: '#4f46e5', padding: '3px 10px', cursor: busy ? 'wait' : 'pointer',
                           fontSize: '0.75rem', fontWeight: 600, opacity: busy ? 0.6 : 1,
                         }}
                       >
@@ -504,21 +515,21 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       </button>
                     ) : (
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <code style={{ background: 'rgba(15,23,42,0.7)', border: '1px solid rgba(148,163,184,0.15)', borderRadius: '4px', padding: '2px 6px', color: '#cbd5e1', fontSize: '0.75rem' }}>
+                        <code style={{ background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '4px', padding: '2px 6px', color: '#1f2937', fontSize: '0.75rem' }}>
                           {key.key_prefix}…
                         </code>
                         {key.is_active ? (
-                          <span style={{ fontSize: '0.7rem', color: '#86efac', fontWeight: 600 }}>active</span>
+                          <span style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: 600 }}>active</span>
                         ) : (
-                          <span style={{ fontSize: '0.7rem', color: '#fca5a5', fontWeight: 600 }}>revoked</span>
+                          <span style={{ fontSize: '0.7rem', color: '#dc2626', fontWeight: 600 }}>revoked</span>
                         )}
                         {key.is_active ? (
                           <button
                             onClick={() => handleRevokeKey(m, key, false)}
                             disabled={busy}
                             style={{
-                              background: 'rgba(234,179,8,0.12)', border: '1px solid rgba(234,179,8,0.3)',
-                              borderRadius: '4px', color: '#fde047', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                              background: '#fef9c3', border: '1px solid #fde047',
+                              borderRadius: '4px', color: '#a16207', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
                               fontSize: '0.7rem',
                             }}
                           >Revoke</button>
@@ -527,8 +538,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                             onClick={() => handleRevokeKey(m, key, true)}
                             disabled={busy}
                             style={{
-                              background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)',
-                              borderRadius: '4px', color: '#86efac', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                              background: '#f0fdf4', border: '1px solid #86efac',
+                              borderRadius: '4px', color: '#15803d', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
                               fontSize: '0.7rem',
                             }}
                           >Reactivate</button>
@@ -537,8 +548,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           onClick={() => handleDeleteKey(m, key)}
                           disabled={busy}
                           style={{
-                            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                            borderRadius: '4px', color: '#fca5a5', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
+                            background: '#fef2f2', border: '1px solid #fca5a5',
+                            borderRadius: '4px', color: '#dc2626', padding: '2px 8px', cursor: busy ? 'wait' : 'pointer',
                             fontSize: '0.7rem',
                           }}
                         >Delete</button>
@@ -551,12 +562,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       // would lock them out (and could lock the org out if
                       // they're the only admin). Backend rejects it anyway.
                       // Issue #54.
-                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}>—</span>
+                      <span style={{ color: '#9ca3af', fontSize: '0.75rem' }}>—</span>
                     ) : (
                       <button onClick={() => handleDelete(m)}
                         style={{
-                          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-                          borderRadius: '4px', color: '#fca5a5', padding: '3px 10px', cursor: 'pointer',
+                          background: '#fef2f2', border: '1px solid #fca5a5',
+                          borderRadius: '4px', color: '#dc2626', padding: '3px 10px', cursor: 'pointer',
                           fontSize: '0.75rem',
                         }}>Remove</button>
                     )}
@@ -573,16 +584,18 @@ export default function TeamPage({ apiFetch, API_URL }) {
 }
 
 const inputStyle = {
-  background: 'rgba(15,23,42,0.8)', border: '1px solid rgba(148,163,184,0.2)',
-  borderRadius: '8px', color: '#e2e8f0', padding: '10px 14px', fontSize: '0.9rem',
-  outline: 'none', width: '100%', boxSizing: 'border-box',
+  background: '#f9fafb', border: `1px solid ${T.border}`,
+  borderRadius: 8, color: T.text, padding: '10px 14px', fontSize: 13,
+  outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: T.font,
 };
 
 const thStyle = {
-  textAlign: 'left', padding: '10px 12px', color: '#94a3b8',
-  fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px',
+  textAlign: 'left', padding: '0 12px 12px', color: T.muted,
+  fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em',
+  borderBottom: `1px solid ${T.border}`,
 };
 
 const tdStyle = {
-  padding: '12px', color: '#e2e8f0', fontSize: '0.85rem',
+  padding: '12px', color: T.sub, fontSize: 13, borderBottom: `1px solid ${T.border}`,
+  verticalAlign: 'middle',
 };

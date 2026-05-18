@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
-import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -25,7 +24,6 @@ export default function CampaignModals({
   handleSaveEditCampaign,
   setCreateError,
 }) {
-  const toast = useToast();
   const [nameTouched, setNameTouched] = useState(false);
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
@@ -65,11 +63,11 @@ export default function CampaignModals({
         <div className="modal-overlay" onClick={handleClose}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '680px', width: '95%', maxHeight: '85vh', overflowY: 'auto'}}>
-            <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
+            <h3 style={{marginTop: 0, marginBottom: '1rem', color: '#111827', fontSize: '1.4rem', fontWeight: 800}}>Create New Campaign</h3>
 
             {/* Template selector */}
             <div style={{marginBottom: '1.5rem'}}>
-              <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '8px'}}>Start from a template (optional)</label>
+              <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '8px'}}>Start from a template (optional)</label>
               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '8px'}}>
                 {CAMPAIGN_TEMPLATES.map(tpl => {
                   const ic = INDUSTRY_COLORS[tpl.industry] || { bg: 'rgba(148,163,184,0.15)', color: '#94a3b8' };
@@ -87,30 +85,30 @@ export default function CampaignModals({
                       }}
                       style={{
                         padding: '10px 12px', borderRadius: '8px', cursor: 'pointer',
-                        border: isSelected ? '2px solid #60a5fa' : '1px solid rgba(255,255,255,0.08)',
-                        background: isSelected ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.03)',
+                        border: isSelected ? '2px solid #6366f1' : '1px solid #e5e7eb',
+                        background: isSelected ? '#eef2ff' : '#ffffff',
                         transition: 'all 0.15s ease',
                       }}>
-                      <div style={{fontWeight: 600, fontSize: '0.82rem', color: '#e2e8f0', marginBottom: '4px'}}>{tpl.name}</div>
+                      <div style={{fontWeight: 800, fontSize: '0.95rem', color: '#111827', marginBottom: '6px'}}>{tpl.name}</div>
                       <div style={{display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px'}}>
                         <span style={{background: ic.bg, color: ic.color, fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
                           {tpl.industry}
                         </span>
-                        <span style={{background: 'rgba(148,163,184,0.15)', color: '#94a3b8', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
+                        <span style={{background: '#f3f4f6', color: '#4b5563', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
                           {LANGUAGE_LABELS[tpl.language] || tpl.language}
                         </span>
                       </div>
-                      <div style={{fontSize: '0.72rem', color: '#64748b', lineHeight: '1.3'}}>{tpl.description}</div>
+                      <div style={{fontSize: '0.78rem', color: '#4b5563', lineHeight: '1.4'}}>{tpl.description}</div>
                     </div>
                   );
                 })}
               </div>
               {selectedTemplate && (
-                <div style={{marginTop: '8px', padding: '8px 12px', borderRadius: '6px', background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.2)'}}>
-                  <div style={{fontSize: '0.75rem', color: '#60a5fa', fontWeight: 600, marginBottom: '2px'}}>
+                <div style={{marginTop: '8px', padding: '8px 12px', borderRadius: '6px', background: '#eef2ff', border: '1px solid #c7d2fe'}}>
+                  <div style={{fontSize: '0.78rem', color: '#4338ca', fontWeight: 700, marginBottom: '2px'}}>
                     Template selected: {selectedTemplate.name}
                   </div>
-                  <div style={{fontSize: '0.7rem', color: '#94a3b8'}}>
+                  <div style={{fontSize: '0.72rem', color: '#4b5563'}}>
                     Voice: {selectedTemplate.tts_provider} / {selectedTemplate.tts_voice_id} &middot; Will auto-set voice settings{createForm.product_id ? ' and product prompt' : ' (select a product to also set the prompt)'}
                   </div>
                 </div>
@@ -124,7 +122,7 @@ export default function CampaignModals({
                 handleCreateCampaign(e);
               }}>
                 <div style={{marginBottom: '1rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                     Campaign Name <span style={{color: '#ef4444'}}>*</span>
                   </label>
                   <input
@@ -147,7 +145,7 @@ export default function CampaignModals({
                   )}
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                     Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                     {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}> — required to apply prompt template</span>}
                   </label>
@@ -159,7 +157,7 @@ export default function CampaignModals({
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                     Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — where did these leads come from?)</span>
                   </label>
                   <select className="form-input" value={createForm.lead_source}
@@ -176,7 +174,7 @@ export default function CampaignModals({
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                  <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>Communication Channel</label>
                   <select className="form-input" value={createForm.channel || 'voice'}
                     onChange={e => setCreateForm({...createForm, channel: e.target.value})}
                     style={{width: '100%'}}>
@@ -211,7 +209,7 @@ export default function CampaignModals({
         <div className="modal-overlay" onClick={() => setShowAddLeadsModal(false)}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '500px', width: '90%', maxHeight: '70vh', display: 'flex', flexDirection: 'column'}}>
-            <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Add Leads to Campaign</h3>
+            <h3 style={{marginTop: 0, marginBottom: '1rem', color: '#111827', fontSize: '1.4rem', fontWeight: 800}}>Add Leads to Campaign</h3>
             {availableLeads.length === 0 ? (
               <p style={{color: '#64748b'}}>All leads are already in this campaign.</p>
             ) : (
@@ -244,7 +242,7 @@ export default function CampaignModals({
         <div className="modal-overlay" onClick={() => setShowCsvImportModal(false)}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
-            <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
+            <h3 style={{marginTop: 0, marginBottom: '1rem', color: '#111827', fontSize: '1.4rem', fontWeight: 800}}>Import Leads from CSV</h3>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>
               Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
             </p>
@@ -268,14 +266,14 @@ export default function CampaignModals({
         <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
-            <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
+            <h3 style={{marginTop: 0, marginBottom: '1rem', color: '#111827', fontSize: '1.4rem', fontWeight: 800}}>Edit Campaign</h3>
             <form onSubmit={e => {
               setEditNameTouched(true);
               if (editNameError) { e.preventDefault(); return; }
               handleSaveEditCampaign(e);
             }}>
               <div style={{marginBottom: '1rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                   Campaign Name <span style={{color: '#ef4444'}}>*</span>
                 </label>
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
@@ -293,7 +291,7 @@ export default function CampaignModals({
                 )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                   Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
                 <select className="form-input" value={editCampaignForm.product_id}
@@ -304,7 +302,7 @@ export default function CampaignModals({
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>
                   Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
                 <select className="form-input" value={editCampaignForm.lead_source}
@@ -321,7 +319,7 @@ export default function CampaignModals({
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
-                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                <label style={{display: 'block', color: '#374151', fontSize: '0.9rem', fontWeight: 700, marginBottom: '4px'}}>Communication Channel</label>
                 <select className="form-input" value={editCampaignForm.channel || 'voice'}
                   onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
                   style={{width: '100%'}}>
@@ -369,7 +367,7 @@ export default function CampaignModals({
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
-                if (!/^\d{10}$/.test(editForm.phone || '')) { toast('Phone must be exactly 10 digits', 'warn'); return; }
+                if (!/^\d{10}$/.test(editForm.phone || '')) { alert('Phone must be exactly 10 digits'); return; }
                 handleSaveEdit();
               }}>Save</button>
             </div>
