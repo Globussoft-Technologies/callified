@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -58,10 +59,6 @@ func (s *phoneSession) addTranscript(role, text string) {
 // Best-effort: errors are logged, never returned. Recording loss is
 // preferable to crashing the call cleanup.
 func (s *phoneSession) flushRecording() {
-	if s.deps.Recordings == nil {
-		return // store unavailable; nothing to do
-	}
-
 	s.recMu.Lock()
 	caller := s.callerPCM
 	bot := s.botPCM
@@ -78,24 +75,67 @@ func (s *phoneSession) flushRecording() {
 			len(caller), len(bot))
 	}
 
+	// Build the WAV once; reused by both the receptionist-local store and
+	// the dashboard's call_transcripts sink so we don't encode twice.
 	wav := buildStereoWAV(caller, bot)
-	recorderID := phoneRecorderID(s.from)
-	id := newRecordingID()
-	meta := recordings.Meta{
-		ID:         id,
-		RecorderID: recorderID,
-		SessionID:  s.callSid,
-		CreatedAt:  s.startedAt,
-		DurationMS: int(time.Since(s.startedAt) / time.Millisecond),
-		AudioMIME:  "audio/wav",
-		Transcript: transcript,
+	durationS := float32(time.Since(s.startedAt).Seconds())
+
+	// 1) Receptionist's own filesystem store (browser dashboard / past
+	//    conversations within the receptionist UI). Nil-safe.
+	if s.deps.Recordings != nil {
+		recorderID := phoneRecorderID(s.from)
+		id := newRecordingID()
+		meta := recordings.Meta{
+			ID:         id,
+			RecorderID: recorderID,
+			SessionID:  s.callSid,
+			CreatedAt:  s.startedAt,
+			DurationMS: int(time.Since(s.startedAt) / time.Millisecond),
+			AudioMIME:  "audio/wav",
+			Transcript: transcript,
+		}
+		if err := s.deps.Recordings.Save(meta, bytes.NewReader(wav)); err != nil {
+			log.Printf("wsphone: flushRecording save failed for %s: %v", s.streamSid, err)
+		} else {
+			log.Printf("wsphone: recording saved id=%s recorder=%s caller_bytes=%d bot_bytes=%d transcript_lines=%d",
+				id, recorderID, len(caller), len(bot), len(transcript))
+		}
 	}
-	if err := s.deps.Recordings.Save(meta, bytes.NewReader(wav)); err != nil {
-		log.Printf("wsphone: flushRecording save failed for %s: %v", s.streamSid, err)
-		return
+
+	// 2) Dashboard sink — writes the WAV to RECORDINGS_DIR and inserts a
+	//    call_transcripts row so the lead's "Past Conversations" modal
+	//    on the campaigns dashboard picks this up the same way it does
+	//    campaign calls. Fire-and-forget; the sink owns its own error
+	//    handling and never blocks call teardown.
+	if s.deps.PastConversations != nil && s.from != "" {
+		// Receptionist transcripts use {role:"user"|"assistant", text:…}.
+		// The dashboard expects {role:"AI"|"User", text:…}. Map here so
+		// the sink stays schema-agnostic.
+		dashTurns := make([]map[string]string, 0, len(transcript))
+		for _, tl := range transcript {
+			role := "User"
+			if tl.Role == "assistant" || tl.Role == "AI" {
+				role = "AI"
+			}
+			dashTurns = append(dashTurns, map[string]string{
+				"role": role,
+				"text": tl.Text,
+			})
+		}
+		jsonBytes, err := json.Marshal(dashTurns)
+		if err != nil {
+			log.Printf("wsphone: flushRecording: json marshal failed for %s: %v", s.streamSid, err)
+			return
+		}
+		s.deps.PastConversations.SaveReceptionistCall(
+			s.from,
+			s.callSid,
+			wav,
+			string(jsonBytes),
+			"en", // receptionist language is fixed for now; pull from convo session later
+			durationS,
+		)
 	}
-	log.Printf("wsphone: recording saved id=%s recorder=%s caller_bytes=%d bot_bytes=%d transcript_lines=%d",
-		id, recorderID, len(caller), len(bot), len(transcript))
 }
 
 // phoneRecorderID derives an opaque recorder_id from the caller's
