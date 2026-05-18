@@ -150,6 +150,38 @@ func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64) (*Lead, error) {
 	return l, err
 }
 
+// HasPriorCallByPhone returns true when the phone number has at least one
+// call_transcripts row attached via a matching lead. Used by the inbound
+// Exotel webhook to route repeat callers to the AI Receptionist instead of
+// the campaign dialer (rule: "anyone who's spoken to us before gets the
+// receptionist; first-time callers get whatever campaign script is queued").
+//
+// Single round-trip — joins leads → call_transcripts and stops at the first
+// hit. Phone match is exact: the caller's `From` field must be byte-identical
+// to leads.phone. Carrier number normalisation happens upstream (the dialer
+// stores leads with the same formatting it later receives back on inbound),
+// so we don't strip "+91" / spaces here — doing so would risk a false match
+// across regions.
+func (d *DB) HasPriorCallByPhone(phone string) (bool, error) {
+	if phone == "" {
+		return false, nil
+	}
+	var one int
+	err := d.pool.QueryRow(`
+		SELECT 1
+		FROM leads l
+		JOIN call_transcripts t ON t.lead_id = l.id
+		WHERE l.phone = ?
+		LIMIT 1`, phone).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CreateLead inserts a new lead. Returns the new ID.
 func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(

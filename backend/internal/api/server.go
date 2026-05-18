@@ -340,7 +340,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// /api/receptionist/* is served by the in-process receptionist handler.
 	// Mounted here (under /api/) so testgo's existing nginx /api/ → :8011 rule
 	// covers it without needing a new nginx location block.
-	mux.Handle("/api/receptionist/", newReceptionistHandler())
+	mux.Handle("/api/receptionist/", s.newReceptionistHandler())
 
 	// ── Telephony webhooks (no auth — provider-initiated) ──────────────────────
 	mux.HandleFunc("GET /webhook/twilio", s.twilioTwiML)

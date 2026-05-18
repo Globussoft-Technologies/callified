@@ -33,11 +33,35 @@ type Server struct {
 	phone      *wsphone.Handler // nil when no TTS provider is configured
 }
 
-// New constructs a server with all dependencies wired. The recordings
-// store is opened at RECORDINGS_DIR (or "./recordings" by default); a
-// failure there is logged but non-fatal — recordings endpoints will
-// return 503 and the rest of the receptionist still works.
-func New() *Server {
+// New constructs a server with all dependencies wired. Variadic options
+// let callers inject a PastConversationSink (so receptionist calls land
+// in the dashboard's call_transcripts table) without breaking the
+// no-arg call from local-dev paths that don't have a DB yet.
+func New(opts ...Option) *Server {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+	return newWithOptions(o)
+}
+
+// Option configures the receptionist server at construction time.
+type Option func(*options)
+
+type options struct {
+	pastConversations wsphone.PastConversationSink
+}
+
+// WithPastConversationSink injects a sink that receives every finished
+// phone call (audio + transcript + duration). Used to bridge the
+// receptionist's call history into the main dashboard's
+// call_transcripts table so repeat-caller conversations appear in the
+// lead's Past Conversations modal alongside campaign calls.
+func WithPastConversationSink(sink wsphone.PastConversationSink) Option {
+	return func(o *options) { o.pastConversations = sink }
+}
+
+func newWithOptions(o options) *Server {
 	cfg := config.Get()
 	store := session.New(time.Duration(cfg.SessionTTLSeconds) * time.Second)
 	apptSvc := appointment.New()
@@ -59,9 +83,10 @@ func New() *Server {
 	// the env has at least one TTS provider key. The handler itself
 	// works without a recordings store but logs a warning.
 	phoneHandler, err := wsphone.New(wsphone.Deps{
-		Manager:    mgr,
-		ApptSvc:    apptSvc,
-		Recordings: recStore,
+		Manager:           mgr,
+		ApptSvc:           apptSvc,
+		Recordings:        recStore,
+		PastConversations: o.pastConversations,
 		ElevenLabsKey:     os.Getenv("ELEVENLABS_API_KEY"),
 		ElevenLabsVoiceID: firstNonEmptyEnv("RECEPTIONIST_INBOUND_VOICE_ID", "ELEVENLABS_VOICE_ID_FEMALE", "ELEVENLABS_VOICE_ID"),
 		SmallestKey:       os.Getenv("SMALLEST_API_KEY"),

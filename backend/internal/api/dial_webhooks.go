@@ -76,6 +76,12 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	callSid := firstNonEmptyStr(q.Get("CallSid"), q.Get("call_sid"))
 	phone := firstNonEmptyStr(q.Get("From"), q.Get("CallFrom"), q.Get("phone"))
 
+	// Redis lookup BEFORE the repeat-caller decision so we can route
+	// outbound calls correctly too: on outbound, the carrier's `From` is
+	// our Exotel CallerID (e.g. 09513886363), not the lead. We need the
+	// lead's actual phone to decide whether they've been spoken to before,
+	// and that lives in the Redis pending-call entry the initiator stashed
+	// under the call_sid at dial time.
 	var pending rstore.PendingCallInfo
 	var hitKey string
 	if callSid != "" {
@@ -126,6 +132,29 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	ttsVoiceID := pending.TTSVoiceID
 	ttsLanguage := pending.TTSLanguage
 
+	// ── Repeat-caller routing ────────────────────────────────────────────────
+	// If the LEAD's phone (not the carrier's `From`, which is our Exotel
+	// CallerID on outbound) has any prior call_transcripts row, the contact
+	// is no longer a fresh lead. Hand the call to the AI Receptionist for
+	// name capture, intent detection and appointment booking — works the
+	// same way for both inbound (lead → us) and outbound (us → lead) calls
+	// because Exotel hits this webhook in both directions and the Redis
+	// pending-call entry tells us which lead this call is for.
+	//
+	// Detection happens in a single SELECT; we ignore errors and fall back
+	// to the campaign path on DB failure so a transient DB hiccup never
+	// black-holes a call.
+	leadPhone := phoneOut
+	if leadPhone != "" && s.db != nil {
+		if hasPrior, err := s.db.HasPriorCallByPhone(leadPhone); err != nil {
+			s.logger.Warn("exotelXML: HasPriorCallByPhone failed, defaulting to campaign flow",
+				zap.String("lead_phone", leadPhone), zap.Error(err))
+		} else if hasPrior {
+			s.writeReceptionistExoML(w, r, callSid, leadPhone)
+			return
+		}
+	}
+
 	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 	wsURL = fmt.Sprintf(
@@ -161,6 +190,54 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
     <Stream url="%s"/>
   </Connect>
 </Response>`, wsURL)
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(xml))
+}
+
+// writeReceptionistExoML returns ExoML pointing the carrier at the embedded
+// AI Receptionist's WebSocket (`/api/receptionist/media-stream`) instead of
+// the campaign dialer's `/media-stream`. Triggered from exotelXML when the
+// caller's phone has at least one prior call_transcripts row.
+//
+// The receptionist owns its own session lifecycle: it reads from/to/call_sid
+// from the query string, runs its own greeting + intent detection + booking
+// flow, and writes its own transcripts. The campaign-side Redis pending-call
+// entry is intentionally NOT consulted here — repeat callers shouldn't be
+// fed into a (possibly stale) campaign context.
+func (s *Server) writeReceptionistExoML(w http.ResponseWriter, r *http.Request, callSid, fromPhone string) {
+	q := r.URL.Query()
+	toPhone := firstNonEmptyStr(q.Get("To"), q.Get("CallTo"))
+
+	wsBase := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
+	wsBase = strings.Replace(wsBase, "http://", "ws://", 1)
+	wsURL := fmt.Sprintf(
+		"%s/api/receptionist/media-stream?from=%s&to=%s&call_sid=%s",
+		wsBase,
+		url.QueryEscape(fromPhone),
+		url.QueryEscape(toPhone),
+		url.QueryEscape(callSid),
+	)
+
+	s.logger.Info("exotelXML: routing repeat caller to receptionist",
+		zap.String("call_sid", callSid),
+		zap.String("from", fromPhone),
+		zap.String("to", toPhone),
+		zap.String("ws_url", wsURL),
+		zap.String("remote_addr", r.RemoteAddr),
+	)
+
+	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <Stream url="%s">
+      <Parameter name="from" value="%s"/>
+      <Parameter name="to" value="%s"/>
+      <Parameter name="call_sid" value="%s"/>
+    </Stream>
+  </Connect>
+</Response>`, wsURL, fromPhone, toPhone, callSid)
+
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(xml))
