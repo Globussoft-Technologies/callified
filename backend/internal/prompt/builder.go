@@ -152,18 +152,20 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	effectiveSource := resolveSource(leadSource, campaignSource)
 
 	// Fetch product: prefer the campaign's linked product, fall back to org's first product.
-	var productName, productContext string
+	var productName, productContext, callFlowInstructions string
 	if campaignProductID > 0 {
 		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil {
 			productName = p.Name
-			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.ManualNotes)
+			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
+			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
 	}
 	if productName == "" {
 		if products, err := b.db.GetProductsByOrg(orgID); err == nil && len(products) > 0 {
 			p := products[0]
 			productName = p.Name
-			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.ManualNotes)
+			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
+			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
 	}
 
@@ -173,15 +175,16 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	sourceInline := sourceContextInline(effectiveSource, effectiveLang)
 
 	pc := promptContext{
-		CompanyName:    companyName,
-		ProductName:    productName,
-		ProductContext: productContext,
-		CampaignName:   campaignName,
-		PersonaName:    personaName,
-		LeadFirst:      firstWord(leadName),
-		LeadInterest:   leadInterest,
-		SourceInline:   sourceInline,
-		Language:       effectiveLang,
+		CompanyName:          companyName,
+		ProductName:          productName,
+		ProductContext:       productContext,
+		CallFlowInstructions: callFlowInstructions,
+		CampaignName:         campaignName,
+		PersonaName:          personaName,
+		LeadFirst:            firstWord(leadName),
+		LeadInterest:         leadInterest,
+		SourceInline:         sourceInline,
+		Language:             effectiveLang,
 	}
 
 	// Build system prompt — custom org-level override short-circuits the full
@@ -228,15 +231,16 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 // promptContext bundles every variable the system prompt needs so we can pass
 // a single value around instead of threading many parameters.
 type promptContext struct {
-	CompanyName    string
-	ProductName    string
-	ProductContext string
-	CampaignName   string
-	PersonaName    string
-	LeadFirst      string
-	LeadInterest   string
-	SourceInline   string
-	Language       string
+	CompanyName          string
+	ProductName          string
+	ProductContext       string
+	CallFlowInstructions string
+	CampaignName         string
+	PersonaName          string
+	LeadFirst            string
+	LeadInterest         string
+	SourceInline         string
+	Language             string
 }
 
 // buildDefaultPrompt assembles the LLM system prompt. Structure is shared
@@ -264,8 +268,12 @@ func buildDefaultPrompt(pc promptContext) string {
 
 	// Goal.
 	b.WriteString("## GOAL\n")
-	b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
-	b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
+	if pc.CallFlowInstructions != "" {
+		b.WriteString("Qualify the lead by asking the questions below in order, then book an appointment.\n\n")
+	} else {
+		b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
+		b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
+	}
 
 	// Call flow.
 	b.WriteString("## CALL FLOW\n")
@@ -273,11 +281,18 @@ func buildDefaultPrompt(pc promptContext) string {
 	if pc.SourceInline != "" {
 		fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
 	}
-	b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
-	fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
-	b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
-	b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
-	b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n\n")
+	if pc.CallFlowInstructions != "" {
+		fmt.Fprintf(&b, "IMPORTANT: The steps below are written in English for clarity. You MUST ask every question in %s. If the customer speaks Hindi or switches language, immediately switch to that language and stay in it.\n", langLabel)
+		b.WriteString(pc.CallFlowInstructions)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
+		fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
+		b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
+		b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+		b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+	}
+	b.WriteString("\n")
 
 	// Core rules — universal, English.
 	b.WriteString(`## CORE RULES (STRICT)
@@ -291,6 +306,7 @@ func buildDefaultPrompt(pc promptContext) string {
 8. LISTEN FIRST. If the customer trails off ("I…", "umm…"), wait — ask them to continue. Do not repeat time slots.
 9. NO REPETITION. Do not ask the same question twice. Do not repeat facts you already stated.
 10. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
+11. LANGUAGE MIRROR. If the customer speaks in a different language (e.g. Hindi when the call started in English), IMMEDIATELY switch to their language for ALL remaining responses. Do not switch back unless they do.
 
 `)
 

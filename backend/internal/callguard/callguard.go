@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	callStartHour = 9  // 9:00 AM
-	callEndHour   = 21 // 9:00 PM
+	callStartHour   = 9  // 9:00 AM
+	callEndHour     = 23 // 11:30 PM
+	callEndMinute   = 30
 )
 
 // Status is the result of a calling-hours check.
@@ -34,7 +35,10 @@ func Check(tzName string) Status {
 
 	now := time.Now().In(loc)
 	hour := now.Hour()
+	minute := now.Minute()
 	currentTime := now.Format("03:04 PM")
+
+	pastEndTime := hour > callEndHour || (hour == callEndHour && minute >= callEndMinute)
 
 	switch {
 	case hour < callStartHour:
@@ -46,10 +50,10 @@ func Check(tzName string) Status {
 			Timezone:    tzName,
 			NextAllowed: "today at 9:00 AM",
 		}
-	case hour >= callEndHour:
+	case pastEndTime:
 		return Status{
 			Allowed:     false,
-			Reason:      fmt.Sprintf("Too late — calls allowed only until 9:00 PM. Current time: %s", currentTime),
+			Reason:      fmt.Sprintf("Too late — calls allowed only until 11:30 PM. Current time: %s", currentTime),
 			CurrentHour: hour,
 			CurrentTime: currentTime,
 			Timezone:    tzName,
@@ -58,7 +62,7 @@ func Check(tzName string) Status {
 	default:
 		return Status{
 			Allowed:     true,
-			Reason:      "Calling hours active (9 AM – 9 PM)",
+			Reason:      "Calling hours active (9 AM – 11:30 PM)",
 			CurrentHour: hour,
 			CurrentTime: currentTime,
 			Timezone:    tzName,
@@ -72,11 +76,13 @@ func NextAllowedTime(tzName string) string {
 	if err != nil {
 		loc, _ = time.LoadLocation("Asia/Kolkata")
 	}
-	hour := time.Now().In(loc).Hour()
+	now := time.Now().In(loc)
+	hour, minute := now.Hour(), now.Minute()
+	pastEndTime := hour > callEndHour || (hour == callEndHour && minute >= callEndMinute)
 	switch {
 	case hour < callStartHour:
 		return "today at 9:00 AM"
-	case hour >= callEndHour:
+	case pastEndTime:
 		return "tomorrow at 9:00 AM"
 	default:
 		return "now (calling is currently allowed)"
