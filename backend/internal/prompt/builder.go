@@ -282,7 +282,6 @@ func buildDefaultPrompt(pc promptContext) string {
 		fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
 	}
 	if pc.CallFlowInstructions != "" {
-		fmt.Fprintf(&b, "IMPORTANT: The steps below are written in English for clarity. You MUST ask every question in %s. If the customer speaks Hindi or switches language, immediately switch to that language and stay in it.\n", langLabel)
 		b.WriteString(pc.CallFlowInstructions)
 		b.WriteString("\n")
 	} else {
@@ -306,7 +305,6 @@ func buildDefaultPrompt(pc promptContext) string {
 8. LISTEN FIRST. If the customer trails off ("I…", "umm…"), wait — ask them to continue. Do not repeat time slots.
 9. NO REPETITION. Do not ask the same question twice. Do not repeat facts you already stated.
 10. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
-11. LANGUAGE MIRROR. If the customer speaks in a different language (e.g. Hindi when the call started in English), IMMEDIATELY switch to their language for ALL remaining responses. Do not switch back unless they do.
 
 `)
 
