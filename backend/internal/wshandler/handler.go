@@ -660,8 +660,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 // bargeInEnergyThreshold is the mean-square PCM energy level above which we
 // treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
 // value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
-// 150_000 ≈ RMS 387 — catches soft voices while staying above mic noise floor.
-const bargeInEnergyThreshold int64 = 150_000
+// Raised to 1_000_000 (RMS≈1000): TTS echo was measuring ~280K and falsely
+// triggering barge-in, cancelling the agent's greeting mid-sentence.
+const bargeInEnergyThreshold int64 = 1_000_000
 
 // pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
 func pcmEnergy(pcm []byte) int64 {
