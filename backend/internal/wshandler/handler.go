@@ -226,32 +226,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 		}
 	}
+	// BARGE-IN DISABLED — uncomment to re-enable
 	onSpeechStarted := func() {
-		sess.Log.Info("barge-in: SpeechStarted",
-			zap.Bool("tts_playing", sess.IsTTSPlaying()),
-			zap.Bool("is_web_sim", sess.IsWebSim),
-			zap.Bool("is_exotel", sess.IsExotel),
-		)
-		if sess.IsTTSPlaying() {
-			metrics.BargeIns.Inc()
-		}
-		// Always set flag + drain — even when TTS is between sentences the
-		// TTSSentences buffer may still hold queued text that must be dropped.
-		sess.SetBargeIn(true)
-		n := sess.DrainTTSSentences()
-		sess.Log.Info("barge-in: draining", zap.Int("drained", n), zap.Bool("tts_was_playing", sess.IsTTSPlaying()))
-		// Safety: clear flag after 3s in case LLM never responds.
-		go func() {
-			time.Sleep(3 * time.Second)
-			sess.SetBargeIn(false)
-		}()
-		sess.CancelActiveTTS()
-		if sess.IsExotel {
-			sendClearEvent(sess)
-		} else if sess.IsWebSim {
-			frame, _ := json.Marshal(map[string]string{"type": "clear"})
-			_ = sess.SendText(frame)
-		}
+		sess.Log.Info("barge-in: SpeechStarted (disabled)", zap.Bool("tts_playing", sess.IsTTSPlaying()))
 	}
 
 	var wg sync.WaitGroup
@@ -495,12 +472,13 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
 	// The 500ms window catches users who speak the instant the agent finishes
 	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-		if sess.TriggerBargeIn() {
-			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-		}
-	}
+	// BARGE-IN DISABLED — uncomment to re-enable
+	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// 	if sess.TriggerBargeIn() {
+	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+	// 	}
+	// }
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -799,12 +777,13 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
 	// The 500ms window catches users who speak the instant the agent finishes
 	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-		if sess.TriggerBargeIn() {
-			sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-		}
-	}
+	// BARGE-IN DISABLED — uncomment to re-enable
+	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// 	if sess.TriggerBargeIn() {
+	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+	// 	}
+	// }
 	select {
 	case sess.AudioIn <- pcm:
 	default:
