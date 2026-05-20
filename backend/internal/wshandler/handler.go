@@ -276,27 +276,45 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sttStarted.Swap(true) {
 			return
 		}
-		// g2: STT goroutine — DualClient for non-Hindi/non-English Indian languages,
-		// single client otherwise. Hindi already uses Deepgram's dedicated nova-2
-		// hi model; English uses nova-2 en — no benefit from a parallel hi connection.
-		useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
+		// g2: STT goroutine.
+		// Sarvam STT is used for Indian-language calls — it auto-detects language
+		// per utterance (te-IN, hi-IN, etc.) enabling reliable mid-call switching.
+		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
-		if useDualSTT {
-			dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
-			dual.OnTranscript = onTranscript
-			dual.OnSpeechStarted = onSpeechStarted
+		onLangDetected := func(_ string, detectedLang string) {
+			if detectedLang != "" {
+				sess.SwitchLanguage(detectedLang)
+			}
+		}
+		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
+			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
+			sarvamClient.OnTranscript = onTranscript
+			sarvamClient.OnSpeechStarted = onSpeechStarted
+			sarvamClient.OnTranscriptWithLang = onLangDetected
 			go func() {
 				defer wg.Done()
-				dual.Run(ctx, sess.AudioIn)
+				sarvamClient.Run(ctx, sess.AudioIn)
 			}()
 		} else {
-			dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
-			dgClient.OnTranscript = onTranscript
-			dgClient.OnSpeechStarted = onSpeechStarted
-			go func() {
-				defer wg.Done()
-				dgClient.Run(ctx, sess.AudioIn)
-			}()
+			// Fallback: Deepgram.
+			useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
+			if useDualSTT {
+				dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
+				dual.OnTranscript = onTranscript
+				dual.OnSpeechStarted = onSpeechStarted
+				go func() {
+					defer wg.Done()
+					dual.Run(ctx, sess.AudioIn)
+				}()
+			} else {
+				dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
+				dgClient.OnTranscript = onTranscript
+				dgClient.OnSpeechStarted = onSpeechStarted
+				go func() {
+					defer wg.Done()
+					dgClient.Run(ctx, sess.AudioIn)
+				}()
+			}
 		}
 	}
 	sess.StartSTT = startSTT

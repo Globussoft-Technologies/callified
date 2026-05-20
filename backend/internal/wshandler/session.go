@@ -118,6 +118,44 @@ type CallSession struct {
 	Log       *zap.Logger
 }
 
+var langLabels = map[string]string{
+	"hi": "Hindi", "mr": "Marathi", "en": "English",
+	"ta": "Tamil", "te": "Telugu", "kn": "Kannada",
+	"bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi",
+	"ml": "Malayalam",
+}
+
+// SwitchLanguage updates the session's active language, TTS language, and
+// patches the system prompt so the LLM immediately responds in the new language.
+// Returns true if the language actually changed.
+func (s *CallSession) SwitchLanguage(newLang string) bool {
+	if newLang == "" || newLang == s.Language {
+		return false
+	}
+	s.Log.Info("language switch detected",
+		zap.String("from", s.Language),
+		zap.String("to", newLang),
+	)
+	s.Language = newLang
+	s.TTSLanguage = newLang
+
+	label := langLabels[newLang]
+	if label == "" {
+		label = "Hindi"
+	}
+	override := "[LANGUAGE SWITCH: Customer is speaking " + label + ". Respond ONLY in " + label + " for the rest of this conversation. This overrides all previous language instructions.]\n\n"
+	if !strings.Contains(s.SystemPrompt, "LANGUAGE SWITCH:") {
+		s.SystemPrompt = override + s.SystemPrompt
+	} else {
+		start := strings.Index(s.SystemPrompt, "[LANGUAGE SWITCH:")
+		end := strings.Index(s.SystemPrompt, "]\n\n")
+		if start >= 0 && end > start {
+			s.SystemPrompt = override + s.SystemPrompt[end+3:]
+		}
+	}
+	return true
+}
+
 // SetTTSInstance stores the TTS client for this call.
 func (s *CallSession) SetTTSInstance(p tts.Provider) {
 	s.ttsMu.Lock()
