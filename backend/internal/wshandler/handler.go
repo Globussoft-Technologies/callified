@@ -211,6 +211,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sess.HangupRequested() {
 			return
 		}
+		// Drop background filler sounds (hu, ha, hmm, ah, uh...) — Sarvam
+		// picks these up as speech but they are not real customer replies.
+		// Agent keeps waiting for a meaningful response.
+		if isFillerSound(text) {
+			sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			return
+		}
 		// Suppress transcripts while TTS is playing or within 1s of it ending
 		// to prevent the agent's own voice from looping back as customer input.
 		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
@@ -262,6 +269,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if detectedLang == "" || detectedLang == "od" {
 				// "od" (Odia) is a persistent Sarvam false positive for short
 				// filler syllables from te/kn/ta callers — ignore it entirely.
+				return
+			}
+			// Don't switch language while the agent's TTS is playing or just
+			// finished — Sarvam may be picking up the backchannel filler
+			// ("Sari...", "Avunu...", "Achha...") from our own audio, not the
+			// customer's voice.
+			if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
 				return
 			}
 			sess.SwitchLanguage(detectedLang)

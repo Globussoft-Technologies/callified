@@ -1,6 +1,44 @@
 package wshandler
 
-import "math/rand"
+import (
+	"math/rand"
+	"strings"
+)
+
+// fillerSounds is a set of short background-noise transcripts that Sarvam
+// commonly returns for non-speech sounds (breathing, ambient noise, filler
+// syllables). These are dropped before reaching the pipeline so the agent
+// keeps waiting for a real customer reply.
+var fillerSounds = map[string]struct{}{
+	"hu": {}, "ha": {}, "haa": {}, "hah": {},
+	"hm": {}, "hmm": {}, "hmmm": {},
+	"ah": {}, "ahh": {}, "aah": {},
+	"oh": {}, "ohh": {},
+	"uh": {}, "uhh": {},
+	"um": {}, "umm": {}, "ummm": {},
+	"ugh": {},
+	"eh": {}, "ehh": {},
+	"ow": {},
+	// Indian-language equivalents
+	"haan": {}, "han": {},
+	"ho": {},
+	"hn": {},
+}
+
+// isFillerSound returns true when the entire transcript is a single short
+// background-noise syllable that should not be forwarded to the pipeline.
+func isFillerSound(text string) bool {
+	words := strings.Fields(strings.ToLower(strings.TrimSpace(text)))
+	if len(words) != 1 {
+		return false // multi-word transcripts are always real speech
+	}
+	word := strings.Trim(words[0], ".,!?…")
+	if _, ok := fillerSounds[word]; ok {
+		return true
+	}
+	// Also drop any single word that is 1–2 characters — too short to be intent.
+	return len([]rune(word)) <= 2
+}
 
 // fillersByLang maps language codes to conversational filler words.
 // These are injected as the first TTS item when the user speaks >2 words,
