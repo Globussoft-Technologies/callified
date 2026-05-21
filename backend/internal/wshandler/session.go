@@ -78,9 +78,11 @@ type CallSession struct {
 	sttFirstAt atomic.Pointer[time.Time]
 
 	// Server-side stereo recording buffers
-	recMu     sync.Mutex
-	micChunks []audio.TimedChunk
-	ttsChunks []audio.TimedChunk
+	recMu            sync.Mutex
+	micChunks        []audio.TimedChunk
+	ttsChunks        []audio.TimedChunk
+	ttsRecordCursor  time.Time // virtual playback cursor for TTS recording
+	ttsNewUtterance  bool      // signals AppendTTSChunk to reset cursor on next chunk
 
 	// Chat history — populated by AppendHistory, read by pipeline
 	historyMu   sync.Mutex
@@ -402,11 +404,30 @@ func (s *CallSession) AppendMicChunk(pcm []byte) {
 	s.recMu.Unlock()
 }
 
-// AppendTTSChunk records an AI PCM chunk for server-side stereo recording.
-func (s *CallSession) AppendTTSChunk(pcm []byte) {
+// MarkTTSNewUtterance signals that the next TTS chunk starts a new utterance.
+// Call this before each TTS synthesis so AppendTTSChunk resets its virtual
+// playback cursor to wall-clock time, preserving silence gaps between turns.
+func (s *CallSession) MarkTTSNewUtterance() {
 	s.recMu.Lock()
-	s.ttsChunks = append(s.ttsChunks, audio.TimedChunk{Ts: time.Now(), Data: append([]byte(nil), pcm...)})
+	s.ttsNewUtterance = true
 	s.recMu.Unlock()
+}
+
+// AppendTTSChunk records an AI PCM chunk for server-side stereo recording.
+// Uses a virtual playback cursor (advancing by chunk duration at 8kHz) so
+// batch TTS providers that deliver audio faster than real-time don't cluster
+// all chunks at the same timestamp and overwrite each other in the WAV buffer.
+func (s *CallSession) AppendTTSChunk(pcm []byte) {
+	const ttsHz = 8000 * 2 // bytes per second at 8kHz 16-bit mono
+	s.recMu.Lock()
+	defer s.recMu.Unlock()
+	if s.ttsNewUtterance || s.ttsRecordCursor.IsZero() {
+		s.ttsRecordCursor = time.Now()
+		s.ttsNewUtterance = false
+	}
+	ts := s.ttsRecordCursor
+	s.ttsChunks = append(s.ttsChunks, audio.TimedChunk{Ts: ts, Data: append([]byte(nil), pcm...)})
+	s.ttsRecordCursor = s.ttsRecordCursor.Add(time.Duration(len(pcm)) * time.Second / ttsHz)
 }
 
 // DrainRecordingBuffers returns copies of both recording buffers and clears them.

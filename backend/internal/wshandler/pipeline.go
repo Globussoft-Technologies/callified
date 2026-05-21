@@ -253,6 +253,7 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 	defer cancel()
 
 	sess.SetTTSPlaying(true)
+	sess.MarkTTSNewUtterance()
 	defer func() {
 		sess.SetTTSPlaying(false)
 		sess.MarkTTSEnd()
