@@ -211,10 +211,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sess.HangupRequested() {
 			return
 		}
-		// Block transcript only while TTS is actively playing and barge-in hasn't
-		// fired yet. Post-TTS gate is 200ms (down from 1000ms) — keeps echo out
-		// while letting quick replies like "yes" / "no" through.
-		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 200) {
+		// Suppress transcripts while TTS is playing or within 1s of it ending
+		// to prevent the agent's own voice from looping back as customer input.
+		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
+		if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
 			sess.Log.Debug("transcript dropped: TTS cooldown",
 				zap.Bool("tts_playing", sess.IsTTSPlaying()),
 				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
@@ -259,9 +259,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
 		onLangDetected := func(_ string, detectedLang string) {
-			if detectedLang != "" {
-				sess.SwitchLanguage(detectedLang)
+			if detectedLang == "" || detectedLang == "od" {
+				// "od" (Odia) is a persistent Sarvam false positive for short
+				// filler syllables from te/kn/ta callers — ignore it entirely.
+				return
 			}
+			sess.SwitchLanguage(detectedLang)
 		}
 		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
 			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)

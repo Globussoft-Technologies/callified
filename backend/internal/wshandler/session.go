@@ -150,10 +150,22 @@ func (s *CallSession) SwitchLanguage(newLang string) bool {
 		s.SystemPrompt = override + s.SystemPrompt
 	} else {
 		start := strings.Index(s.SystemPrompt, "[LANGUAGE SWITCH:")
-		end := strings.Index(s.SystemPrompt, "]\n\n")
-		if start >= 0 && end > start {
-			s.SystemPrompt = override + s.SystemPrompt[end+3:]
+		// Search relative to start so we find the closing ]\n\n of THIS block,
+		// not the first ]\n\n anywhere in the prompt (which may be earlier).
+		endRel := strings.Index(s.SystemPrompt[start:], "]\n\n")
+		if start >= 0 && endRel >= 0 {
+			s.SystemPrompt = override + s.SystemPrompt[start+endRel+3:]
 		}
+	}
+	// Replace any conflicting language directive in the prompt body so the LLM
+	// doesn't weight a bottom-of-prompt "Respond ONLY in Tamil" over our override.
+	for _, lang := range []string{"Hindi", "Marathi", "English", "Tamil", "Telugu", "Kannada", "Bengali", "Gujarati", "Punjabi", "Malayalam"} {
+		if lang == label {
+			continue
+		}
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond ONLY in "+lang, "Respond ONLY in "+label)
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond only in "+lang, "Respond ONLY in "+label)
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "[LANG:"+strings.ToLower(lang[:2])+"]", "[LANG:"+newLang+"]")
 	}
 	return true
 }
