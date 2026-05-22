@@ -211,6 +211,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sess.HangupRequested() {
 			return
 		}
+		// Explicit language switch request ("can you speak in kannada" etc.)
+		// must be handled even during TTS cooldown — Sarvam detects these as
+		// English but the customer clearly wants a different language.
+		if targetLang, ok := isExplicitLangSwitch(text); ok {
+			sess.Log.Info("lang: explicit switch request",
+				zap.String("text", text), zap.String("target", targetLang))
+			sess.SwitchLanguage(targetLang)
+		}
 		// Drop background filler sounds (hu, ha, hmm, ah, uh...) — Sarvam
 		// picks these up as speech but they are not real customer replies.
 		// Agent keeps waiting for a meaningful response.
@@ -265,7 +273,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// per utterance (te-IN, hi-IN, etc.) enabling reliable mid-call switching.
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
-		onLangDetected := func(_ string, detectedLang string) {
+		onLangDetected := func(transcript string, detectedLang string) {
 			if detectedLang == "" || detectedLang == "od" {
 				// "od" (Odia) is a persistent Sarvam false positive for short
 				// filler syllables from te/kn/ta callers — ignore it entirely.
@@ -276,6 +284,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// ("Sari...", "Avunu...", "Achha...") from our own audio, not the
 			// customer's voice.
 			if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+				return
+			}
+			// Require at least 2 words before trusting Sarvam's language
+			// detection — single words like "అవును", "येस", "ம்" are too
+			// short and ambiguous, causing false cross-language switches.
+			if len(strings.Fields(transcript)) < 2 {
+				return
+			}
+			// Don't switch based on number utterances — customers giving phone
+			// numbers or saying "one two three four five" in any script should
+			// not cause a language change.
+			if isNumberInput(transcript) {
+				sess.Log.Debug("lang detection skipped: number input", zap.String("text", transcript))
 				return
 			}
 			sess.SwitchLanguage(detectedLang)
