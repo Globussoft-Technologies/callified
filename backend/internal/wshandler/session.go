@@ -81,6 +81,7 @@ type CallSession struct {
 	recMu            sync.Mutex
 	micChunks        []audio.TimedChunk
 	ttsChunks        []audio.TimedChunk
+	micRecordCursor  time.Time // virtual playback cursor for mic recording
 	ttsRecordCursor  time.Time // virtual playback cursor for TTS recording
 	ttsNewUtterance  bool      // signals AppendTTSChunk to reset cursor on next chunk
 
@@ -410,10 +411,18 @@ func (s *CallSession) SendText(data []byte) error {
 }
 
 // AppendMicChunk records a user PCM chunk for server-side stereo recording.
+// Uses a virtual cursor (same pattern as AppendTTSChunk) so network jitter in
+// the Exotel WebSocket stream does not cause chunks to land on overlapping
+// offsets in the WAV buffer — which previously created audible crackle/clicks.
 func (s *CallSession) AppendMicChunk(pcm []byte) {
+	const micHz = 8000 * 2 // bytes per second at 8kHz 16-bit mono
 	s.recMu.Lock()
-	s.micChunks = append(s.micChunks, audio.TimedChunk{Ts: time.Now(), Data: append([]byte(nil), pcm...)})
-	s.recMu.Unlock()
+	defer s.recMu.Unlock()
+	if s.micRecordCursor.IsZero() {
+		s.micRecordCursor = time.Now()
+	}
+	s.micChunks = append(s.micChunks, audio.TimedChunk{Ts: s.micRecordCursor, Data: append([]byte(nil), pcm...)})
+	s.micRecordCursor = s.micRecordCursor.Add(time.Duration(len(pcm)) * time.Second / micHz)
 }
 
 // MarkTTSNewUtterance signals that the next TTS chunk starts a new utterance.
