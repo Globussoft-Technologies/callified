@@ -42,9 +42,14 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 	fillBuf(userBuf, micChunks, tStart)
 	fillBuf(aiBuf, ttsChunks, tStart)
 
-	// Normalize mic channel: find peak and scale up to micTargetPeak.
-	// Only boost — never attenuate (if caller is already loud, leave as-is).
-	normalizeMic(userBuf)
+	// Match mic level to TTS level so both channels sound equally loud in the
+	// stored recording. Use the TTS peak as the target; fall back to
+	// micTargetPeak when TTS is silent or very quiet.
+	target := pcmPeak(aiBuf)
+	if target < micTargetPeak {
+		target = micTargetPeak
+	}
+	normalizeTo(userBuf, target)
 
 	// Interleave: [L0 L0 R0 R0 | L1 L1 R1 R1 | ...]
 	stereo := make([]byte, totalSamples*4)
@@ -55,13 +60,8 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 	return encodeWAV(stereo, recChannels, recSampleRate, recBitDepth)
 }
 
-// normalizeMic scales the mic PCM buffer so the peak reaches micTargetPeak.
-// Only amplifies — if the peak is already at or above the target, no change.
-func normalizeMic(buf []byte) {
-	if len(buf) < 2 {
-		return
-	}
-	// Find peak
+// pcmPeak returns the absolute peak sample value of a PCM16LE buffer.
+func pcmPeak(buf []byte) int {
 	var peak int16
 	for i := 0; i+1 < len(buf); i += 2 {
 		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
@@ -72,10 +72,20 @@ func normalizeMic(buf []byte) {
 			peak = s
 		}
 	}
-	if peak == 0 || int(peak) >= micTargetPeak {
-		return // silent or already loud enough
+	return int(peak)
+}
+
+// normalizeTo scales buf so its peak matches target.
+// Only amplifies — never attenuates (if buf is already at or above target, no change).
+func normalizeTo(buf []byte, target int) {
+	if len(buf) < 2 || target <= 0 {
+		return
 	}
-	gain := float32(micTargetPeak) / float32(peak)
+	peak := pcmPeak(buf)
+	if peak == 0 || peak >= target {
+		return
+	}
+	gain := float32(target) / float32(peak)
 	for i := 0; i+1 < len(buf); i += 2 {
 		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
 		scaled := int32(float32(s) * gain)
