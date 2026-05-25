@@ -20,6 +20,10 @@ type TimedChunk struct {
 	Data []byte // raw PCM 16-bit little-endian at 8kHz
 }
 
+// micTargetPeak is the target peak amplitude for the mic channel after gain.
+// 24000 ≈ -2.7 dBFS — loud enough to hear clearly, safe from clipping.
+const micTargetPeak = 24000
+
 // BuildStereoWAV assembles mic (L) and TTS (R) chunks into a stereo WAV file.
 // Returns nil if both slices are empty.
 func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
@@ -38,6 +42,10 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 	fillBuf(userBuf, micChunks, tStart)
 	fillBuf(aiBuf, ttsChunks, tStart)
 
+	// Normalize mic channel: find peak and scale up to micTargetPeak.
+	// Only boost — never attenuate (if caller is already loud, leave as-is).
+	normalizeMic(userBuf)
+
 	// Interleave: [L0 L0 R0 R0 | L1 L1 R1 R1 | ...]
 	stereo := make([]byte, totalSamples*4)
 	for i := range totalSamples {
@@ -45,6 +53,41 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 		copy(stereo[i*4+2:i*4+4], aiBuf[i*2:i*2+2])
 	}
 	return encodeWAV(stereo, recChannels, recSampleRate, recBitDepth)
+}
+
+// normalizeMic scales the mic PCM buffer so the peak reaches micTargetPeak.
+// Only amplifies — if the peak is already at or above the target, no change.
+func normalizeMic(buf []byte) {
+	if len(buf) < 2 {
+		return
+	}
+	// Find peak
+	var peak int16
+	for i := 0; i+1 < len(buf); i += 2 {
+		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
+		if s < 0 {
+			s = -s
+		}
+		if s > peak {
+			peak = s
+		}
+	}
+	if peak == 0 || int(peak) >= micTargetPeak {
+		return // silent or already loud enough
+	}
+	gain := float32(micTargetPeak) / float32(peak)
+	for i := 0; i+1 < len(buf); i += 2 {
+		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
+		scaled := int32(float32(s) * gain)
+		if scaled > 32767 {
+			scaled = 32767
+		} else if scaled < -32768 {
+			scaled = -32768
+		}
+		v := uint16(int16(scaled))
+		buf[i] = byte(v)
+		buf[i+1] = byte(v >> 8)
+	}
 }
 
 func timeBounds(a, b []TimedChunk) (tMin, tMax time.Time) {
