@@ -78,11 +78,18 @@ func (s *Server) proxyToWaSender(w http.ResponseWriter, r *http.Request, method,
 	_, _ = io.Copy(w, resp.Body)
 }
 
-// GET /api/wa/session — list sessions for the org's configured PAT.
-// Returns WaSender's raw {success, data:[…]} shape unchanged so the
-// frontend can pick the first session, render its status, and use its
-// id for QR-related calls. We also fold in a hint about which session
-// "looks current" so the UI doesn't have to guess if multiple exist.
+// GET /api/wa/session
+// @Summary     List WaSender sessions
+// @Description Returns WaSender session list for the org's Personal Access Token. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/wa/session [get]
 func (s *Server) waListSessions(w http.ResponseWriter, r *http.Request) {
 	pat := s.waSessionPAT(w, r)
 	if pat == "" {
@@ -91,11 +98,19 @@ func (s *Server) waListSessions(w http.ResponseWriter, r *http.Request) {
 	s.proxyToWaSender(w, r, http.MethodGet, "/api/whatsapp-sessions", pat, nil)
 }
 
-// POST /api/wa/session/{id}/connect — kick off connection for a session.
-// WaSender returns the first QR code in the response body. The QR is a
-// raw string (e.g. "2@DTMUH…"); the frontend turns it into an image with
-// qrcode.react. The QR expires after 45s — clients should call the qr
-// endpoint below to refresh.
+// POST /api/wa/session/{id}/connect
+// @Summary     Connect WaSender session
+// @Description Initiates connection and returns the initial QR code for scanning. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  string  true  "WaSender session ID"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/wa/session/{id}/connect [post]
 func (s *Server) waConnectSession(w http.ResponseWriter, r *http.Request) {
 	pat := s.waSessionPAT(w, r)
 	if pat == "" {
@@ -110,9 +125,19 @@ func (s *Server) waConnectSession(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("/api/whatsapp-sessions/%s/connect", id), pat, nil)
 }
 
-// GET /api/wa/session/{id}/qr — fetch a fresh QR for a session that's
-// already been initialized. Used for the auto-refresh polling loop on
-// the frontend (every ~40s while status=NEED_SCAN).
+// GET /api/wa/session/{id}/qr
+// @Summary     Get WaSender session QR
+// @Description Fetches a fresh QR code for an initialized session (used for 40s auto-refresh). Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  string  true  "WaSender session ID"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/wa/session/{id}/qr [get]
 func (s *Server) waSessionQR(w http.ResponseWriter, r *http.Request) {
 	pat := s.waSessionPAT(w, r)
 	if pat == "" {
@@ -127,13 +152,19 @@ func (s *Server) waSessionQR(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("/api/whatsapp-sessions/%s/qrcode", id), pat, nil)
 }
 
-// POST /api/wa/session/{id}/disconnect — force WaSender to drop the
-// session's WhatsApp link. The dashboard exposes this as a "Disconnect &
-// Re-scan" button for the case where WaSender's reported status is
-// stale (says "connected" while the user's phone has actually unlinked
-// the device — happens after force-quit / network-loss / unclean
-// logout). After hitting this, the session flips back to NEED_SCAN and
-// the QR flow can mint a fresh link.
+// POST /api/wa/session/{id}/disconnect
+// @Summary     Disconnect WaSender session
+// @Description Drops the WhatsApp link and resets session to NEED_SCAN state. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  string  true  "WaSender session ID"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/wa/session/{id}/disconnect [post]
 func (s *Server) waDisconnectSession(w http.ResponseWriter, r *http.Request) {
 	pat := s.waSessionPAT(w, r)
 	if pat == "" {

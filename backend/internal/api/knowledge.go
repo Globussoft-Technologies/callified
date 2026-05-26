@@ -15,6 +15,16 @@ import (
 )
 
 // GET /api/knowledge
+// @Summary     List knowledge files
+// @Description Returns all RAG knowledge base files for the org. Requires Admin role.
+// @Tags        knowledge
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.KnowledgeFile
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/knowledge [get]
 func (s *Server) listKnowledge(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	files, err := s.db.GetKnowledgeFiles(ac.OrgID)
@@ -37,6 +47,19 @@ func (s *Server) knowledgeStoragePath(orgID, fileID int64, filename string) stri
 }
 
 // POST /api/knowledge  — multipart upload
+// @Summary     Upload knowledge file
+// @Description Uploads a PDF or text file to the RAG knowledge base. Requires Admin role.
+// @Tags        knowledge
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       file  formData  file  true  "PDF or .txt file (max 32 MB)"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/knowledge/upload [post]
 func (s *Server) uploadKnowledge(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -121,6 +144,19 @@ func (s *Server) uploadKnowledge(w http.ResponseWriter, r *http.Request) {
 // Serves the original uploaded file. Auth-gated; accepts the JWT via
 // Authorization header (default) or ?token=... (so a plain anchor in a
 // new tab works without needing fetch+blob plumbing on the client).
+// @Summary     Download knowledge file
+// @Description Streams the original uploaded knowledge file (PDF/txt). Requires Admin role.
+// @Tags        knowledge
+// @Produce     application/pdf
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Knowledge file ID"
+// @Success     200  {file}    binary
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     410  {object}  ErrorResponse  "file not on disk — re-upload needed"
+// @Router      /api/knowledge/{id}/download [get]
 func (s *Server) downloadKnowledge(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -148,6 +184,18 @@ func (s *Server) downloadKnowledge(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /api/knowledge/{id}
+// @Summary     Delete knowledge file
+// @Description Removes a knowledge file and its RAG index entry. Requires Admin role.
+// @Tags        knowledge
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Knowledge file ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/knowledge/{id} [delete]
 func (s *Server) deleteKnowledge(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")

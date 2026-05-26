@@ -12,6 +12,16 @@ import (
 
 // ── GET /api/campaigns ───────────────────────────────────────────────────────
 
+// @Summary     List campaigns
+// @Description Returns all campaigns for the org. Requires Admin or Agent role.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Campaign
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns [get]
 func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	campaigns, err := s.db.GetCampaignsByOrg(ac.OrgID)
@@ -50,6 +60,19 @@ func validateCampaignName(name string) string {
 	return ""
 }
 
+// @Summary     Create campaign
+// @Description Creates a new calling campaign. Requires Admin role.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      campaignCreateRequest  true  "Campaign data"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns [post]
 func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var req campaignCreateRequest
@@ -84,6 +107,19 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 // call or lead add that happened after the list was fetched left the cards
 // frozen at 0 until a full page reload.
 
+// @Summary     Get campaign
+// @Description Returns a campaign with fresh stats and voice settings. Requires Admin or Agent role.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  db.Campaign
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id} [get]
 func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -144,6 +180,20 @@ type campaignUpdateRequest struct {
 	Channel    string `json:"channel"`
 }
 
+// @Summary     Update campaign
+// @Description Updates campaign name, status, or product. Requires Admin role.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                  true  "Campaign ID"
+// @Param       body  body      campaignUpdateRequest  true  "Updated fields (empty fields are ignored)"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns/{id} [put]
 func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -175,6 +225,19 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/campaigns/{id} ───────────────────────────────────────────────
 
+// @Summary     Delete campaign
+// @Description Permanently deletes a campaign. Requires Admin role.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id} [delete]
 func (s *Server) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -196,6 +259,18 @@ func (s *Server) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/campaigns/{id}/leads ────────────────────────────────────────────
 
+// @Summary     List campaign leads
+// @Description Returns all leads enrolled in a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {array}   db.CampaignLead
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/leads [get]
 func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -213,6 +288,20 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/campaigns/{id}/leads ───────────────────────────────────────────
 
+// @Summary     Add leads to campaign
+// @Description Enrols existing leads into a campaign. Requires Admin role.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                          true  "Campaign ID"
+// @Param       body  body      object{lead_ids=[]int64}       true  "Lead IDs to enrol"
+// @Success     200   {object}  object{added=int}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/leads [post]
 func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -237,6 +326,20 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/campaigns/{id}/leads/{lead_id} ───────────────────────────────
 
+// @Summary     Remove lead from campaign
+// @Description Removes a lead from a campaign. Requires Admin role.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id       path  int64  true  "Campaign ID"
+// @Param       lead_id  path  int64  true  "Lead ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/leads/{lead_id} [delete]
 func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
 	if err != nil {
@@ -263,6 +366,18 @@ func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/campaigns/{id}/stats ────────────────────────────────────────────
 
+// @Summary     Get campaign stats
+// @Description Returns KPI counts (total, called, qualified, appointments) for a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  db.CampaignStats
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/stats [get]
 func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -280,6 +395,18 @@ func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/campaigns/{id}/call-log ─────────────────────────────────────────
 
+// @Summary     Get campaign call log
+// @Description Returns the full call history for all leads in a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {array}   db.CallLogEntry
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/call-log [get]
 func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -297,6 +424,18 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/campaigns/{id}/voice-settings ───────────────────────────────────
 
+// @Summary     Get campaign voice settings
+// @Description Returns TTS provider, voice ID and language for a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  db.VoiceSettings
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/voice-settings [get]
 func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -314,6 +453,20 @@ func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request
 
 // ── PUT /api/campaigns/{id}/voice-settings ────────────────────────────────────
 
+// @Summary     Save campaign voice settings
+// @Description Updates TTS provider, voice ID and language for a campaign. Also invalidates Redis voice cache. Requires Admin role.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64             true  "Campaign ID"
+// @Param       body  body  db.VoiceSettings  true  "Voice settings"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/voice-settings [put]
 func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -357,6 +510,20 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 // ── POST /api/campaigns/{id}/import-csv ──────────────────────────────────────
 // Import CSV of leads and add them to the campaign in one step.
 
+// @Summary     Import campaign leads from CSV
+// @Description Bulk-imports leads from a CSV and immediately enrols them in the campaign. Requires Admin role.
+// @Tags        campaigns
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64  true  "Campaign ID"
+// @Param       file  formData  file   true  "CSV file (columns: first_name, last_name, phone, source)"
+// @Success     200   {object}  object{imported=int,added_to_campaign=int,errors=[]string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/import-csv [post]
 func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	campaignID, err := parseID(r, "id")
@@ -435,6 +602,18 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 
 // ── GET /api/campaigns/{id}/call-reviews ──────────────────────────────────────
 
+// @Summary     Get campaign call reviews
+// @Description Returns AI-generated call quality reviews for all calls in a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {array}   object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/call-reviews [get]
 func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -455,6 +634,18 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // Retries tab renders without a second fetch. The route was missing entirely
 // before — the tab silently fell back to its empty state. Issue #77.
 
+// @Summary     Get campaign retries
+// @Description Returns pending/failed call retries enriched with lead details.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {array}   db.RetryWithLead
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/retries [get]
 func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -476,6 +667,18 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // before — the tab fell back to the empty per-call list and showed the
 // "no reviews yet" empty state forever. Issue #75.
 
+// @Summary     Get campaign call insights
+// @Description Aggregates call reviews into summary cards, improvement areas, and failure reasons.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/call-insights [get]
 func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

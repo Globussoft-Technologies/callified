@@ -60,7 +60,17 @@ type ssoClaims struct {
 	OrgID int64  `json:"org_id"`
 }
 
-// GET /api/auth/sso/jwt — public endpoint (no auth middleware)
+// GET /api/auth/sso/jwt
+// @Summary     SSO JWT login
+// @Description Accepts a signed JWT from a trusted issuer, resolves or JIT-creates the user, and redirects to the frontend with a Callified session token.
+// @Tags        auth
+// @Param       token     query  string  true   "Signed JWT from issuer"
+// @Param       redirect  query  string  false  "Redirect path after login (default: /crm)"
+// @Success     302  "Redirect to frontend with session token"
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     503  {object}  ErrorResponse
+// @Router      /api/auth/sso/jwt [get]
 func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 	raw := strings.TrimSpace(r.URL.Query().Get("token"))
 	next := r.URL.Query().Get("redirect")

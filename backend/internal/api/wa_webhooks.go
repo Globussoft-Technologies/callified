@@ -13,32 +13,57 @@ import (
 )
 
 // POST /wa/webhook/gupshup
+// @Summary     Gupshup inbound webhook
+// @Description Receives inbound WhatsApp messages from Gupshup. Called by the Gupshup platform.
+// @Tags        webhooks
+// @Accept      json
+// @Success     200  "OK"
+// @Router      /wa/webhook/gupshup [post]
 func (s *Server) waWebhookGupshup(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "gupshup", wa.ParseGupshup)
 }
 
 // POST /wa/webhook/wati
+// @Summary     Wati inbound webhook
+// @Description Receives inbound WhatsApp messages from Wati. Called by the Wati platform.
+// @Tags        webhooks
+// @Accept      json
+// @Success     200  "OK"
+// @Router      /wa/webhook/wati [post]
 func (s *Server) waWebhookWati(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "wati", wa.ParseWati)
 }
 
 // POST /wa/webhook/aisensei
+// @Summary     AiSensei inbound webhook
+// @Description Receives inbound WhatsApp messages from AiSensei. Called by the AiSensei platform.
+// @Tags        webhooks
+// @Accept      json
+// @Success     200  "OK"
+// @Router      /wa/webhook/aisensei [post]
 func (s *Server) waWebhookAiSensei(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "aisensei", wa.ParseAiSensei)
 }
 
 // POST /wa/webhook/interakt
+// @Summary     Interakt inbound webhook
+// @Description Receives inbound WhatsApp messages from Interakt. Called by the Interakt platform.
+// @Tags        webhooks
+// @Accept      json
+// @Success     200  "OK"
+// @Router      /wa/webhook/interakt [post]
 func (s *Server) waWebhookInterakt(w http.ResponseWriter, r *http.Request) {
 	s.handleWAWebhook(w, r, "interakt", wa.ParseInterakt)
 }
 
-// POST /wa/webhook/wasender — verify signature first, then route to the
-// shared inbound handler. WaSender's "signature" is the configured
-// shared secret echoed verbatim in the X-Webhook-Signature header (per
-// their docs — not HMAC). When a secret is stored on the channel config
-// we compare strings; if no secret is stored we fall back to the
-// previous accept-anything behaviour for backwards compat with configs
-// saved before this column existed.
+// POST /wa/webhook/wasender
+// @Summary     WaSender inbound webhook
+// @Description Receives inbound WhatsApp messages from WaSender (X-Webhook-Signature verified). Called by WaSender.
+// @Tags        webhooks
+// @Accept      json
+// @Success     200  "OK"
+// @Failure     401  {object}  ErrorResponse
+// @Router      /wa/webhook/wasender [post]
 func (s *Server) waWebhookWaSender(w http.ResponseWriter, r *http.Request) {
 	if !s.verifyWaSenderSignature(r) {
 		s.logger.Sugar().Warnw("waWebhookWaSender: signature mismatch — request dropped",
@@ -68,8 +93,17 @@ func (s *Server) verifyWaSenderSignature(r *http.Request) bool {
 	return header == cfg.WebhookSecret
 }
 
-// POST /wa/webhook/meta — inbound messages
-// GET  /wa/webhook/meta — Meta hub.challenge verification
+// POST /wa/webhook/meta
+// @Summary     Meta WhatsApp webhook
+// @Description Receives inbound messages from Meta Cloud API (POST) or hub challenge verification (GET).
+// @Tags        webhooks
+// @Accept      json
+// @Param       hub.mode          query  string  false  "Challenge verification mode"
+// @Param       hub.verify_token  query  string  false  "Verification token"
+// @Param       hub.challenge     query  string  false  "Challenge string"
+// @Success     200  "OK or challenge echo"
+// @Failure     403  {object}  ErrorResponse
+// @Router      /wa/webhook/meta [post]
 func (s *Server) waWebhookMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// Hub challenge verification

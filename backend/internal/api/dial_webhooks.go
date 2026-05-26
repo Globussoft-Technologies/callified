@@ -20,6 +20,16 @@ import (
 // Twilio calls this URL when a call connects. We return TwiML that opens a
 // media stream back to this server.
 
+// GET /webhook/twilio
+// @Summary     Twilio TwiML hook
+// @Description Returns TwiML connecting the call to the media-stream WebSocket. Called by Twilio.
+// @Tags        webhooks
+// @Produce     text/xml
+// @Param       lead_id      query  int64  false  "Lead ID"
+// @Param       campaign_id  query  int64  false  "Campaign ID"
+// @Param       org_id       query  int64  false  "Org ID"
+// @Success     200  {string}  string  "TwiML response"
+// @Router      /webhook/twilio [get]
 func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 	leadID := r.URL.Query().Get("lead_id")
 	campaignID := r.URL.Query().Get("campaign_id")
@@ -63,6 +73,15 @@ func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 // the WebSocket URL so the WS handler can hydrate the session immediately
 // without waiting for Redis lookup.
 
+// GET /webhook/exotel
+// @Summary     Exotel ExoML hook
+// @Description Returns ExoML connecting the call to the media-stream WebSocket. Called by Exotel's Passthru applet.
+// @Tags        webhooks
+// @Produce     application/xml
+// @Param       CallSid   query  string  false  "Exotel call SID"
+// @Param       CallFrom  query  string  false  "Caller phone number"
+// @Success     200  {string}  string  "ExoML response"
+// @Router      /webhook/exotel [get]
 func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
@@ -180,6 +199,13 @@ func firstNonEmptyStr(vals ...string) string {
 // ── POST /webhook/twilio/status ───────────────────────────────────────────────
 // Twilio posts call status updates here (initiated, ringing, answered, completed).
 
+// POST /webhook/twilio/status
+// @Summary     Twilio call status hook
+// @Description Receives call status updates from Twilio (initiated, ringing, completed, failed, etc.).
+// @Tags        webhooks
+// @Accept      application/x-www-form-urlencoded
+// @Success     200  "OK"
+// @Router      /webhook/twilio/status [post]
 func (s *Server) twilioStatus(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusOK) // always 200 for Twilio
@@ -265,6 +291,13 @@ func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status st
 // ── POST /webhook/exotel/status ───────────────────────────────────────────────
 // Exotel posts call status updates here.
 
+// POST /webhook/exotel/status
+// @Summary     Exotel call status hook
+// @Description Receives call status updates from Exotel (completed, failed, no-answer, etc.).
+// @Tags        webhooks
+// @Accept      application/x-www-form-urlencoded
+// @Success     200  "OK"
+// @Router      /webhook/exotel/status [post]
 func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusOK)
@@ -324,6 +357,12 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 // ── GET|POST /exotel/recording-ready ─────────────────────────────────────────
 // Exotel calls this when a recording is ready for download.
 
+// GET /exotel/recording-ready
+// @Summary     Exotel recording ready hook
+// @Description Called by Exotel when a call recording is available for download.
+// @Tags        webhooks
+// @Success     200  "OK"
+// @Router      /exotel/recording-ready [get]
 func (s *Server) exotelRecordingReady(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	callSid := coalesceStr(r.FormValue("CallSid"), r.FormValue("sid"))
@@ -337,8 +376,14 @@ func (s *Server) exotelRecordingReady(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── POST /crm-webhook ─────────────────────────────────────────────────────────
-// Generic CRM push webhook: challenge handshake or new lead notification.
 
+// GET /crm-webhook
+// @Summary     CRM push webhook
+// @Description Receives CRM push notifications (new lead events) or responds to hub challenge verification.
+// @Tags        webhooks
+// @Param       hub.challenge  query  string  false  "HubSpot challenge string"
+// @Success     200  "OK or challenge echo"
+// @Router      /crm-webhook [get]
 func (s *Server) crmWebhook(w http.ResponseWriter, r *http.Request) {
 	// HubSpot-style GET challenge verification
 	if r.Method == http.MethodGet {

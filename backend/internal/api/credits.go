@@ -12,6 +12,16 @@ import (
 // Returns the org's prepaid credit balance, the rate per minute (paise), and
 // the derived minutes-available value the UI shows on the Billing page.
 
+// @Summary     Get credit balance
+// @Description Returns the org's prepaid credit balance and minutes available. Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.OrgCredit
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/credits [get]
 func (s *Server) getOrgCredits(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	oc, err := s.db.GetOrgCredit(ac.OrgID)
@@ -30,6 +40,19 @@ func (s *Server) getOrgCredits(w http.ResponseWriter, r *http.Request) {
 // a "no Razorpay configured" response so dev environments can still test the
 // UI flow without real keys (mirrors the existing subscription path).
 
+// @Summary     Create credit top-up order
+// @Description Creates a Razorpay order for topping up prepaid call credits (₹1 – ₹1,00,000). Requires Admin role.
+// @Tags        billing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{amount_inr=int64}  true  "Amount in INR"
+// @Success     200   {object}  object{order_id=string,amount=int64,currency=string,key_id=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     502   {object}  ErrorResponse
+// @Router      /api/billing/credits/topup [post]
 func (s *Server) createCreditOrder(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -68,6 +91,18 @@ func (s *Server) createCreditOrder(w http.ResponseWriter, r *http.Request) {
 // Idempotent on the order ID — handler-level + db-level both guard against
 // double-credit if the frontend retries the verify request.
 
+// @Summary     Verify credit top-up
+// @Description Verifies the Razorpay signature for a credit top-up and adds credits to the org balance. Requires Admin role.
+// @Tags        billing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{razorpay_order_id=string,razorpay_payment_id=string,razorpay_signature=string}  true  "Payment verification"
+// @Success     200   {object}  object{verified=bool,balance_paise=int64}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Router      /api/billing/credits/verify [post]
 func (s *Server) verifyCreditTopup(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -99,6 +134,16 @@ func (s *Server) verifyCreditTopup(w http.ResponseWriter, r *http.Request) {
 // Returns the most-recent ledger entries (purchases, deductions, refunds) so
 // the Billing page can show a history table beneath the balance.
 
+// @Summary     List credit transactions
+// @Description Returns the last 50 credit ledger entries (purchases, deductions, refunds). Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.CreditTransaction
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/credits/transactions [get]
 func (s *Server) listCreditTransactions(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	list, err := s.db.GetCreditTransactions(ac.OrgID, 50)

@@ -32,6 +32,14 @@ func isValidPhone(p string) bool {
 // ── GET /api/leads/sample-csv ─────────────────────────────────────────────────
 // Returns a downloadable CSV template showing the expected import format.
 
+// @Summary     Download sample CSV
+// @Description Returns a downloadable CSV template for bulk lead import.
+// @Tags        leads
+// @Produce     text/csv
+// @Security    BearerAuth
+// @Success     200  {file}    binary
+// @Failure     401  {object}  ErrorResponse
+// @Router      /api/leads/sample-csv [get]
 func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", `attachment; filename="sample_leads.csv"`)
@@ -46,6 +54,15 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 // ── GET /api/leads/export ─────────────────────────────────────────────────────
 // Streams all org leads as a downloadable CSV file.
 
+// @Summary     Export all leads
+// @Description Streams all org leads as a downloadable CSV file.
+// @Tags        leads
+// @Produce     text/csv
+// @Security    BearerAuth
+// @Success     200  {file}    binary
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/export [get]
 func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	leads, err := s.db.GetAllLeads(ac.OrgID)
@@ -73,6 +90,15 @@ func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/leads ────────────────────────────────────────────────────────────
 
+// @Summary     List leads
+// @Description Returns all leads for the authenticated user's org.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Lead
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads [get]
 func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	leads, err := s.db.GetAllLeads(ac.OrgID)
@@ -86,6 +112,17 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/leads/search?q=... ───────────────────────────────────────────────
 
+// @Summary     Search leads
+// @Description Full-text search across leads in the org by name, phone, or source.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       q  query  string  true  "Search query"
+// @Success     200  {array}   db.Lead
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/search [get]
 func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	q := r.URL.Query().Get("q")
@@ -112,6 +149,19 @@ type leadCreateRequest struct {
 	Interest  string `json:"interest"`
 }
 
+// @Summary     Create lead
+// @Description Creates a new CRM lead for the org.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      leadCreateRequest  true  "Lead data"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "phone already exists"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads [post]
 func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var req leadCreateRequest
@@ -175,6 +225,18 @@ func nameHasLettersOnly(s string) bool {
 
 // ── GET /api/leads/{id} ───────────────────────────────────────────────────────
 
+// @Summary     Get lead
+// @Description Returns a single lead by ID.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Lead ID"
+// @Success     200  {object}  db.Lead
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/{id} [get]
 func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -204,6 +266,20 @@ type leadUpdateRequest struct {
 	Interest  string `json:"interest"`
 }
 
+// @Summary     Update lead
+// @Description Updates lead fields. All fields are replaced.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64              true  "Lead ID"
+// @Param       body  body      leadUpdateRequest  true  "Updated lead data"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     404   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id} [put]
 func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -235,6 +311,18 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/leads/{id} ────────────────────────────────────────────────────
 
+// @Summary     Delete lead
+// @Description Permanently deletes a lead from the org.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Lead ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/{id} [delete]
 func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -257,6 +345,19 @@ func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 
 // ── PUT /api/leads/{id}/status ────────────────────────────────────────────────
 
+// @Summary     Update lead status
+// @Description Changes the CRM status of a lead (e.g. New, Interested, Converted).
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                       true  "Lead ID"
+// @Param       body  body      object{status=string}       true  "New status"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/status [put]
 func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -280,6 +381,19 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/leads/{id}/notes ────────────────────────────────────────────────
 
+// @Summary     Add lead note
+// @Description Saves a follow-up note against a lead.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                   true  "Lead ID"
+// @Param       body  body      object{note=string}     true  "Note text (max 5000 chars)"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/notes [post]
 func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -317,6 +431,18 @@ func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 // Accepts multipart/form-data with a "file" field containing a CSV.
 // CSV columns (header row): first_name,last_name,phone,source
 
+// @Summary     Import leads from CSV
+// @Description Accepts a multipart/form-data CSV upload with columns: first_name, last_name, phone, source.
+// @Tags        leads
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       file  formData  file  true  "CSV file"
+// @Success     200   {object}  object{imported=int,errors=[]string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/import-csv [post]
 func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
@@ -393,6 +519,17 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/leads/{id}/documents ─────────────────────────────────────────────
 
+// @Summary     Get lead documents
+// @Description Returns all uploaded documents attached to a lead.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Lead ID"
+// @Success     200  {array}   db.Document
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/{id}/documents [get]
 func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -410,6 +547,19 @@ func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/leads/{id}/documents ───────────────────────────────────────────
 
+// @Summary     Upload lead document
+// @Description Uploads a file and attaches it to a lead.
+// @Tags        leads
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64  true  "Lead ID"
+// @Param       file  formData  file   true  "Document file"
+// @Success     201   {object}  object{url=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/documents [post]
 func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -455,6 +605,18 @@ func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/transcripts/{id}/review ─────────────────────────────────────────
 
+// @Summary     Get transcript review
+// @Description Returns the AI-generated call review for a specific transcript.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Transcript ID"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/transcripts/{id}/review [get]
 func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -476,6 +638,17 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/leads/{id}/transcripts ───────────────────────────────────────────
 
+// @Summary     Get lead transcripts
+// @Description Returns all call transcripts for a lead.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Lead ID"
+// @Success     200  {array}   object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/{id}/transcripts [get]
 func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -520,6 +693,17 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 // leads by guessing phone numbers. Returns an empty array (200 OK) when the
 // phone matches no lead in the caller's org — same shape as a lead with no
 // calls — so consumers don't need a 404 branch.
+// @Summary     Get lead calls by phone
+// @Description Returns all calls for the lead matching the given phone number, combined with recording URL and transcript.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path      string  true  "10-digit phone number"
+// @Success     200    {array}   object
+// @Failure     400    {object}  ErrorResponse
+// @Failure     401    {object}  ErrorResponse
+// @Failure     500    {object}  ErrorResponse
+// @Router      /api/leads/by-phone/{phone}/calls [get]
 func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
 	phone := strings.TrimSpace(r.PathValue("phone"))
 	if phone == "" {

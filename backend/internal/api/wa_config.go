@@ -9,6 +9,16 @@ import (
 )
 
 // GET /api/wa/channels
+// @Summary     List WhatsApp channels
+// @Description Returns all WhatsApp channel configurations for the org. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.WAChannelConfig
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/channels [get]
 func (s *Server) listWAChannels(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	configs, err := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
@@ -20,6 +30,19 @@ func (s *Server) listWAChannels(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/wa/channels
+// @Summary     Create WhatsApp channel
+// @Description Adds a new WhatsApp channel configuration. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{provider=string,phone_number=string,api_key=string,app_id=string,webhook_url=string}  true  "Channel config"
+// @Success     201  {object}  IDResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/channels [post]
 func (s *Server) createWAChannel(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -42,6 +65,20 @@ func (s *Server) createWAChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 // PUT /api/wa/channels/{id}
+// @Summary     Update WhatsApp channel
+// @Description Updates credentials/settings for an existing WhatsApp channel. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64  true  "Channel ID"
+// @Param       body  body  object{api_key=string,app_id=string,webhook_url=string,ai_enabled=bool}  true  "Updated fields"
+// @Success     200  {object}  object{updated=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/channels/{id} [put]
 func (s *Server) updateWAChannel(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -67,6 +104,18 @@ func (s *Server) updateWAChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /api/wa/channels/{id}
+// @Summary     Delete WhatsApp channel
+// @Description Removes a WhatsApp channel configuration. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Channel ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/channels/{id} [delete]
 func (s *Server) deleteWAChannel(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -82,6 +131,20 @@ func (s *Server) deleteWAChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 // PUT /api/wa/channels/{id}/toggle-ai
+// @Summary     Toggle AI on WhatsApp channel
+// @Description Enables or disables AI auto-reply for a specific channel. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64  true  "Channel ID"
+// @Param       body  body  object{enabled=bool}  true  "AI enabled flag"
+// @Success     200  {object}  object{ai_enabled=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/channels/{id}/toggle-ai [put]
 func (s *Server) toggleWAAI(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -103,11 +166,18 @@ func (s *Server) toggleWAAI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ai_enabled": body.Enabled})
 }
 
-// GET /api/wa/conversations  (?archived=1 includes archived rows)
-//
-// The dashboard inbox calls this with no query string (default = hide
-// archived). Toggling "Show archived" in the UI sets ?archived=1 to
-// surface them so the operator can unarchive or review.
+// GET /api/wa/conversations
+// @Summary     List WhatsApp conversations
+// @Description Returns recent WhatsApp conversations for the org. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       archived  query  int  false  "Set to 1 to include archived conversations"
+// @Success     200  {array}   db.WAConversationRow
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations [get]
 func (s *Server) listWAConversations(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	includeArchived := r.URL.Query().Get("archived") == "1"
@@ -120,6 +190,18 @@ func (s *Server) listWAConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/wa/conversations/{id}/history
+// @Summary     Get WhatsApp chat history
+// @Description Returns the last 100 messages in a WhatsApp conversation. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Conversation ID"
+// @Success     200  {array}   db.WAMessage
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{id}/history [get]
 func (s *Server) getWAHistory(w http.ResponseWriter, r *http.Request) {
 	convID, err := parseID(r, "id")
 	if err != nil {
@@ -143,8 +225,17 @@ func (s *Server) getWAHistory(w http.ResponseWriter, r *http.Request) {
 // These two handlers translate between the shapes so the existing UI works
 // without a rewrite.
 
-// GET /api/wa/config — returns the org's first active WA channel config in
-// Python's response shape, or a default empty object when none exists.
+// GET /api/wa/config
+// @Summary     Get WhatsApp config (legacy)
+// @Description Returns the org's active WhatsApp channel config in the legacy single-config shape. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{provider=string,credentials=object,default_product_id=int,auto_reply=bool}
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/config [get]
 func (s *Server) getWAConfig(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	configs, err := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
@@ -221,10 +312,20 @@ var validWAProviders = map[string]bool{
 	"gupshup": true, "wati": true, "aisensei": true, "interakt": true, "meta": true, "wasender": true,
 }
 
-// POST /api/wa/config — upsert the org's single WA channel config. The
-// frontend posts `{provider, credentials{}, default_product_id, auto_reply}`;
-// we fan it out onto the flat columns. UNIQUE(org_id,provider) makes this
-// an upsert.
+// POST /api/wa/config
+// @Summary     Save WhatsApp config (legacy)
+// @Description Upserts the org's WhatsApp channel config. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{provider=string,credentials=object,default_product_id=int,auto_reply=bool}  true  "WA config"
+// @Success     200  {object}  object{saved=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/config [post]
 func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	s.logger.Sugar().Infow("saveWAConfig called", "org_id", ac.OrgID)
@@ -295,9 +396,19 @@ func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
 }
 
-// GET /api/wa/conversations/{phone}/messages — per-phone message history.
-// The frontend looks up conversations by phone number, not the internal
-// conversation ID, so we resolve phone → conversation for this org first.
+// GET /api/wa/conversations/{phone}/messages
+// @Summary     Get messages by phone
+// @Description Returns chat messages for a phone number's WhatsApp conversation. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number (with or without +)"
+// @Success     200  {array}   db.WAMessage
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{phone}/messages [get]
 func (s *Server) getWAMessagesByPhone(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := r.PathValue("phone")
@@ -318,9 +429,21 @@ func (s *Server) getWAMessagesByPhone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(history))
 }
 
-// POST /api/wa/toggle-ai/{phone} — flip ai_enabled on one conversation row.
-// Body: `{enabled: bool}`. Stored per-conversation (so one runaway contact
-// can be muted without disabling AI for the whole channel).
+// POST /api/wa/toggle-ai/{phone}
+// @Summary     Toggle AI by phone
+// @Description Enables or disables AI auto-reply for a specific WhatsApp conversation. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number"
+// @Param       body   body  object{enabled=bool}  true  "AI enabled flag"
+// @Success     200  {object}  object{ai_enabled=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/toggle-ai/{phone} [post]
 func (s *Server) toggleWAAIByPhone(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := r.PathValue("phone")
@@ -342,13 +465,20 @@ func (s *Server) toggleWAAIByPhone(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ai_enabled": body.Enabled})
 }
 
-// POST /api/wa/send sends a manual outbound WhatsApp message and persists
-// it to the conversation history. Accepts either {to_phone,message} (the
-// original API shape) or {contact_phone,text} (what the dashboard chat
-// composer posts) so we don't have to fork the frontend just to rename
-// fields. Creates the conversation row on first use, so this endpoint
-// also doubles as "start a new chat" when the operator opens a chat with
-// a number that's never messaged us before.
+// POST /api/wa/send
+// @Summary     Send WhatsApp message
+// @Description Sends a manual outbound WhatsApp message. Accepts to_phone/message or contact_phone/text. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{to_phone=string,message=string,channel_id=int64}  true  "Message details"
+// @Success     200  {object}  object{sent=bool,conversation_id=int64,phone=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/wa/send [post]
 func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -433,14 +563,20 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// POST /api/wa/conversations/ensure — idempotently creates an empty
-// conversation row for the given phone so it shows up in the inbox.
-// Used by the dashboard after a successful WaSender QR scan, so the
-// linked device's own number appears in the left-side list as an empty
-// thread (giving the operator a starting point and visible confirmation
-// that the link worked). GetOrCreateWAConversation is a no-op when a row
-// already exists for (org, phone), so calling this on every scan event
-// is safe.
+// POST /api/wa/conversations/ensure
+// @Summary     Ensure WhatsApp conversation
+// @Description Idempotently creates a conversation row for the given phone. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body  object{phone=string,provider=string}  true  "Phone and provider"
+// @Success     200  {object}  object{conversation_id=int64,phone=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/ensure [post]
 func (s *Server) ensureWAConversation(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -489,7 +625,20 @@ func normalizePathPhone(raw string) string {
 }
 
 // POST /api/wa/conversations/{phone}/mute
-// Body: {"muted": bool}. Suppresses AI auto-reply for one thread.
+// @Summary     Mute/unmute WhatsApp conversation
+// @Description Suppresses or restores AI auto-reply for one thread. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number"
+// @Param       body   body  object{muted=bool}  true  "Muted flag"
+// @Success     200  {object}  object{muted=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{phone}/mute [post]
 func (s *Server) muteWAConversation(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := normalizePathPhone(r.PathValue("phone"))
@@ -509,7 +658,20 @@ func (s *Server) muteWAConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/wa/conversations/{phone}/archive
-// Body: {"archived": bool}. Hides/shows the thread in the default inbox.
+// @Summary     Archive/unarchive WhatsApp conversation
+// @Description Hides or shows a thread in the default inbox. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number"
+// @Param       body   body  object{archived=bool}  true  "Archived flag"
+// @Success     200  {object}  object{archived=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{phone}/archive [post]
 func (s *Server) archiveWAConversation(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := normalizePathPhone(r.PathValue("phone"))
@@ -529,7 +691,18 @@ func (s *Server) archiveWAConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/wa/conversations/{phone}/clear
-// Wipes message history but keeps the conversation row + flags.
+// @Summary     Clear WhatsApp conversation
+// @Description Wipes message history while keeping the conversation row. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number"
+// @Success     200  {object}  object{cleared=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{phone}/clear [post]
 func (s *Server) clearWAConversation(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := normalizePathPhone(r.PathValue("phone"))
@@ -545,7 +718,18 @@ func (s *Server) clearWAConversation(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /api/wa/conversations/{phone}
-// Removes conversation row + all its messages. Irreversible.
+// @Summary     Delete WhatsApp conversation
+// @Description Permanently removes a conversation and all its messages. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       phone  path  string  true  "Phone number"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/conversations/{phone} [delete]
 func (s *Server) deleteWAConversation(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	phone := normalizePathPhone(r.PathValue("phone"))

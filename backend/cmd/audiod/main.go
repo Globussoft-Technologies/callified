@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	httpSwagger "github.com/swaggo/http-swagger"
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/api"
+	_ "github.com/globussoft/callified-backend/docs"
 	"github.com/globussoft/callified-backend/internal/config"
 	apidb "github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
@@ -100,6 +102,9 @@ func main() {
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")
 	}
+
+	// Swagger UI — browse all API endpoints at /swagger/
+	mux.Handle("/swagger/", httpSwagger.WrapHandler)
 
 	// Prometheus metrics endpoint (scraped by Prometheus/Grafana)
 	mux.Handle("/metrics", promhttp.Handler())

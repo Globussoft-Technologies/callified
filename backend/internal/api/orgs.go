@@ -17,6 +17,15 @@ import (
 
 // ── GET /api/organizations ───────────────────────────────────────────────────
 
+// @Summary     List organizations
+// @Description Returns the caller's org (or all orgs for superadmin).
+// @Tags        organizations
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Organization
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations [get]
 func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	// Return only the user's own org unless they're a superadmin (org_id==0).
@@ -45,6 +54,19 @@ func (s *Server) listOrgs(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/organizations ──────────────────────────────────────────────────
 
+// @Summary     Create organization
+// @Description Creates a new organisation. Requires Admin role.
+// @Tags        organizations
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{name=string}  true  "Org name"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/organizations [post]
 func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
@@ -64,6 +86,18 @@ func (s *Server) createOrg(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/organizations/{id} ───────────────────────────────────────────
 
+// @Summary     Delete organization
+// @Description Permanently deletes an org. Requires Admin role.
+// @Tags        organizations
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Org ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id} [delete]
 func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -80,6 +114,20 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request) {
 
 // ── PUT /api/organizations/{id}/timezone ─────────────────────────────────────
 
+// @Summary     Update org timezone
+// @Description Sets the IANA timezone for the org (used for call scheduling). Requires Admin role.
+// @Tags        organizations
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                       true  "Org ID"
+// @Param       body  body  object{timezone=string}     true  "IANA timezone string (e.g. Asia/Kolkata)"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/timezone [put]
 func (s *Server) updateOrgTimezone(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -103,6 +151,17 @@ func (s *Server) updateOrgTimezone(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/organizations/{id}/voice-settings ───────────────────────────────
 
+// @Summary     Get org voice settings
+// @Description Returns TTS provider, voice ID and language for the org.
+// @Tags        organizations
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Org ID"
+// @Success     200  {object}  db.VoiceSettings
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/voice-settings [get]
 func (s *Server) getOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -120,6 +179,20 @@ func (s *Server) getOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 
 // ── PUT /api/organizations/{id}/voice-settings ───────────────────────────────
 
+// @Summary     Save org voice settings
+// @Description Updates default TTS provider, voice ID and language. Requires Admin role.
+// @Tags        organizations
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64             true  "Org ID"
+// @Param       body  body  db.VoiceSettings  true  "Voice settings"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/voice-settings [put]
 func (s *Server) saveOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -146,6 +219,17 @@ func (s *Server) saveOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 // auto_generated is the product-knowledge context assembled from the org's
 // products; custom_prompt is the optional override stored on the organization.
 
+// @Summary     Get org system prompt
+// @Description Returns the auto-generated product context and the custom override prompt for the org.
+// @Tags        organizations
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Org ID"
+// @Success     200  {object}  object{auto_generated=string,custom_prompt=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/system-prompt [get]
 func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -169,6 +253,20 @@ func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 //
 // Request body matches the Python contract: { "custom_prompt": "..." }.
 
+// @Summary     Save org system prompt
+// @Description Saves a custom LLM system prompt for the org (max 8000 chars). Requires Admin role.
+// @Tags        organizations
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                          true  "Org ID"
+// @Param       body  body  object{custom_prompt=string}  true  "Custom system prompt"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/system-prompt [put]
 func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -229,6 +327,17 @@ func (s *Server) buildProductKnowledgeContext(orgID int64) string {
 
 // ── GET /api/organizations/{id}/products ─────────────────────────────────────
 
+// @Summary     List products
+// @Description Returns all products for an org.
+// @Tags        products
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Org ID"
+// @Success     200  {array}   db.Product
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/organizations/{id}/products [get]
 func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -252,6 +361,21 @@ type productCreateRequest struct {
 	ManualNotes string `json:"manual_notes"`
 }
 
+// @Summary     Create product
+// @Description Creates a new product under an org. Requires Admin role.
+// @Tags        products
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                 true  "Org ID"
+// @Param       body  body  productCreateRequest  true  "Product data"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "product name already exists"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/organizations/{id}/products [post]
 func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 	orgID, err := parseID(r, "id")
 	if err != nil {
@@ -293,6 +417,20 @@ type productUpdateRequest struct {
 	ManualNotes string `json:"manual_notes"`
 }
 
+// @Summary     Update product
+// @Description Updates product name, website URL, scraped info and notes. Requires Admin role.
+// @Tags        products
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                 true  "Product ID"
+// @Param       body  body  productUpdateRequest  true  "Updated product data"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/products/{id} [put]
 func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -314,6 +452,18 @@ func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/products/{id} ────────────────────────────────────────────────
 
+// @Summary     Delete product
+// @Description Permanently deletes a product. Requires Admin role.
+// @Tags        products
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Product ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/products/{id} [delete]
 func (s *Server) deleteProduct(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -330,6 +480,17 @@ func (s *Server) deleteProduct(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/products/{id}/prompt ────────────────────────────────────────────
 
+// @Summary     Get product prompt
+// @Description Returns the agent persona and call flow instructions for a product.
+// @Tags        products
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Product ID"
+// @Success     200  {object}  object{agent_persona=string,call_flow_instructions=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/products/{id}/prompt [get]
 func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -350,6 +511,20 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 
 // ── PUT /api/products/{id}/prompt ────────────────────────────────────────────
 
+// @Summary     Update product prompt
+// @Description Saves agent persona and call flow instructions for a product. Requires Admin role.
+// @Tags        products
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                                                                   true  "Product ID"
+// @Param       body  body  object{agent_persona=string,call_flow_instructions=string}              true  "Prompt fields"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/products/{id}/prompt [put]
 func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

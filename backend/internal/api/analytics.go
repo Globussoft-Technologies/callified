@@ -8,6 +8,16 @@ import (
 )
 
 // GET /api/analytics/dashboard
+// @Summary     Analytics dashboard
+// @Description Returns full analytics including daily call counts, sentiment breakdown, campaign performance, and failure reasons. Requires Admin role.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.FullDashboardStats
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/dashboard [get]
 func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	stats, err := s.db.GetFullDashboardStats(ac.OrgID)
@@ -20,6 +30,16 @@ func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/analytics/languages
+// @Summary     Analytics: language performance
+// @Description Returns call performance broken down by TTS language. Requires Admin role.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.LanguagePerf
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/languages [get]
 func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	langs, err := s.db.GetLanguagePerformance(ac.OrgID)
@@ -32,6 +52,17 @@ func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/analytics/export?campaign_id=N
+// @Summary     Export analytics CSV
+// @Description Exports campaign analytics as a downloadable CSV. Requires Admin role.
+// @Tags        analytics
+// @Produce     text/csv
+// @Security    BearerAuth
+// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Success     200  {file}    binary
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/export [get]
 func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -59,7 +90,18 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 	cw.Flush()
 }
 
-// GET /api/analytics/report?campaign_id=N  — returns HTML report
+// GET /api/analytics/report
+// @Summary     Export analytics HTML report
+// @Description Exports campaign analytics as an HTML report page. Requires Admin role.
+// @Tags        analytics
+// @Produce     text/html
+// @Security    BearerAuth
+// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Success     200  {string}  string  "HTML report"
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/report [get]
 func (s *Server) analyticsExportReport(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -86,7 +128,18 @@ th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f5f5f5}</s
 	fmt.Fprint(w, "</table></body></html>")
 }
 
-// GET /api/analytics/scored-leads?campaign_id=N
+// GET /api/analytics/scored-leads
+// @Summary     List scored leads
+// @Description Returns leads with AI-generated scores for a campaign. Requires Admin role.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Param       campaign_id  query  int64  false  "Campaign ID"
+// @Success     200  {array}   object
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/scored-leads [get]
 func (s *Server) scoredLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	campaignIDStr := r.URL.Query().Get("campaign_id")

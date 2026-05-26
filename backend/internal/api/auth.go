@@ -23,6 +23,17 @@ type signupRequest struct {
 	Role     string `json:"role"`
 }
 
+// @Summary     Sign up
+// @Description Create a new user account and organisation. Returns a JWT on success.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body  body      signupRequest  true  "Signup payload"
+// @Success     201   {object}  TokenResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "email already registered"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/auth/signup [post]
 func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" {
@@ -105,6 +116,17 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// @Summary     Login
+// @Description Authenticate with email + password. Returns a 30-day JWT.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body  body      loginRequest  true  "Login credentials"
+// @Success     200   {object}  TokenResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse  "invalid credentials"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/auth/login [post]
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Password == "" {
@@ -147,6 +169,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 // it the frontend's `{currentUser.org_name ? ` (${org_name})` : ''}` branch
 // silently evaluates to empty and the org suffix disappears.
 
+// @Summary     Get current user
+// @Description Returns the authenticated user's profile and org name.
+// @Tags        auth
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  UserResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/auth/me [get]
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	user, err := s.db.GetUserByEmail(ac.Email)
@@ -218,6 +249,15 @@ func (s *Server) mintSSETicket(email string, orgID int64, role string) (string, 
 // GET /api/sse/ticket — issues a short-lived ticket the frontend appends as
 // ?ticket=… to /api/campaign-events and /api/sse/live-logs. Requires the
 // regular Bearer auth header.
+// @Summary     Mint SSE ticket
+// @Description Issues a 60-second short-lived JWT for use as ?ticket= on SSE endpoints.
+// @Tags        auth
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  SSETicketResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/sse/ticket [get]
 func (s *Server) sseTicket(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	tok, err := s.mintSSETicket(ac.Email, ac.OrgID, ac.Role)
@@ -235,6 +275,16 @@ func (s *Server) sseTicket(w http.ResponseWriter, r *http.Request) {
 // users). Errors that prevent sending the email are logged but the response
 // still claims success — same intentional opacity as the Python version.
 
+// @Summary     Forgot password
+// @Description Sends a password-reset link to the given email. Returns the same message regardless of whether the email exists.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body  body      object{email=string}  true  "Email address"
+// @Success     200   {object}  MessageResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/auth/forgot-password [post]
 func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Email string `json:"email"`
@@ -299,6 +349,16 @@ func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) {
 // Validates the token, replaces the user's bcrypt hash, marks the token used.
 // Mirrors Python auth.py reset_password.
 
+// @Summary     Reset password
+// @Description Validates the reset token and sets a new password.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body  body      object{token=string,new_password=string}  true  "Reset token and new password"
+// @Success     200   {object}  MessageResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/auth/reset-password [post]
 func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Token       string `json:"token"`

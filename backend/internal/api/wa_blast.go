@@ -25,6 +25,20 @@ var strictTemplateProviders = map[string]bool{
 
 // ── POST /api/wa/campaign-blast/{campaign_id} ─────────────────────────────────
 
+// @Summary     Blast WhatsApp campaign
+// @Description Sends WhatsApp messages to all new leads in the campaign. Returns immediately; blast runs in background. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       campaign_id  path  int64  true  "Campaign ID"
+// @Success     202  {object}  object{job_id=int64,total=int}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     409  {object}  ErrorResponse  "blast already in progress"
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/campaign-blast/{campaign_id} [post]
 func (s *Server) campaignBlast(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 
@@ -209,6 +223,19 @@ func (s *Server) blastOneLead(
 
 // ── GET /api/wa/campaign-blast/status/{job_id} ───────────────────────────────
 
+// @Summary     Get blast job status
+// @Description Returns the current status (sent/failed counts) of a WhatsApp blast job. Requires Admin role.
+// @Tags        whatsapp
+// @Produce     json
+// @Security    BearerAuth
+// @Param       job_id  path  int64  true  "Blast job ID"
+// @Success     200  {object}  db.WABlastJob
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/wa/campaign-blast/status/{job_id} [get]
 func (s *Server) blastStatus(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 

@@ -7,7 +7,15 @@ import (
 	"time"
 )
 
-// GET /api/sse/live-logs  — SSE stream of live log entries from Redis pub/sub
+// GET /api/sse/live-logs
+// @Summary     Live log stream (SSE)
+// @Description Server-sent event stream of live backend log entries. Authenticate via ?ticket=<sse-ticket> or Authorization header.
+// @Tags        sse
+// @Produce     text/event-stream
+// @Security    BearerAuth
+// @Param       ticket  query  string  false  "Short-lived SSE ticket (alternative to Bearer header)"
+// @Success     200  {string}  string  "event: log\\ndata: {...}\\n\\n"
+// @Router      /api/sse/live-logs [get]
 func (s *Server) liveLogs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -49,7 +57,16 @@ func (s *Server) liveLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/campaign-events?campaign_id={id}  — frontend-facing alias
+// GET /api/campaign-events
+// @Summary     Campaign events stream (SSE, query param)
+// @Description Server-sent event stream for campaign dial progress. Use campaign_id=0 for all campaigns.
+// @Tags        sse
+// @Produce     text/event-stream
+// @Security    BearerAuth
+// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all)"
+// @Param       ticket       query  string false  "Short-lived SSE ticket"
+// @Success     200  {string}  string  "data: {...}\\n\\n"
+// @Router      /api/campaign-events [get]
 func (s *Server) campaignEventsQuery(w http.ResponseWriter, r *http.Request) {
 	campaignID := r.URL.Query().Get("campaign_id")
 	if campaignID == "" || campaignID == "0" {
@@ -58,7 +75,16 @@ func (s *Server) campaignEventsQuery(w http.ResponseWriter, r *http.Request) {
 	s.streamCampaignEvents(w, r, campaignID)
 }
 
-// GET /api/sse/campaign/{id}/events  — SSE stream for campaign dial progress
+// GET /api/sse/campaign/{id}/events
+// @Summary     Campaign events stream by ID (SSE)
+// @Description Server-sent event stream for a specific campaign's dial progress.
+// @Tags        sse
+// @Produce     text/event-stream
+// @Security    BearerAuth
+// @Param       id      path   int64   true   "Campaign ID"
+// @Param       ticket  query  string  false  "Short-lived SSE ticket"
+// @Success     200  {string}  string  "data: {...}\\n\\n"
+// @Router      /api/sse/campaign/{id}/events [get]
 func (s *Server) campaignEvents(w http.ResponseWriter, r *http.Request) {
 	campaignID := r.PathValue("id")
 	s.streamCampaignEvents(w, r, campaignID)

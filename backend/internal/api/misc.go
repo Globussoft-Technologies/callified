@@ -24,6 +24,15 @@ var pronAllowed = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .'\-]{0,49}$`)
 
 // ── GET /api/tasks ───────────────────────────────────────────────────────────
 
+// @Summary     List tasks
+// @Description Returns all CRM follow-up tasks for the org.
+// @Tags        misc
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Task
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/tasks [get]
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	tasks, err := s.db.GetAllTasks(ac.OrgID)
@@ -37,6 +46,17 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 
 // ── PUT /api/tasks/{id}/complete ─────────────────────────────────────────────
 
+// @Summary     Complete task
+// @Description Marks a CRM follow-up task as completed.
+// @Tags        misc
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Task ID"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/tasks/{id}/complete [put]
 func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -53,6 +73,16 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/reports ─────────────────────────────────────────────────────────
 
+// @Summary     Get reports
+// @Description Returns org-level aggregate reports. Requires Admin role.
+// @Tags        misc
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.Report
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/reports [get]
 func (s *Server) getReports(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	report, err := s.db.GetReports(ac.OrgID)
@@ -66,6 +96,16 @@ func (s *Server) getReports(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/pronunciation ───────────────────────────────────────────────────
 
+// @Summary     List pronunciations
+// @Description Returns the org-wide pronunciation guide used by the AI agent. Requires Admin role.
+// @Tags        misc
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Pronunciation
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/pronunciation [get]
 func (s *Server) listPronunciations(w http.ResponseWriter, r *http.Request) {
 	list, err := s.db.GetAllPronunciations()
 	if err != nil {
@@ -78,6 +118,19 @@ func (s *Server) listPronunciations(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/pronunciation ──────────────────────────────────────────────────
 
+// @Summary     Add pronunciation
+// @Description Adds or updates a word-to-phonetic mapping in the pronunciation guide. Requires Admin role.
+// @Tags        misc
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{word=string,phonetic=string}  true  "Word and phonetic spelling"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/pronunciation [post]
 func (s *Server) addPronunciation(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Word     string `json:"word"`
@@ -111,6 +164,19 @@ func (s *Server) addPronunciation(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/pronunciation/{id} ───────────────────────────────────────────
 
+// @Summary     Delete pronunciation
+// @Description Removes a pronunciation rule. Requires Admin role.
+// @Tags        misc
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Pronunciation ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/pronunciation/{id} [delete]
 func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -134,6 +200,16 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 // Serves stereo WAV recordings from the recordings directory.
 // Auth-gated so recordings are not publicly accessible.
 
+// @Summary     Serve recording
+// @Description Streams a call recording WAV file. Auth-gated.
+// @Tags        recordings
+// @Produce     audio/wav
+// @Security    BearerAuth
+// @Param       filename  path  string  true  "Recording filename"
+// @Success     200  {file}    binary
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Router      /api/recordings/{filename} [get]
 func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 	filename := r.PathValue("filename")
 
@@ -162,6 +238,19 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 // because finalizeCall runs in a goroutine — the transcript row may not
 // exist yet when the browser POSTs the file.
 
+// @Summary     Upload browser recording
+// @Description Accepts a browser MediaRecorder webm upload and attaches it to the latest transcript.
+// @Tags        recordings
+// @Accept      multipart/form-data
+// @Produce     json
+// @Security    BearerAuth
+// @Param       file     formData  file    true   "Opus/webm audio file"
+// @Param       lead_id  formData  string  false  "Lead ID (optional, used to link recording)"
+// @Success     200  {object}  object{status=string,url=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     503  {object}  ErrorResponse
+// @Router      /api/upload-recording [post]
 func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.RecordingsDir == "" {
 		writeError(w, http.StatusServiceUnavailable, "recordings dir not configured")

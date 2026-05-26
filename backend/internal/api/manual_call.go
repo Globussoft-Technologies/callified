@@ -41,6 +41,21 @@ type manualCallRequest struct {
 //
 //	{"type":"transcript","role":"user|agent","text":"..."}
 //	{"type":"audio","role":"user|agent","format":"pcm16_8k|ulaw_8k","payload":"<base64>"}
+// @Summary     Manual call
+// @Description Places an immediate outbound call or creates a web-sim session. Requires Admin role.
+// @Tags        dialing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      manualCallRequest  true  "Call parameters. mode: 'dial' | 'web-sim'"
+// @Success     200   {object}  object{mode=string,call_sid=string,monitor_url=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     402   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse
+// @Failure     502   {object}  ErrorResponse
+// @Router      /api/manual-call [post]
 func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 	var body manualCallRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {

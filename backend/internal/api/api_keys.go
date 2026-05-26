@@ -9,6 +9,16 @@ import (
 
 // ── GET /api/api-keys ─────────────────────────────────────────────────────────
 
+// @Summary     List API keys
+// @Description Returns all API keys for the org (prefix shown, secret never returned). Requires Admin role.
+// @Tags        api-keys
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.APIKey
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/api-keys [get]
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	keys, err := s.db.GetAPIKeysByOrg(ac.OrgID)
@@ -22,6 +32,19 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/api-keys ────────────────────────────────────────────────────────
 
+// @Summary     Create API key
+// @Description Generates a new API key. The raw key is returned once — store it securely. Requires Admin role.
+// @Tags        api-keys
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{name=string}  true  "Key name/label"
+// @Success     201   {object}  object{id=int64,key=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/api-keys [post]
 func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -55,6 +78,19 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/api-keys/{id} ─────────────────────────────────────────────────
 
+// @Summary     Delete API key
+// @Description Revokes an API key. Requires Admin role.
+// @Tags        api-keys
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "API Key ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/api-keys/{id} [delete]
 func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")

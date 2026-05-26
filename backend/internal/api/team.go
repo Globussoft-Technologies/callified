@@ -25,6 +25,15 @@ const inviteTokenTTL = 72 * time.Hour
 // dashboard cards render real numbers even though full /api/campaigns is
 // admin-gated. Returns just the 5 aggregate counts — no campaign objects.
 
+// @Summary     Dashboard summary
+// @Description Returns 5 aggregate KPI counts for the org dashboard (open to any authenticated role).
+// @Tags        dashboard
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.OrgDashboardSummary
+// @Failure     401  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/dashboard/summary [get]
 func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	summary, err := s.db.GetOrgDashboardSummary(ac.OrgID)
@@ -38,6 +47,16 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/team ─────────────────────────────────────────────────────────────
 
+// @Summary     List team members
+// @Description Returns all users in the org. Requires Admin role.
+// @Tags        team
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.User
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team [get]
 func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	members, err := s.db.GetTeamMembers(ac.OrgID)
@@ -55,6 +74,20 @@ func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
 // We persist a short-lived invite token, email the invitee a one-time link,
 // and the invitee chooses their own password via the public accept endpoint.
 
+// @Summary     Invite team member
+// @Description Sends an email invite to a new team member. Requires Admin role.
+// @Tags        team
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{email=string,full_name=string,role=string}  true  "Invitee details"
+// @Success     201   {object}  object{id=int64,email=string,message=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "user or invite already exists"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/team/invite [post]
 func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -164,6 +197,16 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 // full name, role, and org name so the accept page can render a useful
 // "You've been invited to <X>" header. Token itself is NEVER echoed back.
 
+// @Summary     Get invite details
+// @Description Public endpoint. Validates the invite token and returns the invitee's details.
+// @Tags        team
+// @Produce     json
+// @Param       token  path  string  true  "Invite token"
+// @Success     200  {object}  object{email=string,full_name=string,role=string,org_name=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     410  {object}  ErrorResponse  "invite expired or invalid"
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/invite/{token} [get]
 func (s *Server) getInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -195,6 +238,19 @@ func (s *Server) getInvite(w http.ResponseWriter, r *http.Request) {
 // invite accepted (single-use). Re-checks GetUserByEmail in case a user with
 // the same address was created via another flow between invite and accept.
 
+// @Summary     Accept invite
+// @Description Public endpoint. The invitee sets their own password and creates their account.
+// @Tags        team
+// @Accept      json
+// @Produce     json
+// @Param       token  path  string                                    true  "Invite token"
+// @Param       body   body  object{password=string,full_name=string}  true  "Password and optional name override"
+// @Success     200   {object}  object{email=string,message=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse
+// @Failure     410   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/invite/{token}/accept [post]
 func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	if token == "" {
@@ -267,6 +323,16 @@ func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 // Admin-only. Returns the org's pending (unaccepted, unexpired) invites so
 // the team page can show "Pending Invites" alongside actual members.
 
+// @Summary     List pending invites
+// @Description Returns all pending (unaccepted, unexpired) team invites for the org. Requires Admin role.
+// @Tags        team
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   object
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/invites [get]
 func (s *Server) listPendingInvites(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	invites, err := s.db.ListPendingInvites(ac.OrgID)
@@ -286,6 +352,19 @@ func (s *Server) listPendingInvites(w http.ResponseWriter, r *http.Request) {
 // invitee; making it visible to the inviter does NOT compromise the security
 // model (issue #55) since the invitee still picks their own password.
 
+// @Summary     Get invite link
+// @Description Returns the accept-invite URL for a pending invite (for out-of-band sharing). Requires Admin role.
+// @Tags        team
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Invite ID"
+// @Success     200  {object}  object{invite_link=string}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     410  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/invites/{id}/link [get]
 func (s *Server) getInviteLink(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -311,6 +390,18 @@ func (s *Server) getInviteLink(w http.ResponseWriter, r *http.Request) {
 // Admin-only. Cancels a pending invite — the existing token becomes invalid
 // at the next GetValidTeamInvite check (row simply isn't there).
 
+// @Summary     Cancel invite
+// @Description Deletes a pending invite. Requires Admin role.
+// @Tags        team
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Invite ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/invites/{id} [delete]
 func (s *Server) cancelInvite(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -405,6 +496,20 @@ var commonPasswords = map[string]struct{}{
 
 // ── PUT /api/team/{id}/role ───────────────────────────────────────────────────
 
+// @Summary     Update team member role
+// @Description Changes a team member's role (Admin/Agent/Viewer). Requires Admin role.
+// @Tags        team
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                   true  "User ID"
+// @Param       body  body  object{role=string}     true  "New role"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/{id}/role [put]
 func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -428,6 +533,19 @@ func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/team/{id} ─────────────────────────────────────────────────────
 
+// @Summary     Delete team member
+// @Description Removes a team member from the org. Requires Admin role. Cannot remove yourself or the last admin.
+// @Tags        team
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "User ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/{id} [delete]
 func (s *Server) deleteTeamMember(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")

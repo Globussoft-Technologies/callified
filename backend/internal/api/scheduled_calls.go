@@ -8,6 +8,16 @@ import (
 
 // ── GET /api/scheduled-calls ──────────────────────────────────────────────────
 
+// @Summary     List scheduled calls
+// @Description Returns all scheduled calls for the org. Requires Admin role.
+// @Tags        scheduled-calls
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   object
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/scheduled-calls [get]
 func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	calls, err := s.db.GetScheduledCallsByOrg(ac.OrgID)
@@ -21,6 +31,20 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/scheduled-calls ─────────────────────────────────────────────────
 
+// @Summary     Schedule a call
+// @Description Schedules a future outbound call for a lead. Requires Admin role.
+// @Tags        scheduled-calls
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{lead_id=int64,campaign_id=int64,scheduled_at=string,notes=string}  true  "scheduled_at: RFC3339 or YYYY-MM-DD HH:MM:SS"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "lead is on DND list"
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/scheduled-calls [post]
 func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -79,6 +103,19 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/scheduled-calls/{id} ─────────────────────────────────────────
 
+// @Summary     Cancel scheduled call
+// @Description Cancels a pending scheduled call. Requires Admin role.
+// @Tags        scheduled-calls
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Scheduled Call ID"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/scheduled-calls/{id} [delete]
 func (s *Server) cancelScheduledCall(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")

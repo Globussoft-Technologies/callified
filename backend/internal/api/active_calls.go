@@ -19,13 +19,16 @@ func (s *Server) SetWSHandler(h activeCallLister) {
 	s.wsHandler = h
 }
 
-// activeCalls returns a JSON list of every currently-active call session.
-// Admin-gated (PII: lead names + phone numbers). Useful for ops dashboards
-// and as a way to grab a live stream_sid for /ws/monitor/{sid} without
-// tailing backend logs.
-//
-//	GET /api/active-calls
-//	→ 200 {"count": 2, "active_calls": [{stream_sid, monitor_url, ...}]}
+// GET /api/active-calls
+// @Summary     List active calls
+// @Description Returns all currently active call sessions with stream SIDs and monitor URLs. Requires Admin role.
+// @Tags        calls
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  object{count=int,active_calls=array}
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Router      /api/active-calls [get]
 func (s *Server) activeCalls(w http.ResponseWriter, r *http.Request) {
 	if s.wsHandler == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
