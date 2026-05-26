@@ -442,8 +442,18 @@ func (s *CallSession) AppendTTSChunk(pcm []byte) {
 	const ttsHz = 8000 * 2 // bytes per second at 8kHz 16-bit mono
 	s.recMu.Lock()
 	defer s.recMu.Unlock()
-	if s.ttsNewUtterance || s.ttsRecordCursor.IsZero() {
+	if s.ttsRecordCursor.IsZero() {
 		s.ttsRecordCursor = time.Now()
+		s.ttsNewUtterance = false
+	} else if s.ttsNewUtterance {
+		// Sarvam TTS delivers audio faster than real-time. If synthesis of the
+		// next sentence completes before the previous sentence has "played out",
+		// time.Now() is still behind ttsRecordCursor. Resetting to time.Now()
+		// would make this sentence overlap the previous one in the WAV buffer
+		// → audible distortion. Use the later of the two so we never go back.
+		if now := time.Now(); now.After(s.ttsRecordCursor) {
+			s.ttsRecordCursor = now
+		}
 		s.ttsNewUtterance = false
 	}
 	ts := s.ttsRecordCursor
