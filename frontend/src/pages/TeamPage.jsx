@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -8,7 +9,7 @@ const T = {
   font: "'DM Sans', sans-serif",
 };
 
-const card = {
+const cardStyle = {
   background: T.card, border: `1px solid ${T.border}`,
   borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
   padding: '24px 28px',
@@ -33,6 +34,9 @@ const tdStyle = {
 
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
+  const toast = useToast();
+  const confirmDialog = useConfirm();
+  const promptInline = usePrompt();
   const [members, setMembers] = useState([]);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -41,23 +45,130 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(null);
-  const [confirmCancelInvite, setConfirmCancelInvite] = useState(null);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
+
+  // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
+  // Only the most-recently-issued key per user is surfaced — older orphaned rows
+  // are ignored since the raw secret is unrecoverable.
+  const [apiKeysByUser, setApiKeysByUser] = useState({});
+  // After Generate, hold the raw key long enough for the Admin to copy it.
+  // Cleared when the modal closes.
+  const [newKey, setNewKey] = useState(null); // { user_id, email, key }
+  const [keyBusyUserId, setKeyBusyUserId] = useState(null);
 
   useEffect(() => { fetchTeam(); }, []);
 
   const fetchTeam = async () => {
     setLoading(true);
     try {
-      const [mRes, iRes] = await Promise.all([
+      const [mRes, iRes, kRes] = await Promise.all([
         apiFetch(`${API_URL}/team`),
         apiFetch(`${API_URL}/team/invites`),
+        // Admin-only; non-admins get 403 — render "—" in the API Key column.
+        apiFetch(`${API_URL}/api-keys`),
       ]);
       if (mRes.ok) setMembers(await mRes.json());
       if (iRes.ok) setPendingInvites(await iRes.json());
+      if (kRes.ok) {
+        const keys = await kRes.json();
+        const byUser = {};
+        for (const k of (keys || [])) {
+          const m = /^team:(\d+)/.exec(k.name || '');
+          if (!m) continue;
+          const uid = Number(m[1]);
+          const prev = byUser[uid];
+          if (!prev || k.id > prev.id) byUser[uid] = k;
+        }
+        setApiKeysByUser(byUser);
+      }
     } catch (e) { console.error('Team fetch error:', e); }
     setLoading(false);
+  };
+
+  const isAdminMember = (m) => m && m.role === 'Admin';
+
+  const handleGenerateKey = async (member) => {
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: `team:${member.id}:${member.email}` }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to generate key', 'error');
+        setKeyBusyUserId(null);
+        return;
+      }
+      setNewKey({ user_id: member.id, email: member.email, key: data.key });
+      fetchTeam();
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const handleRevokeKey = async (member, key, makeActive) => {
+    const verb = makeActive ? 'Reactivate' : 'Revoke';
+    const ok = await confirmDialog({
+      title: `${verb} API key`,
+      message: makeActive
+        ? `Reactivate this API key for ${member.email}? It will start accepting requests again.`
+        : `Revoke this API key for ${member.email}? Calls using it will start returning 403 immediately.`,
+      okText: verb,
+      danger: !makeActive,
+    });
+    if (!ok) return;
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys/${key.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: makeActive }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || `Failed to ${verb.toLowerCase()} key`, 'error');
+      } else {
+        fetchTeam();
+      }
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const handleDeleteKey = async (member, key) => {
+    const ok = await confirmDialog({
+      title: 'Delete API key',
+      message: `Permanently delete this API key for ${member.email}? This cannot be undone.`,
+      okText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    setKeyBusyUserId(member.id);
+    try {
+      const res = await apiFetch(`${API_URL}/api-keys/${key.id}`, { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to delete key', 'error');
+      } else {
+        fetchTeam();
+      }
+    } catch (e) { toast('Network error', 'error'); }
+    setKeyBusyUserId(null);
+  };
+
+  const copyNewKey = async () => {
+    if (!newKey) return;
+    try {
+      await navigator.clipboard.writeText(newKey.key);
+      toast('API key copied to clipboard', 'success');
+    } catch (_) {
+      await promptInline({
+        title: 'Copy API key',
+        message: 'Clipboard access was blocked — select and copy manually.',
+        defaultValue: newKey.key,
+        okText: 'Done',
+      });
+    }
   };
 
   const closeInvite = () => {
@@ -97,7 +208,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
       const res = await apiFetch(`${API_URL}/team/invites/${inviteId}/link`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.error || data.detail || 'Failed to fetch invite link');
+        toast(data.error || data.detail || 'Failed to fetch invite link', 'error');
         return;
       }
       try {
@@ -105,23 +216,35 @@ export default function TeamPage({ apiFetch, API_URL }) {
         setCopiedInviteId(inviteId);
         setTimeout(() => setCopiedInviteId(prev => prev === inviteId ? null : prev), 2000);
       } catch (_) {
-        prompt('Copy this invite link:', data.invite_link);
+        await promptInline({
+          title: 'Copy invite link',
+          message: 'Clipboard access was blocked — select and copy manually.',
+          defaultValue: data.invite_link,
+          okText: 'Done',
+        });
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
-  const handleCancelInvite = async (inviteId) => {
+  const handleCancelInvite = async (invite) => {
+    const ok = await confirmDialog({
+      title: 'Cancel invite',
+      message: `Cancel the invite for ${invite.email}? They won't be able to use the link anymore.`,
+      okText: 'Cancel invite',
+      cancelText: 'Keep it',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await apiFetch(`${API_URL}/team/invites/${inviteId}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_URL}/team/invites/${invite.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setConfirmCancelInvite(null);
         fetchTeam();
       } else {
         let msg = `Failed to cancel invite (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
-        alert(msg);
+        toast(msg, 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
   const handleRoleChange = async (userId, newRole) => {
@@ -134,23 +257,30 @@ export default function TeamPage({ apiFetch, API_URL }) {
       if (res.ok) fetchTeam();
       else {
         const data = await res.json();
-        alert(data.detail || 'Failed to update role');
+        toast(data.detail || 'Failed to update role', 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
-  const handleDelete = async (userId) => {
+  const handleDelete = async (member) => {
+    const label = member.full_name || member.email;
+    const ok = await confirmDialog({
+      title: 'Remove team member',
+      message: `Remove ${label} from the team? They'll lose access immediately.`,
+      okText: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      const res = await apiFetch(`${API_URL}/team/${userId}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_URL}/team/${member.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setConfirmDelete(null);
         fetchTeam();
       } else {
         let msg = `Failed to remove user (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
-        alert(msg);
+        toast(msg, 'error');
       }
-    } catch (e) { alert('Network error'); }
+    } catch (e) { toast('Network error', 'error'); }
   };
 
   const roleBadge = (role) => {
@@ -173,14 +303,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-            <span style={{ color: T.accent }}>Team</span> Members
-          </h2>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-            Manage your organization's users and their roles.
-          </p>
-        </div>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          <span style={{ color: T.accent }}>Team</span> Members
+        </h2>
         <button
           onClick={() => setShowInvite(true)}
           style={{
@@ -198,7 +323,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
         }} onClick={closeInvite}>
-          <div style={{ ...card, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
+          <div style={{ ...cardStyle, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Invite Team Member</h3>
             <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
               They'll get an email with a link to set their own password — no password is set here.
@@ -254,9 +379,42 @@ export default function TeamPage({ apiFetch, API_URL }) {
         </div>
       )}
 
+      {/* Newly-generated key modal — shown once only */}
+      {newKey && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={() => setNewKey(null)}>
+          <div style={{ ...cardStyle, width: 520, maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>
+              API key for {newKey.email}
+            </h3>
+            <p style={{ margin: '0 0 14px', color: T.amber, fontSize: 13, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, padding: '8px 12px' }}>
+              Copy this key now — it cannot be shown again. Use it in the <code>X-API-Key</code> header.
+            </p>
+            <div style={{
+              background: '#f9fafb', border: `1px solid ${T.border}`,
+              borderRadius: 8, padding: '10px 14px', color: T.text, fontFamily: 'monospace',
+              fontSize: 13, wordBreak: 'break-all', marginBottom: 16,
+              userSelect: 'all',
+            }}>{newKey.key}</div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={copyNewKey}
+                style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: 8, color: T.accent, padding: '8px 16px', cursor: 'pointer', fontWeight: 600, fontSize: 13, fontFamily: T.font }}>
+                Copy
+              </button>
+              <button onClick={() => setNewKey(null)}
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none', borderRadius: 8, color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font }}>
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pending Invites */}
       {pendingInvites.length > 0 && (
-        <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ ...cardStyle, marginBottom: 16 }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: T.text }}>
             Pending Invites{' '}
             <span style={{ color: T.muted, fontWeight: 400, fontSize: 13 }}>({pendingInvites.length})</span>
@@ -286,32 +444,22 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       {inv.expires_at ? new Date(inv.expires_at).toLocaleString() : '-'}
                     </td>
                     <td style={{ ...rowTd, textAlign: 'right' }}>
-                      {confirmCancelInvite === inv.id ? (
-                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-                          <span style={{ fontSize: 12, color: T.red }}>Cancel?</span>
-                          <button onClick={() => handleCancelInvite(inv.id)}
-                            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>Yes</button>
-                          <button onClick={() => setConfirmCancelInvite(null)}
-                            style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>No</button>
-                        </span>
-                      ) : (
-                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
-                          <button onClick={() => handleCopyInviteLink(inv.id)}
-                            title="Copy invite link to clipboard"
-                            style={{
-                              background: copiedInviteId === inv.id ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)',
-                              border: `1px solid ${copiedInviteId === inv.id ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.25)'}`,
-                              borderRadius: 6, color: copiedInviteId === inv.id ? T.green : T.accent,
-                              padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
-                            }}>
-                            {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
-                          </button>
-                          <button onClick={() => setConfirmCancelInvite(inv.id)}
-                            style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
-                            Cancel Invite
-                          </button>
-                        </span>
-                      )}
+                      <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button onClick={() => handleCopyInviteLink(inv.id)}
+                          title="Copy invite link to clipboard"
+                          style={{
+                            background: copiedInviteId === inv.id ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)',
+                            border: `1px solid ${copiedInviteId === inv.id ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.25)'}`,
+                            borderRadius: 6, color: copiedInviteId === inv.id ? T.green : T.accent,
+                            padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                          }}>
+                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                        </button>
+                        <button onClick={() => handleCancelInvite(inv)}
+                          style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
+                          Cancel Invite
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 );
@@ -322,7 +470,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
       )}
 
       {/* Team Table */}
-      <div style={card}>
+      <div style={cardStyle}>
         {loading ? (
           <div style={{ textAlign: 'center', color: T.muted, padding: '40px' }}>Loading team...</div>
         ) : members.length === 0 ? (
@@ -335,6 +483,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
                 <th style={thStyle}>Joined</th>
+                <th style={thStyle}>API Key</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
@@ -343,6 +492,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 const isSelf = currentUser && currentUser.id === m.id;
                 const isLast = i === members.length - 1;
                 const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                const key = apiKeysByUser[m.id];
+                const busy = keyBusyUserId === m.id;
                 return (
                   <tr key={m.id}>
                     <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>
@@ -374,19 +525,71 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     <td style={{ ...rowTd, color: T.muted }}>
                       {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                     </td>
+                    <td style={rowTd}>
+                      {!isAdminMember(m) ? (
+                        // API keys are Admin-only — Agents/Viewers shouldn't mint
+                        // org-scoped keys that bypass their role restrictions.
+                        <span style={{ color: T.muted }}>—</span>
+                      ) : !key ? (
+                        <button
+                          onClick={() => handleGenerateKey(m)}
+                          disabled={busy}
+                          style={{
+                            background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+                            borderRadius: 6, color: T.accent, padding: '3px 10px',
+                            cursor: busy ? 'wait' : 'pointer', fontSize: 12, fontWeight: 600,
+                            fontFamily: T.font, opacity: busy ? 0.6 : 1,
+                          }}>
+                          {busy ? 'Generating...' : '+ Generate'}
+                        </button>
+                      ) : (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <code style={{
+                            background: '#f3f4f6', border: `1px solid ${T.border}`,
+                            borderRadius: 4, padding: '2px 6px', color: T.text, fontSize: 12,
+                          }}>
+                            {key.key_prefix}…
+                          </code>
+                          {key.is_active ? (
+                            <span style={{ fontSize: 11, color: T.green, fontWeight: 600 }}>active</span>
+                          ) : (
+                            <span style={{ fontSize: 11, color: T.red, fontWeight: 600 }}>revoked</span>
+                          )}
+                          {key.is_active ? (
+                            <button
+                              onClick={() => handleRevokeKey(m, key, false)}
+                              disabled={busy}
+                              style={{
+                                background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)',
+                                borderRadius: 4, color: T.amber, padding: '2px 8px',
+                                cursor: busy ? 'wait' : 'pointer', fontSize: 11, fontFamily: T.font,
+                              }}>Revoke</button>
+                          ) : (
+                            <button
+                              onClick={() => handleRevokeKey(m, key, true)}
+                              disabled={busy}
+                              style={{
+                                background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)',
+                                borderRadius: 4, color: T.green, padding: '2px 8px',
+                                cursor: busy ? 'wait' : 'pointer', fontSize: 11, fontFamily: T.font,
+                              }}>Reactivate</button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteKey(m, key)}
+                            disabled={busy}
+                            style={{
+                              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+                              borderRadius: 4, color: T.red, padding: '2px 8px',
+                              cursor: busy ? 'wait' : 'pointer', fontSize: 11, fontFamily: T.font,
+                            }}>Delete</button>
+                        </div>
+                      )}
+                    </td>
                     <td style={{ ...rowTd, textAlign: 'right' }}>
                       {isSelf ? (
                         <span style={{ color: T.muted, fontSize: 13 }}>—</span>
-                      ) : confirmDelete === m.id ? (
-                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-                          <span style={{ fontSize: 12, color: T.red }}>Remove?</span>
-                          <button onClick={() => handleDelete(m.id)}
-                            style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>Yes</button>
-                          <button onClick={() => setConfirmDelete(null)}
-                            style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, color: T.muted, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>No</button>
-                        </span>
                       ) : (
-                        <button onClick={() => setConfirmDelete(m.id)}
+                        <button onClick={() => handleDelete(m)}
                           style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
                           Remove
                         </button>

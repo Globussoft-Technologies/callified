@@ -338,6 +338,24 @@ func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON,
 	return res.LastInsertId()
 }
 
+// GetTranscriptByID fetches a single transcript by its primary key.
+// Returns (nil, nil) when no row matches.
+func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''),
+		       COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts WHERE id=?`, id)
+	var t Transcript
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &t, err
+}
+
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
 func (d *DB) UpdateCallTranscriptRecording(transcriptID int64, recordingURL string) error {
 	_, err := d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)

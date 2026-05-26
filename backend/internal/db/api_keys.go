@@ -13,7 +13,8 @@ type APIKey struct {
 	ID        int64  `json:"id"`
 	OrgID     int64  `json:"org_id"`
 	Name      string `json:"name"`
-	KeyPrefix string `json:"key_prefix"` // first 8 chars of the raw key for display
+	KeyPrefix string `json:"key_prefix"` // first 10 chars of the raw key for display
+	IsActive  bool   `json:"is_active"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -31,9 +32,11 @@ func GenerateAPIKey() (raw, hashed string, err error) {
 }
 
 // CreateAPIKey inserts a new API key row (stores hash, not the raw key).
+// is_active is set explicitly to 1 so newly generated keys are active regardless
+// of the column's DB default.
 func (d *DB) CreateAPIKey(orgID int64, name, keyHash, keyPrefix string) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO api_keys (org_id, name, key_hash, key_prefix) VALUES (?,?,?,?)`,
+		`INSERT INTO api_keys (org_id, name, key_hash, key_prefix, is_active) VALUES (?,?,?,?,1)`,
 		orgID, name, keyHash, keyPrefix)
 	if err != nil {
 		return 0, err
@@ -44,7 +47,7 @@ func (d *DB) CreateAPIKey(orgID int64, name, keyHash, keyPrefix string) (int64, 
 // GetAPIKeysByOrg returns all API keys for an org (never exposes hashes).
 func (d *DB) GetAPIKeysByOrg(orgID int64) ([]APIKey, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, org_id, name, COALESCE(key_prefix,''),
+		SELECT id, org_id, name, COALESCE(key_prefix,''), COALESCE(is_active,1),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM api_keys WHERE org_id=? ORDER BY id DESC`, orgID)
 	if err != nil {
@@ -54,7 +57,7 @@ func (d *DB) GetAPIKeysByOrg(orgID int64) ([]APIKey, error) {
 	var list []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.IsActive, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, k)
@@ -73,15 +76,38 @@ func (d *DB) DeleteAPIKey(orgID, id int64) (bool, error) {
 }
 
 // GetAPIKeyByHash looks up a key by its SHA-256 hash (for inbound API auth).
+// Returns (nil, nil) when no row matches so callers can distinguish "unknown
+// key" (→ 401) from "key revoked" (→ 403) by inspecting IsActive on the hit.
 func (d *DB) GetAPIKeyByHash(keyHash string) (*APIKey, error) {
 	row := d.pool.QueryRow(`
-		SELECT id, org_id, name, COALESCE(key_prefix,''),
+		SELECT id, org_id, name, COALESCE(key_prefix,''), COALESCE(is_active,1),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM api_keys WHERE key_hash=?`, keyHash)
 	k := &APIKey{}
-	err := row.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.CreatedAt)
+	err := row.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.IsActive, &k.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return k, err
+}
+
+// SetAPIKeyActive toggles is_active for a key, scoped to the caller's org so
+// one org can't poke another's keys. Returns true if a row was updated.
+func (d *DB) SetAPIKeyActive(orgID, id int64, active bool) (bool, error) {
+	res, err := d.pool.Exec(
+		`UPDATE api_keys SET is_active=? WHERE id=? AND org_id=?`,
+		active, id, orgID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// TouchAPIKey bumps last_used_at on a successful authenticated request.
+// Best-effort — callers should fire-and-forget; a write failure must not
+// block the inbound request.
+func (d *DB) TouchAPIKey(id int64) error {
+	_, err := d.pool.Exec(`UPDATE api_keys SET last_used_at=NOW() WHERE id=?`, id)
+	return err
 }

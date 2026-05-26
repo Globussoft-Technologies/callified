@@ -7,18 +7,19 @@ import (
 
 // CallReview mirrors the call_reviews table.
 type CallReview struct {
-	ID                int64   `json:"id"`
-	TranscriptID      int64   `json:"transcript_id"`
-	OrgID             int64   `json:"org_id"`
-	QualityScore      float64 `json:"quality_score"`
-	Sentiment         string  `json:"sentiment"`
-	AppointmentBooked bool    `json:"appointment_booked"`
-	FailureReason     string  `json:"failure_reason"`
-	WhatWentWell      string  `json:"what_went_well"`
-	WhatWentWrong     string  `json:"what_went_wrong"`
-	Summary           string  `json:"summary"`
-	Insights          string  `json:"insights"`
-	CreatedAt         string  `json:"created_at"`
+	ID                          int64   `json:"id"`
+	TranscriptID                int64   `json:"transcript_id"`
+	OrgID                       int64   `json:"org_id"`
+	QualityScore                float64 `json:"quality_score"`
+	Sentiment                   string  `json:"sentiment"`
+	AppointmentBooked           bool    `json:"appointment_booked"`
+	FailureReason               string  `json:"failure_reason"`
+	WhatWentWell                string  `json:"what_went_well"`
+	WhatWentWrong               string  `json:"what_went_wrong"`
+	Summary                     string  `json:"summary"`
+	Insights                    string  `json:"insights"`
+	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
+	CreatedAt                   string  `json:"created_at"`
 }
 
 // CallReviewWithLead enriches a call_reviews row with lead name info and
@@ -194,13 +195,16 @@ func (d *DB) GetCallReviewByTranscript(transcriptID int64) (*CallReview, error) 
 	row := d.pool.QueryRow(`
 		SELECT id, transcript_id, COALESCE(org_id,0), COALESCE(quality_score,0),
 		COALESCE(sentiment,'neutral'), COALESCE(appointment_booked,0),
-		COALESCE(failure_reason,''), COALESCE(summary,''), COALESCE(insights,''),
+		COALESCE(failure_reason,''), COALESCE(what_went_well,''), COALESCE(what_went_wrong,''),
+		COALESCE(summary,''), COALESCE(insights,''),
+		COALESCE(prompt_improvement_suggestion,''),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_reviews WHERE transcript_id=?`, transcriptID)
 	r := &CallReview{}
 	var apptBooked int
 	err := row.Scan(&r.ID, &r.TranscriptID, &r.OrgID, &r.QualityScore, &r.Sentiment,
-		&apptBooked, &r.FailureReason, &r.Summary, &r.Insights, &r.CreatedAt)
+		&apptBooked, &r.FailureReason, &r.WhatWentWell, &r.WhatWentWrong,
+		&r.Summary, &r.Insights, &r.PromptImprovementSuggestion, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -220,16 +224,18 @@ func (d *DB) SaveCallReview(r *CallReview) error {
 	_, err := d.pool.Exec(`
 		INSERT INTO call_reviews
 		(transcript_id, org_id, quality_score, sentiment, appointment_booked,
-		 failure_reason, what_went_well, what_went_wrong, summary, insights)
-		VALUES (?,?,?,?,?,?,?,?,?,?)
+		 failure_reason, what_went_well, what_went_wrong, summary, insights,
+		 prompt_improvement_suggestion)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
 		quality_score=VALUES(quality_score), sentiment=VALUES(sentiment),
 		appointment_booked=VALUES(appointment_booked), failure_reason=VALUES(failure_reason),
 		what_went_well=VALUES(what_went_well), what_went_wrong=VALUES(what_went_wrong),
-		summary=VALUES(summary), insights=VALUES(insights)`,
+		summary=VALUES(summary), insights=VALUES(insights),
+		prompt_improvement_suggestion=VALUES(prompt_improvement_suggestion)`,
 		r.TranscriptID, r.OrgID, r.QualityScore, r.Sentiment, apptBooked,
 		nullString(r.FailureReason), nullString(r.WhatWentWell), nullString(r.WhatWentWrong),
-		nullString(r.Summary), nullString(r.Insights))
+		nullString(r.Summary), nullString(r.Insights), nullString(r.PromptImprovementSuggestion))
 	return err
 }
 

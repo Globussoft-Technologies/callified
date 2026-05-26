@@ -76,6 +76,50 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── PATCH /api/api-keys/{id} ──────────────────────────────────────────────────
+
+// @Summary     Toggle API key status
+// @Description Activate or revoke an API key. Body: {"is_active": false} to revoke. Requires Admin role.
+// @Tags        api-keys
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                    true  "API Key ID"
+// @Param       body  body      object{is_active=bool}   true  "Active state"
+// @Success     200   {object}  object{id=int64,is_active=bool}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     404   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/api-keys/{id} [patch]
+func (s *Server) patchAPIKey(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		IsActive *bool `json:"is_active"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.IsActive == nil {
+		writeError(w, http.StatusBadRequest, "is_active required")
+		return
+	}
+	updated, err := s.db.SetAPIKeyActive(ac.OrgID, id, *body.IsActive)
+	if err != nil {
+		s.logger.Sugar().Errorw("patchAPIKey", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "is_active": *body.IsActive})
+}
+
 // ── DELETE /api/api-keys/{id} ─────────────────────────────────────────────────
 
 // @Summary     Delete API key

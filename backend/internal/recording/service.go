@@ -195,15 +195,20 @@ func (s *Service) saveWAV(streamSid string, data []byte) string {
 
 // ── Gemini analysis ───────────────────────────────────────────────────────────
 
+// Analysis is the exported view of the LLM scoring output. Used by the API
+// layer's on-demand conclusion endpoint without importing internal types.
+type Analysis = analysis
+
 type analysis struct {
-	QualityScore      float64 `json:"quality_score"`
-	Sentiment         string  `json:"sentiment"`
-	AppointmentBooked bool    `json:"appointment_booked"`
-	FailureReason     string  `json:"failure_reason"`
-	WhatWentWell      string  `json:"what_went_well"`
-	WhatWentWrong     string  `json:"what_went_wrong"`
-	Summary           string  `json:"summary"`
-	Insights          string  `json:"insights"`
+	QualityScore                float64 `json:"quality_score"`
+	Sentiment                   string  `json:"sentiment"`
+	AppointmentBooked           bool    `json:"appointment_booked"`
+	FailureReason               string  `json:"failure_reason"`
+	WhatWentWell                string  `json:"what_went_well"`
+	WhatWentWrong               string  `json:"what_went_wrong"`
+	Summary                     string  `json:"summary"`
+	Insights                    string  `json:"insights"`
+	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
 const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the provided transcript and return ONLY a JSON object with these exact keys:
@@ -216,6 +221,12 @@ const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the 
 - "summary": string (1-2 sentence call summary)
 - "insights": string (key coaching insight for the agent)
 Return ONLY valid JSON. No markdown, no explanation. Keep each string under 200 chars.`
+
+// AnalyzeCall is the public wrapper around analyzeCall. Used by the API
+// layer for on-demand conclusion generation without importing internal types.
+func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
+	return s.analyzeCall(ctx, history)
+}
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)

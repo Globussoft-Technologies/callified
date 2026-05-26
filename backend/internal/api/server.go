@@ -19,25 +19,35 @@ import (
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/rag"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
+	"github.com/globussoft/callified-backend/internal/recording"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
 )
 
 // Server holds shared dependencies for all REST handlers.
 type Server struct {
-	db          *db.DB
-	cfg         *config.Config
-	logger      *zap.Logger
-	dispatcher  *webhook.Dispatcher
-	store       *rstore.Store
-	initiator   *dial.Initiator
-	billingSvc  *billing.Service
-	emailSvc    *email.Service
-	ragClient   *rag.Client
-	waAgent     *wa.Agent
-	waSender    waSenderIface
-	llmProvider *llm.Provider // Phase 4: Gemini-powered generation endpoints
-	wsHandler   activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
+	db           *db.DB
+	cfg          *config.Config
+	logger       *zap.Logger
+	dispatcher   *webhook.Dispatcher
+	store        *rstore.Store
+	initiator    *dial.Initiator
+	billingSvc   *billing.Service
+	emailSvc     *email.Service
+	ragClient    *rag.Client
+	waAgent      *wa.Agent
+	waSender     waSenderIface
+	llmProvider  *llm.Provider // Phase 4: Gemini-powered generation endpoints
+	wsHandler    activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
+	recordingSvc callAnalyzer     // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+}
+
+// callAnalyzer is the slice of recording.Service the API needs for on-demand
+// conclusion regeneration. Kept as a tiny interface so the api package
+// doesn't have to import the recording package (which would re-import
+// internal/llm and create a cycle).
+type callAnalyzer interface {
+	AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*recording.Analysis, error)
 }
 
 // waSenderIface allows the WA sender to be nil-safe.
@@ -81,6 +91,13 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 // SetWAAgent wires the WhatsApp AI agent after construction.
 func (s *Server) SetWAAgent(agent *wa.Agent) {
 	s.waAgent = agent
+}
+
+// SetRecordingService wires the post-call analyzer after construction.
+// Used by the on-demand "regenerate conclusion" endpoint. Nil-safe — the
+// endpoint reports 503 when this isn't wired.
+func (s *Server) SetRecordingService(svc callAnalyzer) {
+	s.recordingSvc = svc
 }
 
 // waChannelConfig constructs a wa.ChannelConfig from individual fields.
@@ -216,6 +233,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
+	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	// /check is a read-only lookup any agent might need before placing a call;
@@ -263,6 +281,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── API keys ──────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/api-keys", adminAuth(s.listAPIKeys))
 	mux.HandleFunc("POST /api/api-keys", adminAuth(s.createAPIKey))
+	mux.HandleFunc("PATCH /api/api-keys/{id}", adminAuth(s.patchAPIKey))
 	mux.HandleFunc("DELETE /api/api-keys/{id}", adminAuth(s.deleteAPIKey))
 
 	// ── Onboarding ────────────────────────────────────────────────────────────

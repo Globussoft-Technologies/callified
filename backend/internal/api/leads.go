@@ -806,3 +806,115 @@ Return ONLY the email body text, no subject line.`, name, lead.Phone, lead.Inter
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"email_draft": draft})
 }
+
+// ── POST /api/transcripts/{id}/conclusion ────────────────────────────────────
+//
+// (Re)generates the AI conclusion for a single transcript on demand and
+// returns the full CallReview row. Idempotent: if a review already exists
+// with prose it is returned as-is unless ?force=1 is passed.
+// Returns 204 when the transcript has no turns to analyse.
+func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+
+	if s.recordingSvc == nil || s.llmProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "conclusion generation not available on this server")
+		return
+	}
+
+	t, err := s.db.GetTranscriptByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("postTranscriptConclusion: load transcript", "id", id, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if t == nil {
+		writeError(w, http.StatusNotFound, "transcript not found")
+		return
+	}
+
+	// Return cached review unless force=1 — makes modal opens cheap.
+	if !force {
+		if existing, _ := s.db.GetCallReviewByTranscript(id); existing != nil &&
+			(existing.Summary != "" || existing.WhatWentWell != "" || existing.WhatWentWrong != "" ||
+				existing.FailureReason != "" || existing.Insights != "") {
+			writeJSON(w, http.StatusOK, existing)
+			return
+		}
+	}
+
+	var turns []struct {
+		Role string `json:"role"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+		// Handle legacy capitalised keys: {Role, Text}
+		var alt []struct {
+			Role string `json:"Role"`
+			Text string `json:"Text"`
+		}
+		if err2 := json.Unmarshal(t.Transcript, &alt); err2 != nil {
+			writeError(w, http.StatusUnprocessableEntity, "transcript is not valid JSON turns")
+			return
+		}
+		for _, a := range alt {
+			turns = append(turns, struct {
+				Role string `json:"role"`
+				Text string `json:"text"`
+			}{Role: a.Role, Text: a.Text})
+		}
+	}
+
+	if len(turns) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	history := make([]llm.ChatMessage, 0, len(turns))
+	for _, tn := range turns {
+		role := "user"
+		if strings.EqualFold(tn.Role, "AI") || strings.EqualFold(tn.Role, "model") || strings.EqualFold(tn.Role, "agent") {
+			role = "model"
+		}
+		history = append(history, llm.ChatMessage{Role: role, Text: tn.Text})
+	}
+
+	a, err := s.recordingSvc.AnalyzeCall(r.Context(), history)
+	if err != nil {
+		s.logger.Sugar().Warnw("postTranscriptConclusion: LLM analysis failed", "id", id, "err", err)
+		writeError(w, http.StatusBadGateway, "AI analysis failed: "+err.Error())
+		return
+	}
+
+	var orgID int64
+	if t.LeadID > 0 {
+		if ld, _ := s.db.GetLeadByID(t.LeadID); ld != nil {
+			orgID = ld.OrgID
+		}
+	}
+	review := &db.CallReview{
+		TranscriptID:                id,
+		OrgID:                       orgID,
+		QualityScore:                a.QualityScore,
+		Sentiment:                   a.Sentiment,
+		AppointmentBooked:           a.AppointmentBooked,
+		FailureReason:               a.FailureReason,
+		WhatWentWell:                a.WhatWentWell,
+		WhatWentWrong:               a.WhatWentWrong,
+		Summary:                     a.Summary,
+		Insights:                    a.Insights,
+		PromptImprovementSuggestion: a.PromptImprovementSuggestion,
+	}
+	if err := s.db.SaveCallReview(review); err != nil {
+		s.logger.Sugar().Warnw("postTranscriptConclusion: save review failed", "id", id, "err", err)
+	}
+	if saved, _ := s.db.GetCallReviewByTranscript(id); saved != nil {
+		writeJSON(w, http.StatusOK, saved)
+		return
+	}
+	writeJSON(w, http.StatusOK, review)
+}
