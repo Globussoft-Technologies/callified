@@ -256,6 +256,34 @@ definitions:
       source:
         type: string
     type: object
+  db.CallReview:
+    properties:
+      appointment_booked:
+        type: boolean
+      failure_reason:
+        type: string
+      insights:
+        type: string
+      org_id:
+        format: int64
+        type: integer
+      prompt_improvement_suggestion:
+        type: string
+      quality_score:
+        format: double
+        type: number
+      sentiment:
+        type: string
+      summary:
+        type: string
+      transcript_id:
+        format: int64
+        type: integer
+      what_went_well:
+        type: string
+      what_went_wrong:
+        type: string
+    type: object
   db.Campaign:
     properties:
       channel:
@@ -1088,6 +1116,64 @@ paths:
       summary: Delete API key
       tags:
       - api-keys
+    patch:
+      consumes:
+      - application/json
+      description: Revokes or reactivates an API key. Requires Admin role.
+      parameters:
+      - description: API Key ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Active flag
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            is_active:
+              type: boolean
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              id:
+                format: int64
+                type: integer
+              is_active:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update API key (revoke/reactivate)
+      tags:
+      - api-keys
   /api/auth/forgot-password:
     post:
       consumes:
@@ -1280,6 +1366,88 @@ paths:
       summary: SSO JWT login
       tags:
       - auth
+  /api/billing/cancel:
+    post:
+      description: Alias for DELETE /api/billing/subscription. Cancels the org's active
+        subscription. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Cancel subscription (alias)
+      tags:
+      - billing
+  /api/billing/create-order:
+    post:
+      consumes:
+      - application/json
+      description: Creates a Razorpay order for subscribing to a plan. Alias for POST
+        /api/billing/subscription. Requires Admin role.
+      parameters:
+      - description: Subscription request
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            billing_cycle:
+              type: string
+            plan_id:
+              format: int64
+              type: integer
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              billing_cycle:
+                type: string
+              order_id:
+                type: string
+              razorpay_key:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create Razorpay order (alias)
+      tags:
+      - billing
   /api/billing/credits:
     get:
       description: Returns the org's prepaid credit balance and minutes available.
@@ -1785,6 +1953,46 @@ paths:
       summary: Verify payment
       tags:
       - billing
+  /api/billing/webhook:
+    post:
+      consumes:
+      - application/json
+      description: Receives Razorpay payment events. HMAC-verified — no auth header
+        required.
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Razorpay webhook
+      tags:
+      - billing
+  /api/calling-status:
+    get:
+      description: Returns current calling status including business hours check for
+        the org.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get current calling status (business hours check)
+      tags:
+      - misc
   /api/campaign-events:
     get:
       description: Server-sent event stream for campaign dial progress. Use campaign_id=0
@@ -2656,6 +2864,205 @@ paths:
       summary: Dashboard summary
       tags:
       - dashboard
+  /api/debug/call-timeline:
+    get:
+      description: Returns call timeline debug information. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get call timeline debug info
+      tags:
+      - debug
+  /api/debug/health:
+    get:
+      description: Returns debug health check information including DB status. Requires
+        Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              db:
+                type: string
+              status:
+                type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Debug health check
+      tags:
+      - debug
+  /api/debug/last-dial:
+    get:
+      description: Returns debug information about the last dial attempt. Requires
+        Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get last dial debug info
+      tags:
+      - debug
+  /api/debug/logs:
+    get:
+      description: Returns debug log entries. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Fetch debug logs
+      tags:
+      - debug
+  /api/debug/recording-config:
+    get:
+      description: Returns recording configuration debug information. Requires Admin
+        role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get recording config debug info
+      tags:
+      - debug
+  /api/demo-requests:
+    get:
+      description: Returns all submitted demo requests. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List demo requests
+      tags:
+      - misc
+    post:
+      consumes:
+      - application/json
+      description: Public endpoint — no authentication required. Submits a new demo
+        request.
+      parameters:
+      - description: Demo request details
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            company:
+              type: string
+            email:
+              type: string
+            message:
+              type: string
+            name:
+              type: string
+            phone:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            properties:
+              id:
+                format: int64
+                type: integer
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Submit a demo request (public)
+      tags:
+      - misc
   /api/dial/{lead_id}:
     post:
       consumes:
@@ -2899,6 +3306,53 @@ paths:
       security:
       - BearerAuth: []
       summary: Check DND by phone (path param)
+      tags:
+      - dnd
+  /api/dnd/import:
+    get:
+      consumes:
+      - multipart/form-data
+      description: Alias for POST /api/dnd/import-csv. Bulk-imports DND numbers from
+        a CSV file. Requires Admin role.
+      parameters:
+      - description: 'CSV file (first column: 10-digit phone)'
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              imported:
+                type: integer
+              skipped:
+                items:
+                  type: string
+                type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Import DND numbers from CSV (alias)
       tags:
       - dnd
   /api/dnd/import-csv:
@@ -3571,6 +4025,49 @@ paths:
       summary: Upload lead document
       tags:
       - leads
+  /api/leads/{id}/draft-email:
+    get:
+      description: Generates a draft email for a lead using AI.
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              body:
+                type: string
+              subject:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate a draft email for a lead using AI
+      tags:
+      - leads
   /api/leads/{id}/notes:
     post:
       consumes:
@@ -3853,6 +4350,25 @@ paths:
       summary: Search leads
       tags:
       - leads
+  /api/live-logs:
+    get:
+      description: Legacy alias. Server-sent event stream of live backend log entries.
+        Authenticate via ?ticket=<sse-ticket>.
+      parameters:
+      - description: Short-lived SSE ticket
+        in: query
+        name: ticket
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: 'event: log\ndata: {...}\n\n'
+          schema:
+            type: string
+      summary: Live log stream (SSE, legacy alias)
+      tags:
+      - sse
   /api/manual-call:
     post:
       consumes:
@@ -3909,6 +4425,98 @@ paths:
       summary: Manual call
       tags:
       - dialing
+  /api/onboarding:
+    get:
+      description: Returns the onboarding completion flag for the authenticated user's
+        org.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              completed:
+                type: boolean
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get onboarding completion flag
+      tags:
+      - onboarding
+  /api/onboarding/complete:
+    post:
+      description: Marks onboarding as complete for the org. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              ok:
+                type: boolean
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Mark onboarding as complete
+      tags:
+      - onboarding
+  /api/onboarding/status:
+    get:
+      description: Returns detailed onboarding status with per-step completion flags.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              completed:
+                type: boolean
+              steps:
+                properties:
+                  campaign:
+                    type: boolean
+                  leads:
+                    type: boolean
+                  voice:
+                    type: boolean
+                type: object
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get onboarding status with step flags
+      tags:
+      - onboarding
   /api/organizations:
     get:
       description: Returns the caller's org (or all orgs for superadmin).
@@ -4012,6 +4620,47 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete organization
+      tags:
+      - organizations
+  /api/organizations/{id}/generate-prompt:
+    post:
+      description: AI-generates a system prompt for the given org. Requires Admin role.
+      parameters:
+      - description: Org ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              prompt:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: AI-generate a system prompt for an org
       tags:
       - organizations
   /api/organizations/{id}/products:
@@ -4402,6 +5051,88 @@ paths:
       summary: Update product
       tags:
       - products
+  /api/products/{id}/generate-persona:
+    post:
+      description: AI-generates a product persona. Requires Admin role.
+      parameters:
+      - description: Product ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              persona:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: AI-generate a product persona
+      tags:
+      - products
+  /api/products/{id}/generate-prompt:
+    post:
+      description: AI-generates a product prompt. Requires Admin role.
+      parameters:
+      - description: Product ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              prompt:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: AI-generate a product prompt
+      tags:
+      - products
   /api/products/{id}/prompt:
     get:
       description: Returns the agent persona and call flow instructions for a product.
@@ -4490,6 +5221,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Update product prompt
+      tags:
+      - products
+  /api/products/{id}/scrape:
+    post:
+      description: Scrapes product information from the product's website URL. Requires
+        Admin role.
+      parameters:
+      - description: Product ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Scrape product info from URL
       tags:
       - products
   /api/pronunciation:
@@ -5214,6 +5984,102 @@ paths:
       summary: Get invite link
       tags:
       - team
+  /api/test-email:
+    post:
+      description: Sends a test email. Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.MessageResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send a test email
+      tags:
+      - misc
+  /api/transcripts/{id}/conclusion:
+    post:
+      description: Generates or retrieves an AI conclusion for a transcript. Pass force=1
+        to regenerate.
+      parameters:
+      - description: Transcript ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Pass "1" to force regeneration
+        in: query
+        name: force
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              appointment_booked:
+                type: boolean
+              failure_reason:
+                type: string
+              insights:
+                type: string
+              org_id:
+                format: int64
+                type: integer
+              prompt_improvement_suggestion:
+                type: string
+              quality_score:
+                format: double
+                type: number
+              sentiment:
+                type: string
+              summary:
+                type: string
+              transcript_id:
+                format: int64
+                type: integer
+              what_went_well:
+                type: string
+              what_went_wrong:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Generate AI conclusion for transcript
+      tags:
+      - transcripts
   /api/transcripts/{id}/review:
     get:
       description: Returns the AI-generated call review for a specific transcript.
@@ -6315,6 +7181,35 @@ paths:
       summary: Toggle AI by phone
       tags:
       - whatsapp
+  /api/whatsapp:
+    get:
+      description: Returns WhatsApp log entries (legacy endpoint). Requires Admin role.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List WhatsApp logs (legacy endpoint)
+      tags:
+      - whatsapp
   /api/webhooks:
     get:
       description: Returns all configured outbound webhooks for the org. Requires
@@ -6474,6 +7369,392 @@ paths:
       summary: Get webhook logs
       tags:
       - webhooks
+  /mobile/leads:
+    get:
+      description: Returns all leads for the authenticated user's org (mobile).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/db.Lead'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List leads (mobile)
+      tags:
+      - mobile
+    post:
+      consumes:
+      - application/json
+      description: Creates a new CRM lead for the org (mobile).
+      parameters:
+      - description: Lead data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.leadCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/api.IDResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "409":
+          description: phone already exists
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create lead (mobile)
+      tags:
+      - mobile
+  /mobile/leads/export:
+    get:
+      description: Streams all org leads as a downloadable CSV file (mobile).
+      produces:
+      - text/csv
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Export all leads (mobile)
+      tags:
+      - mobile
+  /mobile/leads/search:
+    get:
+      description: Full-text search across leads in the org by name, phone, or source
+        (mobile).
+      parameters:
+      - description: Search query
+        in: query
+        name: q
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/db.Lead'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Search leads (mobile)
+      tags:
+      - mobile
+  /mobile/leads/{id}:
+    delete:
+      description: Permanently deletes a lead from the org (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.DeletedResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Delete lead (mobile)
+      tags:
+      - mobile
+    get:
+      description: Returns a single lead by ID (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/db.Lead'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get lead (mobile)
+      tags:
+      - mobile
+    put:
+      consumes:
+      - application/json
+      description: Updates lead fields. All fields are replaced (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated lead data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.leadUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update lead (mobile)
+      tags:
+      - mobile
+  /mobile/leads/{id}/notes:
+    post:
+      consumes:
+      - application/json
+      description: Saves a follow-up note against a lead (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Note text (max 5000 chars)
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            note:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Add lead note (mobile)
+      tags:
+      - mobile
+  /mobile/leads/{id}/status:
+    put:
+      consumes:
+      - application/json
+      description: Changes the CRM status of a lead (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: New status
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            status:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update lead status (mobile)
+      tags:
+      - mobile
+  /mobile/leads/{id}/transcripts:
+    get:
+      description: Returns all call transcripts for a lead (mobile).
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              type: object
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get lead transcripts (mobile)
+      tags:
+      - mobile
+  /ping:
+    get:
+      description: Returns a simple pong response to verify the server is running.
+        No authentication required.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              pong:
+                type: boolean
+            type: object
+      summary: Health check ping
+      tags:
+      - misc
   /crm-webhook:
     get:
       description: Receives CRM push notifications (new lead events) or responds to

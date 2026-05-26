@@ -107,7 +107,9 @@ func main() {
 	}
 
 	// Swagger UI — browse all API endpoints at /swagger/
-	mux.Handle("/swagger/", httpSwagger.WrapHandler)
+	mux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
 	// Prometheus metrics endpoint (scraped by Prometheus/Grafana)
 	mux.Handle("/metrics", promhttp.Handler())
