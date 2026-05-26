@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
+import SsoReturn from './pages/SsoReturn';
 import MonitorPage from './pages/MonitorPage';
 import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
@@ -87,6 +88,9 @@ export default function App() {
   }
   if (location.pathname === '/accept-invite') {
     return <AcceptInvitePage />;
+  }
+  if (location.pathname === '/sso/return') {
+    return <SsoReturn />;
   }
 
   // ─── AUTH PAGES (after all hooks) ───
