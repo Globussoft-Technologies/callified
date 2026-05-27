@@ -2,7 +2,9 @@ package api
 
 import (
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -128,6 +130,11 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 	//    issuer told us which org the user belongs to. We never guess: a
 	//    stranger arriving without an org_id claim is rejected so a typo'd
 	//    JWT can't drop someone into the first org we find.
+	// Normalize the claim values once so JIT-create and existing-user-sync
+	// see the same canonical role / org_id.
+	claimRole := s.normalizeRole(claims.Role)
+	claimOrg := s.remapOrgID(claims.OrgID)
+
 	user, err := s.db.GetUserByEmail(email)
 	if err != nil {
 		s.logger.Sugar().Errorw("ssoJWT: GetUserByEmail", "err", err)
@@ -135,30 +142,44 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil {
-		if claims.OrgID <= 0 {
+		if claimOrg <= 0 {
 			s.ssoFail(w, r, next, "org_required_for_jit_create", http.StatusForbidden)
 			return
 		}
-		role := claims.Role
-		if role != "Admin" && role != "Agent" {
-			role = "Agent" // default-deny to least-privilege
-		}
-		// Empty password hash → user can never log in via password; SSO is
-		// the only path. CreateUser is happy with that today; if you want
-		// to enforce at the DB layer, make password_hash NOT NULL with a
-		// per-user random sentinel.
-		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), role, claims.OrgID)
+		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), claimRole, claimOrg)
 		if err != nil {
 			s.logger.Sugar().Errorw("ssoJWT: CreateUser failed", "err", err, "email", email)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		s.logger.Sugar().Infow("ssoJWT: JIT-created user", "id", uid, "email", email, "role", role, "org", claims.OrgID)
+		s.logger.Sugar().Infow("ssoJWT: JIT-created user",
+			"id", uid, "email", email, "role", claimRole, "org", claimOrg,
+			"raw_role", claims.Role, "raw_org", claims.OrgID)
 		user, err = s.db.GetUserByEmail(email)
 		if err != nil || user == nil {
 			s.logger.Sugar().Errorw("ssoJWT: post-create lookup failed", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+	} else {
+		// Existing user: re-sync role / org_id from the JWT each login.
+		if claimRole != "" && (claimRole != user.Role || (claimOrg > 0 && claimOrg != user.OrgID)) {
+			newRole := claimRole
+			newOrg := user.OrgID
+			if claimOrg > 0 {
+				newOrg = claimOrg
+			}
+			if err := s.db.UpdateUserRoleAndOrg(user.ID, newRole, newOrg); err != nil {
+				s.logger.Sugar().Warnw("ssoJWT: UpdateUserRoleAndOrg failed",
+					"err", err, "user_id", user.ID, "email", email)
+			} else {
+				s.logger.Sugar().Infow("ssoJWT: synced role/org from JWT",
+					"user_id", user.ID, "email", email,
+					"from_role", user.Role, "to_role", newRole,
+					"from_org", user.OrgID, "to_org", newOrg)
+				user.Role = newRole
+				user.OrgID = newOrg
+			}
 		}
 	}
 
@@ -221,6 +242,128 @@ func (s *Server) ssoFail(w http.ResponseWriter, r *http.Request, next, code stri
 		"&next=" + url.QueryEscape(next)
 	_ = zap.String // silence unused import lint when logger sugaring not used here
 	http.Redirect(w, r, dst, http.StatusFound)
+}
+
+// ── Permanent SSO via API Key ─────────────────────────────────────────────────
+//
+// GET /api/auth/sso/api-key?api_key=<key>&redirect=/crm
+//   Browser flow: validates key → finds org Admin → mints JWT → redirects SPA.
+//   Embed this URL in any external app for a permanent, revokable login link.
+//
+// GET /api/auth/token?api_key=<key>
+//   JSON flow: returns {"token":"<jwt>"} for machine-to-machine callers.
+
+func (s *Server) ssoAPIKey(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("api_key"))
+	next := r.URL.Query().Get("redirect")
+	if next == "" {
+		next = "/crm"
+	}
+	if raw == "" {
+		s.ssoFail(w, r, next, "missing_api_key", http.StatusBadRequest)
+		return
+	}
+	token, err := s.mintTokenFromAPIKey(raw)
+	if err != nil {
+		s.logger.Sugar().Infow("ssoAPIKey: rejected", "err", err)
+		s.ssoFail(w, r, next, "invalid_api_key", http.StatusUnauthorized)
+		return
+	}
+	dst := s.cfg.FrontendURL + "/sso/return?token=" + url.QueryEscape(token) +
+		"&next=" + url.QueryEscape(next)
+	http.Redirect(w, r, dst, http.StatusFound)
+}
+
+func (s *Server) apiKeyToken(w http.ResponseWriter, r *http.Request) {
+	raw := strings.TrimSpace(r.URL.Query().Get("api_key"))
+	if raw == "" {
+		writeError(w, http.StatusBadRequest, "api_key required")
+		return
+	}
+	token, err := s.mintTokenFromAPIKey(raw)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or revoked api key")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+func (s *Server) mintTokenFromAPIKey(rawKey string) (string, error) {
+	sum := sha256.Sum256([]byte(rawKey))
+	hashed := hex.EncodeToString(sum[:])
+
+	k, err := s.db.GetAPIKeyByHash(hashed)
+	if err != nil {
+		return "", fmt.Errorf("db: %w", err)
+	}
+	if k == nil {
+		return "", errors.New("unknown key")
+	}
+	if !k.IsActive {
+		return "", errors.New("key revoked")
+	}
+
+	members, err := s.db.GetTeamMembers(k.OrgID)
+	if err != nil || len(members) == 0 {
+		return "", fmt.Errorf("no users for org %d", k.OrgID)
+	}
+	user := members[0]
+	for _, m := range members {
+		if m.Role == "Admin" {
+			user = m
+			break
+		}
+	}
+
+	go s.db.TouchAPIKey(k.ID)
+	return s.mintToken(user.Email, user.OrgID, user.Role)
+}
+
+func (s *Server) normalizeRole(raw string) string {
+	r := strings.ToLower(strings.TrimSpace(raw))
+	switch r {
+	case "admin":
+		return "Admin"
+	case "agent":
+		return "Agent"
+	case "viewer":
+		return "Viewer"
+	}
+	fallback := strings.TrimSpace(s.cfg.SSODefaultRole)
+	if fallback == "" {
+		return "Agent"
+	}
+	switch strings.ToLower(fallback) {
+	case "admin":
+		return "Admin"
+	case "viewer":
+		return "Viewer"
+	}
+	return "Agent"
+}
+
+func (s *Server) remapOrgID(in int64) int64 {
+	raw := strings.TrimSpace(s.cfg.SSOOrgRemap)
+	if raw == "" || in <= 0 {
+		return in
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		fromStr, toStr, ok := strings.Cut(strings.TrimSpace(pair), ":")
+		if !ok {
+			continue
+		}
+		var from, to int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(fromStr), "%d", &from); err != nil {
+			continue
+		}
+		if _, err := fmt.Sscanf(strings.TrimSpace(toStr), "%d", &to); err != nil {
+			continue
+		}
+		if from == in {
+			return to
+		}
+	}
+	return in
 }
 
 // audienceContains returns true if want appears anywhere in aud. JWT's "aud"

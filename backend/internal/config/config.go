@@ -99,6 +99,8 @@ type Config struct {
 	SSOPublicKeyPEM string `env:"SSO_PUBLIC_KEY_PEM"`
 	SSOIssuer       string `env:"SSO_ISSUER"`
 	SSOAudience     string `env:"SSO_AUDIENCE"`
+	SSODefaultRole  string `env:"SSO_DEFAULT_ROLE" envDefault:"Agent"`
+	SSOOrgRemap     string `env:"SSO_ORG_REMAP"`
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
 }
 

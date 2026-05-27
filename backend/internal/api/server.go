@@ -136,6 +136,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Public SSO entry point — verified by signature on the inbound JWT,
 	// not by our own middleware. See internal/api/sso.go for the flow.
 	mux.HandleFunc("GET /api/auth/sso/jwt", s.ssoJWT)
+	mux.HandleFunc("GET /api/auth/sso/api-key", s.ssoAPIKey)
+	mux.HandleFunc("GET /api/auth/token", s.apiKeyToken)
 
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux
