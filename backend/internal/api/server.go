@@ -233,6 +233,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/campaigns/{id}/call-insights", adminOrAgent(s.getCampaignCallInsights))
 	mux.HandleFunc("GET /api/campaigns/{id}/retries", adminOrAgent(s.getCampaignRetries))
 
+	// ── External / partner transcript export ─────────────────────────────────
+	mux.HandleFunc("GET /api/external/transcripts", s.requireAPIKeyOrAuth(s.getExternalTranscripts))
+
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
