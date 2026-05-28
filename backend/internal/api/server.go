@@ -101,13 +101,24 @@ func (s *Server) SetRecordingService(svc callAnalyzer) {
 }
 
 // waChannelConfig constructs a wa.ChannelConfig from individual fields.
+// For Meta provider, falls back to platform-level env credentials when the
+// org hasn't saved their own access token / phone number ID.
 func (s *Server) waChannelConfig(orgID int64, provider, phoneNumber, apiKey, appID string, defaultProductID int64) wa.ChannelConfig {
+	if provider == "meta" {
+		if apiKey == "" {
+			apiKey = s.cfg.MetaAccessToken
+		}
+		if phoneNumber == "" {
+			phoneNumber = s.cfg.MetaPhoneNumberID
+		}
+	}
 	return wa.ChannelConfig{
 		OrgID:            orgID,
 		Provider:         provider,
 		PhoneNumber:      phoneNumber,
 		APIKey:           apiKey,
 		AppID:            appID,
+		GraphVersion:     s.cfg.MetaGraphVersion,
 		DefaultProductID: defaultProductID,
 	}
 }
@@ -403,6 +414,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/wa/conversations/{id}/history", adminAuth(s.getWAHistory))
 	mux.HandleFunc("GET /api/wa/config", adminAuth(s.getWAConfig))
 	mux.HandleFunc("POST /api/wa/config", adminAuth(s.saveWAConfig))
+	mux.HandleFunc("GET /api/wa/meta/app-config", auth(s.metaAppConfig))
+	mux.HandleFunc("POST /api/wa/onboard/exchange", adminAuth(s.metaOnboardExchange))
 	mux.HandleFunc("GET /api/wa/conversations/{phone}/messages", adminAuth(s.getWAMessagesByPhone))
 	mux.HandleFunc("POST /api/wa/toggle-ai/{phone}", adminAuth(s.toggleWAAIByPhone))
 	mux.HandleFunc("POST /api/wa/send", adminAuth(s.sendWAMessage))

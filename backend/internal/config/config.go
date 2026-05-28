@@ -78,7 +78,14 @@ type Config struct {
 	AppURL       string `env:"APP_URL"        envDefault:"https://test.callified.ai"`
 
 	// WhatsApp (Phase 3C)
-	MetaVerifyToken string `env:"META_WHATSAPP_VERIFY_TOKEN"`
+	MetaVerifyToken   string `env:"META_WHATSAPP_VERIFY_TOKEN"`
+	MetaAppID         string `env:"META_APP_ID"`
+	MetaAppSecret     string `env:"META_APP_SECRET"`
+	MetaESConfigID    string `env:"META_ES_CONFIG_ID"`
+	MetaAccessToken   string `env:"META_ACCESS_TOKEN"`
+	MetaPhoneNumberID string `env:"META_PHONE_NUMBER_ID"`
+	MetaGraphVersion  string `env:"META_GRAPH_VERSION" envDefault:"v18.0"`
+	MetaDefaultOrgID  int64  `env:"META_DEFAULT_ORG_ID" envDefault:"1"`
 
 	// SSO (JWT-based, single trusted issuer).
 	//

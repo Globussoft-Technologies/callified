@@ -19,6 +19,7 @@ type ChannelConfig struct {
 	PhoneNumber      string
 	APIKey           string
 	AppID            string // Gupshup source phone / Wati API URL prefix
+	GraphVersion     string // Meta only; defaults to v18.0 when empty
 	DefaultProductID int64  // product whose prompt the AI agent uses; 0 = fallback generic
 }
 
@@ -99,7 +100,11 @@ func sendMetaText(ctx context.Context, cfg ChannelConfig, toPhone, text string) 
 		"type":              "text",
 		"text":              map[string]string{"body": text},
 	})
-	u := fmt.Sprintf("https://graph.facebook.com/v18.0/%s/messages", cfg.PhoneNumber)
+	version := cfg.GraphVersion
+	if version == "" {
+		version = "v18.0"
+	}
+	u := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages", version, cfg.PhoneNumber)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return err

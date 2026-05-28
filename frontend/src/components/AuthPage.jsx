@@ -89,7 +89,7 @@ export default function AuthPage() {
                 style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '0.9rem', padding: 0 }}>
                 &larr; Back to Login
               </button>
-              <h2 style={{ color: '#f8fafc', fontSize: '1.2rem', marginTop: '0.75rem', marginBottom: 0 }}>Forgot Password</h2>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: 700, marginTop: '0.75rem', marginBottom: 0, background: 'linear-gradient(135deg, #a78bfa, #7c3aed)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Forgot Password</h2>
             </div>
           )}
 

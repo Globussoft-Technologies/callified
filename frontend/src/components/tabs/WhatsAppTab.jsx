@@ -36,12 +36,7 @@ const PROVIDER_FIELDS = {
   interakt: [
     { key: 'api_key', label: 'API Key', type: 'password' },
   ],
-  meta: [
-    { key: 'access_token', label: 'Access Token', type: 'password' },
-    { key: 'phone_number_id', label: 'Phone Number ID', type: 'text' },
-    { key: 'app_secret', label: 'App Secret', type: 'password' },
-    { key: 'verify_token', label: 'Verify Token', type: 'text' },
-  ],
+  meta: [],
   wasender: [
     { key: 'api_key', label: 'Personal Access Token (from wasenderapi.com → Profile)', type: 'password' },
     { key: 'phone_number', label: 'Source Phone', type: 'text' },
@@ -87,6 +82,137 @@ function SecretField({ value, onChange, placeholder }) {
   );
 }
 
+/* ─── Meta Embedded Signup Connect Panel ─── */
+function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
+  const [appConfig, setAppConfig] = useState(null);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState('');
+  const [connectedPhone, setConnectedPhone] = useState(existingPhone || '');
+  const sdkReady = useRef(false);
+
+  useEffect(() => {
+    apiFetch(`${API_URL}/wa/meta/app-config`)
+      .then(r => r.json())
+      .then(cfg => {
+        setAppConfig(cfg);
+        loadFBSDK(cfg.app_id, cfg.graph_version || 'v25.0');
+      })
+      .catch(() => setError('Could not load Meta app config from server'));
+  }, [apiFetch, API_URL]);
+
+  useEffect(() => {
+    setConnectedPhone(existingPhone || '');
+  }, [existingPhone]);
+
+  const loadFBSDK = (appId, version) => {
+    if (document.getElementById('facebook-jssdk')) {
+      if (window.FB) {
+        window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version });
+        sdkReady.current = true;
+      }
+      return;
+    }
+    window.fbAsyncInit = function () {
+      window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version });
+      sdkReady.current = true;
+    };
+    const s = document.createElement('script');
+    s.id = 'facebook-jssdk';
+    s.src = 'https://connect.facebook.net/en_US/sdk.js';
+    document.head.appendChild(s);
+  };
+
+  const handleConnect = () => {
+    if (!window.FB || !appConfig) {
+      setError('Facebook SDK not ready — please wait a moment and try again');
+      return;
+    }
+    setConnecting(true);
+    setError('');
+
+    // Reset after 90s in case the popup is blocked or silently closed —
+    // FB.login does not always fire the callback when popups are blocked.
+    const bail = setTimeout(() => {
+      setConnecting(false);
+      setError('Timed out. The Facebook popup may have been blocked — allow popups for this site and try again.');
+    }, 90000);
+
+    window.FB.login((response) => {
+      clearTimeout(bail);
+      if (!response.authResponse?.code) {
+        setConnecting(false);
+        setError('Connection cancelled or popup blocked. Allow popups for this site and try again.');
+        return;
+      }
+      apiFetch(`${API_URL}/wa/onboard/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: response.authResponse.code }),
+      })
+        .then(res => res.json().then(data => ({ res, data })))
+        .then(({ res, data }) => {
+          if (!res.ok) {
+            setError(data.error || 'Connection failed');
+            setConnecting(false);
+            return;
+          }
+          const phone = data.phone_display || data.phone_number_id;
+          setConnectedPhone(phone);
+          onConnected?.(phone, data.phone_number_id);
+          setConnecting(false);
+        })
+        .catch(() => {
+          setError('Network error — could not reach server');
+          setConnecting(false);
+        });
+    }, {
+      config_id: appConfig.es_config_id,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: { setup: {}, featuretype: '', sessionInfoVersion: '3' },
+    });
+  };
+
+  if (connectedPhone) {
+    return (
+      <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', padding: '12px 14px', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ color: '#15803d', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '3px' }}>Connected</div>
+          <div style={{ color: '#1e293b', fontFamily: 'monospace', fontSize: '0.9rem', fontWeight: 600 }}>{connectedPhone}</div>
+        </div>
+        <button onClick={() => setConnectedPhone('')} style={{ background: 'none', border: '1px solid rgba(34,197,94,0.4)', borderRadius: '6px', color: '#15803d', padding: '5px 12px', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}>
+          Reconnect
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      {error && (
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px', padding: '10px 14px', marginBottom: '0.75rem', color: '#dc2626', fontSize: '0.82rem' }}>
+          {error}
+        </div>
+      )}
+      <button
+        onClick={handleConnect}
+        disabled={connecting || !appConfig}
+        style={{
+          width: '100%', background: connecting || !appConfig ? '#94a3b8' : '#1877F2',
+          color: '#fff', border: 'none', borderRadius: '8px', padding: '11px 16px',
+          fontSize: '0.88rem', fontWeight: 600, cursor: connecting || !appConfig ? 'not-allowed' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+        }}
+      >
+        {connecting ? 'Connecting…' : '🔗 Connect with WhatsApp Business'}
+      </button>
+      <div style={{ color: '#94a3b8', fontSize: '0.74rem', textAlign: 'center', marginTop: '6px' }}>
+        A Facebook popup will open — log in and select your WhatsApp Business Account
+      </div>
+    </div>
+  );
+}
+
 /* ─── Config Modal ─── */
 function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
   const [provider, setProvider] = useState('gupshup');
@@ -119,7 +245,8 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
   // entry in the modal means the provider integration won't actually work.
   const fields = PROVIDER_FIELDS[provider] || [];
   const missingField = fields.find(f => !f.optional && !(creds[f.key] || '').trim());
-  const canSave = !saving && fields.length > 0 && !missingField;
+  const metaConnected = provider === 'meta' && !!(creds.phone_number || creds.phone_display);
+  const canSave = !saving && (metaConnected || (provider !== 'meta' && fields.length > 0 && !missingField));
 
   const handleSave = async () => {
     setError('');
@@ -172,7 +299,14 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
           {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
 
-        {fields.map(f => (
+        {provider === 'meta' ? (
+          <MetaConnectPanel
+            apiFetch={apiFetch}
+            API_URL={API_URL}
+            existingPhone={creds.phone_number}
+            onConnected={(display, phoneNumberID) => setCreds({ ...creds, phone_display: display, phone_number: phoneNumberID || display })}
+          />
+        ) : fields.map(f => (
           <div key={f.key}>
             <label style={labelStyle}>{f.label}</label>
             {f.type === 'password' ? (

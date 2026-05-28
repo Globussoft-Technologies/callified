@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"strings"
@@ -106,7 +109,6 @@ func (s *Server) verifyWaSenderSignature(r *http.Request) bool {
 // @Router      /wa/webhook/meta [post]
 func (s *Server) waWebhookMeta(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		// Hub challenge verification
 		mode := r.URL.Query().Get("hub.mode")
 		token := r.URL.Query().Get("hub.verify_token")
 		challenge := r.URL.Query().Get("hub.challenge")
@@ -118,7 +120,38 @@ func (s *Server) waWebhookMeta(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "verification failed")
 		return
 	}
-	s.handleWAWebhook(w, r, "meta", wa.ParseMeta)
+
+	// HMAC-SHA256 signature verification. Meta sends X-Hub-Signature-256
+	// as "sha256=<hex>". Skip only when app secret is not configured (dev mode).
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if s.cfg.MetaAppSecret != "" {
+		sig := r.Header.Get("X-Hub-Signature-256")
+		if !verifyMetaSignature(body, sig, s.cfg.MetaAppSecret) {
+			s.logger.Sugar().Warnw("waWebhookMeta: signature mismatch", "remote", r.RemoteAddr)
+			writeError(w, http.StatusUnauthorized, "invalid signature")
+			return
+		}
+	}
+
+	s.handleWAWebhookBody(w, r, body, "meta", wa.ParseMeta)
+}
+
+func verifyMetaSignature(body []byte, header, secret string) bool {
+	const prefix = "sha256="
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	got, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return hmac.Equal(mac.Sum(nil), got)
 }
 
 // handleWAWebhook is the shared handler for all inbound WA provider webhooks.
@@ -130,6 +163,13 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	s.handleWAWebhookBody(w, r, body, provider, parser)
+}
+
+// handleWAWebhookBody processes an already-read webhook body. Used by providers
+// (e.g. Meta) that need to read the body early for signature verification.
+func (s *Server) handleWAWebhookBody(w http.ResponseWriter, r *http.Request, body []byte, provider string,
+	parser func([]byte) (*wa.IncomingMessage, error)) {
 
 	msg, err := parser(body)
 	if err != nil || msg == nil {
@@ -137,22 +177,18 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		return
 	}
 
-	// Look up the channel config by provider + destination phone. cfg may be
-	// nil if the provider points at a number we don't own — still log the
-	// message so the operator can see orphaned traffic in the DB, but
-	// against org_id=0 (only truly unattributable case).
+	// Look up the channel config by provider + destination phone.
 	cfg, _ := s.db.GetWAChannelConfigByPhone(provider, msg.ToPhone)
-	// Some providers (WaSender) don't include the destination phone in the
-	// inbound webhook payload. Fall back: if there's exactly one active
-	// config for this provider, use it. Multi-tenant ambiguity is impossible
-	// here because each (org, provider) is unique by schema and a single
-	// org's WaSender device only ever has one number.
 	if cfg == nil {
 		cfg, _ = s.db.GetSingleActiveWAChannelConfig(provider)
 	}
+	// For Meta: if no DB config exists, fall back to platform env credentials
+	// so the webhook works without any UI configuration.
 	var orgID int64
 	if cfg != nil {
 		orgID = cfg.OrgID
+	} else if provider == "meta" && s.cfg.MetaAccessToken != "" {
+		orgID = s.cfg.MetaDefaultOrgID
 	}
 
 	// Skip empty-phone events. Some provider event types (presence
@@ -196,30 +232,33 @@ func (s *Server) handleWAWebhook(w http.ResponseWriter, r *http.Request, provide
 		_, _ = s.db.SaveWAMessage(convID, "inbound", msg.Text, msg.MessageType, msg.ProviderMsgID)
 	}
 
-	if cfg == nil || !cfg.AIEnabled {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	// Per-conversation mute: even if the channel-wide AI is on, an
-	// operator can mute a specific thread (handed off for manual reply,
-	// or VIP customer who shouldn't get a bot). Inbound is still saved
-	// above, but the AI branch is skipped.
-	if s.db.IsWAConversationMuted(cfg.OrgID, fromPhone) {
+	// Build effective channel config — prefer DB config, fall back to env for Meta.
+	var effectiveCfg wa.ChannelConfig
+	if cfg != nil {
+		if !cfg.AIEnabled {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if s.db.IsWAConversationMuted(cfg.OrgID, fromPhone) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		effectiveCfg = s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
+	} else if provider == "meta" && s.cfg.MetaAccessToken != "" {
+		effectiveCfg = s.waChannelConfig(orgID, "meta", "", "", "", 0)
+	} else {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// Process with AI agent (async so we return 200 quickly). The goroutine
-	// must NOT inherit r.Context() — that gets canceled the moment we
-	// write the 200 response, which would kill the LLM request mid-stream.
-	// Detach with a fresh background context bounded by a sane timeout.
+	// Process with AI agent (async so we return 200 quickly).
 	bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	go func() {
 		defer cancel()
 		if s.waAgent == nil {
 			return
 		}
-		channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
+		channelCfg := effectiveCfg
 		reply, err := s.waAgent.ProcessIncoming(bgCtx, channelCfg, msg)
 		if err != nil {
 			s.logger.Warn("waWebhook: agent failed",

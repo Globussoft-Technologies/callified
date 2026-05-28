@@ -352,16 +352,19 @@ func (s *Server) saveWAConfig(w http.ResponseWriter, r *http.Request) {
 	// follow-up: backend reads `app_id`/`phone_number` while the gupshup UI
 	// posts `app_name`/`source_phone`, so a strict check here would need
 	// the key-name reconciliation first).
-	hasAnyCred := false
-	for _, v := range body.Credentials {
-		if strings.TrimSpace(v) != "" {
-			hasAnyCred = true
-			break
+	// Meta uses env credentials — no UI input required.
+	if body.Provider != "meta" {
+		hasAnyCred := false
+		for _, v := range body.Credentials {
+			if strings.TrimSpace(v) != "" {
+				hasAnyCred = true
+				break
+			}
 		}
-	}
-	if !hasAnyCred {
-		writeError(w, http.StatusBadRequest, "at least one credential is required")
-		return
+		if !hasAnyCred {
+			writeError(w, http.StatusBadRequest, "at least one credential is required")
+			return
+		}
 	}
 	apiKey := body.Credentials["api_key"]
 	appID := body.Credentials["app_id"]
@@ -499,34 +502,34 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	settings, err := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
-	if err != nil || len(settings) == 0 {
-		writeError(w, http.StatusBadRequest, "no WA channel configured")
-		return
-	}
+	settings, _ := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
 
-	// Pick the *active* config — matches the getWAConfig logic so the
-	// modal and the send path agree about which provider is in use.
-	// Without this filter, the send path would always use the lowest-id
-	// row (probably an old provider the operator already switched away
-	// from), causing "I saved WaSender but messages go via Meta" surprises.
-	cfg := settings[0]
-	for _, c := range settings {
-		if c.IsActive {
-			cfg = c
-			break
+	// If no DB config but platform Meta env credentials are set, send via Meta directly.
+	var channelCfg wa.ChannelConfig
+	if len(settings) == 0 {
+		if s.cfg.MetaAccessToken == "" {
+			writeError(w, http.StatusBadRequest, "no WA channel configured")
+			return
 		}
-	}
-	if body.ChannelID > 0 {
+		channelCfg = s.waChannelConfig(ac.OrgID, "meta", "", "", "", 0)
+	} else {
+		cfg := settings[0]
 		for _, c := range settings {
-			if c.ID == body.ChannelID {
+			if c.IsActive {
 				cfg = c
 				break
 			}
 		}
+		if body.ChannelID > 0 {
+			for _, c := range settings {
+				if c.ID == body.ChannelID {
+					cfg = c
+					break
+				}
+			}
+		}
+		channelCfg = s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
 	}
-
-	channelCfg := s.waChannelConfig(cfg.OrgID, cfg.Provider, cfg.PhoneNumber, cfg.APIKey, cfg.AppID, cfg.DefaultProductID)
 	if err := s.waSender.SendText(r.Context(), channelCfg, phone, text); err != nil {
 		// Surface the provider's actual error so the frontend can display
 		// it instead of a misleading "HTTP 502". Most provider errors are
@@ -535,18 +538,13 @@ func (s *Server) sendWAMessage(w http.ResponseWriter, r *http.Request) {
 		// account). Hiding them behind 502 made the dashboard useless for
 		// diagnosing real provider failures. Status code stays 502 — the
 		// upstream did fail — but the body carries the readable detail.
-		s.logger.Sugar().Warnw("wa send failed", "provider", cfg.Provider, "to", phone, "err", err.Error())
+		s.logger.Sugar().Warnw("wa send failed", "provider", channelCfg.Provider, "to", phone, "err", err.Error())
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	// Persist the outbound message so it appears in the dashboard chat
-	// view immediately. Normalize to E.164-without-plus so the stored key
-	// matches whatever format inbound webhooks use (WaSender always sends
-	// full international digits like "917795740488"; a 10-digit dashboard
-	// input must be expanded to the same form or they create two rows).
 	storedPhone := strings.TrimPrefix(wa.NormalizePhone(phone), "+")
-	convID, err := s.db.GetOrCreateWAConversation(cfg.OrgID, storedPhone, cfg.Provider)
+	convID, err := s.db.GetOrCreateWAConversation(channelCfg.OrgID, storedPhone, channelCfg.Provider)
 	if err == nil && convID > 0 {
 		_, _ = s.db.SaveWAMessage(convID, "outbound", text, "text", "")
 	}
