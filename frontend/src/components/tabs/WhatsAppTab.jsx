@@ -194,6 +194,27 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
           {error}
         </div>
       )}
+
+      {/* Platform credentials option — skips FB popup when server has env credentials */}
+      <div style={{ background: 'rgba(37,211,102,0.06)', border: '1px solid rgba(37,211,102,0.25)', borderRadius: '8px', padding: '12px 14px', marginBottom: '0.75rem' }}>
+        <div style={{ color: '#15803d', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '4px' }}>Platform Credentials</div>
+        <div style={{ color: '#334155', fontSize: '0.82rem', marginBottom: '10px' }}>
+          Use the WhatsApp Business credentials already configured on the server.
+        </div>
+        <button
+          onClick={() => onConnected?.('platform', 'platform')}
+          style={{
+            width: '100%', background: '#25D366', color: '#fff',
+            border: 'none', borderRadius: '8px', padding: '9px 16px',
+            fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
+          }}
+        >
+          ✅ Use Platform Credentials
+        </button>
+      </div>
+
+      <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.72rem', margin: '8px 0' }}>— or connect your own account —</div>
+
       <button
         onClick={handleConnect}
         disabled={connecting || !appConfig}
@@ -245,8 +266,8 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
   // entry in the modal means the provider integration won't actually work.
   const fields = PROVIDER_FIELDS[provider] || [];
   const missingField = fields.find(f => !f.optional && !(creds[f.key] || '').trim());
-  const metaConnected = provider === 'meta' && !!(creds.phone_number || creds.phone_display);
-  const canSave = !saving && (metaConnected || (provider !== 'meta' && fields.length > 0 && !missingField));
+  const metaConnected = provider === 'meta' && !!(creds.phone_number || creds.phone_display || creds.platform);
+  const canSave = !saving && (provider === 'meta' ? metaConnected : (fields.length > 0 && !missingField));
 
   const handleSave = async () => {
     setError('');

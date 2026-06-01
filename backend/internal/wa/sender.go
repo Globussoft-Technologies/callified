@@ -94,9 +94,10 @@ func sendInteraktText(ctx context.Context, cfg ChannelConfig, toPhone, text stri
 }
 
 func sendMetaText(ctx context.Context, cfg ChannelConfig, toPhone, text string) error {
+	to := strings.TrimPrefix(toPhone, "+")
 	body, _ := json.Marshal(map[string]any{
 		"messaging_product": "whatsapp",
-		"to":                toPhone,
+		"to":                to,
 		"type":              "text",
 		"text":              map[string]string{"body": text},
 	})
