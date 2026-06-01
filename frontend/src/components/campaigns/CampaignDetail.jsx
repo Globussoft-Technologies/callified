@@ -146,6 +146,30 @@ export default function CampaignDetail({
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
 
+  const [waSendingId, setWaSendingId] = useState(null);
+  const [waSendStatus, setWaSendStatus] = useState({}); // lead.id → 'sent' | 'error'
+
+  const handleSendWA = async (lead) => {
+    setWaSendingId(lead.id);
+    setWaSendStatus(s => ({ ...s, [lead.id]: null }));
+    try {
+      const res = await apiFetch(`${API_URL}/wa/campaign-blast/${selectedCampaign.id}/send-one`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_id: lead.id }),
+      });
+      setWaSendStatus(s => ({ ...s, [lead.id]: res.ok ? 'sent' : 'error' }));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || `Send failed (HTTP ${res.status})`);
+      }
+    } catch {
+      setWaSendStatus(s => ({ ...s, [lead.id]: 'error' }));
+      alert('Network error — could not reach server');
+    }
+    setWaSendingId(null);
+  };
+
   const [qaName, setQaName] = useState('');
   const [qaPhone, setQaPhone] = useState('');
   const [qaNameErr, setQaNameErr] = useState('');
@@ -904,6 +928,22 @@ export default function CampaignDetail({
                           }}>
                           {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
                         </button>
+                        {selectedCampaign.channel === 'whatsapp' && (
+                          <button
+                            onClick={() => handleSendWA(lead)}
+                            disabled={waSendingId === lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: waSendingId === lead.id ? 'not-allowed' : 'pointer',
+                              opacity: waSendingId === lead.id ? 0.6 : 1,
+                              background: waSendStatus[lead.id] === 'sent' ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.08)',
+                              color: waSendStatus[lead.id] === 'error' ? '#dc2626' : '#065f46',
+                              border: `1px solid ${waSendStatus[lead.id] === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(37,211,102,0.35)'}`,
+                              borderRadius: 6,
+                            }}>
+                            {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
+                          </button>
+                        )}
                         <button
                           onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                           disabled={webCallActive != null && webCallActive !== lead.id}

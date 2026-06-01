@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/db"
+	"github.com/globussoft/callified-backend/internal/wa"
 )
 
 // strictTemplateProviders require a pre-approved template for first outbound contact.
@@ -219,6 +220,116 @@ func (s *Server) blastOneLead(
 	}
 
 	_ = s.db.IncrBlastJobSent(jobID)
+}
+
+// ── POST /api/wa/campaign-blast/{campaign_id}/send-one ───────────────────────
+
+// @Summary     Send WA message to one campaign lead
+// @Description Sends a WhatsApp greeting to a single lead in a campaign. Requires Admin role.
+// @Tags        whatsapp
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       campaign_id  path  int64  true  "Campaign ID"
+// @Param       body         body  object{lead_id=int64}  true  "Lead ID"
+// @Success     200  {object}  object{sent=bool}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Router      /api/wa/campaign-blast/{campaign_id}/send-one [post]
+func (s *Server) campaignBlastSendOne(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+
+	campaignID, err := parseID(r, "campaign_id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid campaign_id")
+		return
+	}
+
+	var body struct {
+		LeadID int64 `json:"lead_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.LeadID == 0 {
+		writeError(w, http.StatusBadRequest, "lead_id required")
+		return
+	}
+
+	campaign, err := s.db.GetCampaignByID(campaignID)
+	if err != nil || campaign == nil {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if campaign.OrgID != ac.OrgID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if campaign.Channel != "whatsapp" {
+		writeError(w, http.StatusBadRequest, "campaign channel is not whatsapp")
+		return
+	}
+
+	// Resolve channel config from wa_channel_configs (new table) with env fallback —
+	// same lookup chain as sendWAMessage so Meta credentials are found correctly.
+	settings, _ := s.db.GetWAChannelConfigsByOrg(ac.OrgID)
+	var channelCfg wa.ChannelConfig
+	if len(settings) == 0 {
+		if s.cfg.MetaAccessToken == "" {
+			writeError(w, http.StatusNotFound, "no active WhatsApp config found — configure it in WhatsApp Comms → Settings")
+			return
+		}
+		channelCfg = s.waChannelConfig(ac.OrgID, "meta", "", "", "", 0)
+	} else {
+		activeCfg := settings[0]
+		for _, c := range settings {
+			if c.IsActive {
+				activeCfg = c
+				break
+			}
+		}
+		channelCfg = s.waChannelConfig(activeCfg.OrgID, activeCfg.Provider, activeCfg.PhoneNumber, activeCfg.APIKey, activeCfg.AppID, activeCfg.DefaultProductID)
+	}
+
+	lead, err := s.db.GetLeadByID(body.LeadID)
+	if err != nil || lead == nil {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+
+	productName, _ := s.db.GetProductName(campaign.ProductID)
+
+	sendCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	// Normalize phone — derive country code from channel phone number.
+	// For Meta the PhoneNumber field is a numeric phone-number-ID (e.g. "1108367485687042"),
+	// not a dialable number, so CountryCodeFromPhone returns "". Default to "91" (India)
+	// so 10-digit Indian leads get the correct +91 prefix.
+	cc := db.CountryCodeFromPhone(channelCfg.PhoneNumber)
+	if cc == "" {
+		cc = "91"
+	}
+	phone, ok := db.NormalizePhone(lead.Phone, cc)
+	if !ok {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid phone: %q", lead.Phone))
+		return
+	}
+
+	leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+	if leadName == "" {
+		leadName = "there"
+	}
+	msgText := db.BuildGreeting(leadName, productName)
+
+	if sendErr := s.waSender.SendText(sendCtx, channelCfg, phone, msgText); sendErr != nil {
+		s.logger.Warn("campaignBlastSendOne: send failed",
+			zap.String("phone", phone), zap.Int64("lead", lead.ID), zap.Error(sendErr))
+		writeError(w, http.StatusBadGateway, sendErr.Error())
+		return
+	}
+
+	_, _ = s.db.SaveWAConversationMessage(channelCfg.OrgID, 0, lead.ID, phone, leadName, msgText)
+	_ = s.db.UpdateLeadStatus(lead.ID, "contacted")
+
+	writeJSON(w, http.StatusOK, map[string]any{"sent": true, "phone": phone})
 }
 
 // ── GET /api/wa/campaign-blast/status/{job_id} ───────────────────────────────

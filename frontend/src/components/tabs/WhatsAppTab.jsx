@@ -344,49 +344,6 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
           </div>
         ))}
 
-        <label style={labelStyle}>Default Product</label>
-        <select value={defaultProduct} onChange={e => setDefaultProduct(e.target.value)} style={selectStyle}>
-          <option value="">— None —</option>
-          {(orgProducts || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-
-        {/* Product knowledge preview — shown when a product is selected */}
-        {defaultProduct && (() => {
-          const prod = (orgProducts || []).find(p => String(p.id) === String(defaultProduct));
-          if (!prod) return null;
-          const hasInfo = prod.scraped_info || prod.manual_notes || prod.agent_persona;
-          return (
-            <div style={{ margin: '8px 0 4px', background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', padding: '10px 12px' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6366f1', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                AI will chat as: {prod.name}
-              </div>
-              {prod.agent_persona ? (
-                <div style={{ fontSize: '0.8rem', color: '#334155', lineHeight: 1.5, marginBottom: prod.scraped_info || prod.manual_notes ? '6px' : 0 }}>
-                  <span style={{ fontWeight: 600, color: '#64748b' }}>Persona: </span>{prod.agent_persona.slice(0, 160)}{prod.agent_persona.length > 160 ? '…' : ''}
-                </div>
-              ) : null}
-              {(prod.scraped_info || prod.manual_notes) ? (
-                <div style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                  {prod.scraped_info ? '✅ Product info available' : ''}
-                  {prod.scraped_info && prod.manual_notes ? ' · ' : ''}
-                  {prod.manual_notes ? '📝 Manual notes available' : ''}
-                </div>
-              ) : (
-                !prod.agent_persona && (
-                  <div style={{ fontSize: '0.78rem', color: '#b45309' }}>
-                    No product info yet — go to Product Knowledge tab to add details.
-                  </div>
-                )
-              )}
-              {!hasInfo && (
-                <div style={{ fontSize: '0.78rem', color: '#b45309', marginTop: '2px' }}>
-                  No product details yet — add scraped info or manual notes in the Product Knowledge tab.
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '1rem 0' }}>
           <label style={{ ...labelStyle, margin: 0 }}>Auto-Reply</label>
           <button onClick={() => setAutoReply(!autoReply)}

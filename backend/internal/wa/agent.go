@@ -66,8 +66,15 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 		ragContext, _ = a.ragClient.RetrieveContext(ctx, msg.Text, cfg.OrgID, 3)
 	}
 
-	// Build system prompt from the configured product; fall back to generic.
-	systemPrompt := a.buildSystemPrompt(cfg.DefaultProductID, ragContext)
+	// Campaign-based product overrides the channel default: if this phone number
+	// belongs to a lead in a WhatsApp campaign, use that campaign's product.
+	effectiveProductID := cfg.DefaultProductID
+	if campaign, err := a.db.GetActiveCampaignForLeadPhone(cfg.OrgID, msg.FromPhone); err == nil && campaign != nil && campaign.ProductID > 0 {
+		effectiveProductID = campaign.ProductID
+	}
+
+	// Build system prompt from the effective product; fall back to generic.
+	systemPrompt := a.buildSystemPrompt(effectiveProductID, ragContext)
 
 	// Generate AI response
 	reply, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 300)
@@ -97,7 +104,7 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 // call_flow_instructions guide the conversation. Falls back to a generic
 // WhatsApp assistant when no product is set.
 func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
-	const chatRules = "Be concise and friendly — keep replies under 3 sentences unless the customer asks for details. Reply in the same language the customer uses. Do not mention call scripts or phone steps; this is a WhatsApp chat."
+	const chatRules = "Be concise and friendly — keep replies under 3 sentences unless the customer asks for details. IMPORTANT: Reply in English by default. Only switch to another language if the customer's CURRENT message is clearly written in that language — do NOT match the language of previous AI messages in the history. Do not mention call scripts or phone steps; this is a WhatsApp chat."
 
 	var prompt string
 

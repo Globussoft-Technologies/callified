@@ -174,6 +174,35 @@ func (d *DB) GetCampaignNewLeads(campaignID int64) ([]Lead, error) {
 	return list, rows.Err()
 }
 
+// GetActiveCampaignForLeadPhone returns the most recent whatsapp campaign that
+// contains a lead matching the given phone number, within the given org. Used
+// by the WA agent to pick a campaign-level product prompt instead of the
+// channel-wide default. Returns nil when no matching campaign exists.
+func (d *DB) GetActiveCampaignForLeadPhone(orgID int64, phone string) (*Campaign, error) {
+	// Phone may be stored as 10 digits ("7795740488") while the inbound webhook
+	// normalises it to 12 digits with country code ("917795740488"). Match on
+	// the last 10 digits so both formats resolve to the same lead.
+	suffix := phone
+	if len(suffix) > 10 {
+		suffix = suffix[len(suffix)-10:]
+	}
+	row := d.pool.QueryRow(`
+		SELECT `+campaignCols+`
+		FROM campaigns c
+		LEFT JOIN products p ON c.product_id = p.id
+		JOIN campaign_leads cl ON cl.campaign_id = c.id
+		JOIN leads l ON l.id = cl.lead_id
+		WHERE c.org_id = ? AND c.channel = 'whatsapp'
+		  AND RIGHT(l.phone, 10) = ?
+		ORDER BY cl.id DESC
+		LIMIT 1`, orgID, suffix)
+	c, err := scanCampaign(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
+}
+
 // DeleteCampaign deletes a campaign. Returns true if deleted.
 func (d *DB) DeleteCampaign(id int64) (bool, error) {
 	res, err := d.pool.Exec(`DELETE FROM campaigns WHERE id=?`, id)

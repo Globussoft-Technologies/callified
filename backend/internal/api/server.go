@@ -230,6 +230,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── WhatsApp Campaign Blast ────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}", adminAuth(s.campaignBlast))
+	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}/send-one", adminAuth(s.campaignBlastSendOne))
 	mux.HandleFunc("GET /api/wa/campaign-blast/status/{job_id}", adminAuth(s.blastStatus))
 
 	// ── Organizations: system prompt ──────────────────────────────────────────
