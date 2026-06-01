@@ -1275,11 +1275,11 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
               </div>
             </div>
 
-            {/* Messages */}
+            {/* Messages — reversed so oldest appears at top, newest at bottom */}
             <div style={messagesAreaStyle}>
               {messages.length === 0 ? (
                 <div style={{ textAlign: 'center', color: '#64748b', marginTop: '3rem', fontSize: '0.85rem' }}>No messages yet</div>
-              ) : messages.map((msg, i) => {
+              ) : [...messages].reverse().map((msg, i) => {
                 const isOutbound = msg.direction === 'outbound';
                 return (
                   <div key={msg.id || i} style={{ display: 'flex', justifyContent: isOutbound ? 'flex-end' : 'flex-start', marginBottom: '8px' }}>
