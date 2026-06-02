@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 )
@@ -180,28 +181,41 @@ func (d *DB) SaveOrganizationVoiceSettings(orgID int64, vs VoiceSettings) error 
 
 // Product mirrors the products table.
 type Product struct {
-	ID                   int64  `json:"id"`
-	OrgID                int64  `json:"org_id"`
-	Name                 string `json:"name"`
-	WebsiteURL           string `json:"website_url"`
-	ScrapedInfo          string `json:"scraped_info"`
-	ManualNotes          string `json:"manual_notes"`
-	AgentPersona         string `json:"agent_persona"`
-	CallFlowInstructions string `json:"call_flow_instructions"`
-	CreatedAt            string `json:"created_at"`
+	ID                   int64    `json:"id"`
+	OrgID                int64    `json:"org_id"`
+	Name                 string   `json:"name"`
+	WebsiteURL           string   `json:"website_url"`
+	ScrapedInfo          string   `json:"scraped_info"`
+	ManualNotes          string   `json:"manual_notes"`
+	AgentPersona         string   `json:"agent_persona"`
+	CallFlowInstructions string   `json:"call_flow_instructions"`
+	CreatedAt            string   `json:"created_at"`
+	ImageURLs            []string `json:"image_urls"` // product image URLs extracted from website
 }
 
 const productCols = `id, org_id, name,
 	COALESCE(website_url,''), COALESCE(scraped_info,''), COALESCE(manual_notes,''),
 	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''),
-	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')`
+	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),
+	COALESCE(image_urls,'[]')`
 
 func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	p := &Product{}
+	var imageURLsJSON string
 	err := row.Scan(&p.ID, &p.OrgID, &p.Name,
 		&p.WebsiteURL, &p.ScrapedInfo, &p.ManualNotes,
-		&p.AgentPersona, &p.CallFlowInstructions, &p.CreatedAt)
-	return p, err
+		&p.AgentPersona, &p.CallFlowInstructions, &p.CreatedAt,
+		&imageURLsJSON)
+	if err != nil {
+		return p, err
+	}
+	if imageURLsJSON != "" && imageURLsJSON != "[]" {
+		_ = json.Unmarshal([]byte(imageURLsJSON), &p.ImageURLs)
+	}
+	if p.ImageURLs == nil {
+		p.ImageURLs = []string{}
+	}
+	return p, nil
 }
 
 // GetProductsByOrg returns one row per unique (org_id, lower(name)) — when
@@ -301,6 +315,18 @@ func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes 
 	}
 	args = append(args, id)
 	_, err := d.pool.Exec(`UPDATE products SET `+strings.Join(parts, ",")+` WHERE id=?`, args...)
+	return err
+}
+
+// UpdateProductImageURLs updates the image_urls JSON column for a product.
+// Requires: ALTER TABLE products ADD COLUMN image_urls TEXT NULL
+// (run this migration on the DB before using this feature).
+func (d *DB) UpdateProductImageURLs(id int64, urls []string) error {
+	data, err := json.Marshal(urls)
+	if err != nil {
+		return err
+	}
+	_, err = d.pool.Exec(`UPDATE products SET image_urls=? WHERE id=?`, string(data), id)
 	return err
 }
 

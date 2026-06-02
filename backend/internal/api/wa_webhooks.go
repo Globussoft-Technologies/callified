@@ -259,24 +259,45 @@ func (s *Server) handleWAWebhookBody(w http.ResponseWriter, r *http.Request, bod
 			return
 		}
 		channelCfg := effectiveCfg
-		reply, err := s.waAgent.ProcessIncoming(bgCtx, channelCfg, msg)
+		reply, imageURLs, err := s.waAgent.ProcessIncoming(bgCtx, channelCfg, msg)
 		if err != nil {
 			s.logger.Warn("waWebhook: agent failed",
 				zap.String("provider", provider), zap.Error(err))
 			return
 		}
-		if reply == "" {
+		s.logger.Info("waWebhook: agent result",
+			zap.String("provider", provider),
+			zap.String("from", fromPhone),
+			zap.Int("reply_len", len(reply)),
+			zap.Int("image_count", len(imageURLs)),
+			zap.Strings("image_urls", imageURLs))
+		if reply == "" && len(imageURLs) == 0 {
 			return
 		}
-		if err := s.waSender.SendText(bgCtx, channelCfg, fromPhone, reply); err != nil {
-			s.logger.Warn("waWebhook: send reply failed",
-				zap.String("provider", provider), zap.Error(err))
-			return
+		// Send text reply first (if any).
+		if reply != "" {
+			if err := s.waSender.SendText(bgCtx, channelCfg, fromPhone, reply); err != nil {
+				s.logger.Warn("waWebhook: send reply failed",
+					zap.String("provider", provider), zap.Error(err))
+				return
+			}
+			// Persist the AI's reply as an outbound message so both sides of the
+			// conversation show up in the inbox.
+			if convID > 0 {
+				_, _ = s.db.SaveWAMessage(convID, "outbound", reply, "text", "")
+			}
 		}
-		// Persist the AI's reply as an outbound message so both sides of the
-		// conversation show up in the inbox.
-		if convID > 0 {
-			_, _ = s.db.SaveWAMessage(convID, "outbound", reply, "text", "")
+		// Send product images after text.
+		for _, imgURL := range imageURLs {
+			if err := wa.SendImage(bgCtx, channelCfg, fromPhone, imgURL); err != nil {
+				s.logger.Warn("waWebhook: send image failed",
+					zap.String("provider", provider),
+					zap.String("imgURL", imgURL),
+					zap.Error(err))
+			} else if convID > 0 {
+				// Persist each sent image so the inbox can display it.
+				_, _ = s.db.SaveWAMessage(convID, "outbound", imgURL, "image", "")
+			}
 		}
 	}()
 

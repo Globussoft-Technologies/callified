@@ -3,6 +3,7 @@ package wa
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
@@ -33,16 +34,17 @@ func NewAgent(database *db.DB, llmProvider *llm.Provider, ragClient *rag.Client,
 	}
 }
 
-// ProcessIncoming handles one inbound WA message and returns the reply text.
-// Returns ("", nil) if no reply should be sent (e.g. human takeover active).
-func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *IncomingMessage) (string, error) {
+// ProcessIncoming handles one inbound WA message and returns the reply text
+// plus any image URLs the AI wants to send.
+// Returns ("", nil, nil) if no reply should be sent (e.g. human takeover active).
+func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *IncomingMessage) (reply string, imageURLs []string, err error) {
 	convID, err := a.db.GetOrCreateWAConversation(cfg.OrgID, msg.FromPhone, msg.Provider)
 	if err != nil {
-		return "", fmt.Errorf("GetOrCreateWAConversation: %w", err)
+		return "", nil, fmt.Errorf("GetOrCreateWAConversation: %w", err)
 	}
 
 	if msg.Text == "" {
-		return "", nil // media-only message, no AI response
+		return "", nil, nil // media-only message, no AI response
 	}
 
 	// Get recent chat history (last 4 messages = ~2 exchanges). Keeping this
@@ -77,25 +79,107 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 	systemPrompt := a.buildSystemPrompt(effectiveProductID, ragContext)
 
 	// Generate AI response
-	reply, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 300)
+	raw, err := a.llm.GenerateResponse(ctx, systemPrompt, chatHistory, 300)
 	if err != nil {
 		a.log.Warn("wa agent: LLM failed", zap.Error(err))
-		return "", nil
+		return "", nil, nil
 	}
 
 	// Check for human takeover signal
-	if strings.Contains(reply, humanTakeover) {
-		reply = strings.ReplaceAll(reply, humanTakeover, "")
-		reply = strings.TrimSpace(reply)
+	if strings.Contains(raw, humanTakeover) {
+		raw = strings.ReplaceAll(raw, humanTakeover, "")
+		raw = strings.TrimSpace(raw)
 		a.log.Info("wa agent: human takeover triggered", zap.Int64("conv_id", convID))
 	}
 
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return "", nil
+	// Parse [SEND_IMAGE:url] tokens from the reply; strip them from the text.
+	imageURLs, raw = parseImageSignals(raw)
+
+	reply = strings.TrimSpace(raw)
+	if reply == "" && len(imageURLs) == 0 {
+		return "", nil, nil
 	}
 
-	return reply, nil
+	return reply, imageURLs, nil
+}
+
+// imageLabel derives a human-readable label from an image URL by extracting
+// and cleaning the filename. E.g. ".../Morais-Lavender.avif" → "Morais Lavender".
+func imageLabel(rawURL string) string {
+	// Take last path segment
+	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 {
+		rawURL = rawURL[idx+1:]
+	}
+	// Strip query string
+	if q := strings.IndexByte(rawURL, '?'); q >= 0 {
+		rawURL = rawURL[:q]
+	}
+	// URL-decode percent-encoded characters (e.g. OFFICE%20SPACE → OFFICE SPACE)
+	if decoded, err := url.PathUnescape(rawURL); err == nil {
+		rawURL = decoded
+	}
+	// Strip extension
+	if dot := strings.LastIndex(rawURL, "."); dot >= 0 {
+		rawURL = rawURL[:dot]
+	}
+	// Replace separators with spaces
+	rawURL = strings.NewReplacer("-", " ", "_", " ", ".", " ").Replace(rawURL)
+	words := strings.Fields(rawURL)
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// parseImageSignals extracts [SEND_IMAGE:url] tokens from text, returning the
+// list of URLs and the cleaned text with the tokens removed.
+func parseImageSignals(text string) ([]string, string) {
+	const prefix = "[SEND_IMAGE:"
+	const suffix = "]"
+
+	var urls []string
+	var cleaned strings.Builder
+
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, prefix) && strings.HasSuffix(trimmed, suffix) {
+			// Extract the URL from [SEND_IMAGE:url]
+			inner := trimmed[len(prefix) : len(trimmed)-len(suffix)]
+			inner = strings.TrimSpace(inner)
+			if strings.HasPrefix(inner, "http") && len(urls) < 3 {
+				urls = append(urls, inner)
+			}
+			continue
+		}
+		// Check for inline [SEND_IMAGE:...] within a line
+		remaining := line
+		for {
+			start := strings.Index(remaining, prefix)
+			if start < 0 {
+				cleaned.WriteString(remaining)
+				break
+			}
+			end := strings.Index(remaining[start:], suffix)
+			if end < 0 {
+				cleaned.WriteString(remaining)
+				break
+			}
+			cleaned.WriteString(remaining[:start])
+			token := remaining[start : start+end+len(suffix)]
+			inner := token[len(prefix) : len(token)-len(suffix)]
+			inner = strings.TrimSpace(inner)
+			if strings.HasPrefix(inner, "http") && len(urls) < 3 {
+				urls = append(urls, inner)
+			}
+			remaining = remaining[start+end+len(suffix):]
+		}
+		cleaned.WriteString("\n")
+	}
+
+	return urls, strings.TrimSpace(cleaned.String())
 }
 
 // buildSystemPrompt constructs the system prompt for the AI. When a product
@@ -141,6 +225,30 @@ func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
 			// Conversation guide (call-flow adapted for chat).
 			if product.CallFlowInstructions != "" {
 				parts = append(parts, "## Conversation Guide\n"+product.CallFlowInstructions)
+			}
+
+			// Product images: labeled map so the AI sends the RIGHT image for each query.
+			if len(product.ImageURLs) > 0 {
+				var imgSection strings.Builder
+				imgSection.WriteString("## Product Images — Send the RIGHT image for each query\n\n")
+				imgSection.WriteString("Each image below has a LABEL. When a customer asks about a specific item, feature, or property:\n")
+				imgSection.WriteString("1. Match their query keyword to the closest LABEL.\n")
+				imgSection.WriteString("2. Write one short intro line.\n")
+				imgSection.WriteString("3. On the NEXT line output the matching token EXACTLY: [SEND_IMAGE:URL]\n")
+				imgSection.WriteString("4. If they ask for 'images' / 'photos' in general (no specific item), send the first 2-3 tokens.\n")
+				imgSection.WriteString("RULE: NEVER output a [SEND_IMAGE:] token with a URL not listed below.\n\n")
+				imgSection.WriteString("LABEL → [SEND_IMAGE:URL]:\n")
+				for _, u := range product.ImageURLs {
+					label := imageLabel(u)
+					imgSection.WriteString("- " + label + " → [SEND_IMAGE:" + u + "]\n")
+				}
+				// Concrete example using first image
+				if len(product.ImageURLs) > 0 {
+					ex := imageLabel(product.ImageURLs[0])
+					imgSection.WriteString("\nExample — customer: \"show me " + ex + "\"\n")
+					imgSection.WriteString("Your reply: \"Here is " + ex + ":\n[SEND_IMAGE:" + product.ImageURLs[0] + "]\"\n")
+				}
+				parts = append(parts, imgSection.String())
 			}
 
 			prompt = strings.Join(parts, "\n\n") + "\n\n" + chatRules

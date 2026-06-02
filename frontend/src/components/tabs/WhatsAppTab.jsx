@@ -1284,18 +1284,39 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
                 return (
                   <div key={msg.id || i} style={{ display: 'flex', justifyContent: isOutbound ? 'flex-end' : 'flex-start', marginBottom: '8px' }}>
                     <div style={{
-                      maxWidth: '70%', padding: '8px 12px', borderRadius: '12px',
+                      maxWidth: '70%', padding: msg.message_type === 'image' ? '4px' : '8px 12px', borderRadius: '12px',
                       background: isOutbound ? '#25D366' : '#e8edf2',
                       color: isOutbound ? '#fff' : '#1e293b',
                       fontSize: '0.85rem', lineHeight: '1.45',
                       borderTopRightRadius: isOutbound ? '4px' : '12px',
                       borderTopLeftRadius: isOutbound ? '12px' : '4px',
+                      overflow: 'hidden',
                     }}>
-                      {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}>🤖</span>}
-                      <span>{msg.message_text || msg.text || msg.body || msg.content}</span>
-                      <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', marginTop: '4px', textAlign: 'right' }}>
-                        {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
-                      </div>
+                      {msg.message_type === 'image' ? (
+                        <div>
+                          <img
+                            src={msg.message_text || msg.text}
+                            alt="Sent image"
+                            style={{ display: 'block', maxWidth: '260px', maxHeight: '260px', width: '100%', borderRadius: '8px', objectFit: 'cover', cursor: 'pointer' }}
+                            onClick={() => window.open(msg.message_text || msg.text, '_blank')}
+                            onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }}
+                          />
+                          <span style={{ display: 'none', padding: '8px 12px', fontSize: '0.78rem', color: isOutbound ? 'rgba(255,255,255,0.8)' : '#64748b' }}>
+                            📷 Image
+                          </span>
+                          <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', padding: '2px 8px 4px', textAlign: 'right' }}>
+                            {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}>🤖</span>}
+                          <span>{msg.message_text || msg.text || msg.body || msg.content}</span>
+                          <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', marginTop: '4px', textAlign: 'right' }}>
+                            {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 );

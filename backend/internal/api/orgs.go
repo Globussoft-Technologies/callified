@@ -549,6 +549,412 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 
 // ── Phase 4: LLM-powered generation endpoints ─────────────────────────────────
 
+// extractImageURLs scans raw HTML for product images using multiple strategies:
+// 1. og:image / twitter:image meta tags (highest quality, site-chosen hero image)
+// 2. <img src>, srcset, and data-* lazy-load attributes
+// 3. <source srcset> from <picture> elements
+// 4. JavaScript patterns: image:"...", src:"...", photo:"...", thumbnail:"..."
+// 5. CSS background-image: url(...) and data-bg attributes
+// Resolves relative URLs, filters non-content images, deduplicates, returns up to 10.
+func extractImageURLs(rawHTML, baseURL string) []string {
+	lower := strings.ToLower(rawHTML)
+	seen := map[string]bool{}    // full URL dedup
+	seenName := map[string]bool{} // filename-stem dedup (prevents mobile/desktop duplicates)
+	var results []string
+	const maxImages = 10
+
+	base, _ := url.Parse(baseURL)
+
+	// Path/name segments that indicate non-product images (globally applicable).
+	blacklist := []string{
+		"icon", "favicon", "logo", "sprite", "1x1", ".svg",
+		"placeholder", "blank", "pixel",
+		"badge", "award", "certificate", "partner",
+		"/mobile/", // skip mobile-specific image paths; desktop version is already collected
+	}
+	allowedExts := []string{".jpg", ".jpeg", ".png", ".webp", ".avif"}
+
+	addURL := func(src string) {
+		src = strings.TrimSpace(src)
+		if src == "" || len(results) >= maxImages {
+			return
+		}
+		// Strip query-string suffix that may include width hints
+		if q := strings.IndexByte(src, '?'); q > 0 {
+			src = src[:q]
+		}
+		var absURL string
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			absURL = src
+		} else if base != nil {
+			parsed, err := url.Parse(src)
+			if err != nil {
+				return
+			}
+			absURL = base.ResolveReference(parsed).String()
+		} else {
+			return
+		}
+		absLower := strings.ToLower(absURL)
+		for _, bl := range blacklist {
+			if strings.Contains(absLower, bl) {
+				return
+			}
+		}
+		hasExt := false
+		for _, ext := range allowedExts {
+			if strings.Contains(absLower, ext) {
+				hasExt = true
+				break
+			}
+		}
+		if !hasExt {
+			return
+		}
+
+		// Extract and validate filename stem for quality + dedup checks.
+		stem := absURL
+		if idx := strings.LastIndex(stem, "/"); idx >= 0 {
+			stem = stem[idx+1:]
+		}
+		if dot := strings.LastIndex(stem, "."); dot >= 0 {
+			stem = stem[:dot]
+		}
+		stemLower := strings.ToLower(stem)
+
+		// Skip purely-numeric filenames (1.avif, 2.jpg, 001.webp — generic
+		// stock images with no meaningful label).
+		isNumeric := len(stemLower) > 0
+		for _, c := range stemLower {
+			if c < '0' || c > '9' {
+				isNumeric = false
+				break
+			}
+		}
+		if isNumeric {
+			return
+		}
+		// Skip very short stems (< 4 chars) — too ambiguous to label.
+		if len(stemLower) < 4 {
+			return
+		}
+		// Skip mobile filename variants even when not in a /mobile/ path
+		// (e.g. "emp-mobile-clients.webp", "banner-mobile.avif").
+		if strings.HasPrefix(stemLower, "mobile-") || strings.HasSuffix(stemLower, "-mobile") ||
+			strings.Contains(stemLower, "-mobile-") || strings.Contains(stemLower, "_mobile_") {
+			return
+		}
+		// Skip Figma/design-tool exports: Group-2343, Frame-18, Layer-5, etc.
+		// These are component artifacts with no meaningful label.
+		for _, prefix := range []string{"group-", "frame-", "layer-", "component-", "vector-", "ellipse-", "rectangle-"} {
+			if strings.HasPrefix(stemLower, prefix) {
+				rest := stemLower[len(prefix):]
+				allDigits := len(rest) > 0
+				for _, c := range rest {
+					if c < '0' || c > '9' {
+						allDigits = false
+						break
+					}
+				}
+				if allDigits {
+					return // e.g. Group-2343, Frame-18
+				}
+			}
+		}
+		// Skip text-overlay images (e.g. 6-text.png, hero-text.png).
+		if strings.HasSuffix(stemLower, "-text") || strings.HasSuffix(stemLower, "_text") ||
+			strings.HasPrefix(stemLower, "text-") || strings.HasPrefix(stemLower, "text_") {
+			return
+		}
+		// Skip loading animations and generic UI chrome.
+		for _, generic := range []string{"loader", "loading", "spinner", "preloader", "skeleton"} {
+			if stemLower == generic || strings.HasPrefix(stemLower, generic+"-") || strings.HasPrefix(stemLower, generic+"_") {
+				return
+			}
+		}
+		// Skip WordPress thumbnail crops that embed pixel dimensions (200x100,
+		// 531x531, 1024x597, etc.). These are resized copies; the original
+		// full-size file is the one with a meaningful name and no NxN suffix.
+		for i := 1; i < len(stemLower)-2; i++ {
+			if stemLower[i] == 'x' {
+				// Count digits before 'x'
+				j := i - 1
+				for j >= 0 && stemLower[j] >= '0' && stemLower[j] <= '9' {
+					j--
+				}
+				digitsBefore := i - j - 1
+				// Count digits after 'x'
+				k := i + 1
+				for k < len(stemLower) && stemLower[k] >= '0' && stemLower[k] <= '9' {
+					k++
+				}
+				digitsAfter := k - i - 1
+				if digitsBefore >= 2 && digitsAfter >= 2 {
+					return // e.g. image-200x100, icon531x531
+				}
+			}
+		}
+
+		if seen[absURL] {
+			return
+		}
+		// Deduplicate by filename stem so we don't store both
+		// /banner/morais-luxe.avif and /banner/mobile/morais-luxe.avif.
+		if seenName[stemLower] {
+			return
+		}
+		seen[absURL] = true
+		seenName[stemLower] = true
+		results = append(results, absURL)
+	}
+
+	// extractQuoted returns the value of a quoted attribute starting right after
+	// the attribute name+= in the given string slice.
+	extractQuoted := func(s string) string {
+		if len(s) == 0 {
+			return ""
+		}
+		q := s[0]
+		if q != '"' && q != '\'' {
+			return ""
+		}
+		end := strings.IndexByte(s[1:], q)
+		if end < 0 {
+			return ""
+		}
+		return s[1 : end+1]
+	}
+
+	// Strategy 1: og:image and twitter:image meta tags.
+	for _, metaKey := range []string{`property="og:image"`, `name="twitter:image"`, `property="og:image:url"`} {
+		idx := strings.Index(lower, metaKey)
+		if idx < 0 {
+			continue
+		}
+		contentIdx := strings.Index(lower[idx:], `content="`)
+		if contentIdx < 0 {
+			continue
+		}
+		start := idx + contentIdx + 9
+		end := strings.IndexByte(lower[start:], '"')
+		if end < 0 {
+			continue
+		}
+		addURL(rawHTML[start : start+end])
+	}
+
+	// Strategy 2: <img> tag attributes — src, data-src, data-lazy-src, srcset.
+	{
+		pos := 0
+		for len(results) < maxImages {
+			idx := strings.Index(lower[pos:], "<img")
+			if idx < 0 {
+				break
+			}
+			pos += idx
+			end := strings.Index(lower[pos:], ">")
+			if end < 0 {
+				break
+			}
+			tagLower := lower[pos : pos+end+1]
+			tagContent := rawHTML[pos : pos+end+1]
+			pos += end + 1
+
+			for _, attr := range []string{" src=", "\tsrc=", " data-src=", " data-lazy-src=", " data-original=", " data-img="} {
+				attrIdx := strings.Index(tagLower, attr)
+				if attrIdx < 0 {
+					continue
+				}
+				addURL(extractQuoted(tagContent[attrIdx+len(attr):]))
+			}
+			// srcset: "img1.jpg 1x, img2.jpg 2x" — take first candidate
+			if si := strings.Index(tagLower, " srcset="); si >= 0 {
+				val := extractQuoted(tagContent[si+8:])
+				if val != "" {
+					// first entry is "url descriptor" — take URL part
+					first := strings.Fields(val)[0]
+					addURL(first)
+				}
+			}
+		}
+	}
+
+	// Strategy 3: <source srcset=...> inside <picture> elements.
+	{
+		pos := 0
+		for len(results) < maxImages {
+			idx := strings.Index(lower[pos:], "<source")
+			if idx < 0 {
+				break
+			}
+			pos += idx
+			end := strings.Index(lower[pos:], ">")
+			if end < 0 {
+				break
+			}
+			tagLower := lower[pos : pos+end+1]
+			tagContent := rawHTML[pos : pos+end+1]
+			pos += end + 1
+			if si := strings.Index(tagLower, " srcset="); si >= 0 {
+				val := extractQuoted(tagContent[si+8:])
+				if val != "" {
+					first := strings.Fields(val)[0]
+					addURL(first)
+				}
+			}
+			if si := strings.Index(tagLower, " src="); si >= 0 {
+				addURL(extractQuoted(tagContent[si+5:]))
+			}
+		}
+	}
+
+	// Strategy 4: JavaScript / JSON patterns.
+	// Handles: image:"url", image: "url", img:"url", photo:"url",
+	//          thumbnail:"url", src:"url", "image":"url", 'image':'url'
+	jsKeywords := []string{
+		`image:"`, `image: "`, `image:'`, `image: '`,
+		`"image":"`, `"image": "`,
+		`img:"`, `img: "`, `img:'`, `img: '`,
+		`photo:"`, `photo: "`, `photo:'`, `photo: '`,
+		`thumbnail:"`, `thumbnail: "`,
+		`src:"`, `src: "`, `src:'`, `src: '`,
+	}
+	if len(results) < maxImages/2 {
+		for _, kw := range jsKeywords {
+			pos := 0
+			for len(results) < maxImages {
+				idx := strings.Index(lower[pos:], kw)
+				if idx < 0 {
+					break
+				}
+				start := pos + idx + len(kw)
+				// The opening quote is the last char of kw
+				q := kw[len(kw)-1]
+				end := strings.IndexByte(lower[start:], q)
+				if end < 0 {
+					pos = start
+					continue
+				}
+				addURL(rawHTML[start : start+end])
+				pos = start + end + 1
+			}
+		}
+	}
+
+	// Strategy 5: CSS background-image: url(...) and data-bg attributes.
+	if len(results) < maxImages {
+		// data-bg="url" and data-background="url"
+		for _, attr := range []string{` data-bg="`, ` data-background="`, ` data-bg='`, ` data-background='`} {
+			pos := 0
+			for len(results) < maxImages {
+				idx := strings.Index(lower[pos:], attr)
+				if idx < 0 {
+					break
+				}
+				start := pos + idx + len(attr)
+				q := attr[len(attr)-1]
+				end := strings.IndexByte(lower[start:], q)
+				if end < 0 {
+					break
+				}
+				addURL(rawHTML[start : start+end])
+				pos = start + end + 1
+			}
+		}
+		// background-image: url("...") or url('...')
+		pos := 0
+		for len(results) < maxImages {
+			idx := strings.Index(lower[pos:], "background-image:")
+			if idx < 0 {
+				break
+			}
+			pos += idx + 17
+			urlIdx := strings.Index(lower[pos:], "url(")
+			if urlIdx < 0 || urlIdx > 50 {
+				continue
+			}
+			pos += urlIdx + 4
+			end := strings.Index(lower[pos:], ")")
+			if end < 0 {
+				continue
+			}
+			val := strings.Trim(rawHTML[pos:pos+end], `"' `)
+			addURL(val)
+			pos += end + 1
+		}
+	}
+
+	return results
+}
+
+// crawlSiteImages visits the homepage and all reachable internal pages (up to
+// maxPages) in parallel, collects and deduplicates image URLs from every page,
+// and returns up to 20 images sorted with homepage images first.
+func crawlSiteImages(ctx context.Context, baseURL string, maxPages int) []string {
+	rawHome, err := fetchRawHTML(ctx, baseURL)
+	if err != nil {
+		return nil
+	}
+
+	links := extractInternalLinks(baseURL, string(rawHome))
+	if len(links) > maxPages-1 {
+		links = links[:maxPages-1]
+	}
+
+	type pageResult struct {
+		rawURL   string
+		html     []byte
+		priority int
+	}
+
+	// Fetch all sub-pages in parallel.
+	subResults := make([]pageResult, len(links))
+	var wg sync.WaitGroup
+	for i, link := range links {
+		wg.Add(1)
+		go func(i int, link string) {
+			defer wg.Done()
+			pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			b, err := fetchRawHTML(pctx, link)
+			if err == nil {
+				subResults[i] = pageResult{rawURL: link, html: b, priority: pagePriority(link)}
+			}
+		}(i, link)
+	}
+	wg.Wait()
+
+	// Collect all pages. Homepage gets priority -1 so product/feature/pricing
+	// pages (priority 9-10) always contribute their images FIRST. This prevents
+	// generic homepage icons from filling the cap before real app screenshots.
+	pages := []pageResult{{rawURL: baseURL, html: rawHome, priority: -1}}
+	for _, r := range subResults {
+		if r.html != nil {
+			pages = append(pages, r)
+		}
+	}
+
+	// Sort highest-priority pages first (features > product > homepage).
+	sort.Slice(pages, func(i, j int) bool {
+		return pages[i].priority > pages[j].priority
+	})
+
+	seen := map[string]bool{}
+	var all []string
+	for _, p := range pages {
+		for _, u := range extractImageURLs(string(p.html), p.rawURL) {
+			if !seen[u] {
+				seen[u] = true
+				all = append(all, u)
+			}
+		}
+	}
+	if len(all) > 10 {
+		all = all[:10]
+	}
+	return all
+}
+
 // POST /api/products/{id}/scrape
 // Fetches the product's website_url and asks the LLM to extract product context.
 func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
@@ -582,8 +988,16 @@ func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
 	allText := crawlSite(crawlCtx, product.WebsiteURL, 6)
 
 	if len(strings.TrimSpace(allText)) < 50 {
-		writeError(w, http.StatusBadGateway, "could not extract readable text from website")
+		writeError(w, http.StatusBadGateway, "Website is not accessible or blocks automated access (e.g. Amazon, Flipkart). Please add product details manually in the notes field instead.")
 		return
+	}
+
+	// Extract images from ALL crawled pages (homepage + sub-pages in parallel).
+	imageURLs := crawlSiteImages(crawlCtx, product.WebsiteURL, 10)
+	if len(imageURLs) > 0 {
+		if err := s.db.UpdateProductImageURLs(id, imageURLs); err != nil {
+			s.logger.Sugar().Warnw("scrapeProduct: UpdateProductImageURLs", "err", err, "product_id", id)
+		}
 	}
 
 	// Trim to 20000 chars for LLM context

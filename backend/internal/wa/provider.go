@@ -3,6 +3,7 @@ package wa
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -100,6 +101,8 @@ func ParseInterakt(body []byte) (*IncomingMessage, error) {
 }
 
 // ParseMeta parses an inbound Meta (WhatsApp Business API) webhook payload.
+// It also returns any delivery-failure statuses via the second return value
+// so callers can log them. Normal (non-error) statuses are ignored.
 func ParseMeta(body []byte) (*IncomingMessage, error) {
 	var p struct {
 		Entry []struct {
@@ -111,6 +114,16 @@ func ParseMeta(body []byte) (*IncomingMessage, error) {
 						Type string `json:"type"`
 						Text struct{ Body string } `json:"text"`
 					} `json:"messages"`
+					Statuses []struct {
+						ID       string `json:"id"`
+						Status   string `json:"status"`
+						RecipientID string `json:"recipient_id"`
+						Errors   []struct {
+							Code    int    `json:"code"`
+							Title   string `json:"title"`
+							Message string `json:"message"`
+						} `json:"errors"`
+					} `json:"statuses"`
 				} `json:"value"`
 			} `json:"changes"`
 		} `json:"entry"`
@@ -120,6 +133,13 @@ func ParseMeta(body []byte) (*IncomingMessage, error) {
 	}
 	for _, entry := range p.Entry {
 		for _, change := range entry.Changes {
+			// Log any failed delivery statuses
+			for _, st := range change.Value.Statuses {
+				if st.Status == "failed" && len(st.Errors) > 0 {
+					return nil, fmt.Errorf("meta delivery failed for %s (wamid:%s): code=%d %s — %s",
+						st.RecipientID, st.ID, st.Errors[0].Code, st.Errors[0].Title, st.Errors[0].Message)
+				}
+			}
 			for _, msg := range change.Value.Messages {
 				return &IncomingMessage{
 					ProviderMsgID: msg.ID,

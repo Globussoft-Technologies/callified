@@ -26,13 +26,28 @@ const labelStyle = {
 export default function ProductsTab({
   orgProducts, selectedOrg, orgs,
   newProductName, setNewProductName, showProductInput, setShowProductInput,
-  handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping,
+  handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping, scrapeError,
   apiFetch, API_URL
 }) {
   const [productPrompts, setProductPrompts] = React.useState({});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
   const [nameError, setNameError] = useState('');
+
+  const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
+  const setWebsiteUrl = (productId, url) =>
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url } }));
+
+  const handleScrapeWithSave = async (productId) => {
+    const currentUrl = getWebsiteUrl(productId);
+    const product = orgProducts.find(p => p.id === productId);
+    if (currentUrl !== undefined && currentUrl !== (product?.website_url || '')) {
+      await handleSaveProduct(productId, { website_url: currentUrl });
+    }
+    const urlToScrape = currentUrl !== undefined ? currentUrl : product?.website_url;
+    if (!urlToScrape) { alert('Please enter a website URL first.'); return; }
+    await handleScrapeProduct(productId);
+  };
 
   React.useEffect(() => {
     if (!orgProducts || orgProducts.length === 0) return;
@@ -51,6 +66,7 @@ export default function ProductsTab({
               expanded: prev[p.id]?.expanded || false,
               generating: prev[p.id]?.generating || false,
               saving: prev[p.id]?.saving || false,
+              websiteUrl: prev[p.id]?.websiteUrl !== undefined ? prev[p.id].websiteUrl : (p.website_url || ''),
             }
           }));
         })
@@ -248,22 +264,32 @@ export default function ProductsTab({
                     </div>
 
                     {/* Website URL + Scrape */}
-                    <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'flex-end' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={labelStyle}>Website URL</label>
-                        <input placeholder="https://..."
-                          defaultValue={p.website_url}
-                          onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })}
-                          style={{ ...inputStyle, background: T.card }} />
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={labelStyle}>Website URL</label>
+                          <input placeholder="https://..."
+                            value={getWebsiteUrl(p.id) !== undefined ? getWebsiteUrl(p.id) : (p.website_url || '')}
+                            onChange={e => setWebsiteUrl(p.id, e.target.value)}
+                            onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })}
+                            style={{ ...inputStyle, background: T.card }} />
+                        </div>
+                        <button onClick={() => handleScrapeWithSave(p.id)} disabled={scraping === p.id} style={{
+                          height: 38, padding: '0 16px', borderRadius: 8, border: 'none', whiteSpace: 'nowrap',
+                          background: scraping === p.id ? T.muted : 'linear-gradient(135deg, #0891b2, #06b6d4)',
+                          color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
+                          cursor: scraping === p.id ? 'not-allowed' : 'pointer',
+                        }}>
+                          {scraping === p.id ? '⏳ Analyzing...' : ((getWebsiteUrl(p.id) || p.website_url) ? '🔍 Scrape Website' : '🧠 AI Research')}
+                        </button>
                       </div>
-                      <button onClick={() => handleScrapeProduct(p.id)} disabled={scraping === p.id} style={{
-                        height: 38, padding: '0 16px', borderRadius: 8, border: 'none', whiteSpace: 'nowrap',
-                        background: scraping === p.id ? T.muted : 'linear-gradient(135deg, #0891b2, #06b6d4)',
-                        color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
-                        cursor: scraping === p.id ? 'not-allowed' : 'pointer',
-                      }}>
-                        {scraping === p.id ? '⏳ Analyzing...' : (p.website_url ? '🔍 Scrape Website' : '🧠 AI Research')}
-                      </button>
+                      {scrapeError?.[p.id] && (
+                        <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 6,
+                          background: '#fef2f2', border: '1px solid #fca5a5',
+                          color: '#dc2626', fontSize: 12, lineHeight: 1.5, fontFamily: T.font }}>
+                          ⚠️ {scrapeError[p.id]}
+                        </div>
+                      )}
                     </div>
 
                     {/* Expand section */}
@@ -292,6 +318,35 @@ export default function ProductsTab({
                                 height: 220, resize: 'vertical', overflowY: 'scroll',
                                 fontFamily: T.font, cursor: 'text',
                               }} />
+                            </div>
+                          )}
+
+                          {p.image_urls && p.image_urls.length > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                              <label style={{ ...labelStyle, color: '#f59e0b' }}>🖼️ Scraped Images ({p.image_urls.length})</label>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                                {p.image_urls.map((url, i) => (
+                                  <div key={i} style={{ position: 'relative', cursor: 'pointer' }}
+                                    onClick={() => window.open(url, '_blank')}>
+                                    <img src={url} alt={`img-${i+1}`}
+                                      style={{ width: 100, height: 70, objectFit: 'cover', borderRadius: 6,
+                                        border: `1px solid ${T.border}`, background: T.bg }}
+                                      onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
+                                    <div style={{ display: 'none', width: 100, height: 70, borderRadius: 6,
+                                      border: `1px solid ${T.border}`, background: T.bg,
+                                      alignItems: 'center', justifyContent: 'center',
+                                      fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
+                                      ❌ Failed
+                                    </div>
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0,
+                                      background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 9,
+                                      padding: '2px 4px', borderRadius: '0 0 6px 6px',
+                                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                      {url.split('/').pop().split('?')[0]}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
 

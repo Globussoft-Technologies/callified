@@ -5,12 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
+
+	_ "golang.org/x/image/webp" // register webp decoder
 )
+
+var imageDecoder = image.Decode
 
 // ChannelConfig holds the credentials needed to send via a provider.
 type ChannelConfig struct {
@@ -242,6 +251,134 @@ func resolveWaSenderSessionKey(ctx context.Context, baseURL, savedToken string) 
 	return pick, nil
 }
 
+// SendImage sends an image message via the provider configured in cfg.
+// Currently only Meta (WhatsApp Cloud API) is supported.
+func SendImage(ctx context.Context, cfg ChannelConfig, toPhone, imageURL string) error {
+	switch cfg.Provider {
+	case "meta":
+		return sendMetaImage(ctx, cfg, toPhone, imageURL)
+	default:
+		return fmt.Errorf("image sending not supported for provider: %s", cfg.Provider)
+	}
+}
+
+func sendMetaImage(ctx context.Context, cfg ChannelConfig, toPhone, imageURL string) error {
+	version := cfg.GraphVersion
+	if version == "" {
+		version = "v18.0"
+	}
+
+	// Step 1: download the image locally.
+	imgResp, err := http.Get(imageURL)
+	if err != nil {
+		return fmt.Errorf("download image: %w", err)
+	}
+	defer imgResp.Body.Close()
+	imgBytes, err := io.ReadAll(io.LimitReader(imgResp.Body, 10<<20)) // 10 MB max
+	if err != nil {
+		return fmt.Errorf("read image: %w", err)
+	}
+	contentType := imgResp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	// Convert webp → JPEG: Meta silently drops webp even when API returns success.
+	if strings.Contains(contentType, "webp") {
+		img, _, decErr := imageDecoder(bytes.NewReader(imgBytes))
+		if decErr == nil {
+			var jpegBuf bytes.Buffer
+			if encErr := jpeg.Encode(&jpegBuf, img, &jpeg.Options{Quality: 85}); encErr == nil {
+				imgBytes = jpegBuf.Bytes()
+				contentType = "image/jpeg"
+			}
+		}
+	}
+
+	// Convert avif → JPEG using Python3/Pillow if available on the server.
+	// Go has no native avif decoder; Meta does not reliably deliver avif files.
+	if strings.Contains(contentType, "avif") || strings.Contains(imageURL, ".avif") {
+		if converted, err := convertAvifToJPEG(imgBytes); err == nil {
+			imgBytes = converted
+			contentType = "image/jpeg"
+		}
+		// If conversion fails, continue — upload the avif and let Meta attempt delivery.
+	}
+
+	// Step 2: upload to Meta media endpoint to get a media_id.
+	var buf bytes.Buffer
+	mw := multipartWriter(&buf)
+	mw.WriteField("messaging_product", "whatsapp")
+	part, _ := mw.CreateFormFile("file", "image.jpg")
+	part.Write(imgBytes)
+	mw.Close()
+
+	uploadURL := fmt.Sprintf("https://graph.facebook.com/%s/%s/media", version, cfg.PhoneNumber)
+	uploadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, &buf)
+	if err != nil {
+		return err
+	}
+	uploadReq.Header.Set("Content-Type", mw.FormDataContentType())
+	uploadReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+
+	uploadResp, err := http.DefaultClient.Do(uploadReq)
+	if err != nil {
+		return fmt.Errorf("upload image: %w", err)
+	}
+	defer uploadResp.Body.Close()
+	uploadBody, _ := io.ReadAll(uploadResp.Body)
+	var uploadResult struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(uploadBody, &uploadResult)
+	if uploadResult.ID == "" {
+		return fmt.Errorf("media upload failed: %s", string(uploadBody))
+	}
+
+	// Step 3: send using the media_id (not a link).
+	to := strings.TrimPrefix(toPhone, "+")
+	sendBody, _ := json.Marshal(map[string]any{
+		"messaging_product": "whatsapp",
+		"to":                to,
+		"type":              "image",
+		"image":             map[string]string{"id": uploadResult.ID},
+	})
+	u := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages", version, cfg.PhoneNumber)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(sendBody))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	return doRequest(req)
+}
+
+// multipartWriter wraps mime/multipart to avoid an extra import in the package.
+func multipartWriter(buf *bytes.Buffer) *multipart {
+	return &multipart{buf: buf, boundary: "waboundary12345"}
+}
+
+type multipart struct {
+	buf      *bytes.Buffer
+	boundary string
+}
+
+func (m *multipart) FormDataContentType() string {
+	return "multipart/form-data; boundary=" + m.boundary
+}
+
+func (m *multipart) WriteField(name, value string) {
+	fmt.Fprintf(m.buf, "--%s\r\nContent-Disposition: form-data; name=%q\r\n\r\n%s\r\n", m.boundary, name, value)
+}
+
+func (m *multipart) CreateFormFile(fieldname, filename string) (io.Writer, error) {
+	fmt.Fprintf(m.buf, "--%s\r\nContent-Disposition: form-data; name=%q; filename=%q\r\nContent-Type: image/jpeg\r\n\r\n", m.boundary, fieldname, filename)
+	return m.buf, nil
+}
+
+func (m *multipart) Close() {
+	fmt.Fprintf(m.buf, "\r\n--%s--\r\n", m.boundary)
+}
+
 func doFormPost(ctx context.Context, url string, headers, fields map[string]string) error {
 	var buf bytes.Buffer
 	first := true
@@ -274,6 +411,33 @@ func doRequest(req *http.Request) error {
 		return fmt.Errorf("WA send: HTTP %d — %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// convertAvifToJPEG converts an avif image to JPEG using Python3 + Pillow.
+// Returns error if python3 or Pillow is not available on this system.
+func convertAvifToJPEG(avifBytes []byte) ([]byte, error) {
+	tmpIn, err := os.CreateTemp("", "img_*.avif")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpIn.Name())
+	if _, err := tmpIn.Write(avifBytes); err != nil {
+		tmpIn.Close()
+		return nil, err
+	}
+	tmpIn.Close()
+
+	outPath := tmpIn.Name() + ".jpg"
+	defer os.Remove(outPath)
+
+	script := fmt.Sprintf(
+		`from PIL import Image; img=Image.open(%q); img.convert('RGB').save(%q,'JPEG',quality=85)`,
+		tmpIn.Name(), outPath)
+	cmd := exec.Command("python3", "-c", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("avif convert: %w — %s", err, string(out))
+	}
+	return os.ReadFile(outPath)
 }
 
 func escapeJSON(s string) string {
