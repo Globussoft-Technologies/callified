@@ -227,8 +227,10 @@ func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
 				parts = append(parts, "## Conversation Guide\n"+product.CallFlowInstructions)
 			}
 
-			// Product images: labeled map so the AI sends the RIGHT image for each query.
-			if len(product.ImageURLs) > 0 {
+			// Product images: manual uploads first (user-defined labels), then scraped.
+			hasManual := len(product.ManualImages) > 0
+			hasScraped := len(product.ImageURLs) > 0
+			if hasManual || hasScraped {
 				var imgSection strings.Builder
 				imgSection.WriteString("## Product Images — Send the RIGHT image for each query\n\n")
 				imgSection.WriteString("Each image below has a LABEL. When a customer asks about a specific item, feature, or property:\n")
@@ -238,16 +240,26 @@ func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
 				imgSection.WriteString("4. If they ask for 'images' / 'photos' in general (no specific item), send the first 2-3 tokens.\n")
 				imgSection.WriteString("RULE: NEVER output a [SEND_IMAGE:] token with a URL not listed below.\n\n")
 				imgSection.WriteString("LABEL → [SEND_IMAGE:URL]:\n")
+				// Manual images take priority — labels are set by the user.
+				for _, img := range product.ManualImages {
+					imgSection.WriteString("- " + img.Label + " → [SEND_IMAGE:" + img.URL + "]\n")
+				}
+				// Scraped images follow.
 				for _, u := range product.ImageURLs {
 					label := imageLabel(u)
 					imgSection.WriteString("- " + label + " → [SEND_IMAGE:" + u + "]\n")
 				}
-				// Concrete example using first image
-				if len(product.ImageURLs) > 0 {
-					ex := imageLabel(product.ImageURLs[0])
-					imgSection.WriteString("\nExample — customer: \"show me " + ex + "\"\n")
-					imgSection.WriteString("Your reply: \"Here is " + ex + ":\n[SEND_IMAGE:" + product.ImageURLs[0] + "]\"\n")
+				// Concrete example using first available image
+				var exLabel, exURL string
+				if hasManual {
+					exLabel = product.ManualImages[0].Label
+					exURL = product.ManualImages[0].URL
+				} else {
+					exLabel = imageLabel(product.ImageURLs[0])
+					exURL = product.ImageURLs[0]
 				}
+				imgSection.WriteString("\nExample — customer: \"show me " + exLabel + "\"\n")
+				imgSection.WriteString("Your reply: \"Here is " + exLabel + ":\n[SEND_IMAGE:" + exURL + "]\"\n")
 				parts = append(parts, imgSection.String())
 			}
 

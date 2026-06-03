@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1542,4 +1545,159 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ── Product image upload ──────────────────────────────────────────────────────
+
+// POST /api/products/{id}/images
+// @Summary     Upload product image
+// @Description Uploads an image file and appends it to the product's manual_images list.
+// @Tags        products
+// @Accept      multipart/form-data
+// @Param       id     path  int     true  "Product ID"
+// @Param       file   formData  file    true  "Image file"
+// @Param       label  formData  string  false "Human-readable label used by AI for matching"
+// @Success     201  {object}  db.ProductImage
+// @Failure     400  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/products/{id}/images [post]
+func (s *Server) uploadProductImage(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file field required")
+		return
+	}
+	defer file.Close()
+
+	label := strings.TrimSpace(r.FormValue("label"))
+	if label == "" {
+		base := filepath.Base(header.Filename)
+		label = strings.TrimSuffix(base, filepath.Ext(base))
+		label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
+	}
+
+	ext := filepath.Ext(header.Filename)
+	filename := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
+
+	dir := filepath.Join(s.cfg.RecordingsDir, "..", "product_images")
+	if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+		writeError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	dst, err := os.Create(filepath.Join(dir, filename))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		writeError(w, http.StatusInternalServerError, "write error")
+		return
+	}
+
+	publicURL := strings.TrimRight(s.cfg.PublicServerURL, "/") + "/api/product-images/" + filename
+
+	product, err := s.db.GetProductByID(id)
+	if err != nil || product == nil {
+		writeError(w, http.StatusNotFound, "product not found")
+		return
+	}
+	newImage := db.ProductImage{URL: publicURL, Label: label}
+	images := append(product.ManualImages, newImage)
+	if err := s.db.UpdateProductManualImages(id, images); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, newImage)
+}
+
+// PUT /api/products/{id}/images
+// @Summary     Replace all manual images
+// @Description Replaces the full manual_images array (used to update labels or reorder).
+// @Tags        products
+// @Param       id    path  int                  true  "Product ID"
+// @Param       body  body  []db.ProductImage    true  "Full images array"
+// @Success     204  "No Content"
+// @Router      /api/products/{id}/images [put]
+func (s *Server) updateProductImages(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var images []db.ProductImage
+	if err := json.NewDecoder(r.Body).Decode(&images); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := s.db.UpdateProductManualImages(id, images); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// DELETE /api/products/{id}/images/{index}
+// @Summary     Delete product image
+// @Description Removes a manually uploaded image by its index in the manual_images list.
+// @Tags        products
+// @Param       id     path  int  true  "Product ID"
+// @Param       index  path  int  true  "Zero-based index in manual_images array"
+// @Success     204  "No Content"
+// @Failure     400  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Router      /api/products/{id}/images/{index} [delete]
+func (s *Server) deleteProductImage(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	idx, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || idx < 0 {
+		writeError(w, http.StatusBadRequest, "invalid index")
+		return
+	}
+	product, err := s.db.GetProductByID(id)
+	if err != nil || product == nil {
+		writeError(w, http.StatusNotFound, "product not found")
+		return
+	}
+	if idx >= len(product.ManualImages) {
+		writeError(w, http.StatusBadRequest, "index out of range")
+		return
+	}
+	images := append(product.ManualImages[:idx:idx], product.ManualImages[idx+1:]...)
+	if err := s.db.UpdateProductManualImages(id, images); err != nil {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GET /api/product-images/{filename}
+// @Summary     Serve product image
+// @Description Serves an uploaded product image file (public, no auth required — URLs are sent via WhatsApp).
+// @Tags        products
+// @Param       filename  path  string  true  "Image filename"
+// @Success     200  "Image file"
+// @Failure     400  {object}  ErrorResponse
+// @Router      /api/product-images/{filename} [get]
+func (s *Server) serveProductImage(w http.ResponseWriter, r *http.Request) {
+	filename := r.PathValue("filename")
+	if strings.Contains(filename, "/") || strings.Contains(filename, "..") {
+		writeError(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
+	dir := filepath.Join(s.cfg.RecordingsDir, "..", "product_images")
+	http.ServeFile(w, r, filepath.Join(dir, filename))
 }

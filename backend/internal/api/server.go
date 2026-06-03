@@ -218,6 +218,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/products/{id}", adminAuth(s.deleteProduct))
 	mux.HandleFunc("GET /api/products/{id}/prompt", auth(s.getProductPrompt))
 	mux.HandleFunc("PUT /api/products/{id}/prompt", adminAuth(s.updateProductPrompt))
+	mux.HandleFunc("POST /api/products/{id}/images", adminAuth(s.uploadProductImage))
+	mux.HandleFunc("PUT /api/products/{id}/images", adminAuth(s.updateProductImages))
+	mux.HandleFunc("DELETE /api/products/{id}/images/{index}", adminAuth(s.deleteProductImage))
+	// Public: product images are sent as URLs in WhatsApp messages, so must be accessible without auth.
+	mux.HandleFunc("GET /api/product-images/{filename}", s.serveProductImage)
 
 	// ── Recordings ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/recordings/{filename}", auth(s.serveRecording))

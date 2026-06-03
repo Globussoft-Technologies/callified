@@ -67,6 +67,7 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       scrapeError={scrapeError}
       apiFetch={apiFetch}
       API_URL={API_URL}
+      onProductsRefresh={() => fetchOrgProducts(selectedOrg?.id)}
     />
   );
 }

@@ -27,12 +27,14 @@ export default function ProductsTab({
   orgProducts, selectedOrg, orgs,
   newProductName, setNewProductName, showProductInput, setShowProductInput,
   handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping, scrapeError,
-  apiFetch, API_URL
+  apiFetch, API_URL,
+  onProductsRefresh,
 }) {
   const [productPrompts, setProductPrompts] = React.useState({});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
   const [nameError, setNameError] = useState('');
+  const fileInputRefs = React.useRef({});
 
   const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
   const setWebsiteUrl = (productId, url) =>
@@ -47,6 +49,60 @@ export default function ProductsTab({
     const urlToScrape = currentUrl !== undefined ? currentUrl : product?.website_url;
     if (!urlToScrape) { alert('Please enter a website URL first.'); return; }
     await handleScrapeProduct(productId);
+  };
+
+  const handleUploadImage = async (productId) => {
+    const pp = productPrompts[productId] || {};
+    const file = pp.pendingFile;
+    if (!file) { alert('Please choose an image file first.'); return; }
+    updateProductPrompt(productId, 'uploading', true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (pp.uploadLabel?.trim()) formData.append('label', pp.uploadLabel.trim());
+      const res = await apiFetch(`${API_URL}/products/${productId}/images`, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const txt = await res.text();
+        alert('Upload failed: ' + txt);
+      } else {
+        updateProductPrompt(productId, 'pendingFile', null);
+        updateProductPrompt(productId, 'uploadLabel', '');
+        if (fileInputRefs.current[productId]) fileInputRefs.current[productId].value = '';
+        if (onProductsRefresh) onProductsRefresh();
+        else if (selectedOrg) handleSaveProduct && window.location.reload();
+      }
+    } catch(e) {
+      alert('Upload error: ' + e.message);
+    }
+    updateProductPrompt(productId, 'uploading', false);
+  };
+
+  const handleDeleteManualImage = async (productId, idx) => {
+    if (!window.confirm('Remove this image?')) return;
+    try {
+      await apiFetch(`${API_URL}/products/${productId}/images/${idx}`, { method: 'DELETE' });
+      if (onProductsRefresh) onProductsRefresh();
+    } catch(e) {
+      alert('Delete error: ' + e.message);
+    }
+  };
+
+  const handleUpdateImageLabel = async (productId, idx, newLabel) => {
+    const product = orgProducts.find(p => p.id === productId);
+    if (!product) return;
+    const updated = product.manual_images.map((img, i) =>
+      i === idx ? { ...img, label: newLabel } : img
+    );
+    try {
+      await apiFetch(`${API_URL}/products/${productId}/images`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      if (onProductsRefresh) onProductsRefresh();
+    } catch(e) {
+      alert('Save error: ' + e.message);
+    }
   };
 
   React.useEffect(() => {
@@ -349,6 +405,94 @@ export default function ProductsTab({
                               </div>
                             </div>
                           )}
+
+                          {/* Manual Images */}
+                          <div style={{ marginBottom: 16 }}>
+                            <label style={{ ...labelStyle, color: '#8b5cf6' }}>📸 Custom Images (AI uses these labels for WhatsApp matching)</label>
+
+                            {p.manual_images && p.manual_images.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
+                                {p.manual_images.map((img, i) => (
+                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 110 }}>
+                                    {/* Image thumbnail */}
+                                    <div style={{ position: 'relative', cursor: 'pointer' }}
+                                      onClick={() => window.open(img.url, '_blank')}>
+                                      <img src={img.url} alt={img.label}
+                                        style={{ width: 110, height: 75, objectFit: 'cover', borderRadius: 6,
+                                          border: `2px solid #8b5cf6`, background: T.bg, display: 'block' }}
+                                        onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
+                                      <div style={{ display: 'none', width: 110, height: 75, borderRadius: 6,
+                                        border: `2px solid #8b5cf6`, background: T.bg,
+                                        alignItems: 'center', justifyContent: 'center',
+                                        fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
+                                        ❌ Failed
+                                      </div>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); handleDeleteManualImage(p.id, i); }}
+                                        style={{ position: 'absolute', top: 2, right: 2, width: 18, height: 18,
+                                          borderRadius: '50%', border: 'none', background: 'rgba(239,68,68,0.9)',
+                                          color: '#fff', fontSize: 10, cursor: 'pointer',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                                          zIndex: 1 }}>
+                                        ✕
+                                      </button>
+                                    </div>
+                                    {/* Editable label */}
+                                    <input
+                                      defaultValue={img.label}
+                                      onBlur={e => {
+                                        const newLabel = e.target.value.trim();
+                                        if (newLabel && newLabel !== img.label)
+                                          handleUpdateImageLabel(p.id, i, newLabel);
+                                      }}
+                                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                      title="Click to edit label"
+                                      style={{ width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+                                        fontSize: 11, borderRadius: 4, border: `1px solid ${T.border}`,
+                                        background: T.card, color: T.text, fontFamily: T.font,
+                                        textAlign: 'center', outline: 'none' }} />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Upload form */}
+                            <div style={{ padding: '12px 14px', background: 'rgba(139,92,246,0.05)',
+                              border: '1px dashed rgba(139,92,246,0.3)', borderRadius: 8 }}>
+                              <div style={{ marginBottom: 8 }}>
+                                <label style={{ fontSize: 11, color: T.muted, display: 'block', marginBottom: 4, fontFamily: T.font }}>
+                                  Label (AI uses this to match customer queries)
+                                </label>
+                                <input placeholder="e.g. Attendance Dashboard, Lavender Sofa..."
+                                  value={pp.uploadLabel || ''}
+                                  onChange={e => updateProductPrompt(p.id, 'uploadLabel', e.target.value)}
+                                  style={{ ...inputStyle, padding: '7px 10px', fontSize: 13 }} />
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                {/* Hidden native file input */}
+                                <input type="file" accept="image/*"
+                                  ref={el => { if(el) fileInputRefs.current[p.id] = el; }}
+                                  style={{ display: 'none' }}
+                                  onChange={e => updateProductPrompt(p.id, 'pendingFile', e.target.files[0] || null)} />
+                                {/* Styled choose button */}
+                                <button onClick={() => fileInputRefs.current[p.id]?.click()} style={{
+                                  height: 36, padding: '0 14px', borderRadius: 8,
+                                  border: `1px solid ${T.border}`, background: T.card,
+                                  color: T.sub, fontWeight: 600, fontSize: 12, fontFamily: T.font, cursor: 'pointer',
+                                }}>
+                                  📁 {pp.pendingFile ? pp.pendingFile.name : 'Choose Image'}
+                                </button>
+                                <button onClick={() => handleUploadImage(p.id)} disabled={pp.uploading || !pp.pendingFile} style={{
+                                  height: 36, padding: '0 16px', borderRadius: 8, border: 'none',
+                                  background: (pp.uploading || !pp.pendingFile) ? T.muted : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                                  color: '#fff', fontWeight: 600, fontSize: 12, fontFamily: T.font,
+                                  cursor: (pp.uploading || !pp.pendingFile) ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                }}>
+                                  {pp.uploading ? '⏳ Uploading...' : '⬆️ Upload'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
 
                           <div style={{ marginBottom: 16 }}>
                             <label style={labelStyle}>📝 Manual Notes</label>

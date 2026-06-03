@@ -179,33 +179,40 @@ func (d *DB) SaveOrganizationVoiceSettings(orgID int64, vs VoiceSettings) error 
 	return err
 }
 
+// ProductImage holds a manually uploaded image with a human-readable label.
+type ProductImage struct {
+	URL   string `json:"url"`
+	Label string `json:"label"`
+}
+
 // Product mirrors the products table.
 type Product struct {
-	ID                   int64    `json:"id"`
-	OrgID                int64    `json:"org_id"`
-	Name                 string   `json:"name"`
-	WebsiteURL           string   `json:"website_url"`
-	ScrapedInfo          string   `json:"scraped_info"`
-	ManualNotes          string   `json:"manual_notes"`
-	AgentPersona         string   `json:"agent_persona"`
-	CallFlowInstructions string   `json:"call_flow_instructions"`
-	CreatedAt            string   `json:"created_at"`
-	ImageURLs            []string `json:"image_urls"` // product image URLs extracted from website
+	ID                   int64          `json:"id"`
+	OrgID                int64          `json:"org_id"`
+	Name                 string         `json:"name"`
+	WebsiteURL           string         `json:"website_url"`
+	ScrapedInfo          string         `json:"scraped_info"`
+	ManualNotes          string         `json:"manual_notes"`
+	AgentPersona         string         `json:"agent_persona"`
+	CallFlowInstructions string         `json:"call_flow_instructions"`
+	CreatedAt            string         `json:"created_at"`
+	ImageURLs            []string       `json:"image_urls"`     // scraped from website
+	ManualImages         []ProductImage `json:"manual_images"`  // manually uploaded via UI
 }
 
 const productCols = `id, org_id, name,
 	COALESCE(website_url,''), COALESCE(scraped_info,''), COALESCE(manual_notes,''),
 	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''),
 	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),
-	COALESCE(image_urls,'[]')`
+	COALESCE(image_urls,'[]'), COALESCE(manual_images,'[]')`
 
 func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	p := &Product{}
-	var imageURLsJSON string
+	var imageURLsJSON, manualImagesJSON string
 	err := row.Scan(&p.ID, &p.OrgID, &p.Name,
 		&p.WebsiteURL, &p.ScrapedInfo, &p.ManualNotes,
 		&p.AgentPersona, &p.CallFlowInstructions, &p.CreatedAt,
-		&imageURLsJSON)
+		&imageURLsJSON, &manualImagesJSON)
 	if err != nil {
 		return p, err
 	}
@@ -214,6 +221,12 @@ func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	}
 	if p.ImageURLs == nil {
 		p.ImageURLs = []string{}
+	}
+	if manualImagesJSON != "" && manualImagesJSON != "[]" {
+		_ = json.Unmarshal([]byte(manualImagesJSON), &p.ManualImages)
+	}
+	if p.ManualImages == nil {
+		p.ManualImages = []ProductImage{}
 	}
 	return p, nil
 }
@@ -327,6 +340,16 @@ func (d *DB) UpdateProductImageURLs(id int64, urls []string) error {
 		return err
 	}
 	_, err = d.pool.Exec(`UPDATE products SET image_urls=? WHERE id=?`, string(data), id)
+	return err
+}
+
+// UpdateProductManualImages persists the manual_images JSON column.
+func (d *DB) UpdateProductManualImages(id int64, images []ProductImage) error {
+	data, err := json.Marshal(images)
+	if err != nil {
+		return err
+	}
+	_, err = d.pool.Exec(`UPDATE products SET manual_images=? WHERE id=?`, string(data), id)
 	return err
 }
 
