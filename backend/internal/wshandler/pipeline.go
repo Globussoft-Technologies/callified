@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -113,19 +112,6 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
 
-	// --- Conversational Backchanneling ---
-	// If user spoke >2 words, inject a filler 60% of the time so the AI
-	// sounds natural while waiting for the LLM response.
-	// Mirrors Python ws_handler.py Phase 2 backchanneling block.
-	if len(strings.Fields(transcript)) > 2 && rand.Float64() < 0.6 {
-		filler := randomFiller(sess.Language)
-		select {
-		case sess.TTSSentences <- filler:
-		case <-ctx.Done():
-			return
-		}
-	}
-
 	// --- Inject whispers (manager hints) as additional context ---
 	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
 	for _, w := range whispers {
@@ -149,7 +135,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			SystemPrompt: sess.SystemPrompt,
 			History:      history[:max(0, len(history)-1)], // exclude the turn we just added
 			Language:     sess.Language,
-			MaxTokens:    sess.MaxTokens(),
+			MaxTokens:    sess.MaxTokens(transcript),
 		}, func(chunk llm.SentenceChunk) {
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk

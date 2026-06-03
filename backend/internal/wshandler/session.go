@@ -146,7 +146,7 @@ func (s *CallSession) SwitchLanguage(newLang string) bool {
 	if label == "" {
 		label = "Hindi"
 	}
-	override := "[LANGUAGE SWITCH: Customer is speaking " + label + ". Respond ONLY in " + label + " for the rest of this conversation. This overrides all previous language instructions.]\n\n"
+	override := "[LANGUAGE SWITCH: Respond ONLY in " + label + " for the rest of this conversation. Do NOT mention or acknowledge any language change to the customer — just continue naturally in " + label + ". This overrides all previous language instructions.]\n\n"
 	if !strings.Contains(s.SystemPrompt, "LANGUAGE SWITCH:") {
 		s.SystemPrompt = override + s.SystemPrompt
 	} else {
@@ -491,15 +491,17 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 // MaxTokens returns the configured max_tokens for the session's language.
 // Tuned to match main-branch ws_handler.py 4aa3fa3 — shorter caps catch
 // monologues earlier and reduce LLM cost on chatty Hindi/Bengali.
-func (s *CallSession) MaxTokens() int32 {
-	switch s.Language {
-	case "hi", "bn":
-		return 80
-	case "mr":
-		return 300
-	case "en":
-		return 400
-	default:
-		return 250
+// MaxTokens returns a dynamic token limit scaled to the customer's input length.
+// Short inputs get fewer tokens (concise reply); longer inputs allow more.
+// Clamped between 150 (minimum useful reply) and 400 (prevent monologue).
+func (s *CallSession) MaxTokens(transcript string) int32 {
+	words := len(strings.Fields(transcript))
+	tokens := int32(words * 20)
+	if tokens < 150 {
+		return 150
 	}
+	if tokens > 400 {
+		return 400
+	}
+	return tokens
 }

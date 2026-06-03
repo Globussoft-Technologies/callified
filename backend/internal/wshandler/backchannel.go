@@ -1,8 +1,6 @@
 package wshandler
 
 import (
-	"math/rand"
-	"regexp"
 	"strings"
 )
 
@@ -41,37 +39,6 @@ func isFillerSound(text string) bool {
 	return len([]rune(word)) <= 2
 }
 
-// fillersByLang maps language codes to conversational filler words.
-// These are injected as the first TTS item when the user speaks >2 words,
-// giving a more natural response cadence while the LLM generates its reply.
-var fillersByLang = map[string][]string{
-	"hi": {"Hmm...", "Achha...", "Okay...", "Haan..."},
-	"mr": {"Hmm...", "Achha...", "Theek ahe...", "Ho..."},
-	"en": {"Hmm...", "I see...", "Okay...", "Right..."},
-	"ta": {"Hmm...", "Sari...", "Okay...", "Aama..."},
-	"te": {"Hmm...", "Sare...", "Okay...", "Avunu..."},
-	"bn": {"Hmm...", "Achha...", "Okay...", "Haan..."},
-	"gu": {"Hmm...", "Saru...", "Okay...", "Ha..."},
-	"kn": {"Hmm...", "Sari...", "Okay...", "Houdu..."},
-	"ml": {"Hmm...", "Sari...", "Okay...", "Athe..."},
-	"pa": {"Hmm...", "Achha...", "Okay...", "Haan..."},
-}
-
-// defaultFillers is used when the language has no specific mapping.
-var defaultFillers = []string{"Hmm...", "Okay...", "I see..."}
-
-// randomFiller returns a random filler phrase for the given language code.
-// Mirrors Python ws_handler.py:
-//
-//	fillers = ["Hmm...", "Achha...", "Okay...", "Haan..."]
-//	await tts_queue.put(random.choice(fillers))
-func randomFiller(language string) string {
-	fillers, ok := fillersByLang[language]
-	if !ok {
-		fillers = defaultFillers
-	}
-	return fillers[rand.Intn(len(fillers))]
-}
 
 // explicitSwitchKeywords maps target language codes to phrases that unambiguously
 // request a language switch, regardless of what Sarvam detects as the language.
@@ -125,6 +92,50 @@ var explicitSwitchKeywords = map[string][]string{
 	},
 }
 
+// scriptBlock defines the primary Unicode range for an Indian language script.
+type scriptBlock struct{ lo, hi rune }
+
+var langScriptBlocks = map[string]scriptBlock{
+	"hi": {0x0900, 0x097F}, // Devanagari — Hindi
+	"mr": {0x0900, 0x097F}, // Devanagari — Marathi
+	"ta": {0x0B80, 0x0BFF}, // Tamil
+	"te": {0x0C00, 0x0C7F}, // Telugu
+	"kn": {0x0C80, 0x0CFF}, // Kannada
+	"ml": {0x0D00, 0x0D7F}, // Malayalam
+	"bn": {0x0980, 0x09FF}, // Bengali
+	"gu": {0x0A80, 0x0AFF}, // Gujarati
+	"pa": {0x0A00, 0x0A7F}, // Gurmukhi — Punjabi
+}
+
+// scriptMatchesLang returns true when the non-ASCII characters in text are
+// consistent with the given language code. This catches Sarvam mis-detections
+// where the customer speaks Kannada but gets labelled ta-IN, or speaks Hindi
+// but gets labelled pa-IN — because Kannada characters cannot appear in Tamil
+// Unicode and vice-versa.
+//
+// Returns true for English ("en") and unknown languages (no script to check).
+// Returns false when the transcript has no non-ASCII characters — a pure-ASCII
+// transcript (English digits/words) should not trigger a language switch.
+func scriptMatchesLang(text, lang string) bool {
+	b, ok := langScriptBlocks[lang]
+	if !ok {
+		return true // en or unknown — no script check
+	}
+	total, matched := 0, 0
+	for _, r := range text {
+		if r > 127 {
+			total++
+			if r >= b.lo && r <= b.hi {
+				matched++
+			}
+		}
+	}
+	if total == 0 {
+		return false // pure ASCII — not enough signal to confirm a script switch
+	}
+	return matched*10 >= total*6 // ≥60% of non-ASCII chars must match
+}
+
 // isExplicitLangSwitch checks if the transcript contains a clear language-switch
 // request. Returns the target language code and true if found.
 func isExplicitLangSwitch(text string) (targetLang string, ok bool) {
@@ -139,36 +150,3 @@ func isExplicitLangSwitch(text string) (targetLang string, ok bool) {
 	return "", false
 }
 
-// englishNumberWords covers digits spoken aloud; used to detect phone-number
-// utterances that shouldn't trigger a language switch.
-var englishNumberWords = map[string]struct{}{
-	"zero": {}, "one": {}, "two": {}, "three": {}, "four": {}, "five": {},
-	"six": {}, "seven": {}, "eight": {}, "nine": {}, "ten": {},
-	"eleven": {}, "twelve": {}, "thirteen": {}, "fourteen": {}, "fifteen": {},
-	"sixteen": {}, "seventeen": {}, "eighteen": {}, "nineteen": {}, "twenty": {},
-	"thirty": {}, "forty": {}, "fifty": {}, "sixty": {}, "seventy": {}, "eighty": {}, "ninety": {},
-	"hundred": {}, "thousand": {}, "lakh": {}, "crore": {}, "number": {},
-}
-
-var digitRunRe = regexp.MustCompile(`\d{4,}`)
-
-// isNumberInput returns true when the transcript is primarily digits or
-// English number words — these are language-neutral and must not be used
-// to trigger a language switch (e.g. customer gives phone number).
-func isNumberInput(text string) bool {
-	if digitRunRe.MatchString(text) {
-		return true
-	}
-	words := strings.Fields(strings.ToLower(text))
-	if len(words) == 0 {
-		return false
-	}
-	count := 0
-	for _, w := range words {
-		w = strings.Trim(w, ".,!?")
-		if _, ok := englishNumberWords[w]; ok {
-			count++
-		}
-	}
-	return count*2 > len(words)
-}

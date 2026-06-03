@@ -279,24 +279,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// filler syllables from te/kn/ta callers — ignore it entirely.
 				return
 			}
-			// Don't switch language while the agent's TTS is playing or just
-			// finished — Sarvam may be picking up the backchannel filler
-			// ("Sari...", "Avunu...", "Achha...") from our own audio, not the
-			// customer's voice.
-			if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
-				return
-			}
 			// Require at least 2 words before trusting Sarvam's language
 			// detection — single words like "అవును", "येस", "ம்" are too
 			// short and ambiguous, causing false cross-language switches.
-			if len(strings.Fields(transcript)) < 2 {
+			if len(strings.Fields(transcript)) < 3 {
 				return
 			}
-			// Don't switch based on number utterances — customers giving phone
-			// numbers or saying "one two three four five" in any script should
-			// not cause a language change.
-			if isNumberInput(transcript) {
-				sess.Log.Debug("lang detection skipped: number input", zap.String("text", transcript))
+			// Validate transcript script against detected language. Sarvam
+			// occasionally mis-labels similar-sounding languages (kn→ta, hi→pa,
+			// ta→ml). Since each Indian language uses a unique Unicode block,
+			// a Kannada transcript cannot contain Tamil characters — so if the
+			// script doesn't match the detected language, it's a mis-detection.
+			if !scriptMatchesLang(transcript, detectedLang) {
+				sess.Log.Debug("lang switch rejected: script mismatch",
+					zap.String("text", transcript),
+					zap.String("detected", detectedLang))
 				return
 			}
 			sess.SwitchLanguage(detectedLang)
