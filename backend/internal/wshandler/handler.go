@@ -303,6 +303,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			sarvamClient.OnTranscript = onTranscript
 			sarvamClient.OnSpeechStarted = onSpeechStarted
 			sarvamClient.OnTranscriptWithLang = onLangDetected
+			sarvamClient.CurrentLang = func() string { return sess.Language }
 			go func() {
 				defer wg.Done()
 				sarvamClient.Run(ctx, sess.AudioIn)

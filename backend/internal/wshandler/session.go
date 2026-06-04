@@ -488,20 +488,10 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	return snap
 }
 
-// MaxTokens returns the configured max_tokens for the session's language.
-// Tuned to match main-branch ws_handler.py 4aa3fa3 — shorter caps catch
-// monologues earlier and reduce LLM cost on chatty Hindi/Bengali.
-// MaxTokens returns a dynamic token limit scaled to the customer's input length.
-// Short inputs get fewer tokens (concise reply); longer inputs allow more.
-// Clamped between 150 (minimum useful reply) and 400 (prevent monologue).
-func (s *CallSession) MaxTokens(transcript string) int32 {
-	words := len(strings.Fields(transcript))
-	tokens := int32(words * 20)
-	if tokens < 150 {
-		return 150
-	}
-	if tokens > 400 {
-		return 400
-	}
-	return tokens
+// MaxTokens returns 600 for all languages. The LLM self-regulates and stops
+// naturally when the response is complete — 600 is a safety cap to prevent
+// runaway responses while giving enough room for 3-4 full sentences in any
+// Indian script without mid-sentence cutoffs.
+func (s *CallSession) MaxTokens(_ string) int32 {
+	return 600
 }

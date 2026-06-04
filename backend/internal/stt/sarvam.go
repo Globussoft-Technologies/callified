@@ -31,6 +31,10 @@ type SarvamClient struct {
 	OnTranscript         func(text string)
 	OnSpeechStarted      func()
 	OnTranscriptWithLang func(text, detectedLang string)
+	// CurrentLang returns the session's active language at call time.
+	// Set by the handler so transcribe() can skip re-verification when the
+	// detected language already matches the current one.
+	CurrentLang func() string
 }
 
 // NewSarvamClient creates a Sarvam STT client.
@@ -108,40 +112,31 @@ type sarvamResponse struct {
 	LanguageCode string `json:"language_code"`
 }
 
-// transcribe sends one utterance (PCM) to Sarvam STT and fires callbacks.
-func (c *SarvamClient) transcribe(ctx context.Context, pcm []byte) {
-	tStart := time.Now()
-	wavData := sarvamBuildWAV(pcm)
-
+// transcribeRaw sends a pre-built WAV to Sarvam STT and returns the raw response.
+func (c *SarvamClient) transcribeRaw(ctx context.Context, wavData []byte) (sarvamResponse, error) {
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	fw, err := w.CreateFormFile("file", "audio.wav")
 	if err != nil {
-		c.log.Error("sarvam stt: create form file", zap.Error(err))
-		return
+		return sarvamResponse{}, err
 	}
 	if _, err := fw.Write(wavData); err != nil {
-		c.log.Error("sarvam stt: write wav", zap.Error(err))
-		return
+		return sarvamResponse{}, err
 	}
 	_ = w.WriteField("model", "saarika:v2.5")
-	_ = w.WriteField("language_code", "unknown") // auto-detect language
+	_ = w.WriteField("language_code", "unknown")
 	w.Close()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sarvamSTTURL, &body)
 	if err != nil {
-		c.log.Error("sarvam stt: build request", zap.Error(err))
-		return
+		return sarvamResponse{}, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	req.Header.Set("Api-Subscription-Key", c.apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		if ctx.Err() == nil {
-			c.log.Error("sarvam stt: http error", zap.Error(err))
-		}
-		return
+		return sarvamResponse{}, err
 	}
 	defer resp.Body.Close()
 	respBytes, _ := io.ReadAll(resp.Body)
@@ -150,12 +145,30 @@ func (c *SarvamClient) transcribe(ctx context.Context, pcm []byte) {
 		c.log.Error("sarvam stt: non-200",
 			zap.Int("status", resp.StatusCode),
 			zap.String("body", string(respBytes)))
-		return
+		return sarvamResponse{}, nil
 	}
 
 	var result sarvamResponse
 	if err := json.Unmarshal(respBytes, &result); err != nil {
-		c.log.Error("sarvam stt: parse response", zap.Error(err))
+		return sarvamResponse{}, err
+	}
+	return result, nil
+}
+
+// transcribe sends one utterance (PCM) to Sarvam STT and fires callbacks.
+// When the detected language differs from the session's current language,
+// the same audio is sent a second time to verify. The language switch is
+// only forwarded if both API calls agree on the same language — preventing
+// single-utterance hallucinations (Sarvam is non-deterministic).
+func (c *SarvamClient) transcribe(ctx context.Context, pcm []byte) {
+	tStart := time.Now()
+	wavData := sarvamBuildWAV(pcm)
+
+	result, err := c.transcribeRaw(ctx, wavData)
+	if err != nil {
+		if ctx.Err() == nil {
+			c.log.Error("sarvam stt: http error", zap.Error(err))
+		}
 		return
 	}
 
@@ -171,11 +184,49 @@ func (c *SarvamClient) transcribe(ctx context.Context, pcm []byte) {
 		zap.Duration("latency", time.Since(tStart)),
 	)
 
+	// Language switch must be applied BEFORE firing OnTranscript so the pipeline
+	// picks up the transcript with the already-updated language. If we fire
+	// OnTranscript first, the pipeline's 150ms debounce fires before the
+	// re-verification completes (~300ms), causing the LLM to run in the old language.
+	if c.OnTranscriptWithLang != nil {
+		verifiedLang := detectedLang
+
+		// Re-verify when this looks like a language switch: non-trivial transcript,
+		// not Odia (persistent false positive), and language differs from current.
+		currentLang := ""
+		if c.CurrentLang != nil {
+			currentLang = c.CurrentLang()
+		}
+		if detectedLang != "" && detectedLang != "od" &&
+			len(strings.Fields(text)) >= 3 &&
+			detectedLang != currentLang {
+
+			result2, err2 := c.transcribeRaw(ctx, wavData)
+			if err2 == nil {
+				lang2 := sarvamNormLang(result2.LanguageCode)
+				if lang2 != detectedLang {
+					c.log.Info("sarvam stt: lang verify mismatch, suppressing switch",
+						zap.String("lang1", detectedLang),
+						zap.String("lang2", lang2),
+						zap.String("text", text),
+					)
+					verifiedLang = "" // suppress language switch
+				} else {
+					c.log.Info("sarvam stt: lang verify confirmed",
+						zap.String("lang", detectedLang),
+						zap.String("text", text),
+					)
+				}
+			}
+		}
+
+		c.OnTranscriptWithLang(text, verifiedLang)
+	}
+
+	// Fire pipeline transcript AFTER language switch so the LLM sees the
+	// updated language when it picks up the transcript from the channel.
 	if c.OnTranscript != nil {
 		c.OnTranscript(text)
-	}
-	if c.OnTranscriptWithLang != nil {
-		c.OnTranscriptWithLang(text, detectedLang)
 	}
 }
 
@@ -238,4 +289,3 @@ func SarvamLangSupported(lang string) bool {
 	}
 	return false
 }
-
