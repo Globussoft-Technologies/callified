@@ -6,10 +6,9 @@ import { useAuth } from '../../contexts/AuthContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
-  apiFetch, API_URL, selectedOrg,
+  apiFetch, API_URL,
   onCampaignDial, onCampaignWebCall,
   handleViewTranscripts, handleNote,
-  activeVoiceProvider, activeVoiceId, activeLanguage,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
@@ -41,6 +40,7 @@ export default function CampaignsTab({
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchCampaigns(); }, []);
 
   // Open a specific campaign's detail directly when ?id=N is in the URL —
@@ -62,20 +62,21 @@ export default function CampaignsTab({
     handleViewCampaign(target);
     // Strip ?id= from the URL so refreshes / Back don't loop.
     window.history.replaceState({}, '', window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns, view]);
 
   const fetchCampaignLeads = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
       setCampaignLeads(await res.json());
-    } catch (e) { setCampaignLeads([]); }
+    } catch { setCampaignLeads([]);  }
   };
 
   const fetchCallLog = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
       setCallLog(await res.json());
-    } catch (e) { setCallLog([]); }
+    } catch { setCallLog([]);  }
   };
 
   const fetchCampVoice = async (campaignId) => {
@@ -87,7 +88,7 @@ export default function CampaignsTab({
       } else {
         setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
       }
-    } catch (e) { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' }); }
+    } catch { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: ''  }); }
   };
 
   const handleSaveCampVoice = async () => {
@@ -105,10 +106,9 @@ export default function CampaignsTab({
       }
       setCampVoiceSaveStatus('saved');
       setTimeout(() => setCampVoiceSaveStatus(''), 2000);
-    } catch (e) {
-      setCampVoiceSaveStatus('error');
+    } catch { setCampVoiceSaveStatus('error');
       setTimeout(() => setCampVoiceSaveStatus(''), 3000);
-    }
+     }
   };
 
   const handleResetCampVoice = async () => {
@@ -142,7 +142,7 @@ export default function CampaignsTab({
   const startEventStream = async (campaignId) => {
     stopEventStream();
     let ticket;
-    try { ticket = await fetchSseTicket(); } catch (_) { return; }
+    try { ticket = await fetchSseTicket(); } catch { return;  }
     const es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${campaignId}`);
     es.onmessage = (e) => {
       // Backend publishes a JSON envelope with a pre-formatted `label` field;
@@ -157,7 +157,7 @@ export default function CampaignsTab({
           const parsed = new Date(j.ts).getTime();
           if (!Number.isNaN(parsed)) ts = parsed;
         }
-      } catch (_) { /* plain-text legacy event */ }
+      } catch { /* plain-text legacy event */  }
       // Drop replayed events older than the user's last Clear timestamp for
       // this campaign — the backend replays the last 20 events from Redis on
       // every SSE connect, so without this filter a page reload would
@@ -175,7 +175,7 @@ export default function CampaignsTab({
       // Native EventSource will set readyState to CLOSED only when the
       // server explicitly returns a non-200; CONNECTING means a retry is
       // already in flight. Just log so we can see it in DevTools.
-      // eslint-disable-next-line no-console
+       
       console.warn('campaign-events SSE error; readyState=', es.readyState, e);
     };
     eventSourceRef.current = es;
@@ -263,21 +263,6 @@ export default function CampaignsTab({
     }
   };
 
-  const handleToggleStatus = async (campaign) => {
-    const nextStatus = campaign.status === 'active' ? 'paused' : 'active';
-    try {
-      await apiFetch(`${API_URL}/campaigns/${campaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      fetchCampaigns();
-      if (selectedCampaign?.id === campaign.id) {
-        setSelectedCampaign({ ...campaign, status: nextStatus });
-      }
-    } catch (e) { console.error(e); }
-  };
-
   const handleEditCampaign = (campaign) => {
     setEditCampaignForm({
       id: campaign.id,
@@ -358,7 +343,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch (e) { alert('Save failed'); }
+    } catch { alert('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {

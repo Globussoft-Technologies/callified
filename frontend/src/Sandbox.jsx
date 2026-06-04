@@ -46,7 +46,7 @@ const VOICE_OPTIONS = {
   }
 };
 
-export default function Sandbox({ apiUrl }) {
+export default function Sandbox() {
   const [recording, setRecording] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [provider, setProvider] = useState('elevenlabs');
@@ -123,7 +123,7 @@ export default function Sandbox({ apiUrl }) {
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.type === 'clear') {
-            activeSourcesRef.current.forEach(s => { try { s.stop(); } catch (_) {} });
+            activeSourcesRef.current.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
             activeSourcesRef.current = [];
             nextPlayTimeRef.current = audioContext.currentTime;
             if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }

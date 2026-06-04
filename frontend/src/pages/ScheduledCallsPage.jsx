@@ -27,13 +27,14 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
     setLoading(false);
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { fetchScheduledCalls(); }, []);
 
   const handleCancel = async (id) => {
     try {
       await apiFetch(`${API_URL}/scheduled-calls/${id}`, { method: 'DELETE' });
       fetchScheduledCalls();
-    } catch (e) { alert('Failed to cancel'); }
+    } catch { alert('Failed to cancel');  }
   };
 
   const statusStyle = (status) => {

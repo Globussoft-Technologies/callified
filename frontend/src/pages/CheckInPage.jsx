@@ -18,6 +18,7 @@ export default function CheckInPage({ apiFetch, API_URL }) {
 
   useEffect(() => {
     fetchSites();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handlePunchIn = () => {
@@ -46,8 +47,7 @@ export default function CheckInPage({ apiFetch, API_URL }) {
         });
         const data = await response.json();
         setPunchStatus(data);
-      } catch (e) {
-        setPunchStatus({ status: 'error', message: 'Network error checking in.' });
+      } catch { setPunchStatus({ status: 'error', message: 'Network error checking in.'  });
       } finally {
         setPunching(false);
       }

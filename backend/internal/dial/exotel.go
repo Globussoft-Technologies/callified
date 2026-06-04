@@ -81,9 +81,6 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	fmt.Printf("[exotel] InitiateCall request: From=%s CallerId=%s Url=%s CallType=trans\n", phone, e.callerID, exomlURL)
-	fmt.Printf("[exotel] InitiateCall response status=%d body=%s\n", resp.StatusCode, string(body))
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("exotel: status %d: %s", resp.StatusCode, string(body))
 	}

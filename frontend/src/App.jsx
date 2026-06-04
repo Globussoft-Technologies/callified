@@ -67,6 +67,7 @@ export default function App() {
     // promoted/demoted this user mid-session) so a freshly-allowed user
     // doesn't see an empty campaigns list left over from a Viewer phase.
     if (userRole === 'Admin' || userRole === 'Agent') {
+       
       fetchCampaigns();
     } else {
       setCampaigns([]);
@@ -77,8 +78,9 @@ export default function App() {
         const res = await apiFetch(`${API_URL}/onboarding/status`);
         const data = await res.json();
         if (!data.completed) setShowOnboarding(true);
-      } catch (e) {}
+      } catch { /* ignore */ }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userRole]);
 
   // ─── PUBLIC ROUTES (no auth required) ───

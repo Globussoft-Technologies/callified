@@ -62,7 +62,7 @@ export default function CallMonitor({ apiUrl }) {
       setTranscripts(prev => [...prev, { role: 'system', text: 'Call Takeover Active. You are now speaking.' }]);
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) { console.error('Mic access denied'); }
+      } catch { console.error('Mic access denied');  }
     }
   };
 

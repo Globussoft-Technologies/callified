@@ -1,8 +1,13 @@
 import paramiko
+import os
+
+host = os.environ.get("DEPLOY_HOST", "163.227.174.141")
+username = os.environ.get("DEPLOY_USER", "empcloud-development")
+password = os.environ.get("DEPLOY_PASSWORD")
 
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect("163.227.174.141", username="empcloud-development", password="rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u")
+c.connect(host, username=username, password=password, timeout=10)
 
 print("Checking remote recordings folder...")
 _, stdout, _ = c.exec_command("find /home/empcloud-development/callified-ai/recordings/ -type f")

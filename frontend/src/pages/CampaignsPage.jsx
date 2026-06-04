@@ -24,13 +24,14 @@ export default function CampaignsPage({
 
   useEffect(() => {
     fetchLeads();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchLeads = async () => {
     try {
       const res = await apiFetch(`${API_URL}/leads`);
       setLeads(await res.json());
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
 
   const handleViewTranscripts = async (lead) => {
@@ -40,7 +41,7 @@ export default function CampaignsPage({
       if (!res.ok) { setTranscripts([]); return; }
       const data = await res.json();
       setTranscripts(Array.isArray(data) ? data : []);
-    } catch(e) { setTranscripts([]); }
+    } catch { setTranscripts([]);  }
   };
 
   const handleNote = (lead) => {
@@ -61,7 +62,7 @@ export default function CampaignsPage({
       });
       if (!res.ok) {
         let msg = `Failed to save note (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch(_) {}
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
         alert(msg);
         return;
       }

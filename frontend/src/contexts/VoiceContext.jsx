@@ -42,7 +42,7 @@ export function VoiceProvider({ children }) {
           if (found) setSavedVoiceName(found.name);
         }
         if (vs.tts_language) setActiveLanguage(vs.tts_language);
-      } catch (e) {}
+      } catch { /* ignore */ }
     })();
   }, [currentUser, selectedOrg, apiFetch]);
 
@@ -58,6 +58,7 @@ export function VoiceProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useVoice() {
   const ctx = useContext(VoiceContext);
   if (!ctx) throw new Error('useVoice must be used within VoiceProvider');

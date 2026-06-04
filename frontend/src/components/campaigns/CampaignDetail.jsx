@@ -45,7 +45,7 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
         const data = await res.json();
         setJob(data);
         if (data.status !== 'running') stopPoll();
-      } catch(e) { stopPoll(); }
+      } catch { stopPoll();  }
     }, 2000);
   };
 
@@ -66,7 +66,7 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
       }
       setJob({ status: 'running', total: data.total, sent: 0, failed: 0, errors: [] });
       pollStatus(data.job_id);
-    } catch(e) { setError('Network error'); }
+    } catch { setError('Network error');  }
     setBlasting(false);
   };
 
@@ -197,7 +197,7 @@ export default function CampaignDetail({
           return next;
         });
       }, 2000);
-    } catch (e) { /* network/permission — silently skip badge */ }
+    } catch { /* network/permission — silently skip badge */  }
   };
 
   const fetchInsights = async () => {
@@ -227,22 +227,6 @@ export default function CampaignDetail({
     setInsightsLoading(false);
   };
 
-  useEffect(() => {
-    if (detailTab === 'insights') fetchInsights();
-    if (detailTab === 'retries') fetchRetries();
-  }, [detailTab, selectedCampaign.id]);
-
-  useEffect(() => {
-    const fetchBilling = async () => {
-      try {
-        const res = await apiFetch(`${API_URL}/billing/usage`);
-        const data = await res.json();
-        if (data && data.has_subscription) setBillingUsage(data);
-      } catch (e) { /* no subscription — ignore */ }
-    };
-    fetchBilling();
-  }, []);
-
   const fetchRetries = async () => {
     setRetriesLoading(true);
     try {
@@ -252,6 +236,25 @@ export default function CampaignDetail({
     } catch (e) { console.error('Failed to fetch retries', e); }
     setRetriesLoading(false);
   };
+
+  useEffect(() => {
+     
+    if (detailTab === 'insights') fetchInsights();
+    if (detailTab === 'retries') fetchRetries();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailTab, selectedCampaign.id]);
+
+  useEffect(() => {
+    const fetchBilling = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/billing/usage`);
+        const data = await res.json();
+        if (data && data.has_subscription) setBillingUsage(data);
+      } catch { /* no subscription — ignore */  }
+    };
+    fetchBilling();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scoreColor = (s) => {
     if (s >= 4) return T.green;
@@ -469,7 +472,7 @@ export default function CampaignDetail({
               setLiveEvents([]);
               try {
                 localStorage.setItem(`liveEventsClearedAt:${selectedCampaign.id}`, String(Date.now()));
-              } catch (_) { }
+              } catch { /* ignore */ }
             }} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: '0.7rem', fontFamily: T.font }}>Clear</button>
           )}
         </div>
@@ -589,7 +592,7 @@ export default function CampaignDetail({
                 alert(data.message || 'Dialing started');
                 const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
                 setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-              } catch(e) { alert('Dial failed'); }
+              } catch { alert('Dial failed');  }
             }}>
             📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
@@ -603,7 +606,7 @@ export default function CampaignDetail({
               alert(data.message || 'Dialing started');
               const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
               setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-            } catch(e) { alert('Failed'); }
+            } catch { alert('Failed');  }
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>
@@ -1105,8 +1108,7 @@ export default function CampaignDetail({
                       setScheduleLead(null);
                       setScheduleStatus({ kind: '', text: '' });
                     }
-                  } catch (e) {
-                    setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.' });
+                  } catch { setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.'  });
                   }
                   setScheduleSaving(false);
                 }}>

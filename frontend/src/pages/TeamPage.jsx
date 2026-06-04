@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
 
@@ -56,9 +56,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [newKey, setNewKey] = useState(null); // { user_id, email, key }
   const [keyBusyUserId, setKeyBusyUserId] = useState(null);
 
-  useEffect(() => { fetchTeam(); }, []);
-
-  const fetchTeam = async () => {
+  const fetchTeam = useCallback(async () => {
     setLoading(true);
     try {
       const [mRes, iRes, kRes] = await Promise.all([
@@ -83,7 +81,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
       }
     } catch (e) { console.error('Team fetch error:', e); }
     setLoading(false);
-  };
+  }, [apiFetch, API_URL]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchTeam(); }, [fetchTeam]);
 
   const isAdminMember = (m) => m && m.role === 'Admin';
 
@@ -103,7 +104,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
       }
       setNewKey({ user_id: member.id, email: member.email, key: data.key });
       fetchTeam();
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
     setKeyBusyUserId(null);
   };
 
@@ -131,7 +132,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
       } else {
         fetchTeam();
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
     setKeyBusyUserId(null);
   };
 
@@ -152,7 +153,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
       } else {
         fetchTeam();
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
     setKeyBusyUserId(null);
   };
 
@@ -161,13 +162,12 @@ export default function TeamPage({ apiFetch, API_URL }) {
     try {
       await navigator.clipboard.writeText(newKey.key);
       toast('API key copied to clipboard', 'success');
-    } catch (_) {
-      await promptInline({
+    } catch { await promptInline({
         title: 'Copy API key',
         message: 'Clipboard access was blocked — select and copy manually.',
         defaultValue: newKey.key,
         okText: 'Done',
-      });
+       });
     }
   };
 
@@ -197,9 +197,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
       } else {
         setInviteError(data.error || data.detail || 'Failed to send invite');
       }
-    } catch (e) {
-      setInviteError('Network error');
-    }
+    } catch { setInviteError('Network error');
+     }
     setInviteLoading(false);
   };
 
@@ -215,15 +214,14 @@ export default function TeamPage({ apiFetch, API_URL }) {
         await navigator.clipboard.writeText(data.invite_link);
         setCopiedInviteId(inviteId);
         setTimeout(() => setCopiedInviteId(prev => prev === inviteId ? null : prev), 2000);
-      } catch (_) {
-        await promptInline({
+      } catch { await promptInline({
           title: 'Copy invite link',
           message: 'Clipboard access was blocked — select and copy manually.',
           defaultValue: data.invite_link,
           okText: 'Done',
-        });
+         });
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
   };
 
   const handleCancelInvite = async (invite) => {
@@ -241,10 +239,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
         fetchTeam();
       } else {
         let msg = `Failed to cancel invite (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
         toast(msg, 'error');
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
   };
 
   const handleRoleChange = async (userId, newRole) => {
@@ -259,7 +257,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
         const data = await res.json();
         toast(data.detail || 'Failed to update role', 'error');
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
   };
 
   const handleDelete = async (member) => {
@@ -277,10 +275,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
         fetchTeam();
       } else {
         let msg = `Failed to remove user (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) {}
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
         toast(msg, 'error');
       }
-    } catch (e) { toast('Network error', 'error'); }
+    } catch { toast('Network error', 'error');  }
   };
 
   const roleBadge = (role) => {

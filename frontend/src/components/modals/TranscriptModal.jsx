@@ -71,6 +71,7 @@ function ConclusionCard({ transcriptId, turns }) {
 
   useEffect(() => {
     if (!transcriptId || !interactionHappened) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConclusion(false);
   }, [fetchConclusion, transcriptId, interactionHappened]);
 

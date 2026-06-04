@@ -133,6 +133,7 @@ export default function ProductsTab({
           }));
         });
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts]);
 
   const updateProductPrompt = (productId, field, value) => {
@@ -154,7 +155,7 @@ export default function ProductsTab({
         });
         alert('System prompt generated and saved! Review it in Settings → AI System Prompt.');
       } else { alert(data.message || 'Generation failed'); }
-    } catch(e) { alert('Failed to generate'); }
+    } catch { alert('Failed to generate');  }
     updateProductPrompt(productId, 'generating', false);
   };
 
@@ -173,7 +174,7 @@ export default function ProductsTab({
           body: JSON.stringify({ agent_persona: data.agent_persona, call_flow_instructions: data.call_flow_instructions })
         });
       } else { alert(data.message || 'Generation failed'); }
-    } catch(e) { alert('Failed to generate persona'); }
+    } catch { alert('Failed to generate persona');  }
     updateProductPrompt(productId, 'generatingPersona', false);
   };
 

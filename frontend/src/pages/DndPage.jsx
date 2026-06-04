@@ -82,6 +82,7 @@ export default function DndPage({ apiFetch, API_URL }) {
     setLoading(false);
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { fetchNumbers(page); }, [page]);
 
   const handleAdd = async () => {
@@ -123,7 +124,7 @@ export default function DndPage({ apiFetch, API_URL }) {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(phone)}`);
       const data = await res.json();
       setCheckResult(data);
-    } catch (e) { setCheckResult({ error: 'Check failed' }); }
+    } catch { setCheckResult({ error: 'Check failed'  }); }
   };
 
   const handleImport = async (e) => {

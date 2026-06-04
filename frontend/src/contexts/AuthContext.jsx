@@ -61,6 +61,7 @@ export function AuthProvider({ children }) {
   // Sets authReady=true when done so apiFetch knows it's safe to clear the
   // session on 401 (rather than racing with this check on first render).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!authToken) { setAuthReady(true); return; }
     setAuthReady(false);
     fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
@@ -130,6 +131,7 @@ export function AuthProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');

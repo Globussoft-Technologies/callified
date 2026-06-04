@@ -64,10 +64,7 @@ function makeSpark(val, len = 10) {
 
 export default function CrmTab({
   userRole, API_URL,
-  activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId,
-  activeLanguage, setActiveLanguage,
-  INDIAN_VOICES, INDIAN_LANGUAGES,
-  selectedOrg, apiFetch, savedVoiceName, setSavedVoiceName,
+  apiFetch,
   campaigns, dashSummary, onCampaignClick
 }) {
   const activeCampaigns   = campaigns.filter(c => c.status === 'active');
@@ -88,6 +85,7 @@ export default function CrmTab({
   const closeModal = () => { setActiveModal(null); setModalSearch(''); setModalLeads([]); };
 
   useEffect(() => {
+     
     if (!activeModal || activeModal === 'campaigns') { setModalLeads([]); return; }
     const fetch = async () => {
       setModalLeadsLoading(true);
@@ -101,10 +99,11 @@ export default function CrmTab({
           })
         );
         setModalLeads(results.flat());
-      } catch (e) { setModalLeads([]); }
+      } catch { setModalLeads([]);  }
       setModalLeadsLoading(false);
     };
     fetch();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeModal]);
 
   const callPct = totalLeads > 0 ? Math.round((totalCalled / totalLeads) * 100) : 0;

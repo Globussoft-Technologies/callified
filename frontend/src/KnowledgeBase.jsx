@@ -33,10 +33,12 @@ export default function KnowledgeBase({ apiUrl }) {
   };
 
   useEffect(() => {
+     
     fetchFiles();
     // Poll every 5 seconds since FAISS processes in the background
     const interval = setInterval(fetchFiles, 5000);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleUpload = async (e) => {
@@ -74,7 +76,7 @@ export default function KnowledgeBase({ apiUrl }) {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       fetchFiles();
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
 
   return (

@@ -1,10 +1,11 @@
 import paramiko
+import os
 import requests
 import time
 
-host = "163.227.174.141"
-username = "empcloud-development"
-password = "rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u"
+host = os.environ.get("DEPLOY_HOST", "163.227.174.141")
+username = os.environ.get("DEPLOY_USER", "empcloud-development")
+password = os.environ.get("DEPLOY_PASSWORD")
 
 print("--- INJECTING SYNTHETIC TRACE FILE ---")
 client = paramiko.SSHClient()

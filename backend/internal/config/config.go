@@ -24,7 +24,7 @@ type Config struct {
 	MySQLDatabase string `env:"MYSQL_DATABASE" envDefault:"callified_ai"`
 
 	// JWT auth (shared secret with Python FastAPI)
-	JWTSecret string `env:"JWT_SECRET_KEY" envDefault:"your-secret-key-replace-in-production"`
+	JWTSecret string `env:"JWT_SECRET_KEY"`
 
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`
@@ -122,6 +122,12 @@ func Load() (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
+	}
+	if cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET_KEY is required")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET_KEY must be at least 32 characters long")
 	}
 	return cfg, nil
 }

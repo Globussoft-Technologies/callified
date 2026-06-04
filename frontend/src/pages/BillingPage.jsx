@@ -37,6 +37,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const invoiceFrameRef = useRef(null);
   const [loading, setLoading] = useState(true);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
@@ -55,9 +56,9 @@ export default function BillingPage({ apiFetch, API_URL }) {
       const subData   = await subRes.json();   if (subData && !subData.error) setSubscription(subData);
       const usageData = await usageRes.json(); if (usageData && !usageData.error) setUsage(usageData);
       const payData   = await payRes.json();   if (Array.isArray(payData)) setPayments(payData);
-      try { const invData = await invRes.json(); if (Array.isArray(invData)) setInvoices(invData); } catch(e) { setInvoices([]); }
-      try { const c = await creditsRes.json(); if (c && !c.error) setCredits(c); } catch(e) { setCredits(null); }
-      try { const t = await creditTxRes.json(); if (Array.isArray(t)) setCreditTxns(t); } catch(e) { setCreditTxns([]); }
+      try { const invData = await invRes.json(); if (Array.isArray(invData)) setInvoices(invData); } catch { setInvoices([]);  }
+      try { const c = await creditsRes.json(); if (c && !c.error) setCredits(c); } catch { setCredits(null);  }
+      try { const t = await creditTxRes.json(); if (Array.isArray(t)) setCreditTxns(t); } catch { setCreditTxns([]);  }
     } catch(e) { console.error('Billing fetch error:', e); }
     setLoading(false);
   };
@@ -110,9 +111,8 @@ export default function BillingPage({ apiFetch, API_URL }) {
         const subRes = await apiFetch(`${API_URL}/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
         if (subRes.ok) { fetchAll(); }
       }
-    } catch(e) {
-      try {
-        const subRes = await apiFetch(`${API_URL}/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
+    } catch { try {
+        const subRes = await apiFetch(`${API_URL }/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
         if (subRes.ok) { fetchAll(); }
       } catch(e2) { alert('Failed to subscribe: ' + e2.message); }
     }
@@ -139,7 +139,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
     try {
       await apiFetch(`${API_URL}/billing/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'User cancelled' }) });
       fetchAll();
-    } catch(e) { alert('Failed to cancel'); }
+    } catch { alert('Failed to cancel');  }
   };
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading billing…</div>;

@@ -23,6 +23,7 @@ export default function SsoReturn() {
     const errParam = params.get('error');
 
     if (errParam) {
+       
       setError(errParam);
       return;
     }
@@ -33,6 +34,7 @@ export default function SsoReturn() {
     loginWithToken(token)
       .then(() => navigate(next, { replace: true }))
       .catch((e) => setError(String(e.message || 'sso_handshake_failed')));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // run once on mount
 
   return (

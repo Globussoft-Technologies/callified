@@ -36,9 +36,8 @@ export function CallProvider({ children }) {
       } else {
         alert(`Status: ${data.message || 'Connecting call...'}`);
       }
-    } catch(e) {
-      alert("Failed to hit the dialer API. Check console.");
-    }
+    } catch { alert("Failed to hit the dialer API. Check console.");
+     }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
@@ -137,7 +136,7 @@ export function CallProvider({ children }) {
           if (data.type === 'clear') {
             // Backend barge-in — stop all queued audio immediately
             console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
-            activeSources.forEach(s => { try { s.stop(); } catch (_) {} });
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
             activeSources = [];
             nextPlayTime = audioContext.currentTime;
             if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
@@ -246,7 +245,7 @@ export function CallProvider({ children }) {
     try {
       const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
       campVoice = await vRes.json();
-    } catch(e) {}
+    } catch { /* ignore */ }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -332,7 +331,7 @@ export function CallProvider({ children }) {
           if (data.type === 'clear') {
             // Backend barge-in — stop all queued audio immediately
             console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
-            activeSources.forEach(s => { try { s.stop(); } catch (_) {} });
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
             activeSources = [];
             nextPlayTime = audioContext.currentTime;
             if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
@@ -469,6 +468,7 @@ export function CallProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCall() {
   const ctx = useContext(CallContext);
   if (!ctx) throw new Error('useCall must be used within CallProvider');

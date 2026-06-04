@@ -5,7 +5,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -298,8 +297,6 @@ func (s *Server) twilioGather(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) twilioStatus(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err == nil {
-		log.Printf("twilio status callback: %v", r.PostForm)
-	}
+	_ = r.ParseForm()
 	w.WriteHeader(http.StatusNoContent)
 }

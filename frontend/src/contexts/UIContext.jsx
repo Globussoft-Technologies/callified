@@ -4,8 +4,11 @@ const ToastCtx   = createContext(null);
 const ConfirmCtx = createContext(null);
 const PromptCtx  = createContext(null);
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast()   { return useContext(ToastCtx);   }
+// eslint-disable-next-line react-refresh/only-export-components
 export function useConfirm() { return useContext(ConfirmCtx); }
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePrompt()  { return useContext(PromptCtx);  }
 
 const STYLE_ID = 'ui-providers-styles';

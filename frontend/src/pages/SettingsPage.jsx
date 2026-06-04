@@ -12,13 +12,8 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
 
-  useEffect(() => {
-    fetchPronunciations();
-    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
-  }, [selectedOrg]);
-
   const fetchPronunciations = async () => {
-    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch { /* ignore */ }
   };
 
   const fetchSystemPrompt = async (orgId) => {
@@ -28,8 +23,15 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       setSystemPromptAuto(data.auto_generated || '');
       setSystemPromptCustom(data.custom_prompt || '');
       setPromptDirty(false);
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
+
+  useEffect(() => {
+     
+    fetchPronunciations();
+    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrg]);
 
   const handleAddPronunciation = async (e) => {
     e.preventDefault();

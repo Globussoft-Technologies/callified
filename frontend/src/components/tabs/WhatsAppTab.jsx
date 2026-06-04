@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { formatDateTime, formatTime } from '../../utils/dateFormat';
+import { formatTime } from '../../utils/dateFormat';
 
 const PROVIDERS = [
   { value: 'gupshup', label: 'Gupshup' },
@@ -90,20 +90,6 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
   const [connectedPhone, setConnectedPhone] = useState(existingPhone || '');
   const sdkReady = useRef(false);
 
-  useEffect(() => {
-    apiFetch(`${API_URL}/wa/meta/app-config`)
-      .then(r => r.json())
-      .then(cfg => {
-        setAppConfig(cfg);
-        loadFBSDK(cfg.app_id, cfg.graph_version || 'v25.0');
-      })
-      .catch(() => setError('Could not load Meta app config from server'));
-  }, [apiFetch, API_URL]);
-
-  useEffect(() => {
-    setConnectedPhone(existingPhone || '');
-  }, [existingPhone]);
-
   const loadFBSDK = (appId, version) => {
     if (document.getElementById('facebook-jssdk')) {
       if (window.FB) {
@@ -121,6 +107,21 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
     s.src = 'https://connect.facebook.net/en_US/sdk.js';
     document.head.appendChild(s);
   };
+
+  useEffect(() => {
+    apiFetch(`${API_URL}/wa/meta/app-config`)
+      .then(r => r.json())
+      .then(cfg => {
+        setAppConfig(cfg);
+        loadFBSDK(cfg.app_id, cfg.graph_version || 'v25.0');
+      })
+      .catch(() => setError('Could not load Meta app config from server'));
+  }, [apiFetch, API_URL]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setConnectedPhone(existingPhone || '');
+  }, [existingPhone]);
 
   const handleConnect = () => {
     if (!window.FB || !appConfig) {
@@ -235,17 +236,17 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
 }
 
 /* ─── Config Modal ─── */
-function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
+function ConfigModal({ show, onClose, apiFetch, API_URL }) {
   const [provider, setProvider] = useState('gupshup');
   const [creds, setCreds] = useState({});
   const [defaultProduct, setDefaultProduct] = useState('');
   const [autoReply, setAutoReply] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!show) return;
+     
     setError('');
     apiFetch(`${API_URL}/wa/config`)
       .then(r => r.ok ? r.json() : null)
@@ -256,9 +257,9 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
           setDefaultProduct(data.default_product_id || '');
           setAutoReply(data.auto_reply !== false);
         }
-        setLoaded(true);
       })
-      .catch(() => setLoaded(true));
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show]);
 
   // Required = every field shown for the current provider. The list in
@@ -285,15 +286,14 @@ function ConfigModal({ show, onClose, apiFetch, API_URL, orgProducts }) {
       });
       if (!res.ok) {
         let msg = `Save failed (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch (_) { }
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
         setError(msg);
         setSaving(false);
         return;
       }
       onClose();
-    } catch (e) {
-      setError('Network error — could not reach server');
-    }
+    } catch { setError('Network error — could not reach server');
+     }
     setSaving(false);
   };
 
@@ -509,7 +509,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
       if (res.ok && data?.success && data?.data?.qrCode) {
         setQr(data.data.qrCode);
       }
-    } catch (_) { /* ignore — next tick retries */ }
+    } catch { /* ignore — next tick retries */  }
   }, [session?.id, apiFetch, API_URL]);
 
   // QR-only polling: while we're showing a QR (i.e. session is not yet
@@ -521,6 +521,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
     if (!session || isConnected(session.status)) { setQr(''); return; }
     qrTimerRef.current = setInterval(refreshQR, 30000);
     return () => clearInterval(qrTimerRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, session?.status, refreshQR]);
 
   // Surface hook-level fetch errors inline on the panel — but treat
@@ -746,6 +747,7 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
   // leak back in if the user cancelled and reopened.
   useEffect(() => {
     if (!show) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPhone(''); setName(''); setText(''); setError(''); setBusy(false);
   }, [show]);
 
@@ -786,10 +788,9 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
       const stored = data.phone || normalized.replace(/^\+/, '');
       onStarted(stored, name.trim());
       onClose();
-    } catch (e) {
-      setError('Network error — could not reach server');
+    } catch { setError('Network error — could not reach server');
       setBusy(false);
-    }
+     }
   };
 
   return (
@@ -840,7 +841,7 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
 }
 
 /* ─── Main Component ─── */
-export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOrg, orgTimezone }) {
+export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
   const [conversations, setConversations] = useState([]);
   const [selectedPhone, setSelectedPhone] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -896,7 +897,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
     try {
       sessionStorage.setItem('wa_ensured_phones',
         JSON.stringify([...ensuredPhonesRef.current]));
-    } catch (_) {}
+    } catch { /* ignore */ }
 
     // Only auto-open session panel on a fresh scan (transition),
     // not when the page loads and the session is already connected.
@@ -913,7 +914,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
       try {
         sessionStorage.setItem('wa_ensured_phones',
           JSON.stringify([...ensuredPhonesRef.current]));
-      } catch (_) {}
+      } catch { /* ignore */ }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionConnected, sessionPhone, apiFetch, API_URL]);
@@ -1354,7 +1355,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgProducts, selectedOr
 
       {/* Config Modal */}
       <ConfigModal show={showConfig} onClose={() => setShowConfig(false)}
-        apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} />
+        apiFetch={apiFetch} API_URL={API_URL} />
 
       {/* New Chat Modal — onStarted jumps the inbox to the new
           conversation so the operator can keep typing without finding it

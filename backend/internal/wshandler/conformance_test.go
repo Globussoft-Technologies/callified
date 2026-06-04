@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/config"
+	"github.com/globussoft/callified-backend/internal/db"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 )
 
@@ -24,7 +25,7 @@ func newTestHandler(t *testing.T) *Handler {
 	log := zap.NewNop()
 	cfg := &config.Config{Port: 8001, GRPCAddr: "localhost:50051"}
 	store := rstore.New("", log) // empty URL → pure in-memory fallback
-	return New(cfg, nil, nil, store, log)
+	return New(cfg, nil, nil, store, (*db.DB)(nil), log)
 }
 
 // dialWS connects a test WebSocket client to the given httptest server URL + path.
@@ -163,14 +164,20 @@ func TestBinaryFrameAccepted(t *testing.T) {
 
 // ─── Session unit tests ──────────────────────────────────────────────────────
 
-// TestMaxTokensByLanguage verifies Marathi gets 400 tokens, others 250.
-func TestMaxTokensByLanguage(t *testing.T) {
-	for _, lang := range []string{"hi", "en", "ta", "te", ""} {
-		sess := &CallSession{Language: lang}
-		assert.Equal(t, int32(250), sess.MaxTokens(), "lang=%q should be 250", lang)
-	}
-	sess := &CallSession{Language: "mr"}
-	assert.Equal(t, int32(400), sess.MaxTokens())
+// TestMaxTokens verifies token allocation is based on transcript length,
+// clamped between 150 and 400.
+func TestMaxTokens(t *testing.T) {
+	sess := &CallSession{Language: "hi"}
+
+	// Short transcript (2 words → 40) clamped to minimum 150
+	assert.Equal(t, int32(150), sess.MaxTokens("test transcript"), "short transcript should be 150")
+
+	// Medium transcript (10 words → 200)
+	assert.Equal(t, int32(200), sess.MaxTokens("one two three four five six seven eight nine ten"))
+
+	// Long transcript (>20 words → >400) clamped to maximum 400
+	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
+	assert.Equal(t, int32(400), sess.MaxTokens(longText), "long transcript should be 400")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).

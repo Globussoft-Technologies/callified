@@ -6,16 +6,18 @@ export default function OpsPage({ apiFetch, API_URL }) {
   const [reports, setReports] = useState(null);
 
   const fetchTasks = async () => {
-    try { const res = await apiFetch(`${API_URL}/tasks`); setTasks(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/tasks`); setTasks(await res.json()); } catch { /* ignore */ }
   };
 
   const fetchReports = async () => {
-    try { const res = await apiFetch(`${API_URL}/reports`); setReports(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/reports`); setReports(await res.json()); } catch { /* ignore */ }
   };
 
   useEffect(() => {
+     
     fetchTasks();
     fetchReports();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleCompleteTask = async (taskId) => {

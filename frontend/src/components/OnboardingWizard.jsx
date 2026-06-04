@@ -7,7 +7,7 @@ const STEPS = [
   { key: 'campaign', label: 'Create Campaign' },
 ];
 
-export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgProducts, fetchOrgProducts, onComplete }) {
+export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgProducts, onComplete }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [stepStatus, setStepStatus] = useState({ leads: false, voice: false, campaign: false });
   const [allDone, setAllDone] = useState(false);
@@ -35,14 +35,17 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
       const res = await apiFetch(`${API_URL}/onboarding/status`);
       const data = await res.json();
       setStepStatus(data.steps);
-    } catch (e) {}
+    } catch { /* ignore */ }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { refreshStatus(); }, []);
   useEffect(() => {
     if (orgProducts && orgProducts.length > 0 && !productId) {
+       
       setProductId(orgProducts[0].id);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts]);
 
   // --- Step 1: CSV Upload ---
@@ -61,8 +64,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
       setCsvFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       await refreshStatus();
-    } catch (e) {
-      setUploadResult({ status: 'error', errors: ['Upload failed'] });
+    } catch { setUploadResult({ status: 'error', errors: ['Upload failed']  });
     }
     setUploading(false);
   };
@@ -78,7 +80,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
         body: JSON.stringify({ tts_provider: voiceProvider, tts_voice_id: voiceId, tts_language: language })
       });
       await refreshStatus();
-    } catch (e) {}
+    } catch { /* ignore */ }
     setSavingVoice(false);
   };
 
@@ -93,7 +95,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
         body: JSON.stringify({ name: campaignName.trim(), product_id: parseInt(productId) })
       });
       await refreshStatus();
-    } catch (e) {}
+    } catch { /* ignore */ }
     setCreatingCampaign(false);
   };
 
@@ -101,16 +103,16 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
   const handleFinish = async () => {
     try {
       await apiFetch(`${API_URL}/onboarding/complete`, { method: 'POST' });
-    } catch (e) {}
+    } catch { /* ignore */ }
     onComplete();
   };
 
   const voices = INDIAN_VOICES[voiceProvider] || [];
-  const stepsDone = Object.values(stepStatus).filter(Boolean).length;
 
   // Determine if we should show the final screen
   useEffect(() => {
     if (stepStatus.leads && stepStatus.voice && stepStatus.campaign) {
+       
       setAllDone(true);
     }
   }, [stepStatus]);

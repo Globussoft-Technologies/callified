@@ -59,6 +59,7 @@ export default function CrmPage({
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setDashSummary(d); })
       .catch(() => { /* leave as null; CrmTab falls back to per-campaign sum */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchLeads = async () => {
@@ -78,7 +79,7 @@ export default function CrmPage({
       try {
         const res = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(query)}`);
         setLeads(await res.json());
-      } catch(e) {}
+      } catch { /* ignore */ }
     } else if (query.trim().length === 0) {
       fetchLeads();
     }
@@ -162,7 +163,7 @@ export default function CrmPage({
     try {
       const res = await apiFetch(`${API_URL}/leads/${lead.id}/documents`);
       setDocs(await res.json());
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
 
   const handleUploadDoc = async (e) => {
@@ -196,7 +197,7 @@ export default function CrmPage({
       });
       if (!res.ok) {
         let msg = `Failed to save note (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch(_) {}
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
         alert(msg);
         return;
       }
@@ -229,7 +230,7 @@ export default function CrmPage({
       if (!res.ok) { setTranscripts([]); return; }
       const data = await res.json();
       setTranscripts(Array.isArray(data) ? data : []);
-    } catch(e) { setTranscripts([]); }
+    } catch { setTranscripts([]);  }
   };
 
   return (

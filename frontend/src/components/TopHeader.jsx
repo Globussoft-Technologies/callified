@@ -62,6 +62,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [moreOpen]);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMoreOpen(false); }, [location.pathname]);
 
   const moreActive = MORE_ADMIN_TABS.some(t => t.id === activeTab);
