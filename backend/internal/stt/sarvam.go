@@ -35,6 +35,11 @@ type SarvamClient struct {
 	// Set by the handler so transcribe() can skip re-verification when the
 	// detected language already matches the current one.
 	CurrentLang func() string
+
+	// consecutivePaDetections counts back-to-back utterances confirmed as Punjabi.
+	// Auto-switch to Punjabi is only allowed after 2 consecutive detections,
+	// preventing single ambiguous utterances from falsely triggering a switch.
+	consecutivePaDetections int
 }
 
 // NewSarvamClient creates a Sarvam STT client.
@@ -218,6 +223,28 @@ func (c *SarvamClient) transcribe(ctx context.Context, pcm []byte) {
 					)
 				}
 			}
+		}
+
+		// Consecutive Punjabi guard: require 2 back-to-back confirmed Punjabi
+		// utterances before auto-switching any language → pa. This prevents
+		// single ambiguous utterances (e.g. "pandra toh bees lakh" in a Hindi
+		// or English session) from falsely triggering a Punjabi switch.
+		if verifiedLang == "pa" {
+			c.consecutivePaDetections++
+			if c.consecutivePaDetections < 2 {
+				c.log.Info("sarvam stt: punjabi consecutive guard, suppressing switch",
+					zap.Int("count", c.consecutivePaDetections),
+					zap.String("text", text),
+				)
+				verifiedLang = ""
+			} else {
+				c.log.Info("sarvam stt: punjabi consecutive confirmed, allowing switch",
+					zap.String("text", text),
+				)
+				c.consecutivePaDetections = 0
+			}
+		} else {
+			c.consecutivePaDetections = 0
 		}
 
 		c.OnTranscriptWithLang(text, verifiedLang)
