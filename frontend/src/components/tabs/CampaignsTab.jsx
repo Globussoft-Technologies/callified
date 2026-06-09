@@ -3,6 +3,7 @@ import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
@@ -13,6 +14,7 @@ export default function CampaignsTab({
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket } = useAuth();
+  const toast = useToast();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -36,6 +38,7 @@ export default function CampaignsTab({
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
+  const [editCampaignError, setEditCampaignError] = useState('');
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
@@ -271,12 +274,13 @@ export default function CampaignsTab({
       lead_source: campaign.lead_source || '',
       channel: campaign.channel || 'voice'
     });
+    setEditCampaignError('');
     setShowEditCampaignModal(true);
   };
 
   const handleSaveEditCampaign = async (e) => {
     e.preventDefault();
-    if (!editCampaignForm.name.trim()) return;
+    if (!editCampaignForm.name.trim()) { setEditCampaignError('Campaign name is required.'); return; }
     setLoading(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
@@ -343,7 +347,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch { alert('Save failed');  }
+    } catch { toast('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -396,7 +400,7 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      alert(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);
@@ -484,6 +488,8 @@ export default function CampaignsTab({
           editCampaignForm={editCampaignForm}
           setEditCampaignForm={setEditCampaignForm}
           handleSaveEditCampaign={handleSaveEditCampaign}
+          editCampaignError={editCampaignError}
+          setEditCampaignError={setEditCampaignError}
         />
       </>
     );
@@ -645,6 +651,8 @@ export default function CampaignsTab({
         editCampaignForm={editCampaignForm}
         setEditCampaignForm={setEditCampaignForm}
         handleSaveEditCampaign={handleSaveEditCampaign}
+        editCampaignError={editCampaignError}
+        setEditCampaignError={setEditCampaignError}
       />
 
     </div>

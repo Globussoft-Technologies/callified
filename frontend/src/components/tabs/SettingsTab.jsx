@@ -15,9 +15,9 @@ const card = {
 };
 
 export default function SettingsTab({
-  handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
+  handleAddPronunciation, pronFormData, setPronFormData, pronError, setPronError, pronunciations, handleDeletePronunciation,
   selectedOrg,
-  promptDirty, handleSaveSystemPrompt, promptSaving, systemPromptAuto, systemPromptCustom,
+  promptDirty, handleSaveSystemPrompt, promptSaving, promptSaved, systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
   orgTimezone
 }) {
@@ -64,7 +64,7 @@ export default function SettingsTab({
               <label style={labelStyle}>Written Word</label>
               <input
                 required value={pronFormData.word}
-                onChange={e => setPronFormData({ ...pronFormData, word: e.target.value })}
+                onChange={e => { setPronFormData({ ...pronFormData, word: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Adsgpt"
                 data-testid="pron-word"
                 style={inputStyle}
@@ -75,7 +75,7 @@ export default function SettingsTab({
               <label style={labelStyle}>How to Pronounce</label>
               <input
                 required value={pronFormData.phonetic}
-                onChange={e => setPronFormData({ ...pronFormData, phonetic: e.target.value })}
+                onChange={e => { setPronFormData({ ...pronFormData, phonetic: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Ads G P T"
                 data-testid="pron-phonetic"
                 style={inputStyle}
@@ -91,6 +91,11 @@ export default function SettingsTab({
               + Add Rule
             </button>
           </form>
+          {pronError && (
+            <p style={{ margin: '-12px 0 16px', fontSize: 12, fontWeight: 600, color: '#ef4444' }}>
+              {pronError}
+            </p>
+          )}
 
           {pronunciations.length === 0 ? (
             <div style={{
@@ -158,19 +163,24 @@ export default function SettingsTab({
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
-              {promptDirty && (
-                <button
-                  onClick={handleSaveSystemPrompt} disabled={promptSaving}
-                  style={{
-                    background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
-                    borderRadius: 8, color: '#fff', padding: '8px 16px',
-                    cursor: promptSaving ? 'not-allowed' : 'pointer',
-                    fontWeight: 700, fontSize: 13, fontFamily: T.font,
-                    opacity: promptSaving ? 0.7 : 1,
-                  }}>
-                  {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
-                </button>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {!promptDirty && promptSaved && (
+                  <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+                )}
+                {promptDirty && (
+                  <button
+                    onClick={handleSaveSystemPrompt} disabled={promptSaving}
+                    style={{
+                      background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
+                      borderRadius: 8, color: '#fff', padding: '8px 16px',
+                      cursor: promptSaving ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                      opacity: promptSaving ? 0.7 : 1,
+                    }}>
+                    {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
+                  </button>
+                )}
+              </div>
             </div>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
               This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.
@@ -204,6 +214,12 @@ export default function SettingsTab({
                   fontFamily: T.mono,
                 }}
               />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: (systemPromptCustom || '').length > 8000 ? '#ef4444' : '#9ca3af' }}>
+                  {(systemPromptCustom || '').length.toLocaleString()} chars
+                  {(systemPromptCustom || '').length > 8000 && ' — approaching token limit'}
+                </span>
+              </div>
               <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
                 If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.
               </p>

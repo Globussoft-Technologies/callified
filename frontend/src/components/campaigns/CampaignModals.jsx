@@ -22,6 +22,7 @@ export default function CampaignModals({
   showEditCampaignModal, setShowEditCampaignModal,
   editCampaignForm, setEditCampaignForm,
   handleSaveEditCampaign,
+  editCampaignError, setEditCampaignError,
   setCreateError,
 }) {
   const [nameTouched, setNameTouched] = useState(false);
@@ -174,7 +175,9 @@ export default function CampaignModals({
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Communication Channel <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — defaults to voice)</span>
+                  </label>
                   <select className="form-input" value={createForm.channel || 'voice'}
                     onChange={e => setCreateForm({...createForm, channel: e.target.value})}
                     style={{width: '100%'}}>
@@ -263,7 +266,7 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}>
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
@@ -279,15 +282,18 @@ export default function CampaignModals({
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
                   value={editCampaignForm.name}
                   maxLength={CAMPAIGN_NAME_MAX_LEN}
-                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); }}
+                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); if (setEditCampaignError) setEditCampaignError(''); }}
                   onBlur={() => setEditNameTouched(true)}
                   style={{
                     width: '100%',
-                    borderColor: showEditNameError ? 'rgba(239,68,68,0.6)' : undefined,
-                    boxShadow: showEditNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                    borderColor: (showEditNameError || editCampaignError) ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: (showEditNameError || editCampaignError) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
                   }} />
                 {showEditNameError && (
                   <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>{editNameError}</p>
+                )}
+                {!showEditNameError && editCampaignError && (
+                  <p style={{margin: '4px 0 0', fontSize: 12, color: '#f87171'}}>{editCampaignError}</p>
                 )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
@@ -328,7 +334,7 @@ export default function CampaignModals({
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}
+                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>

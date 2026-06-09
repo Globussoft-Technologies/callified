@@ -5,12 +5,14 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
   // Pronunciation State
   const [pronunciations, setPronunciations] = useState([]);
   const [pronFormData, setPronFormData] = useState({ word: '', phonetic: '' });
+  const [pronError, setPronError] = useState('');
 
   // System Prompt State
   const [systemPromptAuto, setSystemPromptAuto] = useState('');
   const [systemPromptCustom, setSystemPromptCustom] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
+  const [promptSaved, setPromptSaved] = useState(false);
 
   const fetchPronunciations = async () => {
     try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch { /* ignore */ }
@@ -36,6 +38,11 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
   const handleAddPronunciation = async (e) => {
     e.preventDefault();
     if (!pronFormData.word.trim() || !pronFormData.phonetic.trim()) return;
+    if (pronFormData.word.trim().toLowerCase() === pronFormData.phonetic.trim().toLowerCase()) {
+      setPronError('The written word and phonetic version cannot be identical.');
+      return;
+    }
+    setPronError('');
     try {
       await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
@@ -63,16 +70,19 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
     });
     setPromptSaving(false);
     setPromptDirty(false);
+    setPromptSaved(true);
+    setTimeout(() => setPromptSaved(false), 3000);
   };
 
   return (
     <SettingsTab
       orgTimezone={orgTimezone}
       handleAddPronunciation={handleAddPronunciation} pronFormData={pronFormData}
-      setPronFormData={setPronFormData} pronunciations={pronunciations}
+      setPronFormData={setPronFormData} pronError={pronError} setPronError={setPronError}
+      pronunciations={pronunciations}
       handleDeletePronunciation={handleDeletePronunciation} selectedOrg={selectedOrg}
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
-      promptSaving={promptSaving} systemPromptAuto={systemPromptAuto}
+      promptSaving={promptSaving} promptSaved={promptSaved} systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
       setPromptDirty={setPromptDirty}
     />

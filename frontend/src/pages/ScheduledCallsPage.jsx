@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
+import { useToast } from '../contexts/UIContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -14,6 +15,7 @@ const card = {
 };
 
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
+  const toast = useToast();
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState(null);
@@ -34,7 +36,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
     try {
       await apiFetch(`${API_URL}/scheduled-calls/${id}`, { method: 'DELETE' });
       fetchScheduledCalls();
-    } catch { alert('Failed to cancel');  }
+    } catch { toast('Failed to cancel');  }
   };
 
   const statusStyle = (status) => {
@@ -97,7 +99,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
                 return (
                   <tr key={call.id}>
                     <td style={{ ...rowTd, color: T.sub }}>
-                      {formatDateTime(call.scheduled_time, orgTimezone)}
+                      {formatDateTime(call.scheduled_at || call.scheduled_time, orgTimezone)}
                     </td>
                     <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>
                       {call.lead_name || call.first_name || '-'}

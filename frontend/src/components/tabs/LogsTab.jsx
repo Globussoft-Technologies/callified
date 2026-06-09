@@ -55,7 +55,7 @@ function parseActivity(entry) {
       label: line,
     };
   }
-  parsed.raw = parsed.label;
+  parsed.raw = parsed.label.replace(/\s*\(\s*\)/g, '');
   return parsed;
 }
 

@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useConfirm } from '../contexts/UIContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -39,6 +41,9 @@ function SourceBadge({ source }) {
 }
 
 export default function DndPage({ apiFetch, API_URL }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const { currentUser } = useAuth();
   const [numbers, setNumbers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -83,7 +88,7 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { fetchNumbers(page); }, [page]);
+  useEffect(() => { if (currentUser?.role === 'Admin') fetchNumbers(page); }, [page, currentUser?.role]);
 
   const handleAdd = async () => {
     const phone = addPhone.trim();
@@ -109,11 +114,11 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   const handleRemove = async (phone) => {
-    if (!window.confirm(`Remove ${phone} from DND list?`)) return;
+    if (!await confirm({ message: `Remove ${phone} from DND list?` })) return;
     try {
       await apiFetch(`${API_URL}/dnd/${encodeURIComponent(phone)}`, { method: 'DELETE' });
       fetchNumbers(page);
-    } catch (e) { alert('Failed to remove: ' + e.message); }
+    } catch (e) { toast('Failed to remove: ' + e.message); }
   };
 
   const handleCheck = async () => {
@@ -144,6 +149,17 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   const totalPages = Math.ceil(totalCount / perPage);
+
+  if (currentUser?.role !== 'Admin') {
+    return (
+      <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+        <div style={{ ...card, padding: '3rem', textAlign: 'center', color: T.muted }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>Access Restricted</div>
+          <div style={{ fontSize: 13 }}>DND management is available to Admins only.</div>
+        </div>
+      </div>
+    );
+  }
 
   const thStyle = {
     fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',

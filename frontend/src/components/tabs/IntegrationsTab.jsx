@@ -122,52 +122,9 @@ export default function IntegrationsTab({
                 value={intFormData.provider}
                 onChange={e => setIntFormData({ provider: e.target.value, credentials: {} })}
                 style={{ ...inputStyle(false), cursor: 'pointer' }}>
-                <option value="HubSpot">HubSpot</option>
-                <option value="Salesforce">Salesforce</option>
-                <option value="Zoho">Zoho CRM</option>
-                <option value="Pipedrive">Pipedrive</option>
-                <option value="ActiveCampaign">ActiveCampaign</option>
-                <option value="Freshsales">Freshsales</option>
-                <option value="Monday">Monday</option>
-                <option value="Keap">Keap</option>
-                <option value="Zendesk">Zendesk</option>
-                <option value="Bitrix24">Bitrix24</option>
-                <option value="Insightly">Insightly</option>
-                <option value="Copper">Copper</option>
-                <option value="Nimble">Nimble</option>
-                <option value="Nutshell">Nutshell</option>
-                <option value="Capsule">Capsule</option>
-                <option value="AgileCRM">AgileCRM</option>
-                <option value="SugarCRM">SugarCRM</option>
-                <option value="Vtiger">Vtiger</option>
-                <option value="Apptivo">Apptivo</option>
-                <option value="Creatio">Creatio</option>
-                <option value="Maximizer">Maximizer</option>
-                <option value="Salesflare">Salesflare</option>
-                <option value="Close">Close</option>
-                <option value="Pipeline">Pipeline</option>
-                <option value="ReallySimpleSystems">ReallySimpleSystems</option>
-                <option value="EngageBay">EngageBay</option>
-                <option value="Ontraport">Ontraport</option>
-                <option value="Kustomer">Kustomer</option>
-                <option value="Dynamics365">Dynamics365</option>
-                <option value="OracleCX">OracleCX</option>
-                <option value="SAPCRM">SAPCRM</option>
-                <option value="NetSuite">NetSuite</option>
-                <option value="SageCRM">SageCRM</option>
-                <option value="Pegasystems">Pegasystems</option>
-                <option value="InforCRM">InforCRM</option>
-                <option value="Workbooks">Workbooks</option>
-                <option value="Kintone">Kintone</option>
-                <option value="Scoro">Scoro</option>
-                <option value="Odoo">Odoo</option>
-                <option value="Streak">Streak</option>
-                <option value="GoHighLevel">GoHighLevel</option>
-                <option value="LessAnnoyingCRM">LessAnnoyingCRM</option>
-                <option value="Daylite">Daylite</option>
-                <option value="AmoCRM">AmoCRM</option>
-                <option value="LeadSquared">LeadSquared</option>
-                <option value="Freshworks">Freshworks</option>
+                {Object.keys(CRM_SCHEMAS).map(p => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
               </select>
             </div>
 
@@ -210,7 +167,7 @@ export default function IntegrationsTab({
 
             <button
               type="submit"
-              disabled={loading || !isFormValid}
+              disabled={loading}
               title={!isFormValid ? `Fill in: ${missingKeys.join(', ')}` : undefined}
               style={{
                 marginTop: 4, padding: '12px 18px', borderRadius: 8, border: 'none',

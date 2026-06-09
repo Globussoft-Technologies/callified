@@ -87,7 +87,7 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
               <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
                 {m.label}
               </div>
-              <div style={{ fontSize: 36, fontWeight: 700, fontFamily: T.mono, color: m.color, lineHeight: 1 }}>
+              <div style={{ fontSize: 36, fontWeight: 700, fontFamily: T.font, color: m.color, lineHeight: 1 }}>
                 {m.value}
               </div>
             </div>

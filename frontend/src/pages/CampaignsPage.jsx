@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CampaignsTab from '../components/tabs/CampaignsTab';
 import TranscriptModal from '../components/modals/TranscriptModal';
+import { useToast } from '../contexts/UIContext';
 
 export default function CampaignsPage({
   apiFetch, API_URL, selectedOrg, orgTimezone, orgProducts,
@@ -10,6 +11,7 @@ export default function CampaignsPage({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   campaigns, fetchCampaigns
 }) {
+  const toast = useToast();
   // Leads for adding to campaigns (the global leads pool)
   const [leads, setLeads] = useState([]);
 
@@ -52,7 +54,7 @@ export default function CampaignsPage({
   const handleSaveNote = async () => {
     if (!noteLead) return;
     const trimmed = noteText.trim();
-    if (!trimmed) { alert('Note cannot be empty'); return; }
+    if (!trimmed) { toast('Note cannot be empty'); return; }
     setNoteSaving(true);
     try {
       const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
@@ -63,13 +65,13 @@ export default function CampaignsPage({
       if (!res.ok) {
         let msg = `Failed to save note (HTTP ${res.status})`;
         try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
-        alert(msg);
+        toast(msg);
         return;
       }
       setNoteLead(null);
       setNoteText('');
     } catch(e) {
-      alert('Failed to save note: ' + (e?.message || 'network error'));
+      toast('Failed to save note: ' + (e?.message || 'network error'));
     } finally {
       setNoteSaving(false);
     }

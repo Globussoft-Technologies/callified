@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
+import { useToast, useConfirm } from '../../contexts/UIContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -133,6 +134,8 @@ export default function CampaignDetail({
   handleEditCampaign
 }) {
   const stats = getCampaignStats(selectedCampaign);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -161,11 +164,11 @@ export default function CampaignDetail({
       setWaSendStatus(s => ({ ...s, [lead.id]: res.ok ? 'sent' : 'error' }));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || `Send failed (HTTP ${res.status})`);
+        toast(data.error || `Send failed (HTTP ${res.status})`);
       }
     } catch {
       setWaSendStatus(s => ({ ...s, [lead.id]: 'error' }));
-      alert('Network error — could not reach server');
+      toast('Network error — could not reach server');
     }
     setWaSendingId(null);
   };
@@ -585,28 +588,28 @@ export default function CampaignDetail({
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
-              if (!window.confirm(`Dial ALL ${newCount} new leads? (30s gap between calls)`)) return;
+              if (!await confirm({ message: `Dial ALL ${newCount} new leads? (30s gap between calls)` })) return;
               try {
                 const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
                 const data = await res.json();
-                alert(data.message || 'Dialing started');
+                toast(data.message || 'Dialing started');
                 const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
                 setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-              } catch { alert('Dial failed');  }
+              } catch { toast('Dial failed');  }
             }}>
             📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
         <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
-            if (!window.confirm(`Dial ALL ${campaignLeads.length} leads? (30s gap)`)) return;
+            if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
             try {
               const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, { method: 'POST' });
               const data = await res.json();
-              alert(data.message || 'Dialing started');
+              toast(data.message || 'Dialing started');
               const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
               setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-            } catch { alert('Failed');  }
+            } catch { toast('Failed');  }
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>

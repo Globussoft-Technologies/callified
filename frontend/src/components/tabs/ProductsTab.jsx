@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useToast, useConfirm } from '../../contexts/UIContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -30,6 +31,8 @@ export default function ProductsTab({
   apiFetch, API_URL,
   onProductsRefresh,
 }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [productPrompts, setProductPrompts] = React.useState({});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
@@ -47,14 +50,14 @@ export default function ProductsTab({
       await handleSaveProduct(productId, { website_url: currentUrl });
     }
     const urlToScrape = currentUrl !== undefined ? currentUrl : product?.website_url;
-    if (!urlToScrape) { alert('Please enter a website URL first.'); return; }
+    if (!urlToScrape) { toast('Please enter a website URL first.'); return; }
     await handleScrapeProduct(productId);
   };
 
   const handleUploadImage = async (productId) => {
     const pp = productPrompts[productId] || {};
     const file = pp.pendingFile;
-    if (!file) { alert('Please choose an image file first.'); return; }
+    if (!file) { toast('Please choose an image file first.'); return; }
     updateProductPrompt(productId, 'uploading', true);
     try {
       const formData = new FormData();
@@ -63,7 +66,7 @@ export default function ProductsTab({
       const res = await apiFetch(`${API_URL}/products/${productId}/images`, { method: 'POST', body: formData });
       if (!res.ok) {
         const txt = await res.text();
-        alert('Upload failed: ' + txt);
+        toast('Upload failed: ' + txt);
       } else {
         updateProductPrompt(productId, 'pendingFile', null);
         updateProductPrompt(productId, 'uploadLabel', '');
@@ -72,18 +75,18 @@ export default function ProductsTab({
         else if (selectedOrg) handleSaveProduct && window.location.reload();
       }
     } catch(e) {
-      alert('Upload error: ' + e.message);
+      toast('Upload error: ' + e.message);
     }
     updateProductPrompt(productId, 'uploading', false);
   };
 
   const handleDeleteManualImage = async (productId, idx) => {
-    if (!window.confirm('Remove this image?')) return;
+    if (!await confirm({ message: 'Remove this image?' })) return;
     try {
       await apiFetch(`${API_URL}/products/${productId}/images/${idx}`, { method: 'DELETE' });
       if (onProductsRefresh) onProductsRefresh();
     } catch(e) {
-      alert('Delete error: ' + e.message);
+      toast('Delete error: ' + e.message);
     }
   };
 
@@ -101,7 +104,7 @@ export default function ProductsTab({
       });
       if (onProductsRefresh) onProductsRefresh();
     } catch(e) {
-      alert('Save error: ' + e.message);
+      toast('Save error: ' + e.message);
     }
   };
 
@@ -153,9 +156,9 @@ export default function ProductsTab({
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ custom_prompt: data.prompt })
         });
-        alert('System prompt generated and saved! Review it in Settings → AI System Prompt.');
-      } else { alert(data.message || 'Generation failed'); }
-    } catch { alert('Failed to generate');  }
+        toast('System prompt generated and saved! Review it in Settings → AI System Prompt.');
+      } else { toast(data.message || 'Generation failed'); }
+    } catch { toast('Failed to generate');  }
     updateProductPrompt(productId, 'generating', false);
   };
 
@@ -173,8 +176,8 @@ export default function ProductsTab({
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agent_persona: data.agent_persona, call_flow_instructions: data.call_flow_instructions })
         });
-      } else { alert(data.message || 'Generation failed'); }
-    } catch { alert('Failed to generate persona');  }
+      } else { toast(data.message || 'Generation failed'); }
+    } catch { toast('Failed to generate persona');  }
     updateProductPrompt(productId, 'generatingPersona', false);
   };
 
@@ -187,8 +190,8 @@ export default function ProductsTab({
         body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '' })
       });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      alert('Persona & call flow saved!');
-    } catch(e) { alert('Failed to save: ' + (e.message || e)); }
+      toast('Persona & call flow saved!');
+    } catch(e) { toast('Failed to save: ' + (e.message || e)); }
     updateProductPrompt(productId, 'saving', false);
   };
 
