@@ -8,6 +8,7 @@ export default function CampaignModals({
   createForm, setCreateForm,
   handleCreateCampaign, loading, createError, orgProducts,
   selectedTemplate, setSelectedTemplate,
+  orgExotelAccounts,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
   availableLeads, selectedLeadIds, toggleLeadSelection,
@@ -185,6 +186,23 @@ export default function CampaignModals({
                     <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
                   </select>
                 </div>
+                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
+                  <div style={{marginBottom: '1.5rem'}}>
+                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                      Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
+                    </label>
+                    <select className="form-input" value={createForm.exotel_account_id || ''}
+                      onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
+                      style={{width: '100%'}}>
+                      <option value="">-- Use default / set later --</option>
+                      {orgExotelAccounts.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} · {a.account_sid} · {a.caller_id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {createError && (
                   <div style={{marginBottom: '1rem', padding: '10px 14px', borderRadius: '8px',
                     background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',

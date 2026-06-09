@@ -807,6 +807,89 @@ Return ONLY the email body text, no subject line.`, name, lead.Phone, lead.Inter
 	writeJSON(w, http.StatusOK, map[string]string{"email_draft": draft})
 }
 
+// POST /api/leads/{id}/generate-followup-note
+// Generates an AI follow-up note for a manual call based on call time, duration, and transcript.
+func (s *Server) generateFollowupNote(w http.ResponseWriter, r *http.Request) {
+	if s.llmProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
+		return
+	}
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	lead, err := s.db.GetLeadByID(id)
+	if err != nil || lead == nil {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+
+	// Build context from most recent call transcript
+	callContext := ""
+	transcriptRecordingURL := ""
+	recordingFilename := ""
+	if transcripts, err := s.db.GetTranscriptsByLead(id); err == nil && len(transcripts) > 0 {
+		t := transcripts[0]
+		callContext += fmt.Sprintf("Call time: %s\n", t.CreatedAt)
+		if t.CallDurationS > 0 {
+			mins := int(t.CallDurationS) / 60
+			secs := int(t.CallDurationS) % 60
+			if mins > 0 {
+				callContext += fmt.Sprintf("Call duration: %dm %ds\n", mins, secs)
+			} else {
+				callContext += fmt.Sprintf("Call duration: %ds\n", secs)
+			}
+		}
+		if t.RecordingURL != "" {
+			transcriptRecordingURL = t.RecordingURL
+			parts := strings.Split(t.RecordingURL, "/")
+			recordingFilename = parts[len(parts)-1]
+		}
+		// Include transcript turns if it's an AI call (not a human-call stub)
+		var turns []struct {
+			Role string `json:"role"`
+			Text string `json:"text"`
+		}
+		if json.Unmarshal(t.Transcript, &turns) == nil {
+			var sb strings.Builder
+			for _, turn := range turns {
+				if turn.Role == "system" {
+					continue
+				}
+				sb.WriteString(turn.Role + ": " + turn.Text + "\n")
+			}
+			if sb.Len() > 0 {
+				callContext += "Transcript:\n" + sb.String()
+			}
+		}
+	}
+
+	name := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+	prompt := fmt.Sprintf(`You are a sales assistant. Generate a concise follow-up note (3-5 sentences) for a sales agent after a call with %s (phone: %s).
+Interest: %s
+
+%s
+The note should summarise:
+- When the call happened and how long it lasted (if known)
+- Key points discussed or outcome
+- Recommended next action
+
+Return ONLY the note text, no labels or headers.`, name, lead.Phone, lead.Interest, callContext)
+
+	note, err := s.llmProvider.GenerateResponse(r.Context(), prompt,
+		[]llm.ChatMessage{{Role: "user", Text: "Generate follow-up note"}}, 250)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "LLM error: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"note":              strings.TrimSpace(note),
+		"recording_url":     transcriptRecordingURL,
+		"recording_filename": recordingFilename,
+	})
+}
+
 // ── POST /api/transcripts/{id}/conclusion ────────────────────────────────────
 //
 // (Re)generates the AI conclusion for a single transcript on demand and

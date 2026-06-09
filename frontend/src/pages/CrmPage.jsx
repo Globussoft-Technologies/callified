@@ -273,6 +273,7 @@ export default function CrmPage({
       <TranscriptModal
         transcriptLead={transcriptLead} setTranscriptLead={setTranscriptLead}
         transcripts={transcripts} orgTimezone={orgTimezone}
+        onRefresh={handleViewTranscripts}
       />
       <EmailDraftModal
         emailDraft={emailDraft} setEmailDraft={setEmailDraft}

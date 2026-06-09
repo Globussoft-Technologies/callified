@@ -24,6 +24,7 @@ import ScheduledCallsPage from './pages/ScheduledCallsPage';
 import CampaignsPage from './pages/CampaignsPage';
 import TeamPage from './pages/TeamPage';
 import ReceptionistPage from './pages/ReceptionistPage';
+import ExotelAccountsPage from './pages/ExotelAccountsPage';
 import './index.css';
 import { API_URL } from './constants/api';
 import { INDIAN_VOICES, INDIAN_LANGUAGES } from './constants/voices';
@@ -174,6 +175,7 @@ export default function App() {
         <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
         <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/receptionist" element={<ReceptionistPage />} />
+        <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
         <Route path="/rag" element={<Navigate to="/knowledge" replace />} />
         <Route path="/livelogs" element={<Navigate to="/logs" replace />} />
         <Route path="*" element={<Navigate to="/crm" replace />} />

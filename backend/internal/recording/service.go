@@ -37,12 +37,19 @@ type SaveRequest struct {
 }
 
 // Service handles post-call analysis.
+// s3Uploader is a minimal interface so the recording package doesn't need to
+// import the storage package directly (avoids any future cycle).
+type s3Uploader interface {
+	UploadPublic(ctx context.Context, key string, data []byte) (string, error)
+}
+
 type Service struct {
 	database   *db.DB
 	llm        *llm.Provider
 	dispatcher *webhook.Dispatcher
 	cfg        *config.Config
 	log        *zap.Logger
+	s3         s3Uploader // nil when S3 is not configured
 }
 
 // New creates a Service.
@@ -55,6 +62,9 @@ func New(database *db.DB, llmProvider *llm.Provider, dispatcher *webhook.Dispatc
 		log:        log,
 	}
 }
+
+// SetS3Uploader wires in an S3 client after construction.
+func (s *Service) SetS3Uploader(u s3Uploader) { s.s3 = u }
 
 // SaveAndAnalyze runs the full post-call pipeline asynchronously.
 // It is fire-and-forget from the WebSocket handler's perspective — call it in a goroutine.
@@ -177,6 +187,20 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 // ── WAV saving ────────────────────────────────────────────────────────────────
 
 func (s *Service) saveWAV(streamSid string, data []byte) string {
+	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
+
+	if s.s3 != nil {
+		s3Key := "recordings/" + filename
+		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
+		if err != nil {
+			s.log.Warn("recording: S3 upload failed", zap.Error(err))
+			// Fall through to local save.
+		} else {
+			s.log.Info("recording: uploaded to S3", zap.String("url", publicURL))
+			return publicURL
+		}
+	}
+
 	if s.cfg.RecordingsDir == "" {
 		return ""
 	}
@@ -184,7 +208,6 @@ func (s *Service) saveWAV(streamSid string, data []byte) string {
 		s.log.Warn("recording: mkdir failed", zap.Error(err))
 		return ""
 	}
-	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
 	path := filepath.Join(s.cfg.RecordingsDir, filename)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		s.log.Warn("recording: WriteFile failed", zap.Error(err))

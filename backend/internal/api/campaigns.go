@@ -1,13 +1,22 @@
 package api
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/db"
+	"github.com/globussoft/callified-backend/internal/dial"
 )
 
 // ── GET /api/campaigns ───────────────────────────────────────────────────────
@@ -36,10 +45,11 @@ func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 // ── POST /api/campaigns ──────────────────────────────────────────────────────
 
 type campaignCreateRequest struct {
-	Name       string `json:"name"`
-	ProductID  int64  `json:"product_id"`
-	LeadSource string `json:"lead_source"`
-	Channel    string `json:"channel"`
+	Name            string `json:"name"`
+	ProductID       int64  `json:"product_id"`
+	LeadSource      string `json:"lead_source"`
+	Channel         string `json:"channel"`
+	ExotelAccountID int64  `json:"exotel_account_id"`
 }
 
 // validateCampaignName mirrors frontend/src/utils/campaignName.js. Defense
@@ -84,7 +94,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"))
+	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), req.ExotelAccountID)
 	if err != nil {
 		s.logger.Sugar().Errorw("createCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -422,6 +432,43 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(log))
 }
 
+// ── GET /api/campaigns/{id}/export-recordings ────────────────────────────────
+// Downloads a CSV of all calls in the campaign that have a recording URL.
+func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	campaign, err := s.db.GetCampaignByID(id)
+	if err != nil || campaign == nil {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	entries, err := s.db.GetCampaignRecordingsExport(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("exportRecordings", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	fname := fmt.Sprintf("recordings_%s.csv", strings.ReplaceAll(campaign.Name, " ", "_"))
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fname))
+	wr := csv.NewWriter(w)
+	_ = wr.Write([]string{
+		"Name", "Phone", "Campaign", "Call Type", "Call Date/Time",
+		"Duration (s)", "Outcome", "Follow-up Note", "Recording Filename", "Recording URL",
+	})
+	for _, e := range entries {
+		_ = wr.Write([]string{
+			e.Name, e.Phone, campaign.Name, e.CallType, e.CreatedAt,
+			fmt.Sprintf("%.0f", e.Duration), e.Outcome, e.FollowUpNote,
+			e.RecordingFilename, e.RecordingURL,
+		})
+	}
+	wr.Flush()
+}
+
 // ── GET /api/campaigns/{id}/voice-settings ───────────────────────────────────
 
 // @Summary     Get campaign voice settings
@@ -600,6 +647,70 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// ── GET /api/campaigns/{id}/exotel-creds ─────────────────────────────────────
+
+// @Summary     Get campaign Exotel credentials
+// @Description Returns the Exotel credentials stored for a campaign. All fields empty means the platform default is used.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  db.ExotelCreds
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/exotel-creds [get]
+func (s *Server) getCampaignExotelCreds(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	creds, err := s.db.GetCampaignExotelCreds(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignExotelCreds", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, creds)
+}
+
+// ── PUT /api/campaigns/{id}/exotel-creds ─────────────────────────────────────
+
+// @Summary     Save campaign Exotel credentials
+// @Description Stores per-campaign Exotel API credentials. Pass empty strings to revert to platform defaults.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64            true  "Campaign ID"
+// @Param       body  body  db.ExotelCreds   true  "Exotel credentials"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/exotel-creds [put]
+func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var creds db.ExotelCreds
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.db.SaveCampaignExotelCreds(id, creds); err != nil {
+		s.logger.Sugar().Errorw("saveCampaignExotelCreds", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
 // ── GET /api/campaigns/{id}/call-reviews ──────────────────────────────────────
 
 // @Summary     Get campaign call reviews
@@ -692,4 +803,216 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, insights)
+}
+
+// ── POST /api/campaigns/{id}/human-call/{lead_id} ────────────────────────────
+// Initiates a human (agent-to-customer) call via Exotel Architecture 3:
+// Exotel calls the agent first; when the agent picks up Exotel fetches our
+// ExoML webhook which announces the customer name and bridges in the customer.
+
+// @Summary     Initiate human call
+// @Description Dials the agent's phone first via Exotel, then bridges to the lead's phone. Uses campaign-level Exotel credentials.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id       path  int64   true  "Campaign ID"
+// @Param       lead_id  path  int64   true  "Lead ID"
+// @Param       body     body  object  true  "Agent phone"
+// @Success     200  {object}  object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/human-call/{lead_id} [post]
+func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
+	campaignID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid campaign id")
+		return
+	}
+	leadID, err := parseID(r, "lead_id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid lead id")
+		return
+	}
+
+	var req struct {
+		AgentPhone string `json:"agent_phone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.AgentPhone) == "" {
+		writeError(w, http.StatusBadRequest, "agent_phone required")
+		return
+	}
+
+	lead, err := s.db.GetLeadByID(leadID)
+	if err != nil || lead == nil {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+
+	creds, err := s.db.GetCampaignExotelCreds(campaignID)
+	if err != nil || !creds.IsSet() {
+		writeError(w, http.StatusBadRequest, "no Exotel credentials configured for this campaign")
+		return
+	}
+
+	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
+
+	// StatusCallback delivers recording URL + final status when the call ends.
+	ac := getAuth(r)
+	statusCallback := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
+		s.cfg.PublicServerURL, leadID, campaignID)
+
+	callSid, err := exotelClient.InitiateHumanCall(r.Context(), req.AgentPhone, lead.Phone, statusCallback)
+	if err != nil {
+		s.logger.Sugar().Errorw("humanCallLead", "campaign_id", campaignID, "lead_id", leadID, "err", err)
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("dial failed: %v", err))
+		return
+	}
+
+	// Log the call so StatusCallback can look it up by call_sid.
+	if _, dbErr := s.db.SaveCallLog(leadID, campaignID, ac.OrgID, callSid, "exotel-human", lead.Phone, "initiated"); dbErr != nil {
+		s.logger.Sugar().Warnw("humanCallLead: SaveCallLog failed", "err", dbErr)
+	}
+
+	// Insert a call_transcripts row (empty transcript, labelled as human call) so the
+	// recording appears in the Call Log tab as soon as it is downloaded.
+	transcriptStub := `[{"role":"system","content":"Human call — agent bridged to customer via Exotel"}]`
+	if transcriptID, tErr := s.db.SaveCallTranscript(leadID, campaignID, ac.OrgID, transcriptStub, "", "", 0); tErr == nil {
+		s.store.SetRaw(r.Context(), "transcript_id:"+callSid, fmt.Sprintf("%d", transcriptID), 2*time.Hour)
+	} else {
+		s.logger.Sugar().Warnw("humanCallLead: SaveCallTranscript failed", "err", tErr)
+	}
+
+	// Store campaign Exotel creds in Redis keyed by callSid so downloadRecording
+	// can authenticate the recording download with the right account.
+	credsJSON, _ := json.Marshal(map[string]string{"api_key": creds.APIKey, "api_token": creds.APIToken})
+	s.store.SetRaw(r.Context(), "exotel_creds:"+callSid, string(credsJSON), 4*time.Hour)
+
+	// Poll Exotel's Recordings API in the background — StatusCallback does not
+	// reliably include RecordingUrl for two-party calls, so we fetch directly.
+	capturedCreds := creds
+	capturedCallSid := callSid
+	capturedLeadID := leadID
+	capturedCampaignID := campaignID
+	capturedOrgID := ac.OrgID
+	go s.pollHumanCallRecording(capturedCallSid, capturedCreds.APIKey, capturedCreds.APIToken,
+		capturedCreds.AccountSID, capturedCreds.CallerID, capturedCreds.AppID,
+		capturedLeadID, capturedCampaignID, capturedOrgID, 30*time.Second)
+
+	writeJSON(w, http.StatusOK, map[string]string{"call_sid": callSid, "status": "dialing"})
+}
+
+// pollHumanCallRecording polls Exotel's Recordings API every 2 minutes for up
+// to 30 minutes, downloads the recording once available, and saves it to both
+// call_logs and call_transcripts so it appears in the Call Log UI.
+//
+// initialWait is how long to sleep before the first attempt. Pass 2*time.Minute
+// when starting at dial time (call not yet connected); pass a shorter value
+// (e.g. 30s) when re-triggering from a StatusCallback after the call is done.
+//
+// This is needed because Exotel does not reliably include RecordingUrl in the
+// StatusCallback for two-party (From+To) calls.
+func (s *Server) pollHumanCallRecording(callSid, apiKey, apiToken, accountSID, callerID, appID string, leadID, campaignID, orgID int64, initialWait time.Duration) {
+	client := dial.NewExotelClient(apiKey, apiToken, accountSID, callerID, appID)
+	ctx := context.Background()
+
+	time.Sleep(initialWait)
+
+	for attempt := 1; attempt <= 14; attempt++ {
+		recURL, err := client.FetchRecordingURL(ctx, callSid)
+		if err != nil {
+			s.logger.Warn("pollHumanCallRecording: FetchRecordingURL error",
+				zap.String("call_sid", callSid), zap.Int("attempt", attempt), zap.Error(err))
+		} else if recURL != "" {
+			s.logger.Info("pollHumanCallRecording: recording found",
+				zap.String("call_sid", callSid), zap.Int("attempt", attempt), zap.String("url", recURL))
+			s.downloadAndSaveHumanRecording(ctx, callSid, recURL, apiKey, apiToken, leadID, campaignID)
+			return
+		}
+		// Not ready yet — wait 30s before retrying.
+		time.Sleep(30 * time.Second)
+	}
+	s.logger.Warn("pollHumanCallRecording: gave up waiting for recording",
+		zap.String("call_sid", callSid))
+}
+
+// downloadAndSaveHumanRecording downloads a recording URL using the campaign's
+// Exotel credentials and updates both call_logs and call_transcripts.
+func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, recordingURL, apiKey, apiToken string, leadID, campaignID int64) {
+	parsedURL, err := url.Parse(recordingURL)
+	if err != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: invalid URL", zap.Error(err))
+		return
+	}
+	if parsedURL.User == nil && apiKey != "" {
+		parsedURL.User = url.UserPassword(apiKey, apiToken)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Get(parsedURL.String())
+	if err != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: download failed", zap.Error(err))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.logger.Warn("downloadAndSaveHumanRecording: HTTP error",
+			zap.Int("status", resp.StatusCode))
+		return
+	}
+
+	ext := ".mp3"
+	if strings.Contains(resp.Header.Get("Content-Type"), "wav") {
+		ext = ".wav"
+	}
+	filename := fmt.Sprintf("recording_%s%s", callSid, ext)
+
+	// Read body into memory so we can either upload to S3 or write to disk.
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: read body failed", zap.Error(err))
+		return
+	}
+
+	var savedURL string
+
+	if s.s3 != nil {
+		// Upload to S3 and use the public URL.
+		s3Key := "recordings/" + filename
+		publicURL, err := s.s3.UploadPublic(ctx, s3Key, data)
+		if err != nil {
+			s.logger.Warn("downloadAndSaveHumanRecording: S3 upload failed", zap.Error(err))
+			// Fall through to local save below.
+		} else {
+			savedURL = publicURL
+			s.logger.Info("downloadAndSaveHumanRecording: uploaded to S3", zap.String("url", publicURL))
+		}
+	}
+
+	if savedURL == "" {
+		// Local fallback.
+		destPath := filepath.Join(s.cfg.RecordingsDir, filename)
+		_ = os.MkdirAll(s.cfg.RecordingsDir, 0755)
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			s.logger.Warn("downloadAndSaveHumanRecording: write failed", zap.Error(err))
+			return
+		}
+		savedURL = fmt.Sprintf("/api/recordings/%s", filename)
+	}
+
+	localURL := savedURL
+
+	// Update call_logs
+	if err := s.db.UpdateCallLogRecordingURL(callSid, localURL); err != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: UpdateCallLogRecordingURL", zap.Error(err))
+	}
+
+	// Update call_transcripts — find the stub row we created at call initiation time.
+	if err := s.db.UpdateHumanCallTranscriptRecording(leadID, campaignID, callSid, localURL); err != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: UpdateHumanCallTranscriptRecording", zap.Error(err))
+	}
+
+	s.logger.Info("downloadAndSaveHumanRecording: saved",
+		zap.String("call_sid", callSid), zap.String("file", filename))
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/rag"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/recording"
+	"github.com/globussoft/callified-backend/internal/storage"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
 )
@@ -40,6 +41,7 @@ type Server struct {
 	llmProvider  *llm.Provider // Phase 4: Gemini-powered generation endpoints
 	wsHandler    activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
 	recordingSvc callAnalyzer     // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+	s3           *storage.S3Client // nil when S3 is not configured
 }
 
 // callAnalyzer is the slice of recording.Service the API needs for on-demand
@@ -72,7 +74,7 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 	billingSvc := billing.New(d, cfg.RazorpayKeyID, cfg.RazorpayKeySecret, emailSvc, logger)
 	ragCli := rag.New(cfg.RAGServiceURL, logger)
 
-	return &Server{
+	srv := &Server{
 		db:          d,
 		cfg:         cfg,
 		logger:      logger,
@@ -86,12 +88,21 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 		llmProvider: llmProvider,
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
+	if cfg.S3Bucket != "" && cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
+		srv.s3 = storage.NewS3Client(cfg.S3Region, cfg.S3Bucket, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey)
+		logger.Sugar().Infow("S3 storage enabled", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+	}
+	return srv
 }
 
 // SetWAAgent wires the WhatsApp AI agent after construction.
 func (s *Server) SetWAAgent(agent *wa.Agent) {
 	s.waAgent = agent
 }
+
+// S3 returns the S3 client (nil when not configured). Used by main.go to wire
+// the same client into the recording service.
+func (s *Server) S3() *storage.S3Client { return s.s3 }
 
 // SetRecordingService wires the post-call analyzer after construction.
 // Used by the on-demand "regenerate conclusion" endpoint. Nil-safe — the
@@ -197,9 +208,21 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
 	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminOrAgent(s.getCampaignStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminOrAgent(s.getCampaignCallLog))
+	mux.HandleFunc("GET /api/campaigns/{id}/export-recordings", adminOrAgent(s.exportRecordings))
 	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminOrAgent(s.getCampaignVoiceSettings))
 	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
+	mux.HandleFunc("GET /api/campaigns/{id}/exotel-creds", adminAuth(s.getCampaignExotelCreds))
+	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-creds", adminAuth(s.saveCampaignExotelCreds))
+	mux.HandleFunc("GET /api/campaigns/{id}/exotel-account", adminAuth(s.getCampaignExotelAccount))
+	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-account", adminAuth(s.setCampaignExotelAccount))
+	mux.HandleFunc("POST /api/campaigns/{id}/human-call/{lead_id}", adminOrAgent(s.humanCallLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
+
+	// ── Org Exotel accounts ───────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/exotel-accounts", adminAuth(s.listExotelAccounts))
+	mux.HandleFunc("POST /api/exotel-accounts", adminAuth(s.createExotelAccount))
+	mux.HandleFunc("PUT /api/exotel-accounts/{id}", adminAuth(s.updateExotelAccount))
+	mux.HandleFunc("DELETE /api/exotel-accounts/{id}", adminAuth(s.deleteExotelAccount))
 
 	// ── Organizations ─────────────────────────────────────────────────────────
 	// Org-level config (voice, timezone, system prompt) is Admin-only; reads
@@ -367,6 +390,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhook/twilio/status", s.twilioStatus)
 	mux.HandleFunc("GET /webhook/exotel", s.exotelXML)
 	mux.HandleFunc("POST /webhook/exotel", s.exotelXML)
+	mux.HandleFunc("GET /webhook/exotel/human-call", s.exotelHumanCallXML)
 	mux.HandleFunc("POST /webhook/exotel/status", s.exotelStatus)
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
@@ -501,6 +525,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/products/{id}/generate-persona", adminAuth(s.generateProductPersona))
 	mux.HandleFunc("POST /api/organizations/{id}/generate-prompt", adminAuth(s.generateOrgPrompt))
 	mux.HandleFunc("GET /api/leads/{id}/draft-email", auth(s.draftLeadEmail))
+	mux.HandleFunc("POST /api/leads/{id}/generate-followup-note", auth(s.generateFollowupNote))
 }
 
 // ── Response helpers ──────────────────────────────────────────────────────────

@@ -278,29 +278,41 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	// Defence: strip any path traversal — only the basename survives.
 	fname = filepath.Base(fname)
 
-	if err := os.MkdirAll(s.cfg.RecordingsDir, 0o755); err != nil {
-		s.logger.Sugar().Errorw("uploadRecording: mkdir", "err", err)
-		writeError(w, http.StatusInternalServerError, "mkdir failed")
-		return
-	}
-	fpath := filepath.Join(s.cfg.RecordingsDir, fname)
-	out, err := os.Create(fpath)
-	if err != nil {
-		s.logger.Sugar().Errorw("uploadRecording: create", "err", err, "path", fpath)
-		writeError(w, http.StatusInternalServerError, "create failed")
-		return
-	}
-	written, copyErr := io.Copy(out, file)
-	_ = out.Close()
-	if copyErr != nil {
-		s.logger.Sugar().Errorw("uploadRecording: copy", "err", copyErr)
-		writeError(w, http.StatusInternalServerError, "write failed")
+	data, readErr := io.ReadAll(file)
+	if readErr != nil {
+		s.logger.Sugar().Errorw("uploadRecording: read", "err", readErr)
+		writeError(w, http.StatusInternalServerError, "read failed")
 		return
 	}
 
-	recURL := "/api/recordings/" + fname
-	s.logger.Sugar().Infow("uploadRecording: saved",
-		"path", fpath, "bytes", written, "lead_id", leadIDStr)
+	var recURL string
+	if s.s3 != nil {
+		s3Key := "recordings/" + fname
+		publicURL, err := s.s3.UploadPublic(r.Context(), s3Key, data)
+		if err != nil {
+			s.logger.Sugar().Warnw("uploadRecording: S3 upload failed", "err", err)
+			// Fall through to local save.
+		} else {
+			recURL = publicURL
+			s.logger.Sugar().Infow("uploadRecording: uploaded to S3", "url", publicURL, "lead_id", leadIDStr)
+		}
+	}
+
+	if recURL == "" {
+		if err := os.MkdirAll(s.cfg.RecordingsDir, 0o755); err != nil {
+			s.logger.Sugar().Errorw("uploadRecording: mkdir", "err", err)
+			writeError(w, http.StatusInternalServerError, "mkdir failed")
+			return
+		}
+		fpath := filepath.Join(s.cfg.RecordingsDir, fname)
+		if err := os.WriteFile(fpath, data, 0644); err != nil {
+			s.logger.Sugar().Errorw("uploadRecording: write", "err", err, "path", fpath)
+			writeError(w, http.StatusInternalServerError, "write failed")
+			return
+		}
+		recURL = "/api/recordings/" + fname
+		s.logger.Sugar().Infow("uploadRecording: saved locally", "path", fpath, "bytes", len(data), "lead_id", leadIDStr)
+	}
 
 	// Swap the stereo-WAV URL on the most recent transcript for this lead
 	// to point at the higher-quality webm instead. Poll up to ~3s because

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // Campaign mirrors the campaigns table (joined with products.name).
@@ -108,17 +109,25 @@ func (d *DB) GetCampaignByID(id int64) (*Campaign, error) {
 }
 
 // CreateCampaign inserts a new campaign. Returns the new ID.
-func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string) (int64, error) {
+func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID int64) (int64, error) {
 	if channel == "" {
 		channel = "voice"
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel) VALUES (?,?,?,?,?)`,
-		orgID, productID, name, nullString(leadSource), channel)
+		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id) VALUES (?,?,?,?,?,?)`,
+		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// SetCampaignExotelAccount updates which org-level Exotel account a campaign uses.
+// Pass 0 to unlink (fall back to inline per-campaign credentials).
+func (d *DB) SetCampaignExotelAccount(campaignID, accountID int64) error {
+	_, err := d.pool.Exec(`UPDATE campaigns SET exotel_account_id=? WHERE id=?`,
+		nullInt64(accountID), campaignID)
+	return err
 }
 
 // UpdateCampaign updates mutable campaign fields. Pass zero/empty to skip a field.
@@ -433,6 +442,69 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 	return list, rows.Err()
 }
 
+// RecordingExportRow is one row for the recordings CSV export.
+type RecordingExportRow struct {
+	Name              string
+	Phone             string
+	CallType          string
+	CreatedAt         string
+	Duration          float64
+	Outcome           string
+	FollowUpNote      string
+	RecordingFilename string
+	RecordingURL      string
+}
+
+// GetCampaignRecordingsExport returns all call transcript rows that have a
+// recording URL, enriched with lead name, phone, follow-up note, and a
+// derived call type (AI Dial / Manual).
+func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow, error) {
+	rows, err := d.pool.Query(`
+		SELECT
+			TRIM(CONCAT(COALESCE(l.first_name,''), ' ', COALESCE(l.last_name,''))) AS name,
+			COALESCE(l.phone,''),
+			COALESCE(ct.tts_language,''),
+			COALESCE(ct.call_duration_s, 0),
+			COALESCE(ct.recording_url, ''),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			COALESCE(l.follow_up_note,''),
+			CASE
+				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
+				WHEN ct.call_duration_s>5 THEN 'Connected'
+				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'Busy'
+				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
+				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
+				ELSE 'No Answer'
+			END AS outcome
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id = l.id
+		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+		ORDER BY ct.created_at DESC`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []RecordingExportRow
+	for rows.Next() {
+		var e RecordingExportRow
+		var ttsLang string
+		if err := rows.Scan(&e.Name, &e.Phone, &ttsLang, &e.Duration, &e.RecordingURL,
+			&e.CreatedAt, &e.FollowUpNote, &e.Outcome); err != nil {
+			return nil, err
+		}
+		if ttsLang != "" {
+			e.CallType = "AI Dial"
+		} else {
+			e.CallType = "Manual / Bridge"
+		}
+		// Extract filename from URL
+		parts := strings.Split(e.RecordingURL, "/")
+		e.RecordingFilename = parts[len(parts)-1]
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}
+
 // GetCampaignVoiceSettings returns TTS settings, falling back to org defaults.
 func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 	var orgID int64
@@ -489,4 +561,70 @@ func coalesceStr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// ExotelCreds holds per-campaign Exotel telephony credentials.
+// All fields are optional; empty string means "use the platform default".
+type ExotelCreds struct {
+	APIKey     string `json:"exotel_api_key"`
+	APIToken   string `json:"exotel_api_token"`
+	AccountSID string `json:"exotel_account_sid"`
+	CallerID   string `json:"exotel_caller_id"`
+	AppID      string `json:"exotel_app_id"`
+}
+
+// IsSet returns true when all five fields are non-empty.
+func (e ExotelCreds) IsSet() bool {
+	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""
+}
+
+// GetCampaignExotelCreds returns the Exotel credentials for a campaign.
+// Resolution order:
+//  1. org_exotel_accounts row linked via exotel_account_id (preferred)
+//  2. inline per-campaign columns (legacy / manual override)
+func (d *DB) GetCampaignExotelCreds(campaignID int64) (ExotelCreds, error) {
+	var c ExotelCreds
+	var accountID sql.NullInt64
+	var apiKey, apiToken, accountSID, callerID, appID sql.NullString
+	err := d.pool.QueryRow(
+		`SELECT COALESCE(exotel_account_id,0),
+		        COALESCE(exotel_api_key,''), COALESCE(exotel_api_token,''),
+		        COALESCE(exotel_account_sid,''), COALESCE(exotel_caller_id,''),
+		        COALESCE(exotel_app_id,'')
+		 FROM campaigns WHERE id=?`, campaignID,
+	).Scan(&accountID, &apiKey, &apiToken, &accountSID, &callerID, &appID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	// Prefer org-level account when linked.
+	if accountID.Valid && accountID.Int64 > 0 {
+		var orgID int64
+		_ = d.pool.QueryRow(`SELECT org_id FROM campaigns WHERE id=?`, campaignID).Scan(&orgID)
+		if linked, lerr := d.GetOrgExotelAccountCreds(accountID.Int64, orgID); lerr == nil && linked.IsSet() {
+			return linked, nil
+		}
+	}
+	c.APIKey = apiKey.String
+	c.APIToken = apiToken.String
+	c.AccountSID = accountSID.String
+	c.CallerID = callerID.String
+	c.AppID = appID.String
+	return c, nil
+}
+
+// SaveCampaignExotelCreds persists Exotel credentials on a campaign.
+// Pass empty strings to clear individual fields.
+func (d *DB) SaveCampaignExotelCreds(campaignID int64, creds ExotelCreds) error {
+	_, err := d.pool.Exec(
+		`UPDATE campaigns
+		 SET exotel_api_key=?, exotel_api_token=?, exotel_account_sid=?,
+		     exotel_caller_id=?, exotel_app_id=?
+		 WHERE id=?`,
+		nullString(creds.APIKey), nullString(creds.APIToken),
+		nullString(creds.AccountSID), nullString(creds.CallerID),
+		nullString(creds.AppID), campaignID)
+	return err
 }

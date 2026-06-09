@@ -153,8 +153,21 @@ function ConclusionCard({ transcriptId, turns }) {
   );
 }
 
-export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
+function isHumanCallStub(turns) {
+  if (!Array.isArray(turns) || turns.length === 0) return false;
+  return turns.some(t => t.role === 'system' && (t.content || t.text || '').includes('Human call'));
+}
+
+export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false);
   const list = Array.isArray(transcripts) ? transcripts : [];
+
+  const handleRefresh = async () => {
+    if (!onRefresh || !transcriptLead) return;
+    setRefreshing(true);
+    await onRefresh(transcriptLead);
+    setRefreshing(false);
+  };
 
   useEffect(() => {
     if (!transcriptLead) return;
@@ -198,10 +211,20 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
               {transcriptLead.first_name} — {transcriptLead.phone}
             </p>
           </div>
-          <button onClick={close} style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: T.muted, fontSize: '1.2rem', lineHeight: 1, padding: 4,
-          }}>✕</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onRefresh && (
+              <button onClick={handleRefresh} disabled={refreshing} style={{
+                background: 'transparent', border: `1px solid ${T.border}`,
+                color: T.sub, borderRadius: 6, padding: '4px 12px',
+                fontSize: '0.78rem', cursor: refreshing ? 'wait' : 'pointer',
+                fontWeight: 600,
+              }}>↺ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
+            )}
+            <button onClick={close} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: T.muted, fontSize: '1.2rem', lineHeight: 1, padding: 4,
+            }}>✕</button>
+          </div>
         </div>
 
         {/* Body */}
@@ -240,6 +263,26 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     </div>
                   </div>
 
+                  {/* Recording pending banner for manual calls */}
+                  {!t.recording_url && isHumanCallStub(t.transcript) && (
+                    <div style={{
+                      marginBottom: 12, padding: '10px 14px', background: 'rgba(251,191,36,0.08)',
+                      borderRadius: 8, border: '1px solid rgba(251,191,36,0.3)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                    }}>
+                      <span style={{ fontSize: '0.82rem', color: '#92400e', fontWeight: 500 }}>
+                        ⏳ Recording is being processed. Refresh in a few minutes.
+                      </span>
+                      {onRefresh && (
+                        <button onClick={handleRefresh} disabled={refreshing} style={{
+                          background: 'transparent', border: '1px solid rgba(251,191,36,0.5)',
+                          color: '#92400e', borderRadius: 6, padding: '2px 10px',
+                          fontSize: '0.72rem', cursor: refreshing ? 'wait' : 'pointer', fontWeight: 600,
+                        }}>↺ Refresh</button>
+                      )}
+                    </div>
+                  )}
+
                   {/* Audio player */}
                   {t.recording_url && (() => {
                     const url = t.recording_url || '';
@@ -258,7 +301,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
 
                   {/* Turn-by-turn transcript */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {(Array.isArray(t.transcript) ? t.transcript : []).map((turn, i) => {
+                    {(Array.isArray(t.transcript) ? t.transcript : []).filter(turn => turn.role !== 'system').map((turn, i) => {
                       const isAI = turn.role === 'AI';
                       return (
                         <div key={i} style={{ display: 'flex', flexDirection: isAI ? 'row' : 'row-reverse', gap: 8, alignItems: 'flex-start' }}>

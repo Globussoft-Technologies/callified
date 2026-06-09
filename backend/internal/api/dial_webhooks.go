@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -307,6 +309,10 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 	callSid := coalesceStr(r.FormValue("CallSid"), r.FormValue("sid"))
 	callStatus := coalesceStr(r.FormValue("Status"), r.FormValue("CallStatus"))
 	recordingURL := r.FormValue("RecordingUrl")
+	var callDurationS float64
+	if d := coalesceStr(r.FormValue("CallDuration"), r.FormValue("Duration")); d != "" {
+		fmt.Sscanf(d, "%f", &callDurationS)
+	}
 
 	if callSid == "" {
 		// Try query params (some Exotel setups put them there)
@@ -320,6 +326,9 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.UpdateCallLogStatus(callSid, status); err != nil {
 		s.logger.Warn("exotelStatus: UpdateCallLogStatus",
 			zap.String("call_sid", callSid), zap.Error(err))
+	}
+	if callDurationS > 0 {
+		_ = s.db.UpdateHumanCallTranscriptDuration(callSid, callDurationS)
 	}
 
 	if recordingURL != "" {
@@ -348,6 +357,17 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 				"campaign_id": cl.CampaignID,
 			})
 			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
+
+			// For human (agent-bridged) calls, Exotel often omits RecordingUrl from
+			// the StatusCallback. Re-trigger recording polling so a server restart
+			// between dial-time and recording-ready doesn't leave the transcript empty.
+			if status == "completed" && recordingURL == "" && cl.Provider == "exotel-human" {
+				if creds, cerr := s.db.GetCampaignExotelCreds(cl.CampaignID); cerr == nil && creds.IsSet() {
+					go s.pollHumanCallRecording(callSid,
+						creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID,
+						cl.LeadID, cl.CampaignID, cl.OrgID, 30*time.Second)
+				}
+			}
 		}
 	}
 
@@ -472,13 +492,26 @@ func (s *Server) fetchAndSaveRecording(callSid, recordingURL string) {
 }
 
 func (s *Server) downloadRecording(callSid, recordingURL string) error {
-	// Build authenticated URL for Exotel recordings
+	// Build authenticated URL for Exotel recordings.
+	// Prefer per-callSid creds stored at dial time (for per-campaign Exotel accounts),
+	// fall back to the global config credentials.
 	parsedURL, err := url.Parse(recordingURL)
 	if err != nil {
 		return fmt.Errorf("invalid recording URL: %w", err)
 	}
-	if parsedURL.User == nil && s.cfg.ExotelAPIKey != "" {
-		parsedURL.User = url.UserPassword(s.cfg.ExotelAPIKey, s.cfg.ExotelAPIToken)
+	if parsedURL.User == nil {
+		apiKey, apiToken := s.cfg.ExotelAPIKey, s.cfg.ExotelAPIToken
+		if raw, ok := s.store.GetRaw(context.Background(), "exotel_creds:"+callSid); ok {
+			var m map[string]string
+			if json.Unmarshal([]byte(raw), &m) == nil {
+				if k, t := m["api_key"], m["api_token"]; k != "" && t != "" {
+					apiKey, apiToken = k, t
+				}
+			}
+		}
+		if apiKey != "" {
+			parsedURL.User = url.UserPassword(apiKey, apiToken)
+		}
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -499,28 +532,96 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 	}
 
 	filename := fmt.Sprintf("recording_%s%s", callSid, ext)
-	destPath := filepath.Join(s.cfg.RecordingsDir, filename)
 
-	_ = os.MkdirAll(s.cfg.RecordingsDir, 0755)
-	f, err := os.Create(destPath)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	defer f.Close()
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		return fmt.Errorf("write file: %w", err)
+		return fmt.Errorf("read body: %w", err)
 	}
 
-	localURL := fmt.Sprintf("%s/api/recordings/%s", s.cfg.PublicServerURL, filename)
+	var localURL string
+	if s.s3 != nil {
+		s3Key := "recordings/" + filename
+		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
+		if err != nil {
+			s.logger.Warn("downloadRecording: S3 upload failed", zap.Error(err))
+			// Fall through to local save.
+		} else {
+			localURL = publicURL
+			s.logger.Info("downloadRecording: uploaded to S3", zap.String("url", publicURL))
+		}
+	}
+
+	if localURL == "" {
+		destPath := filepath.Join(s.cfg.RecordingsDir, filename)
+		_ = os.MkdirAll(s.cfg.RecordingsDir, 0755)
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return fmt.Errorf("write file: %w", err)
+		}
+		localURL = fmt.Sprintf("/api/recordings/%s", filename)
+	}
 	if err := s.db.UpdateCallLogRecordingURL(callSid, localURL); err != nil {
 		s.logger.Warn("downloadRecording: UpdateCallLogRecordingURL", zap.Error(err))
+	}
+	// For human calls a call_transcripts stub was pre-created at dial time.
+	// Try Redis first (fast path); fall back to DB lookup so a server restart
+	// between dial and recording-ready doesn't leave the transcript empty.
+	transcriptUpdated := false
+	if raw, ok := s.store.GetRaw(context.Background(), "transcript_id:"+callSid); ok {
+		var transcriptID int64
+		fmt.Sscanf(raw, "%d", &transcriptID)
+		if transcriptID > 0 {
+			if err := s.db.UpdateCallTranscriptRecording(transcriptID, localURL); err != nil {
+				s.logger.Warn("downloadRecording: UpdateCallTranscriptRecording", zap.Error(err))
+			} else {
+				transcriptUpdated = true
+			}
+		}
+	}
+	if !transcriptUpdated {
+		// Redis key expired or server restarted — look up the call log to get
+		// lead_id + campaign_id and update the human-call stub via DB query.
+		if cl, err := s.db.GetCallLogByCallSid(callSid); err == nil && cl != nil && cl.Provider == "exotel-human" {
+			if err := s.db.UpdateHumanCallTranscriptRecording(cl.LeadID, cl.CampaignID, callSid, localURL); err != nil {
+				s.logger.Warn("downloadRecording: UpdateHumanCallTranscriptRecording fallback", zap.Error(err))
+			}
+		}
 	}
 
 	s.logger.Info("recording saved",
 		zap.String("call_sid", callSid),
 		zap.String("file", filename))
 	return nil
+}
+
+// ── GET /webhook/exotel/human-call ───────────────────────────────────────────
+// Exotel fetches this URL when the agent picks up on a human call initiated via
+// POST /api/campaigns/{id}/human-call/{lead_id}. Returns ExoML that announces
+// the customer's name and then dials their number to bridge both parties.
+
+// GET /webhook/exotel/human-call
+// @Summary     Human call ExoML hook
+// @Description Returns ExoML that announces the customer and bridges the agent to them. Called by Exotel when the agent answers.
+// @Tags        webhooks
+// @Produce     application/xml
+// @Param       customer_phone  query  string  true   "Customer phone number"
+// @Param       customer_name   query  string  false  "Customer display name"
+// @Success     200  {string}  string  "ExoML response"
+// @Router      /webhook/exotel/human-call [get]
+func (s *Server) exotelHumanCallXML(w http.ResponseWriter, r *http.Request) {
+	customerPhone := r.URL.Query().Get("customer_phone")
+	customerName := r.URL.Query().Get("customer_name")
+	if customerName == "" {
+		customerName = "the customer"
+	}
+	phone := dial.ExotelPhone(customerPhone)
+	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say>Connecting you to %s</Say>
+  <Dial>%s</Dial>
+</Response>`, customerName, phone)
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(xml))
 }
 
 // ── ensure dial package is used ───────────────────────────────────────────────

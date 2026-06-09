@@ -29,6 +29,18 @@ function withDate(label, tsMs) {
   return `[${dateStr}] ${label}`;
 }
 
+function linkify(text) {
+  if (!text) return text;
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noreferrer"
+          style={{ color: '#6366f1', textDecoration: 'underline', wordBreak: 'break-all' }}
+          onClick={e => e.stopPropagation()}>{p}</a>
+      : p
+  );
+}
+
 // ── WhatsApp Blast Panel ──────────────────────────────────────────────────────
 function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
   const [blasting, setBlasting] = useState(false);
@@ -149,6 +161,53 @@ export default function CampaignDetail({
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
 
+
+  const [editingNote, setEditingNote] = useState(null);
+  const [generatedNote, setGeneratedNote] = useState(null);
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteGenerating, setNoteGenerating] = useState(false);
+
+  const handleGenerateNote = async (lead) => {
+    setNoteGenerating(true);
+    setGeneratedNote(null);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/generate-followup-note`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data.error || 'Could not generate note'); return; }
+      setGeneratedNote({ leadId: lead.id, text: data.note || '', recordingUrl: data.recording_url || '', recordingFilename: data.recording_filename || '' });
+      setEditingNote(null);
+    } catch (e) {
+      toast('Failed to generate note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteGenerating(false);
+    }
+  };
+
+  const handleSaveInlineNote = async (lead) => {
+    if (!editingNote) return;
+    const trimmed = editingNote.text.trim();
+    setNoteSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Failed to save (HTTP ${res.status})`);
+        return;
+      }
+      lead.follow_up_note = trimmed;
+      setEditingNote(null);
+      setGeneratedNote(null);
+    } catch (e) {
+      toast('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
   const [waSendingId, setWaSendingId] = useState(null);
   const [waSendStatus, setWaSendStatus] = useState({}); // lead.id → 'sent' | 'error'
 
@@ -201,6 +260,28 @@ export default function CampaignDetail({
         });
       }, 2000);
     } catch { /* network/permission — silently skip badge */  }
+  };
+
+  const handleHumanCallDial = async () => {
+    if (!humanCallLead || !humanCallPhone.trim()) return;
+    localStorage.setItem('humanCallAgentPhone', humanCallPhone.trim());
+    setHumanCallStatus('dialing');
+    setHumanCallError('');
+    try {
+      const res = await apiFetch(
+        `${API_URL}/campaigns/${selectedCampaign.id}/human-call/${humanCallLead.id}`,
+        { method: 'POST', body: JSON.stringify({ agent_phone: humanCallPhone.trim() }) }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
+      setHumanCallStatus('done');
+      setTimeout(() => { setHumanCallLead(null); setHumanCallStatus('idle'); }, 2000);
+    } catch (e) {
+      setHumanCallError(e.message || 'Dial failed');
+      setHumanCallStatus('error');
+    }
   };
 
   const fetchInsights = async () => {
@@ -258,6 +339,44 @@ export default function CampaignDetail({
     fetchBilling();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Exotel account selector state ─────────────────────────────────────────
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
+  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
+  const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
+
+  const [humanCallLead, setHumanCallLead] = useState(null); // lead being human-called
+  const [humanCallPhone, setHumanCallPhone] = useState(() => localStorage.getItem('humanCallAgentPhone') || '');
+  const [humanCallStatus, setHumanCallStatus] = useState('idle'); // idle | dialing | done | error
+  const [humanCallError, setHumanCallError] = useState('');
+
+  useEffect(() => {
+    if (selectedCampaign.channel === 'whatsapp') return;
+    // Fetch all org accounts
+    apiFetch(`${API_URL}/exotel-accounts`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setOrgExotelAccounts(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    // Fetch which account is linked to this campaign
+    apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaign.id]);
+
+  const handleSaveExotelAccount = async () => {
+    setExotelAccountSaveStatus('saving');
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exotel_account_id: selectedExotelAccountId ? parseInt(selectedExotelAccountId) : 0 }),
+      });
+      setExotelAccountSaveStatus(res.ok ? 'saved' : 'error');
+    } catch { setExotelAccountSaveStatus('error'); }
+    setTimeout(() => setExotelAccountSaveStatus('idle'), 2000);
+  };
 
   const scoreColor = (s) => {
     if (s >= 4) return T.green;
@@ -443,6 +562,50 @@ export default function CampaignDetail({
         </div>
       )}
 
+      {/* Exotel Account — hidden for WhatsApp campaigns */}
+      {selectedCampaign.channel !== 'whatsapp' && (
+        <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
+          <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+            📞 Exotel Account
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              className="form-input"
+              value={selectedExotelAccountId}
+              onChange={e => setSelectedExotelAccountId(e.target.value)}
+              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
+              <option value="">-- Use platform default --</option>
+              {orgExotelAccounts.map(a => (
+                <option key={a.id} value={String(a.id)}>
+                  {a.name} · {a.account_sid} · {a.caller_id}
+                </option>
+              ))}
+            </select>
+            <button
+              style={{
+                background: exotelAccountSaveStatus === 'saved' ? T.green : exotelAccountSaveStatus === 'error' ? T.red : T.accent,
+                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                cursor: exotelAccountSaveStatus === 'saving' ? 'wait' : 'pointer',
+                opacity: exotelAccountSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
+              }}
+              disabled={exotelAccountSaveStatus === 'saving'}
+              onClick={handleSaveExotelAccount}>
+              {exotelAccountSaveStatus === 'saving' ? 'Saving…' : exotelAccountSaveStatus === 'saved' ? '✓ Saved' : exotelAccountSaveStatus === 'error' ? '✗ Failed' : 'Save'}
+            </button>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
+            {selectedExotelAccountId
+              ? (() => {
+                  const a = orgExotelAccounts.find(x => String(x.id) === selectedExotelAccountId);
+                  return a ? `Using: ${a.name} · Account: ${a.account_sid} · Caller: ${a.caller_id}` : 'Account selected';
+                })()
+              : orgExotelAccounts.length === 0
+                ? 'No saved accounts — go to More → Exotel Accounts to add one'
+                : 'Using platform default Exotel credentials'}
+          </div>
+        </div>
+      )}
+
       {/* Billing Minutes Widget */}
       {billingUsage && (
         <div style={{
@@ -584,6 +747,22 @@ export default function CampaignDetail({
         <button style={{ ...btnPrimary, background: '#0891b2' }}
           onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
         <a href={`${API_URL}/leads/sample-csv`} download style={{ color: T.muted, fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center' }}>📋 Sample CSV</a>
+        <button
+          style={{ ...btnPrimary, background: T.green }}
+          onClick={() => {
+            apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
+              .then(res => res.blob())
+              .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `recordings_${(selectedCampaign.name || selectedCampaign.id).toString().replace(/\s+/g,'_')}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              });
+          }}>
+          ⬇ Export Recordings
+        </button>
         {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
@@ -650,6 +829,32 @@ export default function CampaignDetail({
       {/* Call Log Table */}
       {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 16px 0' }}>
+            <a
+              href={`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`}
+              download
+              onClick={e => {
+                e.preventDefault();
+                apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
+                  .then(res => res.blob())
+                  .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+              }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                background: T.green, color: '#fff', borderRadius: 7,
+                padding: '6px 16px', fontSize: '0.8rem', fontWeight: 600,
+                fontFamily: T.font, textDecoration: 'none', cursor: 'pointer',
+              }}>
+              ⬇ Export Recordings CSV
+            </a>
+          </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
@@ -934,6 +1139,18 @@ export default function CampaignDetail({
                           }}>
                           {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
                         </button>
+                        {selectedCampaign.channel !== 'whatsapp' && (
+                          <button
+                            onClick={() => { setHumanCallLead(lead); setHumanCallStatus('idle'); setHumanCallError(''); }}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: 'pointer',
+                              background: 'rgba(234,179,8,0.08)', color: '#854d0e',
+                              border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6,
+                            }}>
+                            📲 Manual Call
+                          </button>
+                        )}
                         {selectedCampaign.channel === 'whatsapp' && (
                           <button
                             onClick={() => handleSendWA(lead)}
@@ -1009,11 +1226,79 @@ export default function CampaignDetail({
                       </div>
                     </td>
                   </tr>
-                  {lead.follow_up_note && (
+                  {(lead.follow_up_note || editingNote?.leadId === lead.id || generatedNote?.leadId === lead.id) && (
                     <tr>
                       <td colSpan="5" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
-                        <div style={{ fontSize: '0.8rem', color: T.muted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>AI Follow-Up Note</div>
-                        <div style={{ whiteSpace: 'pre-wrap', color: T.sub, fontSize: '0.85rem', lineHeight: 1.5 }}>{lead.follow_up_note}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <div style={{ fontSize: '0.8rem', color: T.muted, textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>✨ AI Follow-Up Note</div>
+                          {editingNote?.leadId !== lead.id && (
+                            <button
+                              onClick={() => handleGenerateNote(lead)}
+                              disabled={noteGenerating}
+                              style={{
+                                background: 'rgba(99,102,241,0.08)', border: `1px solid rgba(99,102,241,0.25)`,
+                                color: T.accent, borderRadius: 6, padding: '3px 12px',
+                                fontSize: '0.75rem', fontWeight: 600, cursor: noteGenerating ? 'wait' : 'pointer', fontFamily: T.font,
+                              }}>
+                              {noteGenerating ? '⏳ Generating…' : '↺ Regenerate'}
+                            </button>
+                          )}
+                        </div>
+                        {editingNote?.leadId === lead.id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <textarea
+                              autoFocus
+                              value={editingNote.text}
+                              onChange={e => setEditingNote({ ...editingNote, text: e.target.value })}
+                              rows={4}
+                              style={{
+                                width: '100%', padding: '8px 10px', borderRadius: 6,
+                                border: `1px solid ${T.accent}`, fontSize: '0.85rem',
+                                fontFamily: T.font, lineHeight: 1.5, resize: 'vertical',
+                                outline: 'none', color: T.text, boxSizing: 'border-box',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button onClick={() => handleSaveInlineNote(lead)} disabled={noteSaving} style={{
+                                background: T.accent, color: '#fff', border: 'none', borderRadius: 6,
+                                padding: '5px 16px', fontSize: '0.8rem', fontWeight: 600,
+                                cursor: noteSaving ? 'wait' : 'pointer', fontFamily: T.font,
+                              }}>{noteSaving ? 'Saving…' : 'Save'}</button>
+                              <button onClick={() => setEditingNote(null)} style={{
+                                background: 'transparent', color: T.muted, border: `1px solid ${T.border}`,
+                                borderRadius: 6, padding: '5px 16px', fontSize: '0.8rem',
+                                fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+                              }}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (() => {
+                          const noteData = generatedNote?.leadId === lead.id ? generatedNote : null;
+                          const noteText = noteData?.text || lead.follow_up_note;
+                          return (
+                            <div>
+                              <div
+                                onClick={() => setEditingNote({ leadId: lead.id, text: noteText, recordingUrl: noteData?.recordingUrl || '', recordingFilename: noteData?.recordingFilename || '' })}
+                                title="Click to edit"
+                                style={{
+                                  whiteSpace: 'pre-wrap', color: T.sub, fontSize: '0.85rem', lineHeight: 1.5,
+                                  cursor: 'text', padding: '4px 6px', borderRadius: 6, margin: '-4px -6px',
+                                  border: '1px solid transparent',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.border = `1px solid ${T.border}`; e.currentTarget.style.background = '#fff'; }}
+                                onMouseLeave={e => { e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.background = 'transparent'; }}
+                              >{linkify(noteText)}</div>
+                              {noteData?.recordingUrl && (
+                                <div style={{ marginTop: 8, fontSize: '0.75rem' }}>
+                                  <a href={noteData.recordingUrl} target="_blank" rel="noreferrer"
+                                    style={{ color: T.accent, textDecoration: 'underline', wordBreak: 'break-all' }}
+                                    onClick={e => e.stopPropagation()}>
+                                    {noteData.recordingUrl}
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                     </tr>
                   )}
@@ -1116,6 +1401,62 @@ export default function CampaignDetail({
                   setScheduleSaving(false);
                 }}>
                 {scheduleSaving ? 'Scheduling…' : 'Schedule Call'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Human Call Modal */}
+      {humanCallLead && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) { setHumanCallLead(null); setHumanCallStatus('idle'); } }}
+        >
+          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📲 Manual Call</h3>
+              <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
+                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Calling <strong>{humanCallLead.first_name} {humanCallLead.last_name}</strong> — {humanCallLead.phone}
+            </p>
+            <p style={{ color: T.sub, fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5 }}>
+              Exotel will call <strong>your phone</strong> first. Pick up and you&apos;ll hear the customer&apos;s name announced, then be connected to them.
+            </p>
+            <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+              Your phone number
+              <input
+                type="tel"
+                className="form-input"
+                value={humanCallPhone}
+                onChange={e => setHumanCallPhone(e.target.value)}
+                placeholder="+91XXXXXXXXXX"
+                style={{ ...inputStyle, width: '100%', marginTop: 6 }}
+                onKeyDown={e => e.key === 'Enter' && handleHumanCallDial()}
+              />
+            </label>
+            {humanCallStatus === 'error' && (
+              <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: '#fee2e2', border: '1px solid #fca5a5', color: T.red }}>
+                ⚠️ {humanCallError}
+              </div>
+            )}
+            {humanCallStatus === 'done' && (
+              <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#065f46' }}>
+                ✅ Dialing your phone…
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
+                style={{ ...btnGhost }}>
+                Cancel
+              </button>
+              <button
+                disabled={humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()}
+                onClick={handleHumanCallDial}
+                style={{ ...btnPrimary, opacity: (humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()) ? 0.6 : 1 }}>
+                {humanCallStatus === 'dialing' ? '📞 Dialing…' : '📞 Call Me'}
               </button>
             </div>
           </div>

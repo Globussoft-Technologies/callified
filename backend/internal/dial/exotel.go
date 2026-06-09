@@ -96,6 +96,90 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 	return sid, nil
 }
 
+// InitiateHumanCall dials agentPhone first (two-party bridge, no Url).
+// Exotel calls the agent; once the agent picks up, Exotel calls customerPhone
+// and bridges both parties. Url is intentionally omitted — Exotel overrides
+// any custom Url with the App's configured Passthru URL, which would route the
+// call into the AI stream instead of bridging the customer. From+To without Url
+// is the standard Exotel two-legged call and works reliably.
+func (e *ExotelClient) InitiateHumanCall(ctx context.Context, agentPhone, customerPhone, callbackURL string) (string, error) {
+	endpoint := fmt.Sprintf(
+		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
+		e.accountSID)
+
+	form := url.Values{}
+	form.Set("From", ExotelPhone(agentPhone))
+	form.Set("To", ExotelPhone(customerPhone))
+	form.Set("CallerId", e.callerID)
+	form.Set("CallType", "trans")
+	form.Set("Record", "true")
+	if callbackURL != "" {
+		form.Set("StatusCallback", callbackURL)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("exotel: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(e.apiKey, e.apiToken)
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("exotel: human call: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("exotel: status %d: %s", resp.StatusCode, string(body))
+	}
+	sid := extractNestedJSON(string(body), "Call", "Sid")
+	if sid == "" {
+		sid = extractJSON(string(body), "Sid")
+	}
+	if sid == "" {
+		return "", fmt.Errorf("exotel: no Sid in response: %s", string(body))
+	}
+	return sid, nil
+}
+
+// FetchRecordingURL fetches call details from Exotel and returns RecordingUrl
+// when the call is completed and a recording is available.
+// Returns ("", nil) when not ready yet; error only on network/auth failures.
+// Exotel stores RecordingUrl in the Call object at /Calls/{sid}.json —
+// NOT in the /Calls/{sid}/Recordings.json sub-resource.
+func (e *ExotelClient) FetchRecordingURL(ctx context.Context, callSid string) (string, error) {
+	endpoint := fmt.Sprintf(
+		"https://api.exotel.com/v1/Accounts/%s/Calls/%s.json",
+		e.accountSID, callSid)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(e.apiKey, e.apiToken)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("exotel call fetch: status %d: %s", resp.StatusCode, string(body))
+	}
+	// Response: {"Call": {"Status":"completed", "RecordingUrl":"https://...", ...}}
+	status := extractNestedJSON(string(body), "Call", "Status")
+	if status != "completed" {
+		return "", nil // call not finished yet
+	}
+	recURL := extractNestedJSON(string(body), "Call", "RecordingUrl")
+	return recURL, nil
+}
+
 // NormalizePhone converts an Indian phone number to E.164 format (+91XXXXXXXXXX).
 // Handles 10-digit numbers, numbers with spaces/dashes, and numbers already with +91.
 func NormalizePhone(phone string) string {

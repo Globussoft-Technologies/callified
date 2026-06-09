@@ -149,15 +149,26 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
 		callSid, err = i.twilio.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
 	default: // exotel
-		// Exotel ignores arbitrary ExoML URLs in the Url parameter — only
-		// http://my.exotel.com/exoml/start/{appID} works. The dashboard app
-		// at appID has a Passthru applet pointing to /webhook/exotel which
-		// returns the WebSocket-streaming ExoML when the lead answers.
-		// Per-call context (name, lead_id, phone) is hydrated from Redis by
-		// the WS handler, not from URL params.
+		// TODO: re-enable fallback after testing per-campaign creds
+		// exotelClient := i.exotel
+		// if data.CampaignID > 0 {
+		// 	if creds, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil && creds.IsSet() {
+		// 		exotelClient = NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
+		// 	}
+		// }
+		var exotelClient *ExotelClient
+		if data.CampaignID > 0 {
+			if creds, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil && creds.IsSet() {
+				exotelClient = NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
+			}
+		}
+		if exotelClient == nil {
+			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
+			return "", fmt.Errorf("no Exotel credentials configured for this campaign")
+		}
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, "", statusURL)
+		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))

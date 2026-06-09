@@ -95,6 +95,7 @@ export default function CampaignsPage({
       <TranscriptModal
         transcriptLead={transcriptLead} setTranscriptLead={setTranscriptLead}
         transcripts={transcripts} orgTimezone={orgTimezone}
+        onRefresh={handleViewTranscripts}
       />
 
       {/* Note Modal for campaign leads */}

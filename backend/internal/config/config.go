@@ -42,8 +42,14 @@ type Config struct {
 	SarvamAPIKey     string `env:"SARVAM_API_KEY"`
 	SmallestAPIKey   string `env:"SMALLEST_API_KEY"`
 
-	// Recordings directory
+	// Recordings directory (local fallback when S3 is not configured)
 	RecordingsDir string `env:"RECORDINGS_DIR" envDefault:"recordings"`
+
+	// S3 storage for recordings (optional — if set, recordings go to S3)
+	S3Bucket          string `env:"S3_BUCKET"`
+	S3Region          string `env:"S3_REGION"           envDefault:"ap-south-1"`
+	AWSAccessKeyID    string `env:"AWS_ACCESS_KEY_ID"`
+	AWSSecretAccessKey string `env:"AWS_SECRET_ACCESS_KEY"`
 
 	// Knowledge-base uploads (PDFs/TXT/DOCX). Files are kept on disk so
 	// users can preview/download what was indexed; the FAISS embeddings

@@ -14,7 +14,8 @@ const PRIMARY_ADMIN_TABS = [
 ];
 
 const MORE_ADMIN_TABS = [
-  { id: 'integrations', label: 'Integrations',    path: '/integrations', testid: 'tab-integrations' },
+  { id: 'integrations',     label: 'Integrations',      path: '/integrations',      testid: 'tab-integrations' },
+  { id: 'exotel-accounts', label: 'Exotel Accounts',   path: '/exotel-accounts',   testid: 'tab-exotel-accounts' },
   { id: 'monitor',      label: 'Monitor AI Calls',path: '/monitor',      testid: 'tab-monitor' },
   { id: 'knowledge',    label: 'RAG Knowledge',   path: '/knowledge',    testid: 'tab-rag' },
   { id: 'sandbox',      label: 'AI Sandbox',      path: '/sandbox',      testid: 'tab-sandbox' },

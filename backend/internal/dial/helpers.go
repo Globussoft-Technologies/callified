@@ -1,6 +1,9 @@
 package dial
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // extractJSON extracts a string value from a flat JSON object by key.
 // Used to avoid importing encoding/json in hot-path client code.
@@ -21,11 +24,29 @@ func extractJSON(body, key string) string {
 		return ""
 	}
 	if rest[0] == '"' {
-		end := strings.Index(rest[1:], `"`)
+		// Scan for the closing quote, skipping backslash-escaped characters.
+		// This correctly handles JSON escape sequences like \/ \\ \" \n etc.
+		end := -1
+		for i := 1; i < len(rest); i++ {
+			if rest[i] == '\\' {
+				i++ // skip the escaped character
+				continue
+			}
+			if rest[i] == '"' {
+				end = i
+				break
+			}
+		}
 		if end < 0 {
 			return ""
 		}
-		return rest[1 : end+1]
+		// strconv.Unquote handles Go string escapes but NOT JSON's \/ sequence.
+		// Normalise \/ → / first so Exotel URLs parse correctly.
+		normalized := strings.ReplaceAll(rest[:end+1], `\/`, `/`)
+		if unquoted, err := strconv.Unquote(normalized); err == nil {
+			return unquoted
+		}
+		return strings.ReplaceAll(rest[1:end], `\/`, `/`)
 	}
 	// numeric / bare value
 	end := strings.IndexAny(rest, ",}")

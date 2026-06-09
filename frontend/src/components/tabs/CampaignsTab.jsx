@@ -24,7 +24,8 @@ export default function CampaignsTab({
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '' });
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
@@ -44,7 +45,12 @@ export default function CampaignsTab({
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchCampaigns(); }, []);
+  useEffect(() => {
+    fetchCampaigns();
+    apiFetch(`${API_URL}/exotel-accounts`)
+      .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
 
   // Open a specific campaign's detail directly when ?id=N is in the URL —
   // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
@@ -202,6 +208,7 @@ export default function CampaignsTab({
           product_id: createForm.product_id ? parseInt(createForm.product_id) : null,
           lead_source: createForm.lead_source || null,
           channel: createForm.channel || 'voice',
+          exotel_account_id: createForm.exotel_account_id ? parseInt(createForm.exotel_account_id) : null,
         })
       });
 
@@ -465,6 +472,7 @@ export default function CampaignsTab({
           handleCreateCampaign={handleCreateCampaign}
           loading={loading}
           orgProducts={orgProducts}
+          orgExotelAccounts={orgExotelAccounts}
           selectedTemplate={selectedTemplate}
           setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
@@ -628,6 +636,7 @@ export default function CampaignsTab({
         createError={createError}
         setCreateError={setCreateError}
         orgProducts={orgProducts}
+        orgExotelAccounts={orgExotelAccounts}
         selectedTemplate={selectedTemplate}
         setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}

@@ -101,6 +101,9 @@ func main() {
 		apiServer.SetWSHandler(wsHandler)     // enables GET /api/active-calls
 		if recordingSvc != nil {
 			apiServer.SetRecordingService(recordingSvc) // enables POST /api/transcripts/{id}/conclusion
+			if apiServer.S3() != nil {
+				recordingSvc.SetS3Uploader(apiServer.S3())
+			}
 		}
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")
