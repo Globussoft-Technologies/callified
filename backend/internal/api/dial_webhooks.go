@@ -314,15 +314,27 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(d, "%f", &callDurationS)
 	}
 
+	// Log every status event so we can verify what Exotel actually sends.
+	s.logger.Info("exotelStatus: received",
+		zap.String("call_sid", callSid),
+		zap.String("raw_status", callStatus),
+		zap.String("all_form", r.Form.Encode()),
+	)
+
 	if callSid == "" {
-		// Try query params (some Exotel setups put them there)
-		callSid = r.URL.Query().Get("lead_id") // fallback using lead_id from URL
-		callSid = ""                           // reset — can't infer call_sid this way
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
 	status := mapExotelStatus(callStatus)
+
+	// Customer answered — ungate agent audio in bridge sessions.
+	// Handle both "in-progress" and "answered" since Exotel may send either.
+	rawLower := strings.ToLower(callStatus)
+	if status == "in-progress" || rawLower == "answered" || rawLower == "in-progress" || rawLower == "inprogress" {
+		s.store.MarkBridgeAnswered(r.Context(), callSid)
+	}
+
 	if err := s.db.UpdateCallLogStatus(callSid, status); err != nil {
 		s.logger.Warn("exotelStatus: UpdateCallLogStatus",
 			zap.String("call_sid", callSid), zap.Error(err))

@@ -458,6 +458,34 @@ func (s *Store) DeleteRaw(ctx context.Context, k string) {
 // agent voice across follow-up calls.
 const LeadVoiceTTL = 90 * 24 * time.Hour
 
+// MarkBridgeAnswered records that the customer answered the bridge call.
+// Called from the Exotel status webhook when Status=in-progress.
+func (s *Store) MarkBridgeAnswered(ctx context.Context, callSid string) {
+	if s.rdb != nil {
+		s.rdb.Set(ctx, "bridge:answered:"+callSid, "1", 5*time.Minute)
+	}
+}
+
+// WaitBridgeAnswered polls until MarkBridgeAnswered fires for callSid, or
+// until timeout. Returns true if answered, false if timed out or cancelled.
+func (s *Store) WaitBridgeAnswered(ctx context.Context, callSid string, timeout time.Duration) bool {
+	if s.rdb == nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if val, _ := s.rdb.Get(ctx, "bridge:answered:"+callSid).Result(); val == "1" {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return false
+}
+
 // ResolveLeadVoice returns the voice ID to use for a call to leadID. If a
 // previously-used voice is cached, it wins (consistency over campaign default).
 // Otherwise currentVoice is cached for next time.
