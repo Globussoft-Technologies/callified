@@ -216,6 +216,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/campaigns/{id}/exotel-account", adminAuth(s.getCampaignExotelAccount))
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-account", adminAuth(s.setCampaignExotelAccount))
 	mux.HandleFunc("POST /api/campaigns/{id}/human-call/{lead_id}", adminOrAgent(s.humanCallLead))
+	mux.HandleFunc("POST /api/campaigns/{id}/leads/{lead_id}/browser-call", adminOrAgent(s.browserCall))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 
 	// ── Org Exotel accounts ───────────────────────────────────────────────────

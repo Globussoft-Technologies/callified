@@ -25,6 +25,9 @@ type CallSession struct {
 	CallSid    string
 	IsExotel   bool
 	IsWebSim   bool
+	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
+	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
+	IsBridge bool
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").
@@ -42,6 +45,13 @@ type CallSession struct {
 	LeadID     int64
 	CampaignID int64
 	OrgID      int64
+	// BridgeCh carries decoded PCM chunks from the Exotel phone to the agent
+	// browser WebSocket when IsBridge=true. Closed when the Exotel call ends.
+	BridgeCh chan []byte
+	// agentConnected is true while exactly one /ws/agent WebSocket is relaying
+	// audio for this bridge session. A second connection is rejected to prevent
+	// two goroutines writing to the same Exotel WS (cross-voice contamination).
+	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
 	greetingSent   atomic.Bool
@@ -201,6 +211,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		AudioIn:         make(chan []byte, 512),
 		Transcripts:     make(chan string, 32),
 		TTSSentences:    make(chan string, 64),
+		BridgeCh:        make(chan []byte, 10), // 10 frames × 20 ms = 200 ms max latency
 		CallStart:       time.Now(),
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),

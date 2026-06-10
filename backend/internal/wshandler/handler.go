@@ -398,6 +398,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// deliver a final transcript after cancel(), and sending to a closed channel
 	// panics. runPipeline exits via ctx.Done() instead.
 	close(sess.AudioIn)
+	// Close BridgeCh to signal the agent browser relay goroutine to exit.
+	if sess.IsBridge {
+		close(sess.BridgeCh)
+	}
 
 	wg.Wait()
 
@@ -501,6 +505,10 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		pcm = audio.UlawToPCM(data)
 	} else {
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
+	}
+	if sess.IsBridge {
+		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
+		return
 	}
 	sess.AppendMicChunk(pcm)
 	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
@@ -656,18 +664,27 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 						sess.SetTTSInstance(newProv)
 					}
 				}
-				// Fire the deferred STT + greeting now that the language is
-				// final. ServeHTTP wired these closures and skipped the
-				// immediate startup path because URL params didn't carry a
-				// language. StartSTT is a no-op the second time (web-sim
-				// already invoked it directly); SendGreeting is gated by
-				// TrySetGreeting so it's also single-shot.
-				if sess.StartSTT != nil && sess.Language != "" {
-					sess.StartSTT()
-					sess.StartSTT = nil // prevent double-start on a second start event
-				}
-				if sess.SendGreeting != nil {
-					sess.SendGreeting()
+				// Bridge mode: skip AI pipeline entirely (no STT, no greeting).
+				// Audio from Exotel is relayed to the agent browser via BridgeCh.
+				if info.IsBridge {
+					sess.IsBridge = true
+					sess.StartSTT = nil
+					sess.SendGreeting = nil
+					h.log.Info("bridge mode: AI pipeline skipped", zap.String("call_sid", callSid))
+				} else {
+					// Fire the deferred STT + greeting now that the language is
+					// final. ServeHTTP wired these closures and skipped the
+					// immediate startup path because URL params didn't carry a
+					// language. StartSTT is a no-op the second time (web-sim
+					// already invoked it directly); SendGreeting is gated by
+					// TrySetGreeting so it's also single-shot.
+					if sess.StartSTT != nil && sess.Language != "" {
+						sess.StartSTT()
+						sess.StartSTT = nil // prevent double-start on a second start event
+					}
+					if sess.SendGreeting != nil {
+						sess.SendGreeting()
+					}
 				}
 			}
 		}
@@ -807,6 +824,10 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		// overlap is bounded by the mic-muting logic in the client and the
 		// nextPlayTime arithmetic on the synthesis side.
 		pcm = raw
+	}
+	if sess.IsBridge {
+		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
+		return
 	}
 	sess.AppendMicChunk(pcm)
 	// Energy VAD: trigger barge-in immediately when user speaks during TTS.

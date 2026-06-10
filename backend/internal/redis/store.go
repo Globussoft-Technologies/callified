@@ -43,6 +43,9 @@ type PendingCallInfo struct {
 	TTSProvider   string `json:"tts_provider"`
 	TTSVoiceID    string `json:"tts_voice_id"`
 	TTSLanguage   string `json:"tts_language"`
+	// IsBridge=true means the call is a browser-to-phone bridge: skip AI pipeline,
+	// relay audio between Exotel and the agent's browser WebSocket.
+	IsBridge bool `json:"is_bridge,omitempty"`
 }
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).

@@ -26,6 +26,9 @@ type CallData struct {
 	TTSProvider string
 	TTSVoiceID  string
 	TTSLanguage string
+	// IsBridge=true routes the call to browser-to-phone mode: the Exotel stream is
+	// relayed to the agent's browser WebSocket instead of the AI pipeline.
+	IsBridge bool
 }
 
 // Initiator orchestrates the full dial sequence:
@@ -136,6 +139,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		TTSProvider: data.TTSProvider,
 		TTSVoiceID:  data.TTSVoiceID,
 		TTSLanguage: data.TTSLanguage,
+		IsBridge:    data.IsBridge,
 	}
 
 	// 4. Dial via the configured provider

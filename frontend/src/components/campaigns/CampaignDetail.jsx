@@ -3,6 +3,7 @@ import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
+import BrowserCallModal from './BrowserCallModal';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -284,6 +285,26 @@ export default function CampaignDetail({
     }
   };
 
+  const handleBrowserCallStart = async (lead) => {
+    setBrowserCallLead(lead);
+    setBrowserCallSid(null);
+    setBrowserCallDialing(true);
+    try {
+      const res = await apiFetch(
+        `${API_URL}/campaigns/${selectedCampaign.id}/leads/${lead.id}/browser-call`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setBrowserCallSid(data.call_sid);
+    } catch (e) {
+      setBrowserCallLead(null);
+      alert('Browser call failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setBrowserCallDialing(false);
+    }
+  };
+
   const fetchInsights = async () => {
     setInsightsLoading(true);
     setInsightsError('');
@@ -349,6 +370,10 @@ export default function CampaignDetail({
   const [humanCallPhone, setHumanCallPhone] = useState(() => localStorage.getItem('humanCallAgentPhone') || '');
   const [humanCallStatus, setHumanCallStatus] = useState('idle'); // idle | dialing | done | error
   const [humanCallError, setHumanCallError] = useState('');
+
+  const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call
+  const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API
+  const [browserCallDialing, setBrowserCallDialing] = useState(false);
 
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
@@ -1151,6 +1176,21 @@ export default function CampaignDetail({
                             📲 Manual Call
                           </button>
                         )}
+                        {selectedCampaign.channel !== 'whatsapp' && (
+                          <button
+                            onClick={() => handleBrowserCallStart(lead)}
+                            disabled={browserCallDialing}
+                            title="Call from browser mic — 1x cost"
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: browserCallDialing ? 'not-allowed' : 'pointer',
+                              opacity: browserCallDialing ? 0.6 : 1,
+                              background: 'rgba(99,102,241,0.08)', color: '#3730a3',
+                              border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6,
+                            }}>
+                            🎙 Browser Call
+                          </button>
+                        )}
                         {selectedCampaign.channel === 'whatsapp' && (
                           <button
                             onClick={() => handleSendWA(lead)}
@@ -1408,6 +1448,16 @@ export default function CampaignDetail({
       )}
 
       {/* Human Call Modal */}
+      {/* Browser Call Modal */}
+      {browserCallLead && browserCallSid && (
+        <BrowserCallModal
+          lead={browserCallLead}
+          callSid={browserCallSid}
+          wsBaseUrl={(window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host}
+          onClose={() => { setBrowserCallLead(null); setBrowserCallSid(null); }}
+        />
+      )}
+
       {humanCallLead && (
         <div
           className="modal-overlay"

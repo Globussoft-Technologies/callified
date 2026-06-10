@@ -82,6 +82,11 @@ func main() {
 	// Managers connect here to receive live transcripts, inject whispers, trigger takeover.
 	mux.HandleFunc("/ws/monitor/", wsHandler.ServeMonitor)
 
+	// Agent browser WebSocket: /ws/agent?call_sid=XXX
+	// Agent's browser connects here to relay mic audio to the lead's phone
+	// (browser-to-phone bridge, 1x cost). Requires IsBridge=true in Redis pending call.
+	mux.HandleFunc("/ws/agent", wsHandler.ServeAgent)
+
 	// Dial initiator (Phase 2) — shares dispatcher with recording service
 	var initiator *dial.Initiator
 	if database != nil && recordingSvc != nil {

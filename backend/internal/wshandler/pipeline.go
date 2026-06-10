@@ -214,6 +214,13 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 				sess.WS.Close() //nolint:errcheck
 				return
 			}
+			// Safety: bridge sessions must never synthesise AI audio —
+			// the agent's browser mic is the audio source, not TTS.
+			if sess.IsBridge {
+				sess.Log.Warn("tts worker: dropping sentence for bridge session — should not happen",
+					zap.String("sentence", sentence))
+				continue
+			}
 			// Discard sentences queued before barge-in — customer interrupted,
 			// old agent response is stale.
 			if sess.IsBargeInActive() {
