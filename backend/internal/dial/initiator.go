@@ -142,34 +142,39 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		IsBridge:    data.IsBridge,
 	}
 
-	// 4. Dial via the configured provider
-	provider := i.cfg.DefaultProvider
+	// 4. Resolve per-campaign provider credentials.
+	// Provider is determined by the account linked to the campaign, not by global config.
+	var creds db.ExotelCreds
+	if data.CampaignID > 0 {
+		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
+			creds = c
+		}
+	}
+	provider := creds.Provider
+	if provider == "" {
+		provider = i.cfg.DefaultProvider
+	}
 	var callSid string
 
 	switch provider {
 	case "twilio":
+		var twilioClient *TwilioClient
+		if creds.IsSet() {
+			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
+			twilioClient = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+		} else {
+			twilioClient = i.twilio // global fallback
+		}
 		twimlURL := fmt.Sprintf("%s/webhook/twilio?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
-		callSid, err = i.twilio.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
+		callSid, err = twilioClient.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
 	default: // exotel
-		// TODO: re-enable fallback after testing per-campaign creds
-		// exotelClient := i.exotel
-		// if data.CampaignID > 0 {
-		// 	if creds, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil && creds.IsSet() {
-		// 		exotelClient = NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
-		// 	}
-		// }
-		var exotelClient *ExotelClient
-		if data.CampaignID > 0 {
-			if creds, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil && creds.IsSet() {
-				exotelClient = NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
-			}
-		}
-		if exotelClient == nil {
+		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
 			return "", fmt.Errorf("no Exotel credentials configured for this campaign")
 		}
+		exotelClient := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)

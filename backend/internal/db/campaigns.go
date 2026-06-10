@@ -563,18 +563,27 @@ func coalesceStr(s, def string) string {
 	return s
 }
 
-// ExotelCreds holds per-campaign Exotel telephony credentials.
-// All fields are optional; empty string means "use the platform default".
+// ExotelCreds holds per-campaign telephony credentials (Exotel or Twilio).
+// Field mapping:
+//
+//	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
+//	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
 type ExotelCreds struct {
+	Provider   string // "exotel" or "twilio"; empty means exotel
 	APIKey     string `json:"exotel_api_key"`
 	APIToken   string `json:"exotel_api_token"`
+	APISecret  string // Twilio only
 	AccountSID string `json:"exotel_account_sid"`
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 }
 
-// IsSet returns true when all five fields are non-empty.
+// IsSet returns true when the minimum required fields for the provider are set.
 func (e ExotelCreds) IsSet() bool {
+	if e.Provider == "twilio" {
+		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
+	}
+	// exotel: AppID is required for voice app routing
 	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""
 }
 

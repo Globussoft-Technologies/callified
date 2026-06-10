@@ -217,6 +217,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-account", adminAuth(s.setCampaignExotelAccount))
 	mux.HandleFunc("POST /api/campaigns/{id}/human-call/{lead_id}", adminOrAgent(s.humanCallLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads/{lead_id}/browser-call", adminOrAgent(s.browserCall))
+	mux.HandleFunc("GET /api/campaigns/{id}/twilio-token", adminOrAgent(s.twilioToken))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 
 	// ── Org Exotel accounts ───────────────────────────────────────────────────
@@ -389,6 +390,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Telephony webhooks (no auth — provider-initiated) ──────────────────────
 	mux.HandleFunc("GET /webhook/twilio", s.twilioTwiML)
 	mux.HandleFunc("POST /webhook/twilio/status", s.twilioStatus)
+	mux.HandleFunc("POST /webhook/twilio/voice", s.twilioVoiceWebhook)
 	mux.HandleFunc("GET /webhook/exotel", s.exotelXML)
 	mux.HandleFunc("POST /webhook/exotel", s.exotelXML)
 	mux.HandleFunc("GET /webhook/exotel/human-call", s.exotelHumanCallXML)

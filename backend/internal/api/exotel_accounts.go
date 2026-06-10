@@ -24,9 +24,11 @@ func (s *Server) listExotelAccounts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var req struct {
+		Provider   string `json:"provider"`
 		Name       string `json:"name"`
 		APIKey     string `json:"api_key"`
 		APIToken   string `json:"api_token"`
+		APISecret  string `json:"api_secret"`
 		AccountSID string `json:"account_sid"`
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
@@ -35,13 +37,16 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" || req.APIKey == "" || req.APIToken == "" ||
-		req.AccountSID == "" || req.CallerID == "" {
-		writeError(w, http.StatusBadRequest, "name, api_key, api_token, account_sid and caller_id are required")
+	if req.Provider == "" {
+		req.Provider = "exotel"
+	}
+	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); err != "" {
+		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, strings.TrimSpace(req.Name),
-		req.APIKey, req.APIToken, req.AccountSID, req.CallerID, req.AppID)
+	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
+		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
+		req.AccountSID, req.CallerID, req.AppID)
 	if err != nil {
 		s.logger.Sugar().Errorw("createExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -60,9 +65,11 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		Provider   string `json:"provider"`
 		Name       string `json:"name"`
 		APIKey     string `json:"api_key"`
 		APIToken   string `json:"api_token"`
+		APISecret  string `json:"api_secret"`
 		AccountSID string `json:"account_sid"`
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
@@ -71,13 +78,16 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if strings.TrimSpace(req.Name) == "" || req.APIKey == "" || req.APIToken == "" ||
-		req.AccountSID == "" || req.CallerID == "" {
-		writeError(w, http.StatusBadRequest, "name, api_key, api_token, account_sid and caller_id are required")
+	if req.Provider == "" {
+		req.Provider = "exotel"
+	}
+	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
-	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, strings.TrimSpace(req.Name),
-		req.APIKey, req.APIToken, req.AccountSID, req.CallerID, req.AppID); err != nil {
+	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
+		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
+		req.AccountSID, req.CallerID, req.AppID); err != nil {
 		s.logger.Sugar().Errorw("updateExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -103,7 +113,6 @@ func (s *Server) deleteExotelAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── GET /api/campaigns/{id}/exotel-account ───────────────────────────────────
-// Returns which org-level account (if any) is linked to this campaign.
 
 func (s *Server) getCampaignExotelAccount(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
@@ -116,7 +125,6 @@ func (s *Server) getCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 }
 
 // ── PUT /api/campaigns/{id}/exotel-account ───────────────────────────────────
-// Links or unlinks an org-level Exotel account on a campaign.
 
 func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
@@ -137,4 +145,22 @@ func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"saved": true})
+}
+
+// validateProviderAccount checks required fields per provider.
+func validateProviderAccount(provider, name, apiKey, apiToken, apiSecret, accountSID, callerID string) string {
+	if strings.TrimSpace(name) == "" {
+		return "account name is required"
+	}
+	switch provider {
+	case "twilio":
+		if accountSID == "" || apiKey == "" || apiToken == "" || apiSecret == "" || callerID == "" {
+			return "account_sid, api_key (auth token), api_token (API key SID), api_secret and caller_id (phone number) are required for Twilio"
+		}
+	default: // exotel
+		if apiKey == "" || apiToken == "" || accountSID == "" || callerID == "" {
+			return "api_key, api_token, account_sid and caller_id are required for Exotel"
+		}
+	}
+	return ""
 }

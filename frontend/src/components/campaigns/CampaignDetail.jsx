@@ -4,6 +4,7 @@ import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import BrowserCallModal from './BrowserCallModal';
+import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -286,6 +287,17 @@ export default function CampaignDetail({
   };
 
   const handleBrowserCallStart = async (lead) => {
+    // Detect provider from the campaign's linked account.
+    const linkedAccount = orgExotelAccounts.find(a => String(a.id) === selectedExotelAccountId);
+    const isTwilio = linkedAccount?.provider === 'twilio';
+
+    if (isTwilio) {
+      // Twilio: open WebRTC modal directly — no server-side dial needed.
+      setTwilioBrowserLead(lead);
+      return;
+    }
+
+    // Exotel: server dials the customer, then we relay audio over WebSocket.
     setBrowserCallLead(lead);
     setBrowserCallSid(null);
     setBrowserCallDialing(true);
@@ -371,9 +383,10 @@ export default function CampaignDetail({
   const [humanCallStatus, setHumanCallStatus] = useState('idle'); // idle | dialing | done | error
   const [humanCallError, setHumanCallError] = useState('');
 
-  const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call
-  const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API
+  const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call (Exotel)
+  const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API (Exotel)
   const [browserCallDialing, setBrowserCallDialing] = useState(false);
+  const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
 
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
@@ -591,7 +604,7 @@ export default function CampaignDetail({
       {selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            📞 Exotel Account
+            📞 Provider Account
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
@@ -602,7 +615,7 @@ export default function CampaignDetail({
               <option value="">-- Use platform default --</option>
               {orgExotelAccounts.map(a => (
                 <option key={a.id} value={String(a.id)}>
-                  {a.name} · {a.account_sid} · {a.caller_id}
+                  {a.provider === 'twilio' ? '[Twilio]' : '[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
                 </option>
               ))}
             </select>
@@ -625,8 +638,8 @@ export default function CampaignDetail({
                   return a ? `Using: ${a.name} · Account: ${a.account_sid} · Caller: ${a.caller_id}` : 'Account selected';
                 })()
               : orgExotelAccounts.length === 0
-                ? 'No saved accounts — go to More → Exotel Accounts to add one'
-                : 'Using platform default Exotel credentials'}
+                ? 'No saved accounts — go to More → Provider Accounts to add one'
+                : 'Using platform default credentials'}
           </div>
         </div>
       )}
@@ -1448,13 +1461,23 @@ export default function CampaignDetail({
       )}
 
       {/* Human Call Modal */}
-      {/* Browser Call Modal */}
+      {/* Browser Call Modal — Exotel streaming relay */}
       {browserCallLead && browserCallSid && (
         <BrowserCallModal
           lead={browserCallLead}
           callSid={browserCallSid}
           wsBaseUrl={(window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host}
           onClose={() => { setBrowserCallLead(null); setBrowserCallSid(null); }}
+        />
+      )}
+
+      {/* Browser Call Modal — Twilio WebRTC (zero delay) */}
+      {twilioBrowserLead && (
+        <TwilioBrowserCallModal
+          lead={twilioBrowserLead}
+          campaignId={selectedCampaign.id}
+          callerPhone={orgExotelAccounts.find(a => String(a.id) === selectedExotelAccountId)?.caller_id || ''}
+          onClose={() => setTwilioBrowserLead(null)}
         />
       )}
 
