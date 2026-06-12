@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatDate } from '../../utils/dateFormat';
 
 const T = {
@@ -21,6 +21,35 @@ export default function SettingsTab({
   setSystemPromptCustom, setPromptDirty,
   orgTimezone
 }) {
+  const [callActions, setCallActions] = useState({
+    dial: true,
+    browserCall: true,
+    simWebCall: true,
+  });
+  const [callActionsSaved, setCallActionsSaved] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
+      setCallActions({
+        dial: saved.dial !== false,
+        browserCall: saved.browserCall !== false,
+        simWebCall: saved.simWebCall !== false,
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleCallActionChange = (key) => {
+    setCallActions(prev => ({ ...prev, [key]: !prev[key] }));
+    setCallActionsSaved(false);
+  };
+
+  const saveCallActions = () => {
+    localStorage.setItem('callified_call_actions', JSON.stringify(callActions));
+    setCallActionsSaved(true);
+    setTimeout(() => setCallActionsSaved(false), 3000);
+  };
+
   const labelStyle = { fontSize: 13, fontWeight: 600, color: T.sub, marginBottom: 6, display: 'block', fontFamily: T.font };
   const inputStyle = {
     width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 13,
@@ -226,6 +255,51 @@ export default function SettingsTab({
             </div>
           </div>
         )}
+
+        {/* Call Action Visibility */}
+        <div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>☎️ Call Action Visibility</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {callActionsSaved && (
+                <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+              )}
+              <button
+                onClick={saveCallActions}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                  borderRadius: 8, color: '#fff', padding: '8px 16px',
+                  cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                }}>
+                💾 Save
+              </button>
+            </div>
+          </div>
+          <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+            Choose which call buttons appear in the lead action row on the campaign page.
+          </p>
+
+          {[
+            { key: 'dial', label: '📞 Dial' },
+            { key: 'browserCall', label: '🎙 Browser Call' },
+            { key: 'simWebCall', label: '🌐 Sim Web Call' },
+          ].map(({ key, label }) => (
+            <label key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions[key]}
+                onChange={() => handleCallActionChange(key)}
+                style={{ width: 18, height: 18, cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>{label}</span>
+            </label>
+          ))}
+        </div>
 
       </div>
     </div>

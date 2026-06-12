@@ -89,37 +89,84 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) 
 
   const stopAll = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (processorRef.current) { try { processorRef.current.disconnect(); } catch {} processorRef.current = null; }
+    if (audioDrainRef.current) { clearInterval(audioDrainRef.current); audioDrainRef.current = null; }
+    if (processorRef.current) { try { processorRef.current.disconnect(); } catch { /* ignore */ } processorRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       audioCtxRef.current.close().catch(() => {});
       audioCtxRef.current = null;
     }
-    if (wsRef.current) { try { wsRef.current.close(); } catch {} wsRef.current = null; }
+    if (wsRef.current) { try { wsRef.current.close(); } catch { /* ignore */ } wsRef.current = null; }
+    audioQueueRef.current = [];
+    audioStartedRef.current = false;
   }, []);
 
-  const playAudioChunk = useCallback((b64) => {
-    if (!audioCtxRef.current) return;
+  // Incoming audio jitter buffer: collect a few Exotel frames before starting
+  // playback so a late or missing 20 ms chunk doesn't swallow a short word.
+  const audioQueueRef = useRef([]);
+  const audioStartedRef = useRef(false);
+  const audioDrainRef = useRef(null);
+  const JITTER_TARGET_S = 0.08; // 80 ms ≈ 4 frames
+  const MAX_BUFFER_S = 0.3;     // drop oldest if we exceed 300 ms
+
+  const scheduleChunk = useCallback((f32, startAt) => {
     const ctx = audioCtxRef.current;
-    if (ctx.state === 'closed') return;
+    if (!ctx || ctx.state === 'closed') return;
     try {
-      const f32 = base64ToPcmFloat32(b64);
       const buffer = ctx.createBuffer(1, f32.length, 8000);
       buffer.copyToChannel(f32, 0);
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(ctx.destination);
-      const now = ctx.currentTime;
-      // If scheduled queue has fallen more than 300ms behind, reset to now
-      // to prevent stale audio from playing with increasing delay.
-      if (nextPlayTimeRef.current > now + 0.3) {
-        nextPlayTimeRef.current = now + 0.05;
-      }
-      const startAt = Math.max(nextPlayTimeRef.current, now + 0.01);
       source.start(startAt);
-      nextPlayTimeRef.current = startAt + buffer.duration;
-    } catch {}
+    } catch { /* ignore */ }
   }, []);
+
+  const drainAudioQueue = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === 'closed') return;
+    const q = audioQueueRef.current;
+    if (q.length === 0) {
+      audioStartedRef.current = false;
+      return;
+    }
+
+    // Keep buffer from growing without bound during a network burst.
+    let bufferedS = q.reduce((sum, c) => sum + c.length, 0) / 8000;
+    while (bufferedS > MAX_BUFFER_S && q.length > 0) {
+      bufferedS -= q.shift().length / 8000;
+    }
+
+    // Wait until we have enough audio before we start playing.
+    if (!audioStartedRef.current) {
+      if (bufferedS < JITTER_TARGET_S) return;
+      audioStartedRef.current = true;
+      nextPlayTimeRef.current = ctx.currentTime + 0.02;
+    }
+
+    const now = ctx.currentTime;
+    // If the schedule has drifted too far ahead (e.g. tab was backgrounded),
+    // reset it so we don't sit on stale audio.
+    if (nextPlayTimeRef.current > now + 0.3) {
+      nextPlayTimeRef.current = now + 0.05;
+    }
+
+    while (q.length > 0 && nextPlayTimeRef.current < now + 0.3) {
+      const f32 = q.shift();
+      const startAt = Math.max(nextPlayTimeRef.current, now + 0.01);
+      scheduleChunk(f32, startAt);
+      nextPlayTimeRef.current = startAt + f32.length / 8000;
+    }
+  }, [scheduleChunk]);
+
+  const playAudioChunk = useCallback((b64) => {
+    if (!audioCtxRef.current) return;
+    const f32 = base64ToPcmFloat32(b64);
+    audioQueueRef.current.push(f32);
+    if (!audioDrainRef.current) {
+      audioDrainRef.current = setInterval(drainAudioQueue, 10);
+    }
+  }, [drainAudioQueue]);
 
   useEffect(() => {
     let cancelled = false;

@@ -507,6 +507,9 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
+		// Record customer audio for the server-side stereo WAV, then relay
+		// to the agent browser via BridgeCh.
+		sess.AppendMicChunk(pcm)
 		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
 		return
 	}
@@ -826,6 +829,9 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		pcm = raw
 	}
 	if sess.IsBridge {
+		// Record customer audio for the server-side stereo WAV, then relay
+		// to the agent browser via BridgeCh.
+		sess.AppendMicChunk(pcm)
 		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
 		return
 	}

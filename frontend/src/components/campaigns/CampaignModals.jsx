@@ -264,9 +264,29 @@ export default function CampaignModals({
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
-            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>
+            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem'}}>
               Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
             </p>
+            <button
+              onClick={() => {
+                const csv = 'first_name,last_name,phone,source\nJohn,Doe,9876543210,google\n';
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'callified_leads_template.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}
+              style={{
+                background: 'transparent', border: 'none', color: '#818cf8',
+                cursor: 'pointer', fontSize: '0.8rem', padding: 0, marginBottom: '1rem',
+                textDecoration: 'underline',
+              }}>
+              Download Template
+            </button>
             <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files[0])}
               style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>

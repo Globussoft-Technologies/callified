@@ -178,6 +178,24 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	var customerAudioReady atomic.Bool
 	agentPCM := make(chan []byte, 100) // decoded PCM-16 from browser
 
+	// enqueueAgentPCM pushes decoded browser PCM to the send queue.
+	// When the queue is full it drops the *oldest* frame, not the newest one,
+	// so a short syllable like "is" is not clipped while older silence is discarded.
+	enqueueAgentPCM := func(pcm []byte) {
+		select {
+		case agentPCM <- pcm:
+		default:
+			select {
+			case <-agentPCM: // drop oldest
+			default:
+			}
+			select {
+			case agentPCM <- pcm:
+			default:
+			}
+		}
+	}
+
 	// Read goroutine: decode browser audio and push to agentPCM.
 	go func() {
 		defer close(agentDone)
@@ -207,38 +225,37 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			if decErr != nil || len(rawPCM) == 0 {
 				continue
 			}
-			select {
-			case agentPCM <- rawPCM:
-			default:
-				// Channel full: drop newest frame to keep relay real-time.
-			}
+			enqueueAgentPCM(rawPCM)
 		}
 	}()
 
 	// Send goroutine: accumulate PCM and emit one 20 ms frame every 20 ms.
 	// 20 ms @ 8 kHz, 16-bit = 160 samples = 320 bytes.
+	// The frame clock is aligned to the first received browser chunk so the
+	// start of speech isn't split across tick boundaries.
 	const pcmFrameSize = 320
 	go func() {
-		ticker := time.NewTicker(20 * time.Millisecond)
-		defer ticker.Stop()
 		var buf []byte
+		var nextFrameTime time.Time
+		started := false
 		for {
-			select {
-			case pcm, ok := <-agentPCM:
+			if !started {
+				pcm, ok := <-agentPCM
 				if !ok {
 					return
 				}
 				buf = append(buf, pcm...)
-				// Cap buffer at ~200 ms to prevent backlog on network bursts.
-				if len(buf) > pcmFrameSize*10 {
-					buf = buf[len(buf)-pcmFrameSize*10:]
-				}
-			case <-ticker.C:
-				if len(buf) < pcmFrameSize {
-					continue
-				}
+				started = true
+				nextFrameTime = time.Now().Add(20 * time.Millisecond)
+				continue
+			}
+
+			// If we have a full frame, send it on the aligned clock.
+			if len(buf) >= pcmFrameSize {
 				framePCM := buf[:pcmFrameSize]
 				buf = buf[pcmFrameSize:]
+				// Record agent audio for the server-side stereo WAV.
+				sess.AppendTTSChunk(framePCM)
 				// Convert PCM-16 → μ-law when the Exotel session uses μ-law encoding.
 				// (Voicebot applet uses PCM-16 directly; Passthru/Twilio uses μ-law.)
 				var audioBytes []byte
@@ -253,6 +270,29 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 					"media":  map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
 				})
 				sess.SendText(frame) //nolint:errcheck
+				nextFrameTime = nextFrameTime.Add(20 * time.Millisecond)
+				continue
+			}
+
+			sleep := time.Until(nextFrameTime)
+			if sleep < 0 {
+				sleep = 0
+			}
+			select {
+			case pcm, ok := <-agentPCM:
+				if !ok {
+					return
+				}
+				buf = append(buf, pcm...)
+				// Cap buffer at ~200 ms to prevent backlog on network bursts.
+				if len(buf) > pcmFrameSize*10 {
+					buf = buf[len(buf)-pcmFrameSize*10:]
+				}
+			case <-time.After(sleep):
+				// No full frame yet; advance the clock so we don't spin.
+				if len(buf) < pcmFrameSize {
+					nextFrameTime = time.Now().Add(20 * time.Millisecond)
+				}
 			case <-agentDone:
 				return
 			}

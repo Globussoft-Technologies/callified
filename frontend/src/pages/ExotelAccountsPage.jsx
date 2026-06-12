@@ -146,7 +146,7 @@ export default function ExotelAccountsPage() {
             📞 Provider Accounts
           </h2>
           <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
-            Save Exotel or Twilio credentials and select one per campaign.
+            Save Exotel credentials and select one per campaign.
           </p>
         </div>
         <button onClick={openAdd}
@@ -172,7 +172,7 @@ export default function ExotelAccountsPage() {
             <div style={{ marginBottom: '1.2rem' }}>
               <label style={labelStyle}>Provider <span style={{ color: T.red }}>*</span></label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {['exotel', 'twilio'].map(p => (
+                {['exotel' /* , 'twilio' */].map(p => (
                   <button key={p} type="button"
                     onClick={() => setField('provider', p)}
                     style={{

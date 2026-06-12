@@ -588,39 +588,28 @@ func (e ExotelCreds) IsSet() bool {
 }
 
 // GetCampaignExotelCreds returns the Exotel credentials for a campaign.
-// Resolution order:
-//  1. org_exotel_accounts row linked via exotel_account_id (preferred)
-//  2. inline per-campaign columns (legacy / manual override)
+// It ONLY uses the org_exotel_accounts row linked via exotel_account_id.
+// Inline per-campaign columns and platform env-var defaults are intentionally
+// ignored so calls are routed strictly through the account selected in the UI.
 func (d *DB) GetCampaignExotelCreds(campaignID int64) (ExotelCreds, error) {
 	var c ExotelCreds
 	var accountID sql.NullInt64
-	var apiKey, apiToken, accountSID, callerID, appID sql.NullString
 	err := d.pool.QueryRow(
-		`SELECT COALESCE(exotel_account_id,0),
-		        COALESCE(exotel_api_key,''), COALESCE(exotel_api_token,''),
-		        COALESCE(exotel_account_sid,''), COALESCE(exotel_caller_id,''),
-		        COALESCE(exotel_app_id,'')
-		 FROM campaigns WHERE id=?`, campaignID,
-	).Scan(&accountID, &apiKey, &apiToken, &accountSID, &callerID, &appID)
+		`SELECT COALESCE(exotel_account_id,0) FROM campaigns WHERE id=?`, campaignID,
+	).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, nil
 	}
 	if err != nil {
 		return c, err
 	}
-	// Prefer org-level account when linked.
 	if accountID.Valid && accountID.Int64 > 0 {
 		var orgID int64
 		_ = d.pool.QueryRow(`SELECT org_id FROM campaigns WHERE id=?`, campaignID).Scan(&orgID)
-		if linked, lerr := d.GetOrgExotelAccountCreds(accountID.Int64, orgID); lerr == nil && linked.IsSet() {
+		if linked, lerr := d.GetOrgExotelAccountCreds(accountID.Int64, orgID); lerr == nil {
 			return linked, nil
 		}
 	}
-	c.APIKey = apiKey.String
-	c.APIToken = apiToken.String
-	c.AccountSID = accountSID.String
-	c.CallerID = callerID.String
-	c.AppID = appID.String
 	return c, nil
 }
 

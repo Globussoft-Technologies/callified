@@ -4,7 +4,7 @@ import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import BrowserCallModal from './BrowserCallModal';
-import TwilioBrowserCallModal from './TwilioBrowserCallModal';
+// import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -287,17 +287,7 @@ export default function CampaignDetail({
   };
 
   const handleBrowserCallStart = async (lead) => {
-    // Detect provider from the campaign's linked account.
-    const linkedAccount = orgExotelAccounts.find(a => String(a.id) === selectedExotelAccountId);
-    const isTwilio = linkedAccount?.provider === 'twilio';
-
-    if (isTwilio) {
-      // Twilio: open WebRTC modal directly — no server-side dial needed.
-      setTwilioBrowserLead(lead);
-      return;
-    }
-
-    // Exotel: server dials the customer, then we relay audio over WebSocket.
+    // Exotel only: server dials the customer, then we relay audio over WebSocket.
     setBrowserCallLead(lead);
     setBrowserCallSid(null);
     setBrowserCallDialing(true);
@@ -386,7 +376,24 @@ export default function CampaignDetail({
   const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call (Exotel)
   const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API (Exotel)
   const [browserCallDialing, setBrowserCallDialing] = useState(false);
-  const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
+  // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
+
+  // Call-action visibility from Settings page (localStorage).
+  const [visibleCallActions, setVisibleCallActions] = useState({
+    dial: true,
+    browserCall: true,
+    simWebCall: true,
+  });
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
+      setVisibleCallActions({
+        dial: saved.dial !== false,
+        browserCall: saved.browserCall !== false,
+        simWebCall: saved.simWebCall !== false,
+      });
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
@@ -615,7 +622,7 @@ export default function CampaignDetail({
               <option value="">-- Use platform default --</option>
               {orgExotelAccounts.map(a => (
                 <option key={a.id} value={String(a.id)}>
-                  {a.provider === 'twilio' ? '[Twilio]' : '[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
+                  {'[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
                 </option>
               ))}
             </select>
@@ -639,7 +646,7 @@ export default function CampaignDetail({
                 })()
               : orgExotelAccounts.length === 0
                 ? 'No saved accounts — go to More → Provider Accounts to add one'
-                : 'Using platform default credentials'}
+                : 'No account selected — calls will not go through'}
           </div>
         </div>
       )}
@@ -1165,18 +1172,21 @@ export default function CampaignDetail({
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           ✏️ Edit
                         </button>
-                        <button
-                          onClick={() => handleDialClick(lead)}
-                          disabled={dialingId === lead.id || webCallActive === lead.id}
-                          style={{
-                            fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
-                            cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
-                            opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
-                            background: 'rgba(16,185,129,0.08)', color: '#065f46',
-                            border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
-                          }}>
-                          {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
-                        </button>
+                        {visibleCallActions.dial && (
+                          <button
+                            onClick={() => handleDialClick(lead)}
+                            disabled={dialingId === lead.id || webCallActive === lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
+                              opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
+                              background: 'rgba(16,185,129,0.08)', color: '#065f46',
+                              border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
+                            }}>
+                            {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
+                          </button>
+                        )}
+                        {/* Manual Call disabled — use Browser Call instead
                         {selectedCampaign.channel !== 'whatsapp' && (
                           <button
                             onClick={() => { setHumanCallLead(lead); setHumanCallStatus('idle'); setHumanCallError(''); }}
@@ -1188,8 +1198,8 @@ export default function CampaignDetail({
                             }}>
                             📲 Manual Call
                           </button>
-                        )}
-                        {selectedCampaign.channel !== 'whatsapp' && (
+                        )} */}
+                        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
                           <button
                             onClick={() => handleBrowserCallStart(lead)}
                             disabled={browserCallDialing}
@@ -1220,20 +1230,22 @@ export default function CampaignDetail({
                             {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
                           </button>
                         )}
-                        <button
-                          onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
-                          disabled={webCallActive != null && webCallActive !== lead.id}
-                          style={{
-                            fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
-                            cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
-                            opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
-                            borderRadius: 6,
-                            border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
-                            color: webCallActive === lead.id ? T.red : T.accent,
-                            background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
-                          }}>
-                          {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
-                        </button>
+                        {visibleCallActions.simWebCall && (
+                          <button
+                            onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
+                            disabled={webCallActive != null && webCallActive !== lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
+                              opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
+                              borderRadius: 6,
+                              border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
+                              color: webCallActive === lead.id ? T.red : T.accent,
+                              background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
+                            }}>
+                            {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
+                          </button>
+                        )}
                         {dndBlockedLeadIds.has(lead.id) && (
                           <span title="This number is on the DND list — outbound dials are blocked"
                             style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6,
@@ -1471,15 +1483,15 @@ export default function CampaignDetail({
         />
       )}
 
-      {/* Browser Call Modal — Twilio WebRTC (zero delay) */}
-      {twilioBrowserLead && (
+      {/* Browser Call Modal — Twilio WebRTC (zero delay) [disabled] */}
+      {/* {twilioBrowserLead && (
         <TwilioBrowserCallModal
           lead={twilioBrowserLead}
           campaignId={selectedCampaign.id}
           callerPhone={orgExotelAccounts.find(a => String(a.id) === selectedExotelAccountId)?.caller_id || ''}
           onClose={() => setTwilioBrowserLead(null)}
         />
-      )}
+      )} */}
 
       {humanCallLead && (
         <div
