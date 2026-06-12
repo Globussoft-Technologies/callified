@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
+import loginIcon from '../assets/tg_image_3608761279.png';
 
 export default function AuthPage() {
   const { login, signup } = useAuth();
@@ -54,10 +55,13 @@ export default function AuthPage() {
     }}>
       <div style={{ width: '100%', maxWidth: '440px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, background: 'linear-gradient(135deg, #a78bfa, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            🤖 Callified AI
+          <h1 style={{ fontSize: '2rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 0 }}>
+            <img src={loginIcon} alt="" style={{ height: '1.2em', width: '1.2em', objectFit: 'contain' }} />
+            <span style={{ background: 'linear-gradient(135deg, #a78bfa, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              Callified AI
+            </span>
           </h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.95rem' }}>AI-Powered Lead Qualification Platform</p>
+          <p style={{ color: '#94a3b8', fontSize: '0.95rem', marginTop: '0.5rem' }}>AI-Powered Lead Qualification Platform</p>
           <span style={{ display: 'none' }} data-version="2.0.1" />
         </div>
 

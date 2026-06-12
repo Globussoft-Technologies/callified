@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import navLogo from '../assets/tg_image_3608761279.png';
 
 const AGENT_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
@@ -110,15 +111,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
       <div
         onClick={() => navigate('/crm')}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0, marginRight: 12 }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-          background: 'linear-gradient(135deg, #8b5cf6, #ec4899)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M13 2L4.5 13.5H11.5L11 22L19.5 10.5H12.5L13 2Z" fill="white" strokeLinejoin="round"/>
-          </svg>
-        </div>
+        <img src={navLogo} alt="Callified" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 10 }} />
         <span style={{ fontSize: 15, fontWeight: 700, color: '#111827', fontFamily: font }}>
           Callified
         </span>
