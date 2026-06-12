@@ -20,6 +20,10 @@ type TimedChunk struct {
 	Data []byte // raw PCM 16-bit little-endian at 8kHz
 }
 
+// micTargetPeak is the target peak amplitude for the mic channel after gain.
+// 24000 ≈ -2.7 dBFS — loud enough to hear clearly, safe from clipping.
+const micTargetPeak = 24000
+
 // BuildStereoWAV assembles mic (L) and TTS (R) chunks into a stereo WAV file.
 // Returns nil if both slices are empty.
 func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
@@ -38,6 +42,15 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 	fillBuf(userBuf, micChunks, tStart)
 	fillBuf(aiBuf, ttsChunks, tStart)
 
+	// Match mic level to TTS level so both channels sound equally loud in the
+	// stored recording. Use the TTS peak as the target; fall back to
+	// micTargetPeak when TTS is silent or very quiet.
+	target := pcmPeak(aiBuf)
+	if target < micTargetPeak {
+		target = micTargetPeak
+	}
+	normalizeTo(userBuf, target)
+
 	// Interleave: [L0 L0 R0 R0 | L1 L1 R1 R1 | ...]
 	stereo := make([]byte, totalSamples*4)
 	for i := range totalSamples {
@@ -45,6 +58,46 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 		copy(stereo[i*4+2:i*4+4], aiBuf[i*2:i*2+2])
 	}
 	return encodeWAV(stereo, recChannels, recSampleRate, recBitDepth)
+}
+
+// pcmPeak returns the absolute peak sample value of a PCM16LE buffer.
+func pcmPeak(buf []byte) int {
+	var peak int16
+	for i := 0; i+1 < len(buf); i += 2 {
+		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
+		if s < 0 {
+			s = -s
+		}
+		if s > peak {
+			peak = s
+		}
+	}
+	return int(peak)
+}
+
+// normalizeTo scales buf so its peak matches target.
+// Only amplifies — never attenuates (if buf is already at or above target, no change).
+func normalizeTo(buf []byte, target int) {
+	if len(buf) < 2 || target <= 0 {
+		return
+	}
+	peak := pcmPeak(buf)
+	if peak == 0 || peak >= target {
+		return
+	}
+	gain := float32(target) / float32(peak)
+	for i := 0; i+1 < len(buf); i += 2 {
+		s := int16(uint16(buf[i]) | uint16(buf[i+1])<<8)
+		scaled := int32(float32(s) * gain)
+		if scaled > 32767 {
+			scaled = 32767
+		} else if scaled < -32768 {
+			scaled = -32768
+		}
+		v := uint16(int16(scaled))
+		buf[i] = byte(v)
+		buf[i+1] = byte(v >> 8)
+	}
 }
 
 func timeBounds(a, b []TimedChunk) (tMin, tMax time.Time) {

@@ -53,6 +53,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       } catch (e) { console.error('Failed to load analytics', e); }
       finally { setLoading(false); }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading analytics…</div>;

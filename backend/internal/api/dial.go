@@ -31,6 +31,21 @@ func dialErrorStatus(err error) int {
 
 // dialLead initiates an immediate call to a specific lead.
 // POST /api/dial/{lead_id}
+// @Summary     Dial lead
+// @Description Initiates an immediate outbound call to a specific lead.
+// @Tags        dialing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       lead_id  path      int64                       true   "Lead ID"
+// @Param       body     body      object{campaign_id=int64}   false  "Optional campaign context"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     402   {object}  ErrorResponse  "insufficient credits"
+// @Failure     404   {object}  ErrorResponse
+// @Failure     409   {object}  ErrorResponse  "DND or outside call hours"
+// @Failure     502   {object}  ErrorResponse  "provider error"
+// @Router      /api/dial/{lead_id} [post]
 func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
@@ -62,6 +77,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		TTSProvider: vs.TTSProvider,
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
+		UserEmail:   ac.Email,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -75,6 +91,20 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 
 // campaignDialLead dials a specific lead within a campaign context.
 // POST /api/campaigns/{id}/dial/{lead_id}
+// @Summary     Dial campaign lead
+// @Description Initiates an immediate call to a specific lead using the campaign's voice settings. Requires Admin or Agent role.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id       path  int64  true  "Campaign ID"
+// @Param       lead_id  path  int64  true  "Lead ID"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     402  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     409  {object}  ErrorResponse
+// @Failure     502  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/dial/{lead_id} [post]
 func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
 	if err != nil {
@@ -106,6 +136,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		TTSProvider: vs.TTSProvider,
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
+		UserEmail:   ac.Email,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -131,6 +162,19 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 // once — which is exactly the reported symptom.
 //
 // POST /api/campaigns/{id}/dial-all
+// @Summary     Dial all campaign leads
+// @Description Queues outbound calls for all (or new) leads in a campaign. Requires Admin role.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id     path   int64   true   "Campaign ID"
+// @Param       force  query  boolean false  "Set true to dial all leads regardless of status"
+// @Success     200  {object}  object{status=string,message=string,queued=int}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/dial-all [post]
 func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
 	if err != nil {
@@ -187,6 +231,7 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: vs.TTSProvider,
 			TTSVoiceID:  vs.TTSVoiceID,
 			TTSLanguage: vs.TTSLanguage,
+			UserEmail:   ac.Email,
 		})
 	}
 
@@ -244,6 +289,18 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 //   - returns a user-friendly `message` that the frontend surfaces via alert()
 //
 // POST /api/campaigns/{id}/redial-failed
+// @Summary     Redial failed campaign leads
+// @Description Queues outbound calls for all leads in a campaign with "Call Failed" status. Requires Admin role.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  object{status=string,message=string,queued=int}
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/redial-failed [post]
 func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 	campaignID, err := parseID(r, "id")
 	if err != nil {
@@ -284,6 +341,7 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: vs.TTSProvider,
 			TTSVoiceID:  vs.TTSVoiceID,
 			TTSLanguage: vs.TTSLanguage,
+			UserEmail:   ac.Email,
 		})
 	}
 

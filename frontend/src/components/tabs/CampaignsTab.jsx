@@ -3,17 +3,18 @@ import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
-  apiFetch, API_URL, selectedOrg,
+  apiFetch, API_URL,
   onCampaignDial, onCampaignWebCall,
   handleViewTranscripts, handleNote,
-  activeVoiceProvider, activeVoiceId, activeLanguage,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket } = useAuth();
+  const toast = useToast();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -23,7 +24,8 @@ export default function CampaignsTab({
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '' });
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
@@ -37,11 +39,18 @@ export default function CampaignsTab({
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
+  const [editCampaignError, setEditCampaignError] = useState('');
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
-  useEffect(() => { fetchCampaigns(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetchCampaigns();
+    apiFetch(`${API_URL}/exotel-accounts`)
+      .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
 
   // Open a specific campaign's detail directly when ?id=N is in the URL —
   // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
@@ -62,20 +71,21 @@ export default function CampaignsTab({
     handleViewCampaign(target);
     // Strip ?id= from the URL so refreshes / Back don't loop.
     window.history.replaceState({}, '', window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaigns, view]);
 
   const fetchCampaignLeads = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
       setCampaignLeads(await res.json());
-    } catch (e) { setCampaignLeads([]); }
+    } catch { setCampaignLeads([]);  }
   };
 
   const fetchCallLog = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
       setCallLog(await res.json());
-    } catch (e) { setCallLog([]); }
+    } catch { setCallLog([]);  }
   };
 
   const fetchCampVoice = async (campaignId) => {
@@ -87,7 +97,7 @@ export default function CampaignsTab({
       } else {
         setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
       }
-    } catch (e) { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' }); }
+    } catch { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: ''  }); }
   };
 
   const handleSaveCampVoice = async () => {
@@ -105,10 +115,9 @@ export default function CampaignsTab({
       }
       setCampVoiceSaveStatus('saved');
       setTimeout(() => setCampVoiceSaveStatus(''), 2000);
-    } catch (e) {
-      setCampVoiceSaveStatus('error');
+    } catch { setCampVoiceSaveStatus('error');
       setTimeout(() => setCampVoiceSaveStatus(''), 3000);
-    }
+     }
   };
 
   const handleResetCampVoice = async () => {
@@ -142,7 +151,7 @@ export default function CampaignsTab({
   const startEventStream = async (campaignId) => {
     stopEventStream();
     let ticket;
-    try { ticket = await fetchSseTicket(); } catch (_) { return; }
+    try { ticket = await fetchSseTicket(); } catch { return;  }
     const es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${campaignId}`);
     es.onmessage = (e) => {
       // Backend publishes a JSON envelope with a pre-formatted `label` field;
@@ -157,7 +166,7 @@ export default function CampaignsTab({
           const parsed = new Date(j.ts).getTime();
           if (!Number.isNaN(parsed)) ts = parsed;
         }
-      } catch (_) { /* plain-text legacy event */ }
+      } catch { /* plain-text legacy event */  }
       // Drop replayed events older than the user's last Clear timestamp for
       // this campaign — the backend replays the last 20 events from Redis on
       // every SSE connect, so without this filter a page reload would
@@ -175,7 +184,7 @@ export default function CampaignsTab({
       // Native EventSource will set readyState to CLOSED only when the
       // server explicitly returns a non-200; CONNECTING means a retry is
       // already in flight. Just log so we can see it in DevTools.
-      // eslint-disable-next-line no-console
+       
       console.warn('campaign-events SSE error; readyState=', es.readyState, e);
     };
     eventSourceRef.current = es;
@@ -199,6 +208,7 @@ export default function CampaignsTab({
           product_id: createForm.product_id ? parseInt(createForm.product_id) : null,
           lead_source: createForm.lead_source || null,
           channel: createForm.channel || 'voice',
+          exotel_account_id: createForm.exotel_account_id ? parseInt(createForm.exotel_account_id) : null,
         })
       });
 
@@ -263,21 +273,6 @@ export default function CampaignsTab({
     }
   };
 
-  const handleToggleStatus = async (campaign) => {
-    const nextStatus = campaign.status === 'active' ? 'paused' : 'active';
-    try {
-      await apiFetch(`${API_URL}/campaigns/${campaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      fetchCampaigns();
-      if (selectedCampaign?.id === campaign.id) {
-        setSelectedCampaign({ ...campaign, status: nextStatus });
-      }
-    } catch (e) { console.error(e); }
-  };
-
   const handleEditCampaign = (campaign) => {
     setEditCampaignForm({
       id: campaign.id,
@@ -286,12 +281,13 @@ export default function CampaignsTab({
       lead_source: campaign.lead_source || '',
       channel: campaign.channel || 'voice'
     });
+    setEditCampaignError('');
     setShowEditCampaignModal(true);
   };
 
   const handleSaveEditCampaign = async (e) => {
     e.preventDefault();
-    if (!editCampaignForm.name.trim()) return;
+    if (!editCampaignForm.name.trim()) { setEditCampaignError('Campaign name is required.'); return; }
     setLoading(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
@@ -358,7 +354,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch (e) { alert('Save failed'); }
+    } catch { toast('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -411,7 +407,7 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      alert(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);
@@ -476,6 +472,7 @@ export default function CampaignsTab({
           handleCreateCampaign={handleCreateCampaign}
           loading={loading}
           orgProducts={orgProducts}
+          orgExotelAccounts={orgExotelAccounts}
           selectedTemplate={selectedTemplate}
           setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
@@ -499,6 +496,8 @@ export default function CampaignsTab({
           editCampaignForm={editCampaignForm}
           setEditCampaignForm={setEditCampaignForm}
           handleSaveEditCampaign={handleSaveEditCampaign}
+          editCampaignError={editCampaignError}
+          setEditCampaignError={setEditCampaignError}
         />
       </>
     );
@@ -637,6 +636,7 @@ export default function CampaignsTab({
         createError={createError}
         setCreateError={setCreateError}
         orgProducts={orgProducts}
+        orgExotelAccounts={orgExotelAccounts}
         selectedTemplate={selectedTemplate}
         setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}
@@ -660,6 +660,8 @@ export default function CampaignsTab({
         editCampaignForm={editCampaignForm}
         setEditCampaignForm={setEditCampaignForm}
         handleSaveEditCampaign={handleSaveEditCampaign}
+        editCampaignError={editCampaignError}
+        setEditCampaignError={setEditCampaignError}
       />
 
     </div>

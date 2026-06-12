@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -8,6 +9,7 @@ export default function CampaignModals({
   createForm, setCreateForm,
   handleCreateCampaign, loading, createError, orgProducts,
   selectedTemplate, setSelectedTemplate,
+  orgExotelAccounts,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
   availableLeads, selectedLeadIds, toggleLeadSelection,
@@ -22,8 +24,10 @@ export default function CampaignModals({
   showEditCampaignModal, setShowEditCampaignModal,
   editCampaignForm, setEditCampaignForm,
   handleSaveEditCampaign,
+  editCampaignError, setEditCampaignError,
   setCreateError,
 }) {
+  const hideAiFeatures = useHideAiFeatures();
   const [nameTouched, setNameTouched] = useState(false);
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
@@ -66,7 +70,7 @@ export default function CampaignModals({
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
 
             {/* Template selector */}
-            <div style={{marginBottom: '1.5rem'}}>
+            {!hideAiFeatures && (<div style={{marginBottom: '1.5rem'}}>
               <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '8px'}}>Start from a template (optional)</label>
               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '8px'}}>
                 {CAMPAIGN_TEMPLATES.map(tpl => {
@@ -113,7 +117,7 @@ export default function CampaignModals({
                   </div>
                 </div>
               )}
-            </div>
+            </div>)}
 
             <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
               <form onSubmit={e => {
@@ -174,14 +178,33 @@ export default function CampaignModals({
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Communication Channel <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — defaults to voice)</span>
+                  </label>
                   <select className="form-input" value={createForm.channel || 'voice'}
                     onChange={e => setCreateForm({...createForm, channel: e.target.value})}
                     style={{width: '100%'}}>
-                    <option value="voice">📞 Voice Call (AI Phone)</option>
-                    <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
+                    <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                    {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
+                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
+                  <div style={{marginBottom: '1.5rem'}}>
+                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                      Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
+                    </label>
+                    <select className="form-input" value={createForm.exotel_account_id || ''}
+                      onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
+                      style={{width: '100%'}}>
+                      <option value="">-- Use default / set later --</option>
+                      {orgExotelAccounts.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} · {a.account_sid} · {a.caller_id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {createError && (
                   <div style={{marginBottom: '1rem', padding: '10px 14px', borderRadius: '8px',
                     background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
@@ -243,9 +266,29 @@ export default function CampaignModals({
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
-            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>
+            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem'}}>
               Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
             </p>
+            <button
+              onClick={() => {
+                const csv = 'first_name,last_name,phone,source\nJohn,Doe,9876543210,google\n';
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'callified_leads_template.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}
+              style={{
+                background: 'transparent', border: 'none', color: '#818cf8',
+                cursor: 'pointer', fontSize: '0.8rem', padding: 0, marginBottom: '1rem',
+                textDecoration: 'underline',
+              }}>
+              Download Template
+            </button>
             <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files[0])}
               style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
@@ -263,7 +306,7 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}>
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
@@ -279,15 +322,18 @@ export default function CampaignModals({
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
                   value={editCampaignForm.name}
                   maxLength={CAMPAIGN_NAME_MAX_LEN}
-                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); }}
+                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); if (setEditCampaignError) setEditCampaignError(''); }}
                   onBlur={() => setEditNameTouched(true)}
                   style={{
                     width: '100%',
-                    borderColor: showEditNameError ? 'rgba(239,68,68,0.6)' : undefined,
-                    boxShadow: showEditNameError ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                    borderColor: (showEditNameError || editCampaignError) ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: (showEditNameError || editCampaignError) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
                   }} />
                 {showEditNameError && (
                   <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>{editNameError}</p>
+                )}
+                {!showEditNameError && editCampaignError && (
+                  <p style={{margin: '4px 0 0', fontSize: 12, color: '#f87171'}}>{editCampaignError}</p>
                 )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
@@ -323,12 +369,12 @@ export default function CampaignModals({
                 <select className="form-input" value={editCampaignForm.channel || 'voice'}
                   onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
                   style={{width: '100%'}}>
-                  <option value="voice">📞 Voice Call (AI Phone)</option>
-                  <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
+                  <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                  {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); }}
+                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>

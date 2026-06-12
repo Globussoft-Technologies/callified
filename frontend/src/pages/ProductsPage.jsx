@@ -5,6 +5,7 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   const [newProductName, setNewProductName] = useState('');
   const [showProductInput, setShowProductInput] = useState(false);
   const [scraping, setScraping] = useState(null);
+  const [scrapeError, setScrapeError] = useState({});
 
   const handleAddProduct = async () => {
     if (!selectedOrg || !newProductName.trim()) return;
@@ -18,11 +19,21 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
 
   const handleScrapeProduct = async (productId) => {
     setScraping(productId);
+    setScrapeError(prev => ({ ...prev, [productId]: null }));
     try {
       const res = await apiFetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST' });
-      const data = await res.json();
-      if (data.scraped_info) fetchOrgProducts(selectedOrg.id);
-    } catch(e) { console.error(e); }
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = { error: text || 'unexpected response' }; }
+      if (data.error) {
+        setScrapeError(prev => ({ ...prev, [productId]: data.error }));
+      } else {
+        fetchOrgProducts(selectedOrg.id);
+      }
+    } catch(e) {
+      console.error(e);
+      setScrapeError(prev => ({ ...prev, [productId]: 'Network error — check your connection.' }));
+    }
     setScraping(null);
   };
 
@@ -53,8 +64,10 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       handleSaveProduct={handleSaveProduct}
       handleScrapeProduct={handleScrapeProduct}
       scraping={scraping}
+      scrapeError={scrapeError}
       apiFetch={apiFetch}
       API_URL={API_URL}
+      onProductsRefresh={() => fetchOrgProducts(selectedOrg?.id)}
     />
   );
 }

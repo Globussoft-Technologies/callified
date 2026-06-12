@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
@@ -34,10 +35,10 @@ type AuthClaims struct {
 // regular login JWTs.
 type jwtClaims struct {
 	jwt.RegisteredClaims
-	OrgID    int64  `json:"org_id"`
-	Role     string `json:"role"`
-	Kind     string `json:"kind,omitempty"`
-	DevActor string `json:"dev_actor,omitempty"`
+	OrgID int64  `json:"org_id"`
+	
+	Role  string `json:"role"`
+	Kind  string `json:"kind,omitempty"`
 }
 
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
@@ -131,6 +132,55 @@ func bearerToken(r *http.Request) (string, error) {
 		return "", fmt.Errorf("expected Bearer token")
 	}
 	return parts[1], nil
+}
+
+// requireAPIKeyOrAuth accepts either an X-API-Key header (for partner /
+// external integrations) or a Bearer JWT (for browser-driven dashboard calls).
+// The two paths populate the same AuthClaims so downstream handlers don't need
+// to branch.
+//
+// Spec-defined error responses:
+//
+//	401 {"error": "..."} — missing or unknown key / invalid JWT
+//	403 {"error": "API key has been revoked"} — known key, is_active=0
+//
+// Key format: callers send the raw "ck_..." string in X-API-Key. We SHA-256
+// it and look up by hash so the DB never holds the plaintext.
+func (s *Server) requireAPIKeyOrAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if raw := strings.TrimSpace(r.Header.Get("X-API-Key")); raw != "" {
+			sum := sha256.Sum256([]byte(raw))
+			hashed := fmt.Sprintf("%x", sum)
+			k, err := s.db.GetAPIKeyByHash(hashed)
+			if err != nil {
+				s.logger.Sugar().Errorw("api key lookup", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if k == nil {
+				writeError(w, http.StatusUnauthorized, "Invalid API key")
+				return
+			}
+			if !k.IsActive {
+				writeError(w, http.StatusForbidden, "API key has been revoked")
+				return
+			}
+			// Fire-and-forget last_used_at bump; a write failure must not
+			// reject an otherwise valid request.
+			go func(id int64) { _ = s.db.TouchAPIKey(id) }(k.ID)
+
+			ac := AuthClaims{
+				Email: "apikey:" + k.KeyPrefix, // audit trail in logs
+				OrgID: k.OrgID,
+				Role:  "Admin", // external keys are org-scoped, treat as admin for read-only external endpoints
+			}
+			ctx := context.WithValue(r.Context(), ctxKey{}, ac)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		// No X-API-Key → fall back to JWT.
+		s.requireAuth(next).ServeHTTP(w, r)
+	}
 }
 
 // requireSSETicket is a middleware variant for SSE endpoints. It reads a

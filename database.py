@@ -493,6 +493,19 @@ def init_db():
     except Exception:
         pass  # Already nullable or campaigns table doesn't exist yet
 
+    # --- Per-campaign Exotel credentials (dynamic creds per campaign) ---
+    for col, definition in [
+        ("exotel_api_key",     "VARCHAR(255) DEFAULT NULL"),
+        ("exotel_api_token",   "VARCHAR(255) DEFAULT NULL"),
+        ("exotel_account_sid", "VARCHAR(100) DEFAULT NULL"),
+        ("exotel_caller_id",   "VARCHAR(20)  DEFAULT NULL"),
+        ("exotel_app_id",      "VARCHAR(50)  DEFAULT NULL"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE campaigns ADD COLUMN {col} {definition}")
+        except Exception:
+            pass  # Column already exists
+
     conn.close()
 
 # ─── Phone Normalization ───────────────────────────────────────────────────

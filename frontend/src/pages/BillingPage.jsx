@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useConfirm } from '../contexts/UIContext';
 
 const TOPUP_PRESETS = [100, 500, 1000, 5000];
 
@@ -22,6 +23,8 @@ const thStyle = {
 const tdStyle = { fontSize: 13, color: T.sub, padding: '13px 0', borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle' };
 
 export default function BillingPage({ apiFetch, API_URL }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [plans, setPlans]               = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [usage, setUsage]               = useState(null);
@@ -37,6 +40,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const invoiceFrameRef = useRef(null);
   const [loading, setLoading] = useState(true);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
@@ -55,9 +59,9 @@ export default function BillingPage({ apiFetch, API_URL }) {
       const subData   = await subRes.json();   if (subData && !subData.error) setSubscription(subData);
       const usageData = await usageRes.json(); if (usageData && !usageData.error) setUsage(usageData);
       const payData   = await payRes.json();   if (Array.isArray(payData)) setPayments(payData);
-      try { const invData = await invRes.json(); if (Array.isArray(invData)) setInvoices(invData); } catch(e) { setInvoices([]); }
-      try { const c = await creditsRes.json(); if (c && !c.error) setCredits(c); } catch(e) { setCredits(null); }
-      try { const t = await creditTxRes.json(); if (Array.isArray(t)) setCreditTxns(t); } catch(e) { setCreditTxns([]); }
+      try { const invData = await invRes.json(); if (Array.isArray(invData)) setInvoices(invData); } catch { setInvoices([]);  }
+      try { const c = await creditsRes.json(); if (c && !c.error) setCredits(c); } catch { setCredits(null);  }
+      try { const t = await creditTxRes.json(); if (Array.isArray(t)) setCreditTxns(t); } catch { setCreditTxns([]);  }
     } catch(e) { console.error('Billing fetch error:', e); }
     setLoading(false);
   };
@@ -74,11 +78,11 @@ export default function BillingPage({ apiFetch, API_URL }) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount_inr: Number(topupAmount) }),
       });
-      if (!res.ok) { const body = await res.json().catch(() => ({})); alert('Top-up failed: ' + (body.error || `HTTP ${res.status}`)); setTopupBusy(false); return; }
+      if (!res.ok) { const body = await res.json().catch(() => ({})); toast('Top-up failed: ' + (body.error || `HTTP ${res.status}`)); setTopupBusy(false); return; }
       const order = await res.json();
       if (order.order_id && order.key_id) { openCreditsRazorpay(order); }
-      else { alert('Razorpay is not configured on the server. Top-ups are disabled until RAZORPAY_KEY_ID is set.'); }
-    } catch(e) { alert('Top-up failed: ' + e.message); }
+      else { toast('Razorpay is not configured on the server. Top-ups are disabled until RAZORPAY_KEY_ID is set.'); }
+    } catch(e) { toast('Top-up failed: ' + e.message); }
     finally { setTopupBusy(false); }
   };
 
@@ -93,7 +97,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
           body: JSON.stringify({ razorpay_order_id: response.razorpay_order_id, razorpay_payment_id: response.razorpay_payment_id, razorpay_signature: response.razorpay_signature }),
         });
         if (verifyRes.ok) { setTopupOpen(false); fetchAll(); }
-        else { const body = await verifyRes.json().catch(() => ({})); alert('Payment verification failed: ' + (body.error || 'unknown')); }
+        else { const body = await verifyRes.json().catch(() => ({})); toast('Payment verification failed: ' + (body.error || 'unknown')); }
       },
       modal: { ondismiss: () => setTopupBusy(false) },
       theme: { color: '#6366f1' },
@@ -110,11 +114,10 @@ export default function BillingPage({ apiFetch, API_URL }) {
         const subRes = await apiFetch(`${API_URL}/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
         if (subRes.ok) { fetchAll(); }
       }
-    } catch(e) {
-      try {
-        const subRes = await apiFetch(`${API_URL}/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
+    } catch { try {
+        const subRes = await apiFetch(`${API_URL }/billing/subscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan_id: planId }) });
         if (subRes.ok) { fetchAll(); }
-      } catch(e2) { alert('Failed to subscribe: ' + e2.message); }
+      } catch(e2) { toast('Failed to subscribe: ' + e2.message); }
     }
   };
 
@@ -135,11 +138,11 @@ export default function BillingPage({ apiFetch, API_URL }) {
   };
 
   const handleCancel = async () => {
-    if (!confirm('Are you sure you want to cancel your subscription?')) return;
+    if (!await confirm({ message: 'Are you sure you want to cancel your subscription?', danger: true })) return;
     try {
       await apiFetch(`${API_URL}/billing/cancel`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: 'User cancelled' }) });
       fetchAll();
-    } catch(e) { alert('Failed to cancel'); }
+    } catch { toast('Failed to cancel');  }
   };
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading billing…</div>;
@@ -401,10 +404,10 @@ export default function BillingPage({ apiFetch, API_URL }) {
                         setInvoiceLoading(true);
                         try {
                           const res = await apiFetch(`${API_URL}/billing/invoices/${encodeURIComponent(inv.invoice_number || inv.id)}/download`);
-                          if (!res.ok) { alert(`Invoice fetch failed (HTTP ${res.status})`); return; }
+                          if (!res.ok) { toast(`Invoice fetch failed (HTTP ${res.status})`); return; }
                           const blob = await res.blob();
                           setViewingInvoice({ number: inv.invoice_number || inv.id, blobUrl: URL.createObjectURL(blob) });
-                        } catch(e) { alert('Invoice fetch failed: ' + (e?.message || 'network error')); }
+                        } catch(e) { toast('Invoice fetch failed: ' + (e?.message || 'network error')); }
                         finally { setInvoiceLoading(false); }
                       }} disabled={invoiceLoading} style={{
                         padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, fontFamily: T.font,
@@ -497,7 +500,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
                 <div style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: T.text }}>{viewingInvoice.number}</div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={() => { try { invoiceFrameRef.current?.contentWindow?.print(); } catch(e) { alert('Print failed: ' + (e?.message || 'unknown')); } }}
+                <button onClick={() => { try { invoiceFrameRef.current?.contentWindow?.print(); } catch(e) { toast('Print failed: ' + (e?.message || 'unknown')); } }}
                   style={{ padding: '6px 14px', borderRadius: 6, cursor: 'pointer', background: T.accent, border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, fontFamily: T.font }}>
                   🖨 Print
                 </button>

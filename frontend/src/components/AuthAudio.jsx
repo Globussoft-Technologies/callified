@@ -14,6 +14,7 @@ export default function AuthAudio({ src, ...props }) {
   const [blobUrl, setBlobUrl] = useState(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!src) { setBlobUrl(null); return; }
     if (!src.startsWith('/api/recordings/')) { setBlobUrl(src); return; }
 

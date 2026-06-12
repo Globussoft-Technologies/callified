@@ -174,6 +174,11 @@ func (d *DB) UpdateUserRole(userID int64, role string) error {
 	return err
 }
 
+func (d *DB) UpdateUserRoleAndOrg(userID int64, role string, orgID int64) error {
+	_, err := d.pool.Exec(`UPDATE users SET role=?, org_id=? WHERE id=?`, role, orgID, userID)
+	return err
+}
+
 // DeleteUser removes a user scoped to an org (prevents cross-org deletion).
 func (d *DB) DeleteUser(userID, orgID int64) error {
 	_, err := d.pool.Exec(`DELETE FROM users WHERE id=? AND org_id=?`, userID, orgID)

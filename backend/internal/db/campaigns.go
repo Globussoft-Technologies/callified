@@ -3,7 +3,52 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 )
+
+// EnsureCampaignsTable creates the campaigns table if it doesn't exist and adds
+// any columns that may be missing on legacy schemas.
+func (d *DB) EnsureCampaignsTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS campaigns (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			org_id BIGINT NOT NULL,
+			product_id BIGINT DEFAULT NULL,
+			name VARCHAR(255) NOT NULL,
+			status VARCHAR(50) DEFAULT 'active',
+			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+			tts_provider VARCHAR(50) DEFAULT NULL,
+			tts_voice_id VARCHAR(255) DEFAULT NULL,
+			tts_language VARCHAR(10) DEFAULT NULL,
+			lead_source VARCHAR(100) DEFAULT NULL,
+			channel VARCHAR(20) NOT NULL DEFAULT 'voice',
+			exotel_account_id BIGINT DEFAULT NULL,
+			INDEX idx_org_id (org_id),
+			INDEX idx_product_id (product_id),
+			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
+			FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+	`)
+	if err != nil {
+		return err
+	}
+	columns := []struct{ name, def string }{
+		{"tts_provider", "VARCHAR(50) DEFAULT NULL"},
+		{"tts_voice_id", "VARCHAR(255) DEFAULT NULL"},
+		{"tts_language", "VARCHAR(10) DEFAULT NULL"},
+		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
+		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
+		{"exotel_account_id", "BIGINT DEFAULT NULL"},
+	}
+	for _, col := range columns {
+		_, alterErr := d.pool.Exec(fmt.Sprintf("ALTER TABLE campaigns ADD COLUMN %s %s", col.name, col.def))
+		if alterErr != nil && !strings.Contains(alterErr.Error(), "Duplicate column name") {
+			return alterErr
+		}
+	}
+	return nil
+}
 
 // Campaign mirrors the campaigns table (joined with products.name).
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
@@ -108,17 +153,25 @@ func (d *DB) GetCampaignByID(id int64) (*Campaign, error) {
 }
 
 // CreateCampaign inserts a new campaign. Returns the new ID.
-func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string) (int64, error) {
+func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID int64) (int64, error) {
 	if channel == "" {
 		channel = "voice"
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel) VALUES (?,?,?,?,?)`,
-		orgID, productID, name, nullString(leadSource), channel)
+		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id) VALUES (?,?,?,?,?,?)`,
+		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// SetCampaignExotelAccount updates which org-level Exotel account a campaign uses.
+// Pass 0 to unlink (fall back to inline per-campaign credentials).
+func (d *DB) SetCampaignExotelAccount(campaignID, accountID int64) error {
+	_, err := d.pool.Exec(`UPDATE campaigns SET exotel_account_id=? WHERE id=?`,
+		nullInt64(accountID), campaignID)
+	return err
 }
 
 // UpdateCampaign updates mutable campaign fields. Pass zero/empty to skip a field.
@@ -172,6 +225,35 @@ func (d *DB) GetCampaignNewLeads(campaignID int64) ([]Lead, error) {
 		list = append(list, *lead)
 	}
 	return list, rows.Err()
+}
+
+// GetActiveCampaignForLeadPhone returns the most recent whatsapp campaign that
+// contains a lead matching the given phone number, within the given org. Used
+// by the WA agent to pick a campaign-level product prompt instead of the
+// channel-wide default. Returns nil when no matching campaign exists.
+func (d *DB) GetActiveCampaignForLeadPhone(orgID int64, phone string) (*Campaign, error) {
+	// Phone may be stored as 10 digits ("7795740488") while the inbound webhook
+	// normalises it to 12 digits with country code ("917795740488"). Match on
+	// the last 10 digits so both formats resolve to the same lead.
+	suffix := phone
+	if len(suffix) > 10 {
+		suffix = suffix[len(suffix)-10:]
+	}
+	row := d.pool.QueryRow(`
+		SELECT `+campaignCols+`
+		FROM campaigns c
+		LEFT JOIN products p ON c.product_id = p.id
+		JOIN campaign_leads cl ON cl.campaign_id = c.id
+		JOIN leads l ON l.id = cl.lead_id
+		WHERE c.org_id = ? AND c.channel = 'whatsapp'
+		  AND RIGHT(l.phone, 10) = ?
+		ORDER BY cl.id DESC
+		LIMIT 1`, orgID, suffix)
+	c, err := scanCampaign(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return c, err
 }
 
 // DeleteCampaign deletes a campaign. Returns true if deleted.
@@ -404,6 +486,71 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 	return list, rows.Err()
 }
 
+// RecordingExportRow is one row for the recordings CSV export.
+type RecordingExportRow struct {
+	Name              string
+	Phone             string
+	LeadStatus        string
+	CallType          string
+	CreatedAt         string
+	Duration          float64
+	Outcome           string
+	FollowUpNote      string
+	RecordingFilename string
+	RecordingURL      string
+}
+
+// GetCampaignRecordingsExport returns all call transcript rows that have a
+// recording URL, enriched with lead name, phone, follow-up note, and a
+// derived call type (AI Dial / Manual).
+func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow, error) {
+	rows, err := d.pool.Query(`
+		SELECT
+			TRIM(CONCAT(COALESCE(l.first_name,''), ' ', COALESCE(l.last_name,''))) AS name,
+			COALESCE(l.phone,''),
+			COALESCE(l.status, ''),
+			COALESCE(ct.tts_language,''),
+			COALESCE(ct.call_duration_s, 0),
+			COALESCE(ct.recording_url, ''),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			COALESCE(l.follow_up_note,''),
+			CASE
+				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
+				WHEN ct.call_duration_s>5 THEN 'Connected'
+				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'Busy'
+				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
+				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
+				ELSE 'No Answer'
+			END AS outcome
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id = l.id
+		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+		ORDER BY ct.created_at DESC`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []RecordingExportRow
+	for rows.Next() {
+		var e RecordingExportRow
+		var ttsLang string
+		if err := rows.Scan(&e.Name, &e.Phone, &e.LeadStatus, &ttsLang, &e.Duration, &e.RecordingURL,
+			&e.CreatedAt, &e.FollowUpNote, &e.Outcome); err != nil {
+			return nil, err
+		}
+		if ttsLang != "" {
+			e.CallType = "AI Dial"
+		} else {
+			e.CallType = "Manual / Bridge"
+		}
+		// Extract filename from URL
+		parts := strings.Split(e.RecordingURL, "/")
+		e.RecordingFilename = parts[len(parts)-1]
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}
+
 // GetCampaignVoiceSettings returns TTS settings, falling back to org defaults.
 func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 	var orgID int64
@@ -426,6 +573,25 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 		}, nil
 	}
 	return d.GetOrganizationVoiceSettings(orgID)
+}
+
+// ListCampaignLeadIDs returns the IDs of all leads assigned to a campaign.
+func (d *DB) ListCampaignLeadIDs(campaignID int64) ([]int64, error) {
+	rows, err := d.pool.Query(
+		`SELECT lead_id FROM campaign_leads WHERE campaign_id=?`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // SaveCampaignVoiceSettings updates the tts_* columns on a campaign.
@@ -463,4 +629,69 @@ func coalesceStr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// ExotelCreds holds per-campaign telephony credentials (Exotel or Twilio).
+// Field mapping:
+//
+//	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
+//	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
+type ExotelCreds struct {
+	Provider   string // "exotel" or "twilio"; empty means exotel
+	APIKey     string `json:"exotel_api_key"`
+	APIToken   string `json:"exotel_api_token"`
+	APISecret  string // Twilio only
+	AccountSID string `json:"exotel_account_sid"`
+	CallerID   string `json:"exotel_caller_id"`
+	AppID      string `json:"exotel_app_id"`
+	AppType    string `json:"exotel_app_type"`
+}
+
+// IsSet returns true when the minimum required fields for the provider are set.
+func (e ExotelCreds) IsSet() bool {
+	if e.Provider == "twilio" {
+		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
+	}
+	// exotel: AppID is required for voice app routing
+	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""
+}
+
+// GetCampaignExotelCreds returns the Exotel credentials for a campaign.
+// It ONLY uses the org_exotel_accounts row linked via exotel_account_id.
+// Inline per-campaign columns and platform env-var defaults are intentionally
+// ignored so calls are routed strictly through the account selected in the UI.
+func (d *DB) GetCampaignExotelCreds(campaignID int64) (ExotelCreds, error) {
+	var c ExotelCreds
+	var accountID sql.NullInt64
+	err := d.pool.QueryRow(
+		`SELECT COALESCE(exotel_account_id,0) FROM campaigns WHERE id=?`, campaignID,
+	).Scan(&accountID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	if accountID.Valid && accountID.Int64 > 0 {
+		var orgID int64
+		_ = d.pool.QueryRow(`SELECT org_id FROM campaigns WHERE id=?`, campaignID).Scan(&orgID)
+		if linked, lerr := d.GetOrgExotelAccountCreds(accountID.Int64, orgID); lerr == nil {
+			return linked, nil
+		}
+	}
+	return c, nil
+}
+
+// SaveCampaignExotelCreds persists Exotel credentials on a campaign.
+// Pass empty strings to clear individual fields.
+func (d *DB) SaveCampaignExotelCreds(campaignID int64, creds ExotelCreds) error {
+	_, err := d.pool.Exec(
+		`UPDATE campaigns
+		 SET exotel_api_key=?, exotel_api_token=?, exotel_account_sid=?,
+		     exotel_caller_id=?, exotel_app_id=?
+		 WHERE id=?`,
+		nullString(creds.APIKey), nullString(creds.APIToken),
+		nullString(creds.AccountSID), nullString(creds.CallerID),
+		nullString(creds.AppID), campaignID)
+	return err
 }

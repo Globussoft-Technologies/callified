@@ -1,4 +1,44 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useToast, useConfirm } from '../contexts/UIContext';
+import { useAuth } from '../contexts/AuthContext';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
+const inputStyle = (hasError) => ({
+  padding: '9px 13px', borderRadius: 8, fontSize: 13,
+  border: `1px solid ${hasError ? T.red : T.border}`,
+  background: T.card, color: T.text, fontFamily: T.font, outline: 'none',
+});
+
+const labelStyle = {
+  fontSize: 10, fontWeight: 700, color: T.muted,
+  textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8,
+};
+
+function SourceBadge({ source }) {
+  const colors = {
+    manual:           { bg: 'rgba(148,163,184,0.15)', color: '#64748b' },
+    ndnc:             { bg: 'rgba(239,68,68,0.1)',   color: T.red },
+    customer_request: { bg: 'rgba(245,158,11,0.1)',  color: T.amber },
+  };
+  const s = colors[source] || colors.manual;
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 20,
+      background: s.bg, color: s.color,
+    }}>{source || 'manual'}</span>
+  );
+}
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -39,6 +79,9 @@ function SourceBadge({ source }) {
 }
 
 export default function DndPage({ apiFetch, API_URL }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const { currentUser } = useAuth();
   const [numbers, setNumbers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -82,7 +125,8 @@ export default function DndPage({ apiFetch, API_URL }) {
     setLoading(false);
   };
 
-  useEffect(() => { fetchNumbers(page); }, [page]);
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { if (currentUser?.role === 'Admin') fetchNumbers(page); }, [page, currentUser?.role]);
 
   const handleAdd = async () => {
     const phone = addPhone.trim();
@@ -108,11 +152,11 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   const handleRemove = async (phone) => {
-    if (!window.confirm(`Remove ${phone} from DND list?`)) return;
+    if (!await confirm({ message: `Remove ${phone} from DND list?` })) return;
     try {
       await apiFetch(`${API_URL}/dnd/${encodeURIComponent(phone)}`, { method: 'DELETE' });
       fetchNumbers(page);
-    } catch (e) { alert('Failed to remove: ' + e.message); }
+    } catch (e) { toast('Failed to remove: ' + e.message); }
   };
 
   const handleCheck = async () => {
@@ -123,7 +167,7 @@ export default function DndPage({ apiFetch, API_URL }) {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(phone)}`);
       const data = await res.json();
       setCheckResult(data);
-    } catch (e) { setCheckResult({ error: 'Check failed' }); }
+    } catch { setCheckResult({ error: 'Check failed'  }); }
   };
 
   const handleImport = async (e) => {
@@ -143,6 +187,17 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   const totalPages = Math.ceil(totalCount / perPage);
+
+  if (currentUser?.role !== 'Admin') {
+    return (
+      <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+        <div style={{ ...card, padding: '3rem', textAlign: 'center', color: T.muted }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>Access Restricted</div>
+          <div style={{ fontSize: 13 }}>DND management is available to Admins only.</div>
+        </div>
+      </div>
+    );
+  }
 
   const thStyle = {
     fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',

@@ -208,22 +208,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
-		if sess.HangupRequested() || sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+		if sess.HangupRequested() {
 			return
 		}
+		// Explicit language switch request ("can you speak in kannada" etc.)
+		// must be handled even during TTS cooldown — Sarvam detects these as
+		// English but the customer clearly wants a different language.
+		if targetLang, ok := isExplicitLangSwitch(text); ok {
+			sess.Log.Info("lang: explicit switch request",
+				zap.String("text", text), zap.String("target", targetLang))
+			sess.SwitchLanguage(targetLang)
+		}
+		// Drop background filler sounds (hu, ha, hmm, ah, uh...) — Sarvam
+		// picks these up as speech but they are not real customer replies.
+		// Agent keeps waiting for a meaningful response.
+		if isFillerSound(text) {
+			sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			return
+		}
+		// Suppress transcripts while TTS is playing or within 1s of it ending
+		// to prevent the agent's own voice from looping back as customer input.
+		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
+		if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+			sess.Log.Debug("transcript dropped: TTS cooldown",
+				zap.Bool("tts_playing", sess.IsTTSPlaying()),
+				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
+			return
+		}
+		// Guard against send on closed channel if session tore down mid-STT.
 		select {
 		case sess.Transcripts <- text:
-		default:
+		case <-ctx.Done():
 		}
 	}
+	// BARGE-IN DISABLED — uncomment to re-enable
 	onSpeechStarted := func() {
-		if sess.IsTTSPlaying() {
-			metrics.BargeIns.Inc()
-		}
-		sess.CancelActiveTTS()
-		if sess.IsExotel {
-			sendClearEvent(sess)
-		}
+		sess.Log.Info("barge-in: SpeechStarted (disabled)", zap.Bool("tts_playing", sess.IsTTSPlaying()))
 	}
 
 	var wg sync.WaitGroup
@@ -248,27 +268,66 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sttStarted.Swap(true) {
 			return
 		}
-		// g2: STT goroutine — DualClient for non-Hindi/non-English Indian languages,
-		// single client otherwise. Hindi already uses Deepgram's dedicated nova-2
-		// hi model; English uses nova-2 en — no benefit from a parallel hi connection.
-		useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
+		// g2: STT goroutine.
+		// Sarvam STT is used for Indian-language calls — it auto-detects language
+		// per utterance (te-IN, hi-IN, etc.) enabling reliable mid-call switching.
+		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
-		if useDualSTT {
-			dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
-			dual.OnTranscript = onTranscript
-			dual.OnSpeechStarted = onSpeechStarted
+		onLangDetected := func(transcript string, detectedLang string) {
+			if detectedLang == "" || detectedLang == "od" {
+				// "od" (Odia) is a persistent Sarvam false positive for short
+				// filler syllables from te/kn/ta callers — ignore it entirely.
+				return
+			}
+			// Require at least 2 words before trusting Sarvam's language
+			// detection — single words like "అవును", "येस", "ம்" are too
+			// short and ambiguous, causing false cross-language switches.
+			if len(strings.Fields(transcript)) < 3 {
+				return
+			}
+			// Validate transcript script against detected language. Sarvam
+			// occasionally mis-labels similar-sounding languages (kn→ta, hi→pa,
+			// ta→ml). Since each Indian language uses a unique Unicode block,
+			// a Kannada transcript cannot contain Tamil characters — so if the
+			// script doesn't match the detected language, it's a mis-detection.
+			if !scriptMatchesLang(transcript, detectedLang) {
+				sess.Log.Debug("lang switch rejected: script mismatch",
+					zap.String("text", transcript),
+					zap.String("detected", detectedLang))
+				return
+			}
+			sess.SwitchLanguage(detectedLang)
+		}
+		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
+			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
+			sarvamClient.OnTranscript = onTranscript
+			sarvamClient.OnSpeechStarted = onSpeechStarted
+			sarvamClient.OnTranscriptWithLang = onLangDetected
+			sarvamClient.CurrentLang = func() string { return sess.Language }
 			go func() {
 				defer wg.Done()
-				dual.Run(ctx, sess.AudioIn)
+				sarvamClient.Run(ctx, sess.AudioIn)
 			}()
 		} else {
-			dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
-			dgClient.OnTranscript = onTranscript
-			dgClient.OnSpeechStarted = onSpeechStarted
-			go func() {
-				defer wg.Done()
-				dgClient.Run(ctx, sess.AudioIn)
-			}()
+			// Fallback: Deepgram.
+			useDualSTT := sess.Language != "hi" && sess.Language != "en" && sess.Language != ""
+			if useDualSTT {
+				dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
+				dual.OnTranscript = onTranscript
+				dual.OnSpeechStarted = onSpeechStarted
+				go func() {
+					defer wg.Done()
+					dual.Run(ctx, sess.AudioIn)
+				}()
+			} else {
+				dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
+				dgClient.OnTranscript = onTranscript
+				dgClient.OnSpeechStarted = onSpeechStarted
+				go func() {
+					defer wg.Done()
+					dgClient.Run(ctx, sess.AudioIn)
+				}()
+			}
 		}
 	}
 	sess.StartSTT = startSTT
@@ -334,9 +393,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	done := h.messageLoop(ctx, sess)
 	cancel() // signal all goroutines to stop
 
-	// Close channels after cancellation so goroutines drain cleanly
+	// Close AudioIn so the STT send goroutine exits its range loop.
+	// Do NOT close sess.Transcripts — the Deepgram receive goroutine may still
+	// deliver a final transcript after cancel(), and sending to a closed channel
+	// panics. runPipeline exits via ctx.Done() instead.
 	close(sess.AudioIn)
-	close(sess.Transcripts)
+	// Close BridgeCh to signal the agent browser relay goroutine to exit.
+	if sess.IsBridge {
+		close(sess.BridgeCh)
+	}
 
 	wg.Wait()
 
@@ -353,10 +418,7 @@ func (h *Handler) messageLoop(ctx context.Context, sess *CallSession) bool {
 	// One-shot frame-shape diagnostic — captures the first 5 inbound frames
 	// per session so we can see exactly what protocol the WS opener is
 	// speaking (Exotel Voicebot direct-WSS vs Stream/Passthru applet vs
-	// browser web-sim). Each entry logs: frame type (text/binary), byte
-	// length, and either the parsed event name + first 200 chars of JSON
-	// (text) or the first 16 bytes hex-encoded (binary). After 5 frames the
-	// logging stops so we don't fill the log with media payloads.
+	// browser web-sim).
 	framesLogged := 0
 	for {
 		msgType, msg, err := sess.WS.ReadMessage()
@@ -418,8 +480,7 @@ func (h *Handler) messageLoop(ctx context.Context, sess *CallSession) bool {
 
 // topKeys returns the top-level keys of a parsed JSON object — handy in the
 // frame-shape diagnostic so we can see whether a "start"-like envelope uses
-// our expected shape ({event, start: {callSid, streamSid}}) or some Voicebot
-// variant without us having to log the full payload.
+// our expected shape without logging the full payload.
 func topKeys(m map[string]interface{}) []string {
 	if m == nil {
 		return nil
@@ -436,17 +497,35 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		return
 	}
 	var pcm []byte
-	if sess.IsExotel {
-		// Echo cancellation: check ulaw frame before decoding
+	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(data) {
 			metrics.EchoSuppressions.Inc()
 			return
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
-		pcm = data // web sim sends PCM directly
+		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
+	}
+	if sess.IsBridge {
+		// Record customer audio for the server-side stereo WAV, then relay
+		// to the agent browser via BridgeCh.
+		sess.AppendMicChunk(pcm)
+		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
+		return
 	}
 	sess.AppendMicChunk(pcm)
+	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
+	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
+	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
+	// The 500ms window catches users who speak the instant the agent finishes
+	// (their audio may still be in-flight when IsTTSPlaying flips to false).
+	// BARGE-IN DISABLED — uncomment to re-enable
+	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// 	if sess.TriggerBargeIn() {
+	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+	// 	}
+	// }
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -487,9 +566,8 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		// casing. Voicebot applet and browser web-sim both use snake_case
 		// `stream_sid` and PCM-16 LE. Twilio and the older Exotel Stream/
 		// Passthru applet use camelCase `streamSid` and μ-law. Without this
-		// per-call detection, Voicebot calls (which our handler currently
-		// flags as IsExotel=true) get μ-law decode/encode applied to PCM-16
-		// bytes → garbled noise in both directions.
+		// per-call detection, Voicebot calls get μ-law decode/encode applied
+		// to PCM-16 bytes → garbled noise in both directions.
 		_, hasSnake := startData["stream_sid"]
 		_, hasCamel := startData["streamSid"]
 		switch {
@@ -498,8 +576,6 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		case hasCamel && !hasSnake:
 			sess.UseUlaw = true
 		}
-		// If both or neither key was present we leave UseUlaw at the
-		// NewCallSession default (= IsExotel), preserving prior behaviour.
 		h.log.Info("ws codec detected",
 			zap.String("stream_sid", sess.StreamSid),
 			zap.Bool("is_exotel", sess.IsExotel),
@@ -570,6 +646,10 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					sess.TTSLanguage = info.TTSLanguage
 					sess.Language = info.TTSLanguage
 				}
+				// Carry credit-bypass flag from the dial initiator so post-call
+				// deduction can be skipped for unlimited manual calls.
+				sess.SkipCredits = info.SkipCredits
+				sess.UserEmail = info.UserEmail
 				// Rebuild SystemPrompt and GreetingText now that we know the
 				// real campaign/org/lead. The initial initializeCall ran
 				// before the start event with all-zero IDs (Exotel's Passthru
@@ -591,18 +671,27 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 						sess.SetTTSInstance(newProv)
 					}
 				}
-				// Fire the deferred STT + greeting now that the language is
-				// final. ServeHTTP wired these closures and skipped the
-				// immediate startup path because URL params didn't carry a
-				// language. StartSTT is a no-op the second time (web-sim
-				// already invoked it directly); SendGreeting is gated by
-				// TrySetGreeting so it's also single-shot.
-				if sess.StartSTT != nil && sess.Language != "" {
-					sess.StartSTT()
-					sess.StartSTT = nil // prevent double-start on a second start event
-				}
-				if sess.SendGreeting != nil {
-					sess.SendGreeting()
+				// Bridge mode: skip AI pipeline entirely (no STT, no greeting).
+				// Audio from Exotel is relayed to the agent browser via BridgeCh.
+				if info.IsBridge {
+					sess.IsBridge = true
+					sess.StartSTT = nil
+					sess.SendGreeting = nil
+					h.log.Info("bridge mode: AI pipeline skipped", zap.String("call_sid", callSid))
+				} else {
+					// Fire the deferred STT + greeting now that the language is
+					// final. ServeHTTP wired these closures and skipped the
+					// immediate startup path because URL params didn't carry a
+					// language. StartSTT is a no-op the second time (web-sim
+					// already invoked it directly); SendGreeting is gated by
+					// TrySetGreeting so it's also single-shot.
+					if sess.StartSTT != nil && sess.Language != "" {
+						sess.StartSTT()
+						sess.StartSTT = nil // prevent double-start on a second start event
+					}
+					if sess.SendGreeting != nil {
+						sess.SendGreeting()
+					}
 				}
 			}
 		}
@@ -622,6 +711,27 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"connected", "audio stream opened")
 	}
+}
+
+// bargeInEnergyThreshold is the mean-square PCM energy level above which we
+// treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
+// value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
+// Raised to 1_000_000 (RMS≈1000): TTS echo was measuring ~280K and falsely
+// triggering barge-in, cancelling the agent's greeting mid-sentence.
+const bargeInEnergyThreshold int64 = 1_000_000
+
+// pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
+func pcmEnergy(pcm []byte) int64 {
+	n := len(pcm) / 2
+	if n == 0 {
+		return 0
+	}
+	var sum int64
+	for i := 0; i+1 < len(pcm); i += 2 {
+		s := int64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
+		sum += s * s
+	}
+	return sum / int64(n)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -722,7 +832,25 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		// nextPlayTime arithmetic on the synthesis side.
 		pcm = raw
 	}
+	if sess.IsBridge {
+		// Record customer audio for the server-side stereo WAV, then relay
+		// to the agent browser via BridgeCh.
+		sess.AppendMicChunk(pcm)
+		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
+		return
+	}
 	sess.AppendMicChunk(pcm)
+	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
+	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
+	// The 500ms window catches users who speak the instant the agent finishes
+	// (their audio may still be in-flight when IsTTSPlaying flips to false).
+	// BARGE-IN DISABLED — uncomment to re-enable
+	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
+	// 	if sess.TriggerBargeIn() {
+	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
+	// 	}
+	// }
 	select {
 	case sess.AudioIn <- pcm:
 	default:
@@ -731,7 +859,7 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	// Relay a copy of the caller's inbound audio to any attached monitors.
 	if sess.hasMonitors() {
 		format := "pcm16_8k"
-		if sess.IsExotel {
+		if sess.UseUlaw {
 			format = "ulaw_8k"
 		}
 		sess.BroadcastAudio("user", payload, format)
@@ -833,6 +961,8 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		ChatHistory: sess.HistorySnapshot(),
 		DurationS:   float32(time.Since(sess.CallStart).Seconds()),
 		StereoWav:   wavBytes,
+		SkipCredits: sess.SkipCredits,
+		UserEmail:   sess.UserEmail,
 	}
 	go h.recordingSvc.SaveAndAnalyze(ctx, req)
 }

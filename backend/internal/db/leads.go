@@ -338,9 +338,60 @@ func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON,
 	return res.LastInsertId()
 }
 
+// GetTranscriptByID fetches a single transcript by its primary key.
+// Returns (nil, nil) when no row matches.
+func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''),
+		       COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts WHERE id=?`, id)
+	var t Transcript
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &t, err
+}
+
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
 func (d *DB) UpdateCallTranscriptRecording(transcriptID int64, recordingURL string) error {
 	_, err := d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
+	return err
+}
+
+// UpdateHumanCallTranscriptRecording finds the human-call transcript stub
+// (identified by the "Human call" system message) for a given lead+campaign and
+// sets its recording_url. Falls back to a call_sid match in call_logs if the
+// transcript can be correlated.
+func (d *DB) UpdateHumanCallTranscriptRecording(leadID, campaignID int64, callSid, recordingURL string) error {
+	// Find the most recent transcript stub for this lead+campaign that has no recording yet.
+	var transcriptID int64
+	err := d.pool.QueryRow(`
+		SELECT id FROM call_transcripts
+		WHERE lead_id=? AND campaign_id=? AND recording_url IS NULL
+		  AND transcript LIKE '%Human call%'
+		ORDER BY created_at DESC LIMIT 1`, leadID, campaignID).Scan(&transcriptID)
+	if err != nil {
+		return err
+	}
+	_, err = d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
+	return err
+}
+
+// UpdateHumanCallTranscriptDuration updates call_duration_s for the most recent
+// human-call stub for a given lead+campaign (matched by call_sid via call_logs).
+func (d *DB) UpdateHumanCallTranscriptDuration(callSid string, durationS float64) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_transcripts ct
+		JOIN call_logs cl ON cl.lead_id=ct.lead_id AND cl.campaign_id=ct.campaign_id
+		SET ct.call_duration_s=?
+		WHERE cl.call_sid=? AND ct.transcript LIKE '%Human call%'
+		  AND ct.call_duration_s=0
+		ORDER BY ct.created_at DESC
+		LIMIT 1`, durationS, callSid)
 	return err
 }
 

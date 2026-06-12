@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
+import { useToast } from '../contexts/UIContext';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -14,6 +27,7 @@ const card = {
 };
 
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
+  const toast = useToast();
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState(null);
@@ -27,13 +41,14 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
     setLoading(false);
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
   useEffect(() => { fetchScheduledCalls(); }, []);
 
   const handleCancel = async (id) => {
     try {
       await apiFetch(`${API_URL}/scheduled-calls/${id}`, { method: 'DELETE' });
       fetchScheduledCalls();
-    } catch (e) { alert('Failed to cancel'); }
+    } catch { toast('Failed to cancel');  }
   };
 
   const statusStyle = (status) => {
@@ -96,7 +111,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
                 return (
                   <tr key={call.id}>
                     <td style={{ ...rowTd, color: T.sub }}>
-                      {formatDateTime(call.scheduled_time, orgTimezone)}
+                      {formatDateTime(call.scheduled_at || call.scheduled_time, orgTimezone)}
                     </td>
                     <td style={{ ...rowTd, fontWeight: 600, color: T.text }}>
                       {call.lead_name || call.first_name || '-'}

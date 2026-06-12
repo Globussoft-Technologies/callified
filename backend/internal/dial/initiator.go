@@ -26,6 +26,12 @@ type CallData struct {
 	TTSProvider string
 	TTSVoiceID  string
 	TTSLanguage string
+	// IsBridge=true routes the call to browser-to-phone mode: the Exotel stream is
+	// relayed to the agent's browser WebSocket instead of the AI pipeline.
+	IsBridge bool
+	// UserEmail identifies the agent who clicked the call button. Used to honour
+	// per-user feature flags such as hide_ai_features → unlimited manual calls.
+	UserEmail string
 }
 
 // Initiator orchestrates the full dial sequence:
@@ -48,7 +54,7 @@ func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook
 		db:     database,
 		disp:   disp,
 		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
-		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID),
+		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, ""),
 		log:    log,
 	}
 }
@@ -97,15 +103,44 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	//
 	// OrgID==0 happens in a few legacy/test code paths; let those through
 	// so we don't break dev environments with no billing setup.
+	//
+	// Bypass: agents whose AI features are hidden and who are placing a manual
+	// browser call (IsBridge) get unlimited calls — credits are neither checked
+	// nor deducted for those calls.
+	skipCredits := false
 	if data.OrgID > 0 {
-		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
-		if ocErr != nil {
-			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
-		} else if oc != nil && oc.BalancePaise <= 0 {
-			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
-			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
-				"failed", "insufficient credits — recharge to continue")
-			return "", ErrInsufficientCredits
+		if data.UserEmail != "" && data.IsBridge && i.db.ShouldHideAiFeatures(data.UserEmail) {
+			skipCredits = true
+			i.log.Info("dial: unlimited manual call for AI-hidden user – skipping credit gate",
+				zap.String("email", data.UserEmail),
+				zap.Int64("org_id", data.OrgID),
+				zap.Int64("lead_id", data.LeadID))
+		} else {
+			oc, ocErr := i.db.GetOrgCredit(data.OrgID)
+			if ocErr != nil {
+				i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
+			} else if oc != nil && oc.BalancePaise <= 0 {
+				// Three passes before blocking:
+				// 1. Active subscription → always allow.
+				// 2. No deduction history → org is new / never topped up; allow so
+				//    fresh orgs and test environments aren't dead-on-arrival.
+				// 3. Has prior deductions and balance=0 → genuinely exhausted.
+				sub, _ := i.db.GetSubscriptionByOrg(data.OrgID)
+				if sub != nil {
+					i.log.Info("dial: zero balance but active subscription – allowing call",
+						zap.Int64("org_id", data.OrgID), zap.String("plan", sub.PlanName))
+				} else {
+					hasHistory, _ := i.db.HasCallDeductions(data.OrgID)
+					if hasHistory {
+						_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
+						i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
+							"failed", "insufficient credits – recharge to continue")
+						return "", ErrInsufficientCredits
+					}
+					i.log.Info("dial: zero balance, no prior deductions – allowing call (new org)",
+						zap.Int64("org_id", data.OrgID))
+				}
+			}
 		}
 	}
 
@@ -120,28 +155,50 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		TTSProvider: data.TTSProvider,
 		TTSVoiceID:  data.TTSVoiceID,
 		TTSLanguage: data.TTSLanguage,
+		IsBridge:    data.IsBridge,
+		SkipCredits: skipCredits,
+		UserEmail:   data.UserEmail,
 	}
 
-	// 4. Dial via the configured provider
-	provider := i.cfg.DefaultProvider
+	// 4. Resolve per-campaign provider credentials.
+	// Provider is determined by the account linked to the campaign, not by global config.
+	var creds db.ExotelCreds
+	if data.CampaignID > 0 {
+		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
+			creds = c
+		}
+	}
+	provider := creds.Provider
+	if provider == "" {
+		provider = i.cfg.DefaultProvider
+	}
+	// Carry the Exotel app/flow type through to the webhook so it can return
+	// the correct response format (XML for legacy ExoML, JSON for AgentStream).
+	pending.AppType = creds.AppType
 	var callSid string
 
 	switch provider {
 	case "twilio":
+		var twilioClient *TwilioClient
+		if creds.IsSet() {
+			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
+			twilioClient = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+		} else {
+			twilioClient = i.twilio // global fallback
+		}
 		twimlURL := fmt.Sprintf("%s/webhook/twilio?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
-		callSid, err = i.twilio.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
+		callSid, err = twilioClient.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
 	default: // exotel
-		// Exotel ignores arbitrary ExoML URLs in the Url parameter — only
-		// http://my.exotel.com/exoml/start/{appID} works. The dashboard app
-		// at appID has a Passthru applet pointing to /webhook/exotel which
-		// returns the WebSocket-streaming ExoML when the lead answers.
-		// Per-call context (name, lead_id, phone) is hydrated from Redis by
-		// the WS handler, not from URL params.
+		if !creds.IsSet() {
+			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
+			return "", fmt.Errorf("no Exotel credentials configured for this campaign")
+		}
+		exotelClient := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = i.exotel.InitiateCall(ctx, data.LeadPhone, "", statusURL)
+		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))

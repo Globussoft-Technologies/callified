@@ -25,6 +25,14 @@ type CallSession struct {
 	CallSid    string
 	IsExotel   bool
 	IsWebSim   bool
+	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
+	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
+	IsBridge bool
+	// SkipCredits=true: this call should not be charged against the org's
+	// prepaid balance (unlimited manual calls for AI-hidden users).
+	SkipCredits bool
+	// UserEmail is the agent/admin who initiated the call.
+	UserEmail string
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").
@@ -42,12 +50,21 @@ type CallSession struct {
 	LeadID     int64
 	CampaignID int64
 	OrgID      int64
+	// BridgeCh carries decoded PCM chunks from the Exotel phone to the agent
+	// browser WebSocket when IsBridge=true. Closed when the Exotel call ends.
+	BridgeCh chan []byte
+	// agentConnected is true while exactly one /ws/agent WebSocket is relaying
+	// audio for this bridge session. A second connection is rejected to prevent
+	// two goroutines writing to the same Exotel WS (cross-voice contamination).
+	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
 	greetingSent   atomic.Bool
 	ttsPlaying     atomic.Bool
 	hangupReq      atomic.Bool
 	dgAlive        atomic.Bool
+	bargeInActive   atomic.Bool  // set on SpeechStarted; cleared when new LLM response starts
+	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
 	lastTTSEndNano atomic.Int64 // UnixNano
 	lastTranscript atomic.Int64 // UnixNano — debounce timestamp
 
@@ -76,9 +93,12 @@ type CallSession struct {
 	sttFirstAt atomic.Pointer[time.Time]
 
 	// Server-side stereo recording buffers
-	recMu     sync.Mutex
-	micChunks []audio.TimedChunk
-	ttsChunks []audio.TimedChunk
+	recMu            sync.Mutex
+	micChunks        []audio.TimedChunk
+	ttsChunks        []audio.TimedChunk
+	micRecordCursor  time.Time // virtual playback cursor for mic recording
+	ttsRecordCursor  time.Time // virtual playback cursor for TTS recording
+	ttsNewUtterance  bool      // signals AppendTTSChunk to reset cursor on next chunk
 
 	// Chat history — populated by AppendHistory, read by pipeline
 	historyMu   sync.Mutex
@@ -116,6 +136,56 @@ type CallSession struct {
 	Log       *zap.Logger
 }
 
+var langLabels = map[string]string{
+	"hi": "Hindi", "mr": "Marathi", "en": "English",
+	"ta": "Tamil", "te": "Telugu", "kn": "Kannada",
+	"bn": "Bengali", "gu": "Gujarati", "pa": "Punjabi",
+	"ml": "Malayalam",
+}
+
+// SwitchLanguage updates the session's active language, TTS language, and
+// patches the system prompt so the LLM immediately responds in the new language.
+// Returns true if the language actually changed.
+func (s *CallSession) SwitchLanguage(newLang string) bool {
+	if newLang == "" || newLang == s.Language {
+		return false
+	}
+	s.Log.Info("language switch detected",
+		zap.String("from", s.Language),
+		zap.String("to", newLang),
+	)
+	s.Language = newLang
+	s.TTSLanguage = newLang
+
+	label := langLabels[newLang]
+	if label == "" {
+		label = "Hindi"
+	}
+	override := "[LANGUAGE SWITCH: Respond ONLY in " + label + " for the rest of this conversation. Do NOT mention or acknowledge any language change to the customer — just continue naturally in " + label + ". This overrides all previous language instructions.]\n\n"
+	if !strings.Contains(s.SystemPrompt, "LANGUAGE SWITCH:") {
+		s.SystemPrompt = override + s.SystemPrompt
+	} else {
+		start := strings.Index(s.SystemPrompt, "[LANGUAGE SWITCH:")
+		// Search relative to start so we find the closing ]\n\n of THIS block,
+		// not the first ]\n\n anywhere in the prompt (which may be earlier).
+		endRel := strings.Index(s.SystemPrompt[start:], "]\n\n")
+		if start >= 0 && endRel >= 0 {
+			s.SystemPrompt = override + s.SystemPrompt[start+endRel+3:]
+		}
+	}
+	// Replace any conflicting language directive in the prompt body so the LLM
+	// doesn't weight a bottom-of-prompt "Respond ONLY in Tamil" over our override.
+	for _, lang := range []string{"Hindi", "Marathi", "English", "Tamil", "Telugu", "Kannada", "Bengali", "Gujarati", "Punjabi", "Malayalam"} {
+		if lang == label {
+			continue
+		}
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond ONLY in "+lang, "Respond ONLY in "+label)
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond only in "+lang, "Respond ONLY in "+label)
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "[LANG:"+strings.ToLower(lang[:2])+"]", "[LANG:"+newLang+"]")
+	}
+	return true
+}
+
 // SetTTSInstance stores the TTS client for this call.
 func (s *CallSession) SetTTSInstance(p tts.Provider) {
 	s.ttsMu.Lock()
@@ -141,12 +211,12 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		IsExotel:        isExotel,
 		IsWebSim:        isWebSim,
 		UseUlaw:         isExotel, // legacy default; overridden by start-frame casing detection
-
 		WS:              ws,
 		Log:             log,
 		AudioIn:         make(chan []byte, 512),
 		Transcripts:     make(chan string, 32),
 		TTSSentences:    make(chan string, 64),
+		BridgeCh:        make(chan []byte, 10), // 10 frames × 20 ms = 200 ms max latency
 		CallStart:       time.Now(),
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
@@ -258,12 +328,60 @@ func (s *CallSession) UpdateStreamType() {
 // TrySetGreeting atomically marks greeting as sent. Returns true only the first call.
 func (s *CallSession) TrySetGreeting() bool { return s.greetingSent.CompareAndSwap(false, true) }
 
-func (s *CallSession) SetTTSPlaying(v bool) { s.ttsPlaying.Store(v) }
+func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
-func (s *CallSession) RequestHangup()         { s.hangupReq.Store(true) }
-func (s *CallSession) HangupRequested() bool  { return s.hangupReq.Load() }
-func (s *CallSession) StopDG()                { s.dgAlive.Store(false) }
-func (s *CallSession) DGAlive() bool          { return s.dgAlive.Load() }
+func (s *CallSession) RequestHangup()        { s.hangupReq.Store(true) }
+func (s *CallSession) HangupRequested() bool { return s.hangupReq.Load() }
+func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
+func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
+func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
+func (s *CallSession) IsBargeInActive() bool { return s.bargeInActive.Load() }
+
+// TriggerBargeIn is called by energy VAD when mic energy exceeds the threshold
+// while TTS is playing. Returns false if barge-in was triggered too recently
+// (500 ms cooldown) or is already active.
+func (s *CallSession) TriggerBargeIn() bool {
+	now := time.Now().UnixNano()
+	last := s.lastBargeInNano.Load()
+	if now-last < 500*int64(time.Millisecond) {
+		return false // cooldown: don't flood barge-in events
+	}
+	if !s.lastBargeInNano.CompareAndSwap(last, now) {
+		return false // another goroutine won the race
+	}
+	s.SetBargeIn(true)
+	s.DrainTTSSentences()
+	go func() {
+		time.Sleep(3 * time.Second)
+		s.SetBargeIn(false)
+	}()
+	s.CancelActiveTTS()
+	// Send clear event to flush browser/phone audio queue
+	var frame []byte
+	if s.IsWebSim {
+		frame, _ = json.Marshal(map[string]string{"type": "clear"})
+	} else if s.IsExotel {
+		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	}
+	if frame != nil {
+		_ = s.SendText(frame)
+	}
+	return true
+}
+
+// DrainTTSSentences discards all sentences currently buffered in TTSSentences.
+// Called on barge-in so stale agent sentences don't play after the customer interrupts.
+func (s *CallSession) DrainTTSSentences() int {
+	drained := 0
+	for {
+		select {
+		case <-s.TTSSentences:
+			drained++
+		default:
+			return drained
+		}
+	}
+}
 
 func (s *CallSession) MarkTTSEnd() { s.lastTTSEndNano.Store(time.Now().UnixNano()) }
 func (s *CallSession) MsSinceTTSEnd() int64 {
@@ -309,17 +427,54 @@ func (s *CallSession) SendText(data []byte) error {
 }
 
 // AppendMicChunk records a user PCM chunk for server-side stereo recording.
+// Uses a virtual cursor (same pattern as AppendTTSChunk) so network jitter in
+// the Exotel WebSocket stream does not cause chunks to land on overlapping
+// offsets in the WAV buffer — which previously created audible crackle/clicks.
 func (s *CallSession) AppendMicChunk(pcm []byte) {
+	const micHz = 8000 * 2 // bytes per second at 8kHz 16-bit mono
 	s.recMu.Lock()
-	s.micChunks = append(s.micChunks, audio.TimedChunk{Ts: time.Now(), Data: append([]byte(nil), pcm...)})
+	defer s.recMu.Unlock()
+	if s.micRecordCursor.IsZero() {
+		s.micRecordCursor = time.Now()
+	}
+	s.micChunks = append(s.micChunks, audio.TimedChunk{Ts: s.micRecordCursor, Data: append([]byte(nil), pcm...)})
+	s.micRecordCursor = s.micRecordCursor.Add(time.Duration(len(pcm)) * time.Second / micHz)
+}
+
+// MarkTTSNewUtterance signals that the next TTS chunk starts a new utterance.
+// Call this before each TTS synthesis so AppendTTSChunk resets its virtual
+// playback cursor to wall-clock time, preserving silence gaps between turns.
+func (s *CallSession) MarkTTSNewUtterance() {
+	s.recMu.Lock()
+	s.ttsNewUtterance = true
 	s.recMu.Unlock()
 }
 
 // AppendTTSChunk records an AI PCM chunk for server-side stereo recording.
+// Uses a virtual playback cursor (advancing by chunk duration at 8kHz) so
+// batch TTS providers that deliver audio faster than real-time don't cluster
+// all chunks at the same timestamp and overwrite each other in the WAV buffer.
 func (s *CallSession) AppendTTSChunk(pcm []byte) {
+	const ttsHz = 8000 * 2 // bytes per second at 8kHz 16-bit mono
 	s.recMu.Lock()
-	s.ttsChunks = append(s.ttsChunks, audio.TimedChunk{Ts: time.Now(), Data: append([]byte(nil), pcm...)})
-	s.recMu.Unlock()
+	defer s.recMu.Unlock()
+	if s.ttsRecordCursor.IsZero() {
+		s.ttsRecordCursor = time.Now()
+		s.ttsNewUtterance = false
+	} else if s.ttsNewUtterance {
+		// Sarvam TTS delivers audio faster than real-time. If synthesis of the
+		// next sentence completes before the previous sentence has "played out",
+		// time.Now() is still behind ttsRecordCursor. Resetting to time.Now()
+		// would make this sentence overlap the previous one in the WAV buffer
+		// → audible distortion. Use the later of the two so we never go back.
+		if now := time.Now(); now.After(s.ttsRecordCursor) {
+			s.ttsRecordCursor = now
+		}
+		s.ttsNewUtterance = false
+	}
+	ts := s.ttsRecordCursor
+	s.ttsChunks = append(s.ttsChunks, audio.TimedChunk{Ts: ts, Data: append([]byte(nil), pcm...)})
+	s.ttsRecordCursor = s.ttsRecordCursor.Add(time.Duration(len(pcm)) * time.Second / ttsHz)
 }
 
 // DrainRecordingBuffers returns copies of both recording buffers and clears them.
@@ -349,18 +504,10 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	return snap
 }
 
-// MaxTokens returns the configured max_tokens for the session's language.
-// Tuned to match main-branch ws_handler.py 4aa3fa3 — shorter caps catch
-// monologues earlier and reduce LLM cost on chatty Hindi/Bengali.
-func (s *CallSession) MaxTokens() int32 {
-	switch s.Language {
-	case "hi", "bn":
-		return 80
-	case "mr":
-		return 300
-	case "en":
-		return 400
-	default:
-		return 250
-	}
+// MaxTokens returns 600 for all languages. The LLM self-regulates and stops
+// naturally when the response is complete — 600 is a safety cap to prevent
+// runaway responses while giving enough room for 3-4 full sentences in any
+// Indian script without mid-sentence cutoffs.
+func (s *CallSession) MaxTokens(_ string) int32 {
+	return 600
 }

@@ -74,9 +74,8 @@ export function CallProvider({ children }) {
       } else {
         alert(`Status: ${data.message || 'Connecting call...'}`);
       }
-    } catch(e) {
-      alert("Failed to hit the dialer API. Check console.");
-    }
+    } catch { alert("Failed to hit the dialer API. Check console.");
+     }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch, recordDialIntent, activeVoiceProvider, activeVoiceId, savedVoiceName, activeLanguage, selectedOrg]);
 
@@ -103,7 +102,9 @@ export function CallProvider({ children }) {
     });
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
       webCallAudioCtxRef.current = audioContext;
 
@@ -180,13 +181,18 @@ export function CallProvider({ children }) {
         };
 
         let nextPlayTime = audioContext.currentTime;
+        let activeSources = [];
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            // Mute mic while AI is talking to prevent echo feedback
-            micMuted = true;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
+          if (data.type === 'clear') {
+            // Backend barge-in — stop all queued audio immediately
+            console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
+            activeSources = [];
+            nextPlayTime = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
+          } else if (data.event === 'media') {
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -210,14 +216,13 @@ export function CallProvider({ children }) {
             if (audioContext.currentTime > nextPlayTime) nextPlayTime = audioContext.currentTime;
             destSource.start(nextPlayTime);
             nextPlayTime += buffer.duration;
+            activeSources.push(destSource);
+            destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            // Unmute mic 500ms after last TTS chunk finishes playing
-            const remainingPlayMs = Math.max(0, (nextPlayTime - audioContext.currentTime) * 1000) + 500;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, remainingPlayMs);
-          } else if (data.event === 'clear') {
-            nextPlayTime = audioContext.currentTime; // Discard TTS queue on barge-in
-            micMuted = false; // Immediately unmute on barge-in clear
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
+            }
           }
         };
 
@@ -314,7 +319,7 @@ export function CallProvider({ children }) {
     try {
       const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
       campVoice = await vRes.json();
-    } catch(e) {}
+    } catch { /* ignore */ }
 
     {
       const cvProvider = campVoice.tts_provider || activeVoiceProvider;
@@ -338,7 +343,9 @@ export function CallProvider({ children }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
       webCallAudioCtxRef.current = audioContext;
 
@@ -413,12 +420,18 @@ export function CallProvider({ children }) {
         };
 
         let nextPlayTime = audioContext.currentTime;
+        let activeSources = [];
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            micMuted = true;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
+          if (data.type === 'clear') {
+            // Backend barge-in — stop all queued audio immediately
+            console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
+            activeSources = [];
+            nextPlayTime = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
+          } else if (data.event === 'media') {
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -441,13 +454,13 @@ export function CallProvider({ children }) {
             if (audioContext.currentTime > nextPlayTime) nextPlayTime = audioContext.currentTime;
             destSource.start(nextPlayTime);
             nextPlayTime += buffer.duration;
+            activeSources.push(destSource);
+            destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            const remainingPlayMs = Math.max(0, (nextPlayTime - audioContext.currentTime) * 1000) + 500;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, remainingPlayMs);
-          } else if (data.event === 'clear') {
-            nextPlayTime = audioContext.currentTime;
-            micMuted = false;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
+            }
           }
         };
 
@@ -551,6 +564,7 @@ export function CallProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCall() {
   const ctx = useContext(CallContext);
   if (!ctx) throw new Error('useCall must be used within CallProvider');

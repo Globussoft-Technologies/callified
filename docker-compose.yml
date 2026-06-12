@@ -1,18 +1,22 @@
-# ─── Callified AI — Full Stack (Go Backend + RAG Service + MySQL + Redis) ──────
+# ─── Callified AI — Full Stack ────────────────────────────────────────────────
 #
 # Services:
 #   mysql        MySQL 8 database (port 3307 locally)
 #   redis        Redis 7 (port 6380 locally)
 #   rag-service  Python FAISS/sentence-transformers RAG microservice (port 8002)
 #   go-audio     Go WebSocket audio pipeline + REST API (port 8001)
+#   frontend     React SPA + nginx reverse-proxy (port 80)
 #
 # Prerequisites:
 #   cp backend/.env.example backend/.env   — then fill in your API keys
 #
-# Start the full stack:
+# Production build (frontend + backend both in Docker):
 #   docker compose up --build
 #
-# Rebuild only the Go service (zero downtime hot-swap):
+# Development (Vite HMR on :5173, override replaces nginx with hot-reload):
+#   docker compose up --build           # docker-compose.override.yml auto-loaded
+#
+# Rebuild only the Go service:
 #   docker compose up -d --no-deps --build go-audio
 
 services:
@@ -77,6 +81,31 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s   # allow time for uvicorn startup (model is pre-baked)
+
+  # ── Frontend (React/Vite → nginx) ────────────────────────────────────────────
+  # Production: multi-stage build (node:20 → nginx:1.27). Nginx serves the SPA
+  # from /app/frontend/dist and reverse-proxies /api/, /ws/, /wa/webhook/ etc.
+  # to go-audio:8001. See nginx/callified-docker.conf for the full config.
+  #
+  # Development: docker-compose.override.yml replaces this with a Vite HMR
+  # server on port 5173 — you don't need to rebuild on every source change.
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: callified-frontend
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:80:80"
+    depends_on:
+      go-audio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
 
   # ── Go audio + REST API backend ──────────────────────────────────────────────
   go-audio:

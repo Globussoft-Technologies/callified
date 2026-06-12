@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -113,19 +112,6 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
 
-	// --- Conversational Backchanneling ---
-	// If user spoke >2 words, inject a filler 60% of the time so the AI
-	// sounds natural while waiting for the LLM response.
-	// Mirrors Python ws_handler.py Phase 2 backchanneling block.
-	if len(strings.Fields(transcript)) > 2 && rand.Float64() < 0.6 {
-		filler := randomFiller(sess.Language)
-		select {
-		case sess.TTSSentences <- filler:
-		case <-ctx.Done():
-			return
-		}
-	}
-
 	// --- Inject whispers (manager hints) as additional context ---
 	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
 	for _, w := range whispers {
@@ -149,12 +135,15 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			SystemPrompt: sess.SystemPrompt,
 			History:      history[:max(0, len(history)-1)], // exclude the turn we just added
 			Language:     sess.Language,
-			MaxTokens:    sess.MaxTokens(),
+			MaxTokens:    sess.MaxTokens(transcript),
 		}, func(chunk llm.SentenceChunk) {
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk
 				metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
 				firstChunk = false
+				// New response starting — clear barge-in so TTS worker stops
+				// discarding sentences and the agent can speak again.
+				sess.SetBargeIn(false)
 			}
 			if chunk.HasHangup {
 				hasHangup = true
@@ -225,6 +214,19 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 				sess.WS.Close() //nolint:errcheck
 				return
 			}
+			// Safety: bridge sessions must never synthesise AI audio —
+			// the agent's browser mic is the audio source, not TTS.
+			if sess.IsBridge {
+				sess.Log.Warn("tts worker: dropping sentence for bridge session — should not happen",
+					zap.String("sentence", sentence))
+				continue
+			}
+			// Discard sentences queued before barge-in — customer interrupted,
+			// old agent response is stale.
+			if sess.IsBargeInActive() {
+				sess.Log.Info("barge-in: discarding stale sentence", zap.String("text", sentence))
+				continue
+			}
 			provider := sess.TTSInstance()
 			if provider == nil {
 				sess.Log.Warn("TTS worker: no provider available, dropping sentence",
@@ -244,6 +246,7 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 	defer cancel()
 
 	sess.SetTTSPlaying(true)
+	sess.MarkTTSNewUtterance()
 	defer func() {
 		sess.SetTTSPlaying(false)
 		sess.MarkTTSEnd()
@@ -281,6 +284,11 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
 // Handles ulaw conversion for Exotel and JSON framing differences.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
+	// Drop frames immediately on barge-in so the wsMu write queue doesn't fill
+	// up with stale audio behind the {"type":"clear"} control message.
+	if sess.IsBargeInActive() {
+		return
+	}
 	// Record for server-side stereo WAV
 	sess.AppendTTSChunk(pcm8k)
 	// Feed echo canceller (ulaw representation)

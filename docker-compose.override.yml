@@ -27,14 +27,19 @@ services:
     restart: "no"
 
   # ── Frontend: Vite HMR dev server ────────────────────────────────────────────
+  # Overrides the production nginx build in docker-compose.yml.
+  # Dockerfile.dev is a one-liner (FROM node:20-alpine) that replaces the
+  # multi-stage prod build so docker compose doesn't run `npm run build` here.
   frontend:
-    image: node:20-alpine
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev        # overrides prod build → plain node:20-alpine
     working_dir: /app
     volumes:
       - ./frontend:/app                 # live source mount → HMR sees every file save
       - /app/node_modules               # keep container node_modules, don't overwrite
     ports:
-      - "5173:5173"
+      - "5173:5173"                     # replaces prod 80:80
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
     depends_on:
       - go-audio

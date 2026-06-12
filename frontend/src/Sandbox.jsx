@@ -1,5 +1,17 @@
 import React, { useState, useRef } from 'react';
 
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
 const VOICE_OPTIONS = {
   elevenlabs: {
     label: 'ElevenLabs',
@@ -23,18 +35,18 @@ const VOICE_OPTIONS = {
     label: 'Smallest AI',
     voices: [
       { id: 'mithali', name: 'Mithali (Hindi Female)' },
-      { id: 'priya', name: 'Priya (Hindi Female)' },
+      { id: 'priya',   name: 'Priya (Hindi Female)' },
       { id: 'aravind', name: 'Aravind (Hindi Male)' },
-      { id: 'raj', name: 'Raj (Hindi Male)' },
-      { id: 'arman', name: 'Arman (Male)' },
+      { id: 'raj',     name: 'Raj (Hindi Male)' },
+      { id: 'arman',   name: 'Arman (Male)' },
       { id: 'jasmine', name: 'Jasmine (Female)' },
-      { id: 'emily', name: 'Emily (Female)' },
-      { id: 'james', name: 'James (Male)' },
+      { id: 'emily',   name: 'Emily (Female)' },
+      { id: 'james',   name: 'James (Male)' },
     ]
   }
 };
 
-export default function Sandbox({ apiUrl }) {
+export default function Sandbox() {
   const [recording, setRecording] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [provider, setProvider] = useState('elevenlabs');
@@ -43,6 +55,8 @@ export default function Sandbox({ apiUrl }) {
   const audioContextRef = useRef(null);
   const sourceRef = useRef(null);
   const processorRef = useRef(null);
+  const activeSourcesRef = useRef([]);
+  const nextPlayTimeRef = useRef(0);
 
   const handleProviderChange = (p) => {
     setProvider(p);
@@ -51,42 +65,17 @@ export default function Sandbox({ apiUrl }) {
 
   const startSandbox = async () => {
     try {
-      // Default getUserMedia({audio: true}) silently enables aggressive echo
-      // cancellation, noise suppression, and AGC. With the AI's TTS playing
-      // through the speakers, AEC was treating the user's own voice as echo
-      // and attenuating it — Deepgram saw audio energy of ~90 (near silence)
-      // even when the user spoke clearly. Turning the processing off here
-      // makes the mic pass through speech at normal levels. (issue #33)
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
-      // 16 kHz is well-supported across browsers. We then downsample by 2 to
-      // 8 kHz before sending so the bytes match what Deepgram expects
-      // (sample_rate=8000, encoding=linear16). Asking the browser directly for
-      // 8 kHz didn't work reliably — Chrome silently fell back to 48 kHz on
-      // macOS while still labelling the buffer as 8 kHz, producing audio that
-      // Deepgram couldn't recognise (transcripts came back with confidence 0).
-      // (issue #33)
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       const qp = new URLSearchParams({
-        name: 'Sandbox Tester',
-        interest: 'product demo',
-        lead_id: '0',
-        tts_provider: provider,
-        voice: voiceId,
-        // "multi" tells the backend to put Deepgram in multi-language mode so
-        // STT works for whichever language the tester speaks (English, Hindi,
-        // Tamil, etc). Without this it would default to English-only and
-        // return empty transcripts for any non-English speech. (issue #33)
-        tts_language: 'multi',
+        name: 'Sandbox Tester', interest: 'product demo', lead_id: '0',
+        tts_provider: provider, voice: voiceId, tts_language: 'multi',
       }).toString();
 
       let wsUrl;
@@ -118,9 +107,6 @@ export default function Sandbox({ apiUrl }) {
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN || micMuted) return;
           const float32Array = e.inputBuffer.getChannelData(0);
-          // Downsample 16 kHz → 8 kHz by taking every other sample. Speech
-          // energy is well below 4 kHz so a low-pass filter isn't strictly
-          // necessary; the alias headroom is fine for STT.
           const outLen = Math.floor(float32Array.length / 2);
           const int16Buffer = new Int16Array(outLen);
           for (let i = 0; i < outLen; i++) {
@@ -129,18 +115,20 @@ export default function Sandbox({ apiUrl }) {
           }
           let binary = '';
           const bytes = new Uint8Array(int16Buffer.buffer);
-          for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
-          }
+          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
           ws.send(JSON.stringify({ event: 'media', media: { payload: window.btoa(binary) } }));
         };
 
-        let nextPlayTime = audioContext.currentTime;
+        nextPlayTimeRef.current = audioContext.currentTime;
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            micMuted = true;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+          if (data.type === 'clear') {
+            activeSourcesRef.current.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
+            activeSourcesRef.current = [];
+            nextPlayTimeRef.current = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
+          } else if (data.event === 'media') {
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) audioBytes[i] = audioStr.charCodeAt(i);
@@ -153,24 +141,28 @@ export default function Sandbox({ apiUrl }) {
             bufferSource.buffer = audioBuffer;
             bufferSource.connect(audioContext.destination);
             const now = audioContext.currentTime;
-            const startAt = Math.max(now, nextPlayTime);
+            const startAt = Math.max(now, nextPlayTimeRef.current);
             bufferSource.start(startAt);
-            nextPlayTime = startAt + audioBuffer.duration;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, (nextPlayTime - now) * 1000 + 200);
+            nextPlayTimeRef.current = startAt + audioBuffer.duration;
+            activeSourcesRef.current.push(bufferSource);
+            bufferSource.onended = () => {
+              activeSourcesRef.current = activeSourcesRef.current.filter(s => s !== bufferSource);
+            };
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
+            }
           } else if (data.type === 'transcript') {
-            // Backend sends {type:"transcript", role:"user"|"agent", text}.
-            // Map "agent" → "assistant" for the existing render styling.
             const role = data.role === 'agent' ? 'assistant' : data.role;
             if (role && data.text) setTranscripts(prev => [...prev, { role, text: data.text }]);
           }
         };
       };
 
-      ws.onerror = (e) => console.error("Sandbox WS error", e);
+      ws.onerror = (e) => console.error('Sandbox WS error', e);
       ws.onclose = () => setRecording(false);
     } catch (e) {
-      console.error("Sandbox failed", e);
-      alert("Microphone access required. Please allow and retry.");
+      console.error('Sandbox failed', e);
+      alert('Microphone access required. Please allow and retry.');
     }
   };
 
@@ -187,97 +179,141 @@ export default function Sandbox({ apiUrl }) {
   const selectedVoiceName = currentVoices.find(v => v.id === voiceId)?.name || '';
 
   return (
-    <div className="glass-panel" style={{padding: '2rem'}}>
-      <h2 style={{marginTop: 0, marginBottom: '0.5rem', color: '#f8fafc'}}>🎯 AI Training Sandbox</h2>
-      <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Roleplay and stress test the Voice Agent engine. Choose different TTS providers and voices to find the best fit.</p>
-      
-      <div style={{display: 'flex', gap: '2rem'}}>
-        {/* Left Panel */}
-        <div style={{background: 'rgba(15, 23, 42, 0.6)', borderRadius: '8px', padding: '1.5rem', flex: 1}}>
-          <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Simulation Controls</h3>
-          
-          {/* Provider Selector */}
-          <div style={{marginBottom: '1rem'}}>
-            <label style={{display: 'block', fontSize: '0.8rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>TTS Provider</label>
-            <div style={{display: 'flex', gap: '8px'}}>
-              {Object.entries(VOICE_OPTIONS).map(([key, val]) => (
-                <button key={key} onClick={() => handleProviderChange(key)} disabled={recording}
-                  style={{flex: 1, padding: '8px 12px', borderRadius: '8px', cursor: recording ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.85rem', border: 'none',
-                    background: provider === key ? 'linear-gradient(135deg, #8b5cf6, #6d28d9)' : 'rgba(255,255,255,0.05)',
-                    color: provider === key ? '#fff' : '#94a3b8', opacity: recording ? 0.5 : 1,
-                    transition: 'all 0.2s'}}>
-                  {val.label}
-                </button>
-              ))}
-            </div>
-          </div>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
 
-          {/* Voice Selector */}
-          <div style={{marginBottom: '1.5rem'}}>
-            <label style={{display: 'block', fontSize: '0.8rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Voice</label>
-            <select className="form-input" value={voiceId} onChange={e => setVoiceId(e.target.value)} disabled={recording}
-              style={{width: '100%', fontSize: '0.9rem', padding: '10px 12px', opacity: recording ? 0.5 : 1}}>
-              {currentVoices.map(v => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </select>
-          </div>
+      {/* Page title */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>🎯 AI Training Sandbox</h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          Roleplay and stress test the Voice Agent engine. Choose different TTS providers and voices to find the best fit.
+        </p>
+      </div>
 
-          {/* Action Buttons */}
-          <div style={{display: 'flex', gap: '1rem'}}>
-            {!recording ? (
-              <button className="btn-primary" onClick={startSandbox}
-                style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', borderColor: '#22c55e', flex: 1}}>
-                🎙️ Start Simulation
+    <div style={{ display: 'flex', gap: 16 }}>
+
+      {/* Left: Simulation Controls */}
+      <div style={{ ...card, padding: '24px 28px', flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.text, fontFamily: T.font }}>
+          Simulation Controls
+        </h3>
+
+        {/* Provider toggle */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontFamily: T.font }}>
+            TTS Provider
+          </div>
+          <div style={{ display: 'flex', background: T.bg, borderRadius: 8, padding: 3, gap: 3 }}>
+            {Object.entries(VOICE_OPTIONS).map(([key, val]) => (
+              <button key={key} onClick={() => handleProviderChange(key)} disabled={recording}
+                style={{
+                  flex: 1, padding: '8px 14px', borderRadius: 6, border: 'none',
+                  fontWeight: 600, fontSize: 13, fontFamily: T.font,
+                  cursor: recording ? 'not-allowed' : 'pointer',
+                  background: provider === key ? T.accent : 'transparent',
+                  color: provider === key ? '#fff' : T.muted,
+                  opacity: recording ? 0.6 : 1,
+                  transition: 'all 0.15s',
+                }}>
+                {val.label}
               </button>
-            ) : (
-              <button className="btn-call" onClick={stopSandbox}
-                style={{borderColor: '#ef4444', color: '#ef4444', flex: 1}}>
-                ⏹️ Stop
-              </button>
-            )}
-            <button className="btn-call" onClick={() => setTranscripts([])} style={{flex: 0, fontSize: '0.8rem', whiteSpace: 'nowrap'}}>🗑️ Clear</button>
-          </div>
-          
-          {/* Status */}
-          <div style={{background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '1rem', marginTop: '1rem'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#94a3b8', lineHeight: 1.8}}>
-              <span>Mic:</span>
-              <span>{recording ? <span style={{color: '#34d399'}}>Active 🟢</span> : <span style={{color: '#ef4444'}}>Off 🔴</span>}</span>
-            </div>
-            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#94a3b8', lineHeight: 1.8}}>
-              <span>Provider:</span>
-              <span style={{color: '#c4b5fd'}}>{VOICE_OPTIONS[provider].label}</span>
-            </div>
-            <div style={{display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', color: '#94a3b8', lineHeight: 1.8}}>
-              <span>Voice:</span>
-              <span style={{color: '#c4b5fd'}}>{selectedVoiceName}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Panel - Transcripts */}
-        <div style={{background: 'rgba(15, 23, 42, 0.6)', borderRadius: '8px', padding: '1.5rem', flex: 2}}>
-          <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Live Transcripts</h3>
-          <div style={{background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '1.5rem', minHeight: '350px', maxHeight: '450px', display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto'}}>
-            {transcripts.length === 0 && <p style={{color: '#64748b', textAlign: 'center', marginTop: '5rem'}}>Click "Start Simulation" and speak...</p>}
-            {transcripts.map((t, idx) => (
-              <div key={idx} style={{
-                alignSelf: t.role === 'user' ? 'flex-start' : 'flex-end',
-                background: t.role === 'user' ? 'rgba(56, 189, 248, 0.1)' : 'rgba(168, 85, 247, 0.1)',
-                padding: '10px 16px', borderRadius: '12px',
-                color: t.role === 'user' ? '#e0f2fe' : '#f3e8ff',
-                maxWidth: '80%', border: `1px solid ${t.role === 'user' ? 'rgba(56, 189, 248, 0.2)' : 'rgba(168, 85, 247, 0.2)'}`
-              }}>
-                <strong style={{display: 'block', fontSize: '0.7rem', textTransform: 'uppercase', marginBottom: '4px', opacity: 0.6}}>
-                  {t.role === 'user' ? '👤 You' : '🤖 AI Agent'}
-                </strong>
-                {t.text}
-              </div>
             ))}
           </div>
         </div>
+
+        {/* Voice selector */}
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontFamily: T.font }}>
+            Voice
+          </div>
+          <select value={voiceId} onChange={e => setVoiceId(e.target.value)} disabled={recording}
+            style={{
+              width: '100%', padding: '9px 13px', borderRadius: 8, fontSize: 13,
+              border: `1px solid ${T.border}`, background: T.card, color: T.text,
+              fontFamily: T.font, outline: 'none', cursor: 'pointer',
+              opacity: recording ? 0.6 : 1,
+            }}>
+            {currentVoices.map(v => (
+              <option key={v.id} value={v.id}>{v.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {!recording ? (
+            <button onClick={startSandbox} style={{
+              flex: 1, padding: '10px 18px', borderRadius: 8, border: 'none',
+              fontWeight: 600, fontSize: 13, fontFamily: T.font,
+              background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+              color: '#fff', cursor: 'pointer',
+            }}>
+              🎙️ Start Simulation
+            </button>
+          ) : (
+            <button onClick={stopSandbox} style={{
+              flex: 1, padding: '10px 18px', borderRadius: 8,
+              fontWeight: 600, fontSize: 13, fontFamily: T.font,
+              border: `1px solid ${T.red}`, background: 'rgba(239,68,68,0.08)',
+              color: T.red, cursor: 'pointer',
+            }}>
+              ⏹️ Stop
+            </button>
+          )}
+          <button onClick={() => setTranscripts([])} style={{
+            padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+            fontFamily: T.font, cursor: 'pointer',
+            border: `1px solid ${T.border}`, background: T.card, color: T.sub,
+          }}>🗑️ Clear</button>
+        </div>
+
+        {/* Status panel */}
+        <div style={{ background: T.bg, borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {[
+            { label: 'Mic', value: recording ? <span style={{ color: T.green }}>Active 🟢</span> : <span style={{ color: T.red }}>Off 🔴</span> },
+            { label: 'Provider', value: <span style={{ color: T.accent }}>{VOICE_OPTIONS[provider].label}</span> },
+            { label: 'Voice', value: <span style={{ color: T.accent }}>{selectedVoiceName}</span> },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontFamily: T.font }}>
+              <span style={{ color: T.muted }}>{label}:</span>
+              <span style={{ fontWeight: 500 }}>{value}</span>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {/* Right: Live Transcripts */}
+      <div style={{ ...card, padding: '24px 28px', flex: 2, display: 'flex', flexDirection: 'column' }}>
+        <h3 style={{ margin: '0 0 16px', fontSize: 15, fontWeight: 700, color: T.text, fontFamily: T.font }}>
+          Live Transcripts
+        </h3>
+        <div style={{
+          flex: 1, background: T.bg, borderRadius: 8, padding: '20px',
+          minHeight: 350, maxHeight: 450, display: 'flex', flexDirection: 'column',
+          gap: 10, overflowY: 'auto',
+        }}>
+          {transcripts.length === 0 && (
+            <p style={{ color: T.muted, textAlign: 'center', marginTop: '5rem', fontSize: 14, fontFamily: T.font }}>
+              Click "Start Simulation" and speak...
+            </p>
+          )}
+          {transcripts.map((t, idx) => (
+            <div key={idx} style={{
+              alignSelf: t.role === 'user' ? 'flex-start' : 'flex-end',
+              background: t.role === 'user' ? 'rgba(99,102,241,0.08)' : T.card,
+              border: `1px solid ${t.role === 'user' ? 'rgba(99,102,241,0.2)' : T.border}`,
+              padding: '10px 14px', borderRadius: 12, maxWidth: '80%',
+              fontFamily: T.font,
+            }}>
+              <strong style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, color: T.muted }}>
+                {t.role === 'user' ? '👤 You' : '🤖 AI Agent'}
+              </strong>
+              <span style={{ fontSize: 13, color: T.text }}>{t.text}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+    </div>
     </div>
   );
 }

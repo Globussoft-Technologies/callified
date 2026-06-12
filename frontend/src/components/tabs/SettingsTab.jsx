@@ -1,5 +1,20 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  padding: '24px 28px',
+};
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -15,12 +30,47 @@ const card = {
 };
 
 export default function SettingsTab({
-  handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
+  handleAddPronunciation, pronFormData, setPronFormData, pronError, setPronError, pronunciations, handleDeletePronunciation,
   selectedOrg,
-  promptDirty, handleSaveSystemPrompt, promptSaving, systemPromptAuto, systemPromptCustom,
+  promptDirty, handleSaveSystemPrompt, promptSaving, promptSaved, systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
   orgTimezone
 }) {
+  const hideAiFeatures = useHideAiFeatures();
+  const navigate = useNavigate();
+  const [callActions, setCallActions] = useState({
+    dial: true,
+    browserCall: true,
+    simWebCall: true,
+  });
+  const [callActionsSaved, setCallActionsSaved] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
+      setCallActions({
+        dial: saved.dial !== false,
+        browserCall: saved.browserCall !== false,
+        simWebCall: saved.simWebCall !== false,
+      });
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleCallActionChange = (key) => {
+    setCallActions(prev => ({ ...prev, [key]: !prev[key] }));
+    setCallActionsSaved(false);
+  };
+
+  const saveCallActions = () => {
+    const toSave = hideAiFeatures
+      ? { dial: false, browserCall: true, simWebCall: false }
+      : callActions;
+    localStorage.setItem('callified_call_actions', JSON.stringify(toSave));
+    setCallActions(toSave);
+    setCallActionsSaved(true);
+    setTimeout(() => setCallActionsSaved(false), 3000);
+  };
+
   const labelStyle = { fontSize: 13, fontWeight: 600, color: T.sub, marginBottom: 6, display: 'block', fontFamily: T.font };
   const inputStyle = {
     width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 13,
@@ -43,17 +93,19 @@ export default function SettingsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          <span style={{ color: T.amber }}>AI Voice</span> Settings
+          {hideAiFeatures ? 'Settings' : <><span style={{ color: T.amber }}>AI Voice</span> Settings</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Configure how the AI pronounces product names, brand names, and technical terms during calls.
+          {hideAiFeatures
+            ? 'Configure call action visibility and other preferences.'
+            : 'Configure how the AI pronounces product names, brand names, and technical terms during calls.'}
         </p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* Pronunciation Guide */}
-        <div style={card}>
+        {!hideAiFeatures && (<div style={card}>
           <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>🗣️ Pronunciation Guide</h3>
           <p style={{ margin: '0 0 20px', fontSize: 13, color: T.muted }}>
             Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
@@ -64,7 +116,7 @@ export default function SettingsTab({
               <label style={labelStyle}>Written Word</label>
               <input
                 required value={pronFormData.word}
-                onChange={e => setPronFormData({ ...pronFormData, word: e.target.value })}
+                onChange={e => { setPronFormData({ ...pronFormData, word: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Adsgpt"
                 data-testid="pron-word"
                 style={inputStyle}
@@ -75,7 +127,7 @@ export default function SettingsTab({
               <label style={labelStyle}>How to Pronounce</label>
               <input
                 required value={pronFormData.phonetic}
-                onChange={e => setPronFormData({ ...pronFormData, phonetic: e.target.value })}
+                onChange={e => { setPronFormData({ ...pronFormData, phonetic: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Ads G P T"
                 data-testid="pron-phonetic"
                 style={inputStyle}
@@ -91,6 +143,11 @@ export default function SettingsTab({
               + Add Rule
             </button>
           </form>
+          {pronError && (
+            <p style={{ margin: '-12px 0 16px', fontSize: 12, fontWeight: 600, color: '#ef4444' }}>
+              {pronError}
+            </p>
+          )}
 
           {pronunciations.length === 0 ? (
             <div style={{
@@ -135,10 +192,10 @@ export default function SettingsTab({
               </tbody>
             </table>
           )}
-        </div>
+        </div>)}
 
         {/* How it works */}
-        <div style={{
+        {!hideAiFeatures && (<div style={{
           ...card,
           background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
           boxShadow: 'none',
@@ -151,26 +208,31 @@ export default function SettingsTab({
             <br /><br />
             <strong style={{ color: T.text }}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
           </p>
-        </div>
+        </div>)}
 
         {/* System Prompt */}
-        {selectedOrg && (
+        {!hideAiFeatures && selectedOrg && (
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
-              {promptDirty && (
-                <button
-                  onClick={handleSaveSystemPrompt} disabled={promptSaving}
-                  style={{
-                    background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
-                    borderRadius: 8, color: '#fff', padding: '8px 16px',
-                    cursor: promptSaving ? 'not-allowed' : 'pointer',
-                    fontWeight: 700, fontSize: 13, fontFamily: T.font,
-                    opacity: promptSaving ? 0.7 : 1,
-                  }}>
-                  {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
-                </button>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {!promptDirty && promptSaved && (
+                  <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+                )}
+                {promptDirty && (
+                  <button
+                    onClick={handleSaveSystemPrompt} disabled={promptSaving}
+                    style={{
+                      background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
+                      borderRadius: 8, color: '#fff', padding: '8px 16px',
+                      cursor: promptSaving ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                      opacity: promptSaving ? 0.7 : 1,
+                    }}>
+                    {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
+                  </button>
+                )}
+              </div>
             </div>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
               This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.
@@ -204,12 +266,99 @@ export default function SettingsTab({
                   fontFamily: T.mono,
                 }}
               />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: (systemPromptCustom || '').length > 8000 ? '#ef4444' : '#9ca3af' }}>
+                  {(systemPromptCustom || '').length.toLocaleString()} chars
+                  {(systemPromptCustom || '').length > 8000 && ' — approaching token limit'}
+                </span>
+              </div>
               <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
                 If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.
               </p>
             </div>
           </div>
         )}
+
+        {/* Provider Accounts shortcut for non-AI users */}
+        {hideAiFeatures && (
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>Provider Accounts</h3>
+            </div>
+            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+              Manage your Exotel telephony provider accounts.
+            </p>
+            <button
+              onClick={() => navigate('/exotel-accounts')}
+              style={{
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                borderRadius: 8, color: '#fff', padding: '10px 18px',
+                cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+              }}>
+              Manage Provider Accounts
+            </button>
+          </div>
+        )}
+
+        {/* Call Action Visibility */}
+        {!hideAiFeatures && (<div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>☎️ Call Action Visibility</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {callActionsSaved && (
+                <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+              )}
+              <button
+                onClick={saveCallActions}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                  borderRadius: 8, color: '#fff', padding: '8px 16px',
+                  cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                }}>
+                💾 Save
+              </button>
+            </div>
+          </div>
+          <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+            Choose which call buttons appear in the lead action row on the campaign page.
+          </p>
+
+          {hideAiFeatures ? (
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8,
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions.browserCall}
+                readOnly
+                style={{ width: 18, height: 18, cursor: 'default' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>🎙 Browser Call</span>
+            </label>
+          ) : ([
+            { key: 'dial', label: '📞 Dial' },
+            { key: 'browserCall', label: '🎙 Browser Call' },
+            { key: 'simWebCall', label: '🌐 Sim Web Call' },
+          ].map(({ key, label }) => (
+            <label key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions[key]}
+                onChange={() => handleCallActionChange(key)}
+                style={{ width: 18, height: 18, cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>{label}</span>
+            </label>
+          )))}
+        </div>)}
 
       </div>
     </div>

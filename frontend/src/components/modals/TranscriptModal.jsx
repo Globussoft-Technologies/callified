@@ -1,49 +1,42 @@
-import React, { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
+import { useAuth } from '../../contexts/AuthContext';
+import { API_URL } from '../../constants/api';
 
-// Language code → display name. Covers the 10 languages the dialer supports.
-// We show this as a small badge on each call header so you can tell at a
-// glance which language the call was conducted in — the transcript text
-// itself is already in the native script, but the label is handy when
-// scanning a long history.
-const LANG_NAMES = {
-  en: 'English',  hi: 'Hindi',   mr: 'Marathi', bn: 'Bengali',
-  gu: 'Gujarati', pa: 'Punjabi', ta: 'Tamil',   te: 'Telugu',
-  kn: 'Kannada',  ml: 'Malayalam',
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981',
+  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif",
 };
 
-// (cache-bust 2026-04-30: force a fresh bundle hash so Cloudflare can't keep
-// serving the stale 404 from the earlier upload-to-wrong-dir mistake)
-// agentDisplayName scans an AI turn's text for the persona name the AI
-// announced ("Hi …, I'm Aditya …" / "this is Raj …" / "मैं कबीर बात कर रहा
-// हूं …"). Returns the bare name when found, otherwise the generic "AI"
-// fallback. This avoids the old hardcoded "Arjun (AI)" label, which was
-// wrong whenever the campaign used a non-default voice (Aditya, Raj, Meera,
-// Kabir, …) — the bubble label now matches what the AI actually said.
-//
-// We compute this once per transcript (not per turn) so every AI bubble
-// inside the same call shows the same name. If the first AI turn is too
-// short or doesn't include a self-introduction, later turns are scanned as
-// a fallback before giving up and returning "AI".
+const SENTIMENT_STYLE = {
+  positive: { color: '#15803d', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  emoji: '😊' },
+  neutral:  { color: '#6b7280', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐' },
+  negative: { color: '#dc2626', bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',  emoji: '☹️' },
+  annoyed:  { color: '#c2410c', bg: 'rgba(251,146,60,0.12)',  border: 'rgba(251,146,60,0.3)', emoji: '😤' },
+};
+
+const LANG_NAMES = {
+  en: 'English', hi: 'Hindi',  mr: 'Marathi', bn: 'Bengali',
+  gu: 'Gujarati', pa: 'Punjabi', ta: 'Tamil', te: 'Telugu',
+  kn: 'Kannada', ml: 'Malayalam',
+};
+
 const NAME_PATTERNS = [
-  /\bI[' ]?m\s+([A-Z][a-zA-Z]{1,18})/,           // "I'm Aditya", "I am Raj"
+  /\bI[' ]?m\s+([A-Z][a-zA-Z]{1,18})/,
   /\bI am\s+([A-Z][a-zA-Z]{1,18})/,
-  /\bthis is\s+([A-Z][a-zA-Z]{1,18})/i,           // "This is Aditya"
-  /(?:मैं|मे)\s+([A-Z][a-zA-Z]{1,18})/,           // Devanagari sentence with Roman name
-  /(?:मैं|मे)\s+([ऀ-ॿ]{2,12})\s+(?:बात|बोल)/, // "मैं कबीर बात कर रहा हूँ"
+  /\bthis is\s+([A-Z][a-zA-Z]{1,18})/i,
+  /(?:मैं|मे)\s+([A-Z][a-zA-Z]{1,18})/,
+  /(?:मैं|मे)\s+([ऀ-ॿ]{2,12})\s+(?:बात|बोल)/,
 ];
-// Build identifier kept as a real string literal (not just a comment) so
-// minification can't strip it — guarantees a fresh bundle-hash whenever we
-// bump it, which is necessary to bust Cloudflare's stale-404 cache when a
-// deploy mis-routes the previous upload.
-const TRANSCRIPT_MODAL_BUILD_ID = 'transcript-modal-2026-04-30-cf-bust';
+
 function extractAgentName(turns) {
-  if (typeof TRANSCRIPT_MODAL_BUILD_ID !== 'string') return 'AI'; // unreachable; pins the constant into the emitted bundle
   if (!Array.isArray(turns)) return 'AI';
   for (const t of turns) {
     if ((t.role || '').toLowerCase() !== 'ai' && (t.role || '').toLowerCase() !== 'model') continue;
-    const text = (t.text || t.Text || '').slice(0, 240); // cap regex work
+    const text = (t.text || t.Text || '').slice(0, 240);
     if (!text) continue;
     for (const re of NAME_PATTERNS) {
       const m = text.match(re);
@@ -53,10 +46,129 @@ function extractAgentName(turns) {
   return 'AI';
 }
 
-export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone }) {
+// ConclusionCard — fetches AI conclusion lazily per transcript.
+// POST /api/transcripts/{id}/conclusion (cached; ?force=1 to regenerate).
+function ConclusionCard({ transcriptId, turns }) {
+  const { apiFetch } = useAuth();
+  const [state, setState] = useState({ status: 'idle', review: null, error: '' });
+
+  const turnCount = Array.isArray(turns) ? turns.length : 0;
+  const interactionHappened = turnCount >= 1;
+
+  const fetchConclusion = useCallback((force = false) => {
+    if (!transcriptId) return;
+    setState((s) => ({ ...s, status: 'loading', error: '' }));
+    const qs = force ? '?force=1' : '';
+    apiFetch(`${API_URL}/transcripts/${transcriptId}/conclusion${qs}`, { method: 'POST' })
+      .then(async (res) => {
+        if (res.status === 204) { setState({ status: 'empty', review: null, error: '' }); return; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { setState({ status: 'error', review: null, error: body?.error || `HTTP ${res.status}` }); return; }
+        setState({ status: 'ready', review: body, error: '' });
+      })
+      .catch((e) => setState({ status: 'error', review: null, error: e?.message || 'network error' }));
+  }, [apiFetch, transcriptId]);
+
+  useEffect(() => {
+    if (!transcriptId || !interactionHappened) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchConclusion(false);
+  }, [fetchConclusion, transcriptId, interactionHappened]);
+
+  if (!interactionHappened) return null;
+
+  const wrap = (children) => (
+    <div style={{
+      marginTop: 14, padding: '14px 16px', borderRadius: 10,
+      background: '#ffffff', border: '1px solid #c4b5fd',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+    }}>
+      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#7c3aed', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          ✨ AI Conclusion
+          <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#6b7280' }}>(Gemini)</span>
+        </span>
+        <button type="button" onClick={() => fetchConclusion(true)} disabled={state.status === 'loading'}
+          title="Regenerate"
+          style={{
+            background: 'transparent', border: '1px solid rgba(139,92,246,0.3)',
+            color: '#7c3aed', borderRadius: 6, padding: '3px 10px',
+            fontSize: '0.72rem', cursor: state.status === 'loading' ? 'wait' : 'pointer',
+            fontWeight: 600,
+          }}>↻ Regenerate</button>
+      </div>
+      {children}
+    </div>
+  );
+
+  if (state.status === 'loading' || state.status === 'idle')
+    return wrap(<div style={{ color: '#6b7280', fontSize: '0.85rem' }}>Generating conclusion…</div>);
+  if (state.status === 'error')
+    return wrap(<div style={{ color: '#dc2626', fontSize: '0.82rem' }}>Could not generate conclusion: {state.error}</div>);
+  if (state.status === 'empty')
+    return wrap(<div style={{ color: '#6b7280', fontSize: '0.85rem' }}>No transcript turns to analyse.</div>);
+
+  const r = state.review || {};
+  const summary       = (r.summary || '').trim();
+  const wentWell      = (r.what_went_well || '').trim();
+  const wentWrong     = (r.what_went_wrong || '').trim();
+  const failureReason = (r.failure_reason || '').trim();
+  const suggestion    = (r.prompt_improvement_suggestion || '').trim();
+  const insights      = (r.insights || '').trim();
+
+  const score = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
+  const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
+  const rawSent = (r.customer_sentiment || r.sentiment || '').toLowerCase();
+  const sStyle = SENTIMENT_STYLE[rawSent] || null;
+
+  return wrap(
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: '#1f2937', lineHeight: 1.5 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+        {score > 0 && (
+          <span style={{ background: '#fef9c3', color: '#a16207', border: '1px solid #fde047', fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600 }}>
+            {stars} {score}/5
+          </span>
+        )}
+        {sStyle && (
+          <span style={{ background: sStyle.bg, color: sStyle.color, border: `1px solid ${sStyle.border}`, fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600 }}>
+            {sStyle.emoji} {rawSent}
+          </span>
+        )}
+        <span style={{
+          background: r.appointment_booked ? '#dcfce7' : '#f3f4f6',
+          color: r.appointment_booked ? '#15803d' : '#6b7280',
+          border: `1px solid ${r.appointment_booked ? '#86efac' : '#e5e7eb'}`,
+          fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600,
+        }}>
+          {r.appointment_booked ? '✅ Appointment booked' : '❌ No appointment'}
+        </span>
+      </div>
+      {summary       && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{summary}</div>}
+      {wentWell      && <div><span style={{ color: '#15803d', fontWeight: 700 }}>What went well: </span>{wentWell}</div>}
+      {wentWrong     && <div><span style={{ color: '#dc2626', fontWeight: 700 }}>What went wrong: </span>{wentWrong}</div>}
+      {failureReason && !r.appointment_booked && <div><span style={{ color: '#c2410c', fontWeight: 700 }}>Why no booking: </span>{failureReason}</div>}
+      {suggestion    && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Suggested next step: </span>{suggestion}</div>}
+      {!suggestion && insights && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Coaching insight: </span>{insights}</div>}
+    </div>
+  );
+}
+
+function isHumanCallStub(turns) {
+  if (!Array.isArray(turns) || turns.length === 0) return false;
+  return turns.some(t => t.role === 'system' && (t.content || t.text || '').includes('Human call'));
+}
+
+export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false);
   const list = Array.isArray(transcripts) ? transcripts : [];
-  // Esc-to-close so there's always a keyboard escape even if the ✕ is
-  // somehow hidden by an overflow/scroll edge case.
+
+  const handleRefresh = async () => {
+    if (!onRefresh || !transcriptLead) return;
+    setRefreshing(true);
+    await onRefresh(transcriptLead);
+    setRefreshing(false);
+  };
+
   useEffect(() => {
     if (!transcriptLead) return;
     const onKey = (e) => { if (e.key === 'Escape') setTranscriptLead(null); };
@@ -69,124 +181,176 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
   const close = () => setTranscriptLead(null);
 
   return (
-    // Clicking the dark backdrop closes — instinctive escape.
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) close(); }}>
-      <div className="modal-content glass-panel" style={{position: 'relative', background: 'rgba(15, 23, 42, 0.97)', border: '1px solid rgba(99, 102, 241, 0.2)', maxWidth: '700px', maxHeight: '85vh', display: 'flex', flexDirection: 'column'}}>
+      <div style={{
+        position: 'relative',
+        background: T.card,
+        border: `1px solid ${T.border}`,
+        borderRadius: 16,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+        maxWidth: 700,
+        width: '90%',
+        maxHeight: '85vh',
+        display: 'flex',
+        flexDirection: 'column',
+        fontFamily: T.font,
+      }}>
 
-        <div style={{flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1rem'}}>
+        {/* Header */}
+        <div style={{
+          flexShrink: 0,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '20px 24px 16px',
+          borderBottom: `1px solid ${T.border}`,
+        }}>
           <div>
-            <h2 style={{marginTop: 0, marginBottom: '4px', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '8px'}}>📋 Call Transcripts</h2>
-            <p style={{margin: 0, color: '#94a3b8', fontSize: '0.9rem'}}>{transcriptLead.first_name} — {transcriptLead.phone}</p>
+            <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+              📋 Call Transcripts
+            </h2>
+            <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
+              {transcriptLead.first_name} — {transcriptLead.phone}
+            </p>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {onRefresh && (
+              <button onClick={handleRefresh} disabled={refreshing} style={{
+                background: 'transparent', border: `1px solid ${T.border}`,
+                color: T.sub, borderRadius: 6, padding: '4px 12px',
+                fontSize: '0.78rem', cursor: refreshing ? 'wait' : 'pointer',
+                fontWeight: 600,
+              }}>↺ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
+            )}
+            <button onClick={close} style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: T.muted, fontSize: '1.2rem', lineHeight: 1, padding: 4,
+            }}>✕</button>
           </div>
         </div>
 
-        <div style={{flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '8px'}}>
+        {/* Body */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px' }}>
           {list.length === 0 ? (
-            <div style={{padding: '3rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '12px'}}>
-              <div style={{fontSize: '2rem', marginBottom: '12px'}}>📞</div>
-              <div>No call transcripts yet.</div>
-              <div style={{fontSize: '0.85rem', marginTop: '8px'}}>Transcripts will appear here after AI calls are completed.</div>
+            <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, background: T.bg, borderRadius: 12 }}>
+              <div style={{ fontSize: '2rem', marginBottom: 12 }}>📞</div>
+              <div style={{ fontWeight: 600, color: T.sub }}>No call transcripts yet.</div>
+              <div style={{ fontSize: '0.85rem', marginTop: 8 }}>Transcripts will appear here after AI calls are completed.</div>
             </div>
           ) : (
             list.map((t, idx) => {
-            // Resolve the agent name once per call so every AI bubble
-            // inside the same transcript shows the same persona.
-            const agentName = extractAgentName(t.transcript);
-            return (
-              <div key={t.id || idx} style={{marginBottom: '1.5rem', background: 'rgba(0,0,0,0.2)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.05)'}}>
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                    <span style={{color: '#818cf8', fontWeight: 600}}>Call #{list.length - idx}</span>
-                    <span style={{fontSize: '0.8rem', color: '#64748b'}}>{formatDateTime(t.created_at, orgTimezone)}</span>
-                  </div>
-                  <div style={{display: 'flex', gap: '6px', alignItems: 'center'}}>
-                    {t.tts_language && (
-                      <span
-                        className="badge"
-                        title={`Call language: ${LANG_NAMES[t.tts_language] || t.tts_language}`}
-                        style={{background: 'rgba(34, 197, 94, 0.1)', color: '#4ade80', fontSize: '0.75rem', border: '1px solid rgba(34, 197, 94, 0.25)'}}
-                      >🗣 {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}</span>
-                    )}
-                    {t.call_duration_s > 0 && (
-                      <span className="badge" style={{background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', fontSize: '0.75rem'}}>{Math.round(t.call_duration_s)}s</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Audio Player — color-coded by source */}
-                {t.recording_url && (() => {
-                  const url = t.recording_url || '';
-                  const isWav = url.endsWith('.wav');
-                  const isMp3 = url.endsWith('.mp3');
-                  const isWebm = url.endsWith('.webm');
-                  const sourceLabel = isWav ? '🖥️ Server Recording (Stereo)' : isMp3 ? '📞 Exotel Recording' : isWebm ? '🌐 Browser Recording' : '🔊 Recording';
-                  const color = isWav ? '#22d3ee' : isMp3 ? '#22c55e' : isWebm ? '#a855f7' : '#818cf8';
-                  const bg = isWav ? 'rgba(34,211,238,0.05)' : isMp3 ? 'rgba(34,197,94,0.05)' : isWebm ? 'rgba(168,85,247,0.05)' : 'rgba(99,102,241,0.05)';
-                  const border = isWav ? 'rgba(34,211,238,0.2)' : isMp3 ? 'rgba(34,197,94,0.2)' : isWebm ? 'rgba(168,85,247,0.2)' : 'rgba(99,102,241,0.15)';
-                  // AuthAudio fetches /api/recordings/* as a blob via
-                  // Authorization header to keep the JWT out of the URL.
-                  return (
-                    <div style={{marginBottom: '1rem', padding: '10px', background: bg, borderRadius: '8px', border: `1px solid ${border}`}}>
-                      <div style={{fontSize: '0.8rem', color, marginBottom: '6px', fontWeight: 600}}>{sourceLabel}</div>
-                      <AuthAudio style={{width: '100%', height: '36px'}} src={url} />
+              const agentName = extractAgentName(t.transcript);
+              return (
+                <div key={t.id || idx} style={{
+                  marginBottom: 16, background: T.bg, borderRadius: 12,
+                  padding: '16px', border: `1px solid ${T.border}`,
+                }}>
+                  {/* Call header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ color: T.accent, fontWeight: 700, fontSize: '0.9rem' }}>Call #{list.length - idx}</span>
+                      <span style={{ fontSize: '0.8rem', color: T.muted }}>{formatDateTime(t.created_at, orgTimezone)}</span>
                     </div>
-                  );
-                })()}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {t.tts_language && (
+                        <span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.72rem', fontWeight: 600, border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6, padding: '2px 8px' }}>
+                          🗣 {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}
+                        </span>
+                      )}
+                      {t.call_duration_s > 0 && (
+                        <span style={{ background: 'rgba(99,102,241,0.08)', color: T.accent, fontSize: '0.72rem', fontWeight: 600, border: `1px solid rgba(99,102,241,0.2)`, borderRadius: 6, padding: '2px 8px' }}>
+                          {Math.round(t.call_duration_s)}s
+                        </span>
+                      )}
+                    </div>
+                  </div>
 
-                {/* Turn-by-turn transcript */}
-                <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                  {(Array.isArray(t.transcript) ? t.transcript : []).map((turn, i) => (
-                    <div key={i} style={{
-                      display: 'flex',
-                      flexDirection: turn.role === 'AI' ? 'row' : 'row-reverse',
-                      gap: '8px',
-                      alignItems: 'flex-start'
+                  {/* Recording pending banner for manual calls */}
+                  {!t.recording_url && isHumanCallStub(t.transcript) && (
+                    <div style={{
+                      marginBottom: 12, padding: '10px 14px', background: 'rgba(251,191,36,0.08)',
+                      borderRadius: 8, border: '1px solid rgba(251,191,36,0.3)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                     }}>
-                      <div style={{
-                        width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.75rem', fontWeight: 700,
-                        background: turn.role === 'AI' ? 'rgba(99, 102, 241, 0.2)' : 'rgba(34, 197, 94, 0.2)',
-                        color: turn.role === 'AI' ? '#818cf8' : '#4ade80',
-                        border: `1px solid ${turn.role === 'AI' ? 'rgba(99, 102, 241, 0.3)' : 'rgba(34, 197, 94, 0.3)'}`
-                      }}>
-                        {turn.role === 'AI' ? '🤖' : '👤'}
-                      </div>
-                      <div style={{
-                        maxWidth: '75%', padding: '10px 14px', borderRadius: '12px',
-                        background: turn.role === 'AI' ? 'rgba(99, 102, 241, 0.08)' : 'rgba(34, 197, 94, 0.08)',
-                        border: `1px solid ${turn.role === 'AI' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(34, 197, 94, 0.15)'}`,
-                        color: '#e2e8f0', fontSize: '0.9rem', lineHeight: '1.5'
-                      }}>
-                        <div style={{fontSize: '0.7rem', fontWeight: 600, marginBottom: '4px', color: turn.role === 'AI' ? '#818cf8' : '#4ade80'}}>
-                          {turn.role === 'AI' ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
-                        </div>
-                        {turn.text}
-                      </div>
+                      <span style={{ fontSize: '0.82rem', color: '#92400e', fontWeight: 500 }}>
+                        ⏳ Recording is being processed. Refresh in a few minutes.
+                      </span>
+                      {onRefresh && (
+                        <button onClick={handleRefresh} disabled={refreshing} style={{
+                          background: 'transparent', border: '1px solid rgba(251,191,36,0.5)',
+                          color: '#92400e', borderRadius: 6, padding: '2px 10px',
+                          fontSize: '0.72rem', cursor: refreshing ? 'wait' : 'pointer', fontWeight: 600,
+                        }}>↺ Refresh</button>
+                      )}
                     </div>
-                  ))}
+                  )}
+
+                  {/* Audio player */}
+                  {t.recording_url && (() => {
+                    const url = t.recording_url || '';
+                    const isWav = url.endsWith('.wav');
+                    const isMp3 = url.endsWith('.mp3');
+                    const isWebm = url.endsWith('.webm');
+                    const sourceLabel = isWav ? '🖥️ Server Recording (Stereo)' : isMp3 ? '📞 Exotel Recording' : isWebm ? '🌐 Browser Recording' : '🔊 Recording';
+                    const color = isWav ? '#0891b2' : isMp3 ? '#059669' : isWebm ? '#7c3aed' : T.accent;
+                    return (
+                      <div style={{ marginBottom: 12, padding: '10px 12px', background: T.card, borderRadius: 8, border: `1px solid ${T.border}` }}>
+                        <div style={{ fontSize: '0.78rem', color, fontWeight: 600, marginBottom: 6 }}>{sourceLabel}</div>
+                        <AuthAudio style={{ width: '100%', height: 36 }} src={url} />
+                      </div>
+                    );
+                  })()}
+
+                  {/* Turn-by-turn transcript */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(Array.isArray(t.transcript) ? t.transcript : []).filter(turn => turn.role !== 'system').map((turn, i) => {
+                      const isAI = turn.role === 'AI';
+                      return (
+                        <div key={i} style={{ display: 'flex', flexDirection: isAI ? 'row' : 'row-reverse', gap: 8, alignItems: 'flex-start' }}>
+                          <div style={{
+                            width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.75rem', fontWeight: 700,
+                            background: isAI ? 'rgba(99,102,241,0.1)' : 'rgba(16,185,129,0.1)',
+                            color: isAI ? T.accent : T.green,
+                            border: `1px solid ${isAI ? 'rgba(99,102,241,0.25)' : 'rgba(16,185,129,0.25)'}`,
+                          }}>
+                            {isAI ? '🤖' : '👤'}
+                          </div>
+                          <div style={{
+                            maxWidth: '75%', padding: '10px 14px', borderRadius: 12,
+                            background: isAI ? 'rgba(99,102,241,0.06)' : '#ffffff',
+                            border: `1px solid ${isAI ? 'rgba(99,102,241,0.15)' : T.border}`,
+                            color: T.text, fontSize: '0.88rem', lineHeight: 1.55,
+                          }}>
+                            <div style={{ fontSize: '0.7rem', fontWeight: 700, marginBottom: 4, color: isAI ? T.accent : T.green }}>
+                              {isAI ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
+                            </div>
+                            {turn.text}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* AI Conclusion */}
+                  {t.id && (
+                    <ConclusionCard
+                      transcriptId={t.id}
+                      turns={Array.isArray(t.transcript) ? t.transcript : []}
+                    />
+                  )}
                 </div>
-              </div>
-            );
+              );
             })
           )}
         </div>
 
-        <div style={{flexShrink: 0, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '12px', marginTop: '12px', textAlign: 'center'}}>
-          <button
-            type="button"
-            onClick={close}
-            style={{
-              background: 'rgba(99, 102, 241, 0.15)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
-              color: '#cbd5e1',
-              padding: '8px 24px',
-              borderRadius: '8px',
-              fontSize: '0.9rem',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >Close</button>
+        {/* Footer */}
+        <div style={{ flexShrink: 0, borderTop: `1px solid ${T.border}`, padding: '12px 24px', textAlign: 'center' }}>
+          <button onClick={close} style={{
+            background: T.accent, border: 'none', color: '#fff',
+            padding: '8px 32px', borderRadius: 8, fontSize: '0.9rem',
+            fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+          }}>Close</button>
         </div>
       </div>
     </div>

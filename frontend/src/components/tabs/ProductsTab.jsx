@@ -1,4 +1,29 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useToast, useConfirm } from '../../contexts/UIContext';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', cyan: '#0891b2', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+};
+
+const inputStyle = {
+  width: '100%', padding: '9px 13px', borderRadius: 8, fontSize: 13,
+  border: `1px solid ${T.border}`, background: T.card,
+  color: T.text, fontFamily: T.font, outline: 'none', boxSizing: 'border-box',
+};
+
+const labelStyle = {
+  display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 600,
+  color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: T.font,
+};
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -26,12 +51,87 @@ const labelStyle = {
 export default function ProductsTab({
   orgProducts, selectedOrg, orgs,
   newProductName, setNewProductName, showProductInput, setShowProductInput,
-  handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping,
-  apiFetch, API_URL
+  handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping, scrapeError,
+  apiFetch, API_URL,
+  onProductsRefresh,
 }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [productPrompts, setProductPrompts] = React.useState({});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
+  const [nameError, setNameError] = useState('');
+  const fileInputRefs = React.useRef({});
+  const hideAiFeatures = useHideAiFeatures();
+
+  const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
+  const setWebsiteUrl = (productId, url) =>
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url } }));
+
+  const handleScrapeWithSave = async (productId) => {
+    const currentUrl = getWebsiteUrl(productId);
+    const product = orgProducts.find(p => p.id === productId);
+    if (currentUrl !== undefined && currentUrl !== (product?.website_url || '')) {
+      await handleSaveProduct(productId, { website_url: currentUrl });
+    }
+    const urlToScrape = currentUrl !== undefined ? currentUrl : product?.website_url;
+    if (!urlToScrape) { toast('Please enter a website URL first.'); return; }
+    await handleScrapeProduct(productId);
+  };
+
+  const handleUploadImage = async (productId) => {
+    const pp = productPrompts[productId] || {};
+    const file = pp.pendingFile;
+    if (!file) { toast('Please choose an image file first.'); return; }
+    updateProductPrompt(productId, 'uploading', true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (pp.uploadLabel?.trim()) formData.append('label', pp.uploadLabel.trim());
+      const res = await apiFetch(`${API_URL}/products/${productId}/images`, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const txt = await res.text();
+        toast('Upload failed: ' + txt);
+      } else {
+        updateProductPrompt(productId, 'pendingFile', null);
+        updateProductPrompt(productId, 'uploadLabel', '');
+        if (fileInputRefs.current[productId]) fileInputRefs.current[productId].value = '';
+        if (onProductsRefresh) onProductsRefresh();
+        else if (selectedOrg) handleSaveProduct && window.location.reload();
+      }
+    } catch(e) {
+      toast('Upload error: ' + e.message);
+    }
+    updateProductPrompt(productId, 'uploading', false);
+  };
+
+  const handleDeleteManualImage = async (productId, idx) => {
+    if (!await confirm({ message: 'Remove this image?' })) return;
+    try {
+      await apiFetch(`${API_URL}/products/${productId}/images/${idx}`, { method: 'DELETE' });
+      if (onProductsRefresh) onProductsRefresh();
+    } catch(e) {
+      toast('Delete error: ' + e.message);
+    }
+  };
+
+  const handleUpdateImageLabel = async (productId, idx, newLabel) => {
+    const product = orgProducts.find(p => p.id === productId);
+    if (!product) return;
+    const updated = product.manual_images.map((img, i) =>
+      i === idx ? { ...img, label: newLabel } : img
+    );
+    try {
+      await apiFetch(`${API_URL}/products/${productId}/images`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      if (onProductsRefresh) onProductsRefresh();
+    } catch(e) {
+      toast('Save error: ' + e.message);
+    }
+  };
 
   React.useEffect(() => {
     if (!orgProducts || orgProducts.length === 0) return;
@@ -50,6 +150,7 @@ export default function ProductsTab({
               expanded: prev[p.id]?.expanded || false,
               generating: prev[p.id]?.generating || false,
               saving: prev[p.id]?.saving || false,
+              websiteUrl: prev[p.id]?.websiteUrl !== undefined ? prev[p.id].websiteUrl : (p.website_url || ''),
             }
           }));
         })
@@ -60,6 +161,7 @@ export default function ProductsTab({
           }));
         });
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts]);
 
   const updateProductPrompt = (productId, field, value) => {
@@ -79,9 +181,9 @@ export default function ProductsTab({
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ custom_prompt: data.prompt })
         });
-        alert('System prompt generated and saved! Review it in Settings → AI System Prompt.');
-      } else { alert(data.message || 'Generation failed'); }
-    } catch(e) { alert('Failed to generate'); }
+        toast('System prompt generated and saved! Review it in Settings → AI System Prompt.');
+      } else { toast(data.message || 'Generation failed'); }
+    } catch { toast('Failed to generate');  }
     updateProductPrompt(productId, 'generating', false);
   };
 
@@ -99,8 +201,8 @@ export default function ProductsTab({
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agent_persona: data.agent_persona, call_flow_instructions: data.call_flow_instructions })
         });
-      } else { alert(data.message || 'Generation failed'); }
-    } catch(e) { alert('Failed to generate persona'); }
+      } else { toast(data.message || 'Generation failed'); }
+    } catch { toast('Failed to generate persona');  }
     updateProductPrompt(productId, 'generatingPersona', false);
   };
 
@@ -113,8 +215,8 @@ export default function ProductsTab({
         body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '' })
       });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      alert('Persona & call flow saved!');
-    } catch(e) { alert('Failed to save: ' + (e.message || e)); }
+      toast('Persona & call flow saved!');
+    } catch(e) { toast('Failed to save: ' + (e.message || e)); }
     updateProductPrompt(productId, 'saving', false);
   };
 
@@ -126,10 +228,10 @@ export default function ProductsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          📦 <span style={{ color: T.cyan }}>Product</span> Knowledge
+          {hideAiFeatures ? '📦 Products' : <>📦 <span style={{ color: T.cyan }}>Product</span> Knowledge</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Manage your products. The AI learns from this to have informed conversations.
+          {hideAiFeatures ? 'Manage your products.' : 'Manage your products. The AI learns from this to have informed conversations.'}
         </p>
       </div>
 
@@ -161,22 +263,26 @@ export default function ProductsTab({
                   fontSize: 13, fontFamily: T.font, cursor: 'pointer',
                 }}>+ Add Product</button>
             ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input data-testid="product-name-input" autoFocus
                   placeholder="Product name (e.g. AdsGPT)..."
-                  value={newProductName} onChange={e => setNewProductName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddProduct()}
-                  style={{ ...inputStyle, width: 220, height: 36 }} />
-                <button onClick={handleAddProduct} style={{
+                  value={newProductName}
+                  onChange={e => { setNewProductName(e.target.value); if (nameError) setNameError(''); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { if (!newProductName.trim()) { setNameError('Product name is required'); return; } setNameError(''); handleAddProduct(); } }}
+                  style={{ ...inputStyle, width: 220, height: 36, border: nameError ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+                <button onClick={() => { if (!newProductName.trim()) { setNameError('Product name is required'); return; } setNameError(''); handleAddProduct(); }} style={{
                   padding: '0 14px', height: 36, borderRadius: 8, border: 'none',
                   background: T.green, color: '#fff', fontWeight: 600, fontSize: 13,
                   fontFamily: T.font, cursor: 'pointer',
                 }}>Add</button>
-                <button onClick={() => { setShowProductInput(false); setNewProductName(''); }} style={{
+                <button onClick={() => { setShowProductInput(false); setNewProductName(''); setNameError(''); }} style={{
                   padding: '0 10px', height: 36, borderRadius: 8,
                   border: `1px solid ${T.border}`, background: T.card,
                   color: T.muted, fontSize: 13, cursor: 'pointer', fontFamily: T.font,
                 }}>✕</button>
+              </div>
+              {nameError && <span style={{ color: T.red, fontSize: '0.72rem', marginLeft: 2 }}>{nameError}</span>}
               </div>
             )}
           </div>
@@ -242,27 +348,37 @@ export default function ProductsTab({
                       )}
                     </div>
 
-                    {/* Website URL + Scrape */}
-                    <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'flex-end' }}>
-                      <div style={{ flex: 1 }}>
-                        <label style={labelStyle}>Website URL</label>
-                        <input placeholder="https://..."
-                          defaultValue={p.website_url}
-                          onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })}
-                          style={{ ...inputStyle, background: T.card }} />
+                    {!hideAiFeatures && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={labelStyle}>Website URL</label>
+                          <input placeholder="https://..."
+                            value={getWebsiteUrl(p.id) !== undefined ? getWebsiteUrl(p.id) : (p.website_url || '')}
+                            onChange={e => setWebsiteUrl(p.id, e.target.value)}
+                            onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })}
+                            style={{ ...inputStyle, background: T.card }} />
+                        </div>
+                        <button onClick={() => handleScrapeWithSave(p.id)} disabled={scraping === p.id} style={{
+                          height: 38, padding: '0 16px', borderRadius: 8, border: 'none', whiteSpace: 'nowrap',
+                          background: scraping === p.id ? T.muted : 'linear-gradient(135deg, #0891b2, #06b6d4)',
+                          color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
+                          cursor: scraping === p.id ? 'not-allowed' : 'pointer',
+                        }}>
+                          {scraping === p.id ? '⏳ Analyzing...' : ((getWebsiteUrl(p.id) || p.website_url) ? '🔍 Scrape Website' : '🧠 AI Research')}
+                        </button>
                       </div>
-                      <button onClick={() => handleScrapeProduct(p.id)} disabled={scraping === p.id} style={{
-                        height: 38, padding: '0 16px', borderRadius: 8, border: 'none', whiteSpace: 'nowrap',
-                        background: scraping === p.id ? T.muted : 'linear-gradient(135deg, #0891b2, #06b6d4)',
-                        color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
-                        cursor: scraping === p.id ? 'not-allowed' : 'pointer',
-                      }}>
-                        {scraping === p.id ? '⏳ Analyzing...' : (p.website_url ? '🔍 Scrape Website' : '🧠 AI Research')}
-                      </button>
+                      {scrapeError?.[p.id] && (
+                        <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 6,
+                          background: '#fef2f2', border: '1px solid #fca5a5',
+                          color: '#dc2626', fontSize: 12, lineHeight: 1.5, fontFamily: T.font }}>
+                          ⚠️ {scrapeError[p.id]}
+                        </div>
+                      )}
                     </div>
+                    )}
 
-                    {/* Expand section */}
-                    <div>
+                    {!hideAiFeatures && <div>
                       <button
                         onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}
                         style={{
@@ -289,6 +405,123 @@ export default function ProductsTab({
                               }} />
                             </div>
                           )}
+
+                          {p.image_urls && p.image_urls.length > 0 && (
+                            <div style={{ marginBottom: 16 }}>
+                              <label style={{ ...labelStyle, color: '#f59e0b' }}>🖼️ Scraped Images ({p.image_urls.length})</label>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                                {p.image_urls.map((url, i) => (
+                                  <div key={i} style={{ position: 'relative', cursor: 'pointer' }}
+                                    onClick={() => window.open(url, '_blank')}>
+                                    <img src={url} alt={`img-${i+1}`}
+                                      style={{ width: 100, height: 70, objectFit: 'cover', borderRadius: 6,
+                                        border: `1px solid ${T.border}`, background: T.bg }}
+                                      onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
+                                    <div style={{ display: 'none', width: 100, height: 70, borderRadius: 6,
+                                      border: `1px solid ${T.border}`, background: T.bg,
+                                      alignItems: 'center', justifyContent: 'center',
+                                      fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
+                                      ❌ Failed
+                                    </div>
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0,
+                                      background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 9,
+                                      padding: '2px 4px', borderRadius: '0 0 6px 6px',
+                                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                                      {url.split('/').pop().split('?')[0]}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Manual Images */}
+                          <div style={{ marginBottom: 16 }}>
+                            <label style={{ ...labelStyle, color: '#8b5cf6' }}>📸 Custom Images (AI uses these labels for WhatsApp matching)</label>
+
+                            {p.manual_images && p.manual_images.length > 0 && (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
+                                {p.manual_images.map((img, i) => (
+                                  <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 110 }}>
+                                    {/* Image thumbnail */}
+                                    <div style={{ position: 'relative', cursor: 'pointer' }}
+                                      onClick={() => window.open(img.url, '_blank')}>
+                                      <img src={img.url} alt={img.label}
+                                        style={{ width: 110, height: 75, objectFit: 'cover', borderRadius: 6,
+                                          border: `2px solid #8b5cf6`, background: T.bg, display: 'block' }}
+                                        onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='flex'; }} />
+                                      <div style={{ display: 'none', width: 110, height: 75, borderRadius: 6,
+                                        border: `2px solid #8b5cf6`, background: T.bg,
+                                        alignItems: 'center', justifyContent: 'center',
+                                        fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
+                                        ❌ Failed
+                                      </div>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); handleDeleteManualImage(p.id, i); }}
+                                        style={{ position: 'absolute', top: 2, right: 2, width: 18, height: 18,
+                                          borderRadius: '50%', border: 'none', background: 'rgba(239,68,68,0.9)',
+                                          color: '#fff', fontSize: 10, cursor: 'pointer',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+                                          zIndex: 1 }}>
+                                        ✕
+                                      </button>
+                                    </div>
+                                    {/* Editable label */}
+                                    <input
+                                      defaultValue={img.label}
+                                      onBlur={e => {
+                                        const newLabel = e.target.value.trim();
+                                        if (newLabel && newLabel !== img.label)
+                                          handleUpdateImageLabel(p.id, i, newLabel);
+                                      }}
+                                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); }}
+                                      title="Click to edit label"
+                                      style={{ width: '100%', boxSizing: 'border-box', padding: '3px 6px',
+                                        fontSize: 11, borderRadius: 4, border: `1px solid ${T.border}`,
+                                        background: T.card, color: T.text, fontFamily: T.font,
+                                        textAlign: 'center', outline: 'none' }} />
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Upload form */}
+                            <div style={{ padding: '12px 14px', background: 'rgba(139,92,246,0.05)',
+                              border: '1px dashed rgba(139,92,246,0.3)', borderRadius: 8 }}>
+                              <div style={{ marginBottom: 8 }}>
+                                <label style={{ fontSize: 11, color: T.muted, display: 'block', marginBottom: 4, fontFamily: T.font }}>
+                                  Label (AI uses this to match customer queries)
+                                </label>
+                                <input placeholder="e.g. Attendance Dashboard, Lavender Sofa..."
+                                  value={pp.uploadLabel || ''}
+                                  onChange={e => updateProductPrompt(p.id, 'uploadLabel', e.target.value)}
+                                  style={{ ...inputStyle, padding: '7px 10px', fontSize: 13 }} />
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                {/* Hidden native file input */}
+                                <input type="file" accept="image/*"
+                                  ref={el => { if(el) fileInputRefs.current[p.id] = el; }}
+                                  style={{ display: 'none' }}
+                                  onChange={e => updateProductPrompt(p.id, 'pendingFile', e.target.files[0] || null)} />
+                                {/* Styled choose button */}
+                                <button onClick={() => fileInputRefs.current[p.id]?.click()} style={{
+                                  height: 36, padding: '0 14px', borderRadius: 8,
+                                  border: `1px solid ${T.border}`, background: T.card,
+                                  color: T.sub, fontWeight: 600, fontSize: 12, fontFamily: T.font, cursor: 'pointer',
+                                }}>
+                                  📁 {pp.pendingFile ? pp.pendingFile.name : 'Choose Image'}
+                                </button>
+                                <button onClick={() => handleUploadImage(p.id)} disabled={pp.uploading || !pp.pendingFile} style={{
+                                  height: 36, padding: '0 16px', borderRadius: 8, border: 'none',
+                                  background: (pp.uploading || !pp.pendingFile) ? T.muted : 'linear-gradient(135deg, #8b5cf6, #7c3aed)',
+                                  color: '#fff', fontWeight: 600, fontSize: 12, fontFamily: T.font,
+                                  cursor: (pp.uploading || !pp.pendingFile) ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
+                                }}>
+                                  {pp.uploading ? '⏳ Uploading...' : '⬆️ Upload'}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
 
                           <div style={{ marginBottom: 16 }}>
                             <label style={labelStyle}>📝 Manual Notes</label>
@@ -349,7 +582,7 @@ export default function ProductsTab({
                           </div>
                         </div>
                       )}
-                    </div>
+                    </div>}
 
                   </div>
                 );

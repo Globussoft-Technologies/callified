@@ -10,15 +10,21 @@ import (
 	"strings"
 )
 
-// GroqClient calls Groq via OpenAI-compatible REST SSE streaming.
+// GroqClient calls Groq (or xAI) via OpenAI-compatible REST SSE streaming.
+// Keys starting with "xai-" are routed to api.x.ai; all others use api.groq.com.
 type GroqClient struct {
-	apiKey string
-	model  string
-	http   *http.Client
+	apiKey  string
+	model   string
+	baseURL string
+	http    *http.Client
 }
 
 func NewGroqClient(apiKey, model string) *GroqClient {
-	return &GroqClient{apiKey: apiKey, model: model, http: &http.Client{}}
+	base := "https://api.groq.com/openai/v1"
+	if strings.HasPrefix(apiKey, "xai-") {
+		base = "https://api.x.ai/v1"
+	}
+	return &GroqClient{apiKey: apiKey, model: model, baseURL: base, http: &http.Client{}}
 }
 
 // --- request types ---
@@ -78,7 +84,7 @@ func (g *GroqClient) StreamTokens(ctx context.Context, req TranscriptRequest, on
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.groq.com/openai/v1/chat/completions",
+		g.baseURL+"/chat/completions",
 		bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("groq: build request: %w", err)

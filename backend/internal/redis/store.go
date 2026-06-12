@@ -43,6 +43,17 @@ type PendingCallInfo struct {
 	TTSProvider   string `json:"tts_provider"`
 	TTSVoiceID    string `json:"tts_voice_id"`
 	TTSLanguage   string `json:"tts_language"`
+	// IsBridge=true means the call is a browser-to-phone bridge: skip AI pipeline,
+	// relay audio between Exotel and the agent's browser WebSocket.
+	IsBridge bool `json:"is_bridge,omitempty"`
+	// AppType is the Exotel app/flow type: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON).
+	AppType string `json:"app_type,omitempty"`
+	// SkipCredits=true means the call should not be charged against the org's
+	// prepaid balance (e.g. unlimited manual calls for AI-hidden users).
+	SkipCredits bool `json:"skip_credits,omitempty"`
+	// UserEmail is the agent/admin who initiated the call. Used to segregate
+	// recordings into per-user folders.
+	UserEmail string `json:"user_email,omitempty"`
 }
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).
@@ -439,9 +450,8 @@ func (s *Store) SetRaw(ctx context.Context, k, v string, ttl time.Duration) {
 	}
 }
 
-// DeleteRaw removes key k. No-op when Redis is absent or k is missing.
-// Used by single-use handoff keys (dev impersonation) where the first read
-// must atomically invalidate the key.
+// DeleteRaw removes a single Redis key. Best-effort: errors are logged, not
+// returned, because the caller (cache invalidation) can tolerate a miss.
 func (s *Store) DeleteRaw(ctx context.Context, k string) {
 	if s.rdb == nil {
 		return
@@ -456,10 +466,38 @@ func (s *Store) DeleteRaw(ctx context.Context, k string) {
 // agent voice across follow-up calls.
 const LeadVoiceTTL = 90 * 24 * time.Hour
 
+// MarkBridgeAnswered records that the customer answered the bridge call.
+// Called from the Exotel status webhook when Status=in-progress.
+func (s *Store) MarkBridgeAnswered(ctx context.Context, callSid string) {
+	if s.rdb != nil {
+		s.rdb.Set(ctx, "bridge:answered:"+callSid, "1", 5*time.Minute)
+	}
+}
+
+// WaitBridgeAnswered polls until MarkBridgeAnswered fires for callSid, or
+// until timeout. Returns true if answered, false if timed out or cancelled.
+func (s *Store) WaitBridgeAnswered(ctx context.Context, callSid string, timeout time.Duration) bool {
+	if s.rdb == nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if val, _ := s.rdb.Get(ctx, "bridge:answered:"+callSid).Result(); val == "1" {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return false
+}
+
 // ResolveLeadVoice returns the voice ID to use for a call to leadID. If a
 // previously-used voice is cached, it wins (consistency over campaign default).
-// Otherwise currentVoice is cached for next time. leadID == 0 disables the cache.
-// Returns (voiceID, fromCache).
+// Otherwise currentVoice is cached for next time.
+// leadID == 0 disables the cache. Returns (voiceID, fromCache).
 func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, currentVoice string) (string, bool) {
 	if leadID == 0 || currentVoice == "" {
 		return currentVoice, false

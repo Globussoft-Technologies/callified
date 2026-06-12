@@ -152,18 +152,20 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	effectiveSource := resolveSource(leadSource, campaignSource)
 
 	// Fetch product: prefer the campaign's linked product, fall back to org's first product.
-	var productName, productContext string
+	var productName, productContext, callFlowInstructions string
 	if campaignProductID > 0 {
 		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil {
 			productName = p.Name
-			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.ManualNotes)
+			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
+			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
 	}
 	if productName == "" {
 		if products, err := b.db.GetProductsByOrg(orgID); err == nil && len(products) > 0 {
 			p := products[0]
 			productName = p.Name
-			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.ManualNotes)
+			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
+			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
 	}
 
@@ -173,15 +175,16 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	sourceInline := sourceContextInline(effectiveSource, effectiveLang)
 
 	pc := promptContext{
-		CompanyName:    companyName,
-		ProductName:    productName,
-		ProductContext: productContext,
-		CampaignName:   campaignName,
-		PersonaName:    personaName,
-		LeadFirst:      firstWord(leadName),
-		LeadInterest:   leadInterest,
-		SourceInline:   sourceInline,
-		Language:       effectiveLang,
+		CompanyName:          companyName,
+		ProductName:          productName,
+		ProductContext:       productContext,
+		CallFlowInstructions: callFlowInstructions,
+		CampaignName:         campaignName,
+		PersonaName:          personaName,
+		LeadFirst:            firstWord(leadName),
+		LeadInterest:         leadInterest,
+		SourceInline:         sourceInline,
+		Language:             effectiveLang,
 	}
 
 	// Build system prompt — custom org-level override short-circuits the full
@@ -197,6 +200,17 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		}
 	} else {
 		systemPrompt = buildDefaultPrompt(pc)
+	}
+
+	// Append pronunciation guide so the LLM uses phonetic forms directly in its
+	// responses, which lets the TTS engine synthesise them correctly.
+	if prons, err := b.db.GetAllPronunciations(); err == nil && len(prons) > 0 {
+		var pb strings.Builder
+		pb.WriteString("\n\n## PRONUNCIATION\nWhen saying these words, use the phonetic spelling shown:\n")
+		for _, p := range prons {
+			fmt.Fprintf(&pb, "- Say %q as %q\n", p.Word, p.Phonetic)
+		}
+		systemPrompt += pb.String()
 	}
 
 	greeting := buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang)
@@ -217,15 +231,16 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 // promptContext bundles every variable the system prompt needs so we can pass
 // a single value around instead of threading many parameters.
 type promptContext struct {
-	CompanyName    string
-	ProductName    string
-	ProductContext string
-	CampaignName   string
-	PersonaName    string
-	LeadFirst      string
-	LeadInterest   string
-	SourceInline   string
-	Language       string
+	CompanyName          string
+	ProductName          string
+	ProductContext       string
+	CallFlowInstructions string
+	CampaignName         string
+	PersonaName          string
+	LeadFirst            string
+	LeadInterest         string
+	SourceInline         string
+	Language             string
 }
 
 // buildDefaultPrompt assembles the LLM system prompt. Structure is shared
@@ -253,8 +268,12 @@ func buildDefaultPrompt(pc promptContext) string {
 
 	// Goal.
 	b.WriteString("## GOAL\n")
-	b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
-	b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
+	if pc.CallFlowInstructions != "" {
+		b.WriteString("Qualify the lead by asking the questions below in order, then book an appointment.\n\n")
+	} else {
+		b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
+		b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
+	}
 
 	// Call flow.
 	b.WriteString("## CALL FLOW\n")
@@ -262,16 +281,22 @@ func buildDefaultPrompt(pc promptContext) string {
 	if pc.SourceInline != "" {
 		fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
 	}
-	b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
-	fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
-	b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
-	b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
-	b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n\n")
+	if pc.CallFlowInstructions != "" {
+		b.WriteString(pc.CallFlowInstructions)
+		b.WriteString("\n")
+	} else {
+		b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
+		fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
+		b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
+		b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+		b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+	}
+	b.WriteString("\n")
 
 	// Core rules — universal, English.
 	b.WriteString(`## CORE RULES (STRICT)
 1. NO HALLUCINATION. Only use facts from PRODUCT KNOWLEDGE below. Never invent addresses, phone numbers, pricing, distances, timings, or amenities. If unknown, say the senior will share details in the meeting.
-2. ONE SENTENCE per response. 15 words max. ONE question at a time. No monologues, no multi-part pitches.
+2. ONE QUESTION ONLY. Ask exactly ONE question per response. Never combine two questions in the same reply. Wait for the customer's answer before asking the next question. WRONG: "Apartment venuma? Ungal budget enna?" (TWO QUESTIONS! WRONG!) RIGHT: "Apartment, villa, plot, or commercial — which type?" Then wait. Then ask budget separately.
 3. NO MARKDOWN. No *, **, #, bullets, or numbered lists — TTS reads the characters literally. Plain text only.
 4. NUMBERS IN WORDS. Say "two and a half crore", not "2.5 Cr". Say "five PM", not "5 PM".
 5. LEAD NAME. The lead is "` + leadFirst + `". Use this exact spelling. Never change, abbreviate, or guess another name.
@@ -280,7 +305,7 @@ func buildDefaultPrompt(pc promptContext) string {
 8. LISTEN FIRST. If the customer trails off ("I…", "umm…"), wait — ask them to continue. Do not repeat time slots.
 9. NO REPETITION. Do not ask the same question twice. Do not repeat facts you already stated.
 10. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
-
+11. VALIDATE OPTION ANSWERS. When you ask a question with specific options (e.g. "apartment, villa, plot, or commercial?"), you MUST receive a reply that clearly matches one of those options before moving on. Do NOT guess, assume, or infer an answer. If the customer's reply is off-topic, a joke, food-related, or anything unrelated to the options — re-ask the same question politely. WRONG: Customer: "biryani kidaikkuma?" → AI: "Apartment venuma?" (ASSUMED! WRONG!) RIGHT: Customer: "biryani kidaikkuma?" → AI: "Sorry, I meant which property type — apartment, villa, plot, or commercial space?" If the customer rejects a specific option ("no I don't want apartment"), go back and re-ask with the remaining options. EXCEPTION: if the customer asks to switch language, honor the switch and re-ask the same question in the new language.
 `)
 
 	// Per-language rule extras (forward signals, rejection detection, direct

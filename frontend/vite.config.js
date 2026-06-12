@@ -13,6 +13,7 @@ export default defineConfig({
       '/media-stream': { target: 'ws://go-audio:8001',   changeOrigin: true, ws: true },
       '/ping':         { target: 'http://go-audio:8001', changeOrigin: true },
       '/recordings':   { target: 'http://go-audio:8001', changeOrigin: true },
+      '/wa/webhook':   { target: 'http://go-audio:8001', changeOrigin: true },
     },
   },
 })

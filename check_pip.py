@@ -1,8 +1,9 @@
 import paramiko
+import os
 
-host = "163.227.174.141"
-username = "empcloud-development"
-password = "rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u"
+host = os.environ.get("DEPLOY_HOST", "163.227.174.141")
+username = os.environ.get("DEPLOY_USER", "empcloud-development")
+password = os.environ.get("DEPLOY_PASSWORD")
 
 print("--- EXECUTING NATIVE VENV MODULE CHECK ---")
 client = paramiko.SSHClient()
@@ -20,7 +21,7 @@ print("STDERR:", err)
 
 if "DEPENDENCIES_OK" in out:
     print("--- RESTARTING SYSTEMD SERVICE ---")
-    client.exec_command("echo 'rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u' | sudo -S systemctl restart callified-ai.service")
+    client.exec_command("echo {password} | sudo -S systemctl restart callified-ai.service")
     import time
     time.sleep(2)
     print("--- SERVICE RESTARTED ---")

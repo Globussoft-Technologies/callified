@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	httpSwagger "github.com/swaggo/http-swagger"
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/api"
+	_ "github.com/globussoft/callified-backend/docs"
 	"github.com/globussoft/callified-backend/internal/config"
 	apidb "github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
@@ -80,6 +82,11 @@ func main() {
 	// Managers connect here to receive live transcripts, inject whispers, trigger takeover.
 	mux.HandleFunc("/ws/monitor/", wsHandler.ServeMonitor)
 
+	// Agent browser WebSocket: /ws/agent?call_sid=XXX
+	// Agent's browser connects here to relay mic audio to the lead's phone
+	// (browser-to-phone bridge, 1x cost). Requires IsBridge=true in Redis pending call.
+	mux.HandleFunc("/ws/agent", wsHandler.ServeAgent)
+
 	// Dial initiator (Phase 2) — shares dispatcher with recording service
 	var initiator *dial.Initiator
 	if database != nil && recordingSvc != nil {
@@ -96,10 +103,21 @@ func main() {
 		apiServer = api.New(database, cfg, store, initiator, llmProvider, logger)
 		waAgent := wa.NewAgent(database, llmProvider, ragClient, logger)
 		apiServer.SetWAAgent(waAgent)
-		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
+		apiServer.SetWSHandler(wsHandler)     // enables GET /api/active-calls
+		if recordingSvc != nil {
+			apiServer.SetRecordingService(recordingSvc) // enables POST /api/transcripts/{id}/conclusion
+			if apiServer.S3() != nil {
+				recordingSvc.SetS3Uploader(apiServer.S3())
+			}
+		}
 		apiServer.RegisterRoutes(mux)
 		logger.Info("REST API endpoints registered")
 	}
+
+	// Swagger UI — browse all API endpoints at /swagger/
+	mux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
 
 	// Prometheus metrics endpoint (scraped by Prometheus/Grafana)
 	mux.Handle("/metrics", promhttp.Handler())

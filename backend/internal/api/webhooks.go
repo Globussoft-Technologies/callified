@@ -7,6 +7,16 @@ import (
 
 // ── GET /api/webhooks ─────────────────────────────────────────────────────────
 
+// @Summary     List webhooks
+// @Description Returns all configured outbound webhooks for the org. Requires Admin role.
+// @Tags        webhooks
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   object
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/webhooks [get]
 func (s *Server) listWebhooks(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	hooks, err := s.db.GetWebhooksByOrg(ac.OrgID)
@@ -24,6 +34,19 @@ func (s *Server) listWebhooks(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/webhooks ────────────────────────────────────────────────────────
 
+// @Summary     Create webhook
+// @Description Registers a new outbound webhook endpoint. Requires Admin role.
+// @Tags        webhooks
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{url=string,event=string,secret_key=string}  true  "Webhook config"
+// @Success     201   {object}  IDResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/webhooks [post]
 func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -46,6 +69,19 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 
 // ── DELETE /api/webhooks/{id} ─────────────────────────────────────────────────
 
+// @Summary     Delete webhook
+// @Description Removes an outbound webhook. Requires Admin role.
+// @Tags        webhooks
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Webhook ID"
+// @Success     200  {object}  DeletedResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/webhooks/{id} [delete]
 func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -68,6 +104,18 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/webhooks/{id}/logs ───────────────────────────────────────────────
 
+// @Summary     Get webhook logs
+// @Description Returns the last 50 delivery attempts for a webhook. Requires Admin role.
+// @Tags        webhooks
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Webhook ID"
+// @Success     200  {array}   object
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/webhooks/{id}/logs [get]
 func (s *Server) getWebhookLogs(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

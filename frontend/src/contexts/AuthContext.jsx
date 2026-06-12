@@ -37,17 +37,18 @@ export function AuthProvider({ children }) {
   // refresh — no login-page flash, no loading splash. /auth/me revalidates in
   // the background and clears the session if the token is no longer good.
   const [currentUser, setCurrentUser] = useState(loadCachedUser);
+  // authReady becomes true once /auth/me has run (or when there's no token).
+  // apiFetch only calls clearSession on 401 after authReady=true to avoid a
+  // race where a component's first fetch clears a stale-but-not-yet-validated
+  // token before /auth/me gets a chance to do it cleanly.
+  const [authReady, setAuthReady] = useState(!localStorage.getItem('authToken'));
 
   const clearSession = useCallback(() => {
     setAuthToken(null);
     setCurrentUser(null);
-    const store = getStore();
-    store.removeItem('authToken');
-    store.removeItem('currentUser');
-    // Also drop the impersonation flag if we were in that mode — closing the
-    // tab will do it anyway, but logout should leave nothing behind.
-    try { sessionStorage.removeItem('authMode'); } catch {}
-    try { sessionStorage.removeItem('devActor'); } catch {}
+    setAuthReady(true);
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('currentUser');
   }, []);
 
   const apiFetch = useCallback(async (url, options = {}) => {
@@ -56,11 +57,11 @@ export function AuthProvider({ children }) {
       headers: { ...options.headers, 'Authorization': `Bearer ${authToken}` }
     });
     if (res.status === 401) {
-      clearSession();
+      if (authReady) clearSession();
       throw new Error('Session expired');
     }
     return res;
-  }, [authToken, clearSession]);
+  }, [authToken, clearSession, authReady]);
 
   // Mints a 60-second SSE ticket via Authorization header, returning the
   // ticket string. Callers append it as ?ticket=… to EventSource URLs so the
@@ -71,22 +72,22 @@ export function AuthProvider({ children }) {
     const data = await res.json();
     return data.ticket;
   }, [apiFetch]);
+  
 
   // Background revalidation: if we have a token, verify it's still valid.
   // Runs without blocking the UI — dashboard is already on-screen.
+  // Sets authReady=true when done so apiFetch knows it's safe to clear the
+  // session on 401 (rather than racing with this check on first render).
   useEffect(() => {
-    if (!authToken) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!authToken) { setAuthReady(true); return; }
+    setAuthReady(false);
     fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(u => {
         setCurrentUser(u);
-        getStore().setItem('currentUser', JSON.stringify(u));
-        // If the JWT carries a dev_actor claim, mirror it into sessionStorage
-        // so DevInspectorPanel can render "acting as … on behalf of …" even
-        // on a hard refresh.
-        if (u && u.dev_actor) {
-          try { sessionStorage.setItem('devActor', u.dev_actor); } catch {}
-        }
+        localStorage.setItem('currentUser', JSON.stringify(u));
+        setAuthReady(true);
       })
       .catch(() => clearSession());
   }, [authToken, clearSession]);
@@ -96,7 +97,16 @@ export function AuthProvider({ children }) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email, password })
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'Login failed');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const err = new Error(data.error || data.detail || 'Login failed');
+      err.code = data.code || null;
+      err.expiresAt = data.expires_at || null;
+      err.plan = data.plan || null;
+      err.supportEmail = data.support_email || null;
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
@@ -106,12 +116,24 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  // Helper: true when the current user should not see AI-related UI sections.
+  const hideAiFeatures = Boolean(currentUser?.hide_ai_features);
+
   const signup = async (orgName, fullName, email, password) => {
     const res = await fetch(`${API_URL}/auth/signup`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ org_name: orgName, full_name: fullName, email, password })
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'Signup failed');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const err = new Error(data.error || data.detail || 'Signup failed');
+      err.code = data.code || null;
+      err.expiresAt = data.expires_at || null;
+      err.plan = data.plan || null;
+      err.supportEmail = data.support_email || null;
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
@@ -151,12 +173,13 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures }}>
       {children}
     </AuthContext.Provider>
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');

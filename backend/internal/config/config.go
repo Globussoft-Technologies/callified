@@ -25,7 +25,11 @@ type Config struct {
 	MySQLDatabase string `env:"MYSQL_DATABASE" envDefault:"callified_ai"`
 
 	// JWT auth (shared secret with Python FastAPI)
-	JWTSecret string `env:"JWT_SECRET_KEY" envDefault:"your-secret-key-replace-in-production"`
+	JWTSecret string `env:"JWT_SECRET_KEY"`
+
+	// Subscription management
+	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""` // Email allowed to manage subscriptions
+	SupportEmail    string `env:"SUPPORT_EMAIL"     envDefault:"support@callified.ai"` // Shown on subscription renewal prompts
 
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`
@@ -43,8 +47,14 @@ type Config struct {
 	SarvamAPIKey     string `env:"SARVAM_API_KEY"`
 	SmallestAPIKey   string `env:"SMALLEST_API_KEY"`
 
-	// Recordings directory
+	// Recordings directory (local fallback when S3 is not configured)
 	RecordingsDir string `env:"RECORDINGS_DIR" envDefault:"recordings"`
+
+	// S3 storage for recordings (optional — if set, recordings go to S3)
+	S3Bucket          string `env:"S3_BUCKET"`
+	S3Region          string `env:"S3_REGION"           envDefault:"ap-south-1"`
+	AWSAccessKeyID    string `env:"AWS_ACCESS_KEY_ID"`
+	AWSSecretAccessKey string `env:"AWS_SECRET_ACCESS_KEY"`
 
 	// Knowledge-base uploads (PDFs/TXT/DOCX). Files are kept on disk so
 	// users can preview/download what was indexed; the FAISS embeddings
@@ -79,7 +89,14 @@ type Config struct {
 	AppURL       string `env:"APP_URL"        envDefault:"https://test.callified.ai"`
 
 	// WhatsApp (Phase 3C)
-	MetaVerifyToken string `env:"META_WHATSAPP_VERIFY_TOKEN"`
+	MetaVerifyToken   string `env:"META_WHATSAPP_VERIFY_TOKEN"`
+	MetaAppID         string `env:"META_APP_ID"`
+	MetaAppSecret     string `env:"META_APP_SECRET"`
+	MetaESConfigID    string `env:"META_ES_CONFIG_ID"`
+	MetaAccessToken   string `env:"META_ACCESS_TOKEN"`
+	MetaPhoneNumberID string `env:"META_PHONE_NUMBER_ID"`
+	MetaGraphVersion  string `env:"META_GRAPH_VERSION" envDefault:"v18.0"`
+	MetaDefaultOrgID  int64  `env:"META_DEFAULT_ORG_ID" envDefault:"1"`
 
 	// SSO (JWT-based, single trusted issuer).
 	//
@@ -100,6 +117,8 @@ type Config struct {
 	SSOPublicKeyPEM string `env:"SSO_PUBLIC_KEY_PEM"`
 	SSOIssuer       string `env:"SSO_ISSUER"`
 	SSOAudience     string `env:"SSO_AUDIENCE"`
+	SSODefaultRole  string `env:"SSO_DEFAULT_ROLE" envDefault:"Agent"`
+	SSOOrgRemap     string `env:"SSO_ORG_REMAP"`
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
 
 	// Developer dashboard allowlist. Comma-separated emails permitted to
@@ -132,7 +151,12 @@ func Load() (*Config, error) {
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}
-	cfg.DeveloperEmails = parseEmailSet(cfg.DeveloperEmailsRaw)
+	if cfg.JWTSecret == "" {
+		return nil, fmt.Errorf("JWT_SECRET_KEY is required")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET_KEY must be at least 32 characters long")
+	}
 	return cfg, nil
 }
 

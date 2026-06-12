@@ -13,6 +13,13 @@ import (
 )
 
 // GET /api/billing/plans  (no auth — public)
+// @Summary     List billing plans
+// @Description Returns all available billing plans. Public — no auth required.
+// @Tags        billing
+// @Produce     json
+// @Success     200  {array}   object
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/plans [get]
 func (s *Server) listBillingPlans(w http.ResponseWriter, r *http.Request) {
 	plans, err := s.db.GetBillingPlans()
 	if err != nil {
@@ -23,6 +30,16 @@ func (s *Server) listBillingPlans(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/billing/subscription
+// @Summary     Get subscription
+// @Description Returns the org's active subscription. Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.Subscription
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/subscription [get]
 func (s *Server) getSubscription(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	sub, err := s.db.GetSubscriptionByOrg(ac.OrgID)
@@ -39,6 +56,16 @@ func (s *Server) getSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/billing/usage
+// @Summary     Get billing usage
+// @Description Returns the org's current billing usage (calls, minutes). Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  db.BillingUsage
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/usage [get]
 func (s *Server) getBillingUsage(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	usage, err := s.db.GetBillingUsage(ac.OrgID)
@@ -51,6 +78,19 @@ func (s *Server) getBillingUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/billing/subscribe  (no Razorpay — direct activation for testing)
+// @Summary     Subscribe to plan (test/dev)
+// @Description Directly activates a plan without Razorpay payment (dev/testing only). Requires Admin role.
+// @Tags        billing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{plan_id=int64}  true  "Plan ID"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/billing/subscribe [post]
 func (s *Server) billingSubscribe(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -79,6 +119,19 @@ func (s *Server) billingSubscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/billing/subscription
+// @Summary     Create subscription (Razorpay order)
+// @Description Creates a Razorpay order for subscribing to a plan. Returns an order_id for the frontend to open Razorpay checkout. Requires Admin role.
+// @Tags        billing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{plan_id=int64,billing_cycle=string}  true  "Subscription request"
+// @Success     200   {object}  object{order_id=string,razorpay_key=string,billing_cycle=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     502   {object}  ErrorResponse
+// @Router      /api/billing/subscription [post]
 func (s *Server) createSubscription(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -107,6 +160,16 @@ func (s *Server) createSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 // DELETE /api/billing/subscription
+// @Summary     Cancel subscription
+// @Description Cancels the org's active subscription. Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {object}  BoolResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/subscription [delete]
 func (s *Server) cancelSubscription(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	if err := s.db.CancelSubscription(ac.OrgID); err != nil {
@@ -127,6 +190,18 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /api/billing/verify-payment
+// @Summary     Verify payment
+// @Description Verifies a Razorpay payment signature and activates the subscription. Requires Admin role.
+// @Tags        billing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body  body      object{razorpay_order_id=string,razorpay_payment_id=string,razorpay_signature=string,billing_cycle=string,plan_id=int64}  true  "Payment verification payload"
+// @Success     200   {object}  object{invoice_number=string}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Router      /api/billing/verify-payment [post]
 func (s *Server) verifyPayment(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
@@ -156,6 +231,16 @@ func (s *Server) verifyPayment(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/billing/payments
+// @Summary     List payments
+// @Description Returns all Razorpay payments for the org. Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.BillingPayment
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/payments [get]
 func (s *Server) listPayments(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	payments, err := s.db.GetPaymentsByOrg(ac.OrgID)
@@ -167,6 +252,16 @@ func (s *Server) listPayments(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/billing/invoices
+// @Summary     List invoices
+// @Description Returns all invoices for the org. Requires Admin role.
+// @Tags        billing
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200  {array}   db.Invoice
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/billing/invoices [get]
 func (s *Server) listInvoices(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	invoices, err := s.db.GetInvoicesByOrg(ac.OrgID)
@@ -178,6 +273,17 @@ func (s *Server) listInvoices(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/billing/invoices/{number}/download
+// @Summary     Download invoice PDF
+// @Description Generates and streams an invoice as a PDF file. Requires Admin role.
+// @Tags        billing
+// @Produce     application/pdf
+// @Security    BearerAuth
+// @Param       number  path  string  true  "Invoice number"
+// @Success     200  {file}    binary
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Router      /api/billing/invoices/{number}/download [get]
 func (s *Server) downloadInvoice(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	invoiceNumber := r.PathValue("number")

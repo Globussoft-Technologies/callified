@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -63,7 +63,7 @@ func New(apptSvc *appointment.Service, ambSvc *ambulance.Service) *Agent {
 	a.enabled = true
 	a.systemBlock = a.buildSystemPrompt()
 	a.tools = a.buildTools()
-	log.Printf("Anthropic client initialized (model=%s)", cfg.LLMModel)
+	slog.Info("anthropic client initialized", "model", cfg.LLMModel)
 	return a
 }
 
@@ -242,7 +242,7 @@ func (a *Agent) Respond(sess *session.Session) Result {
 			Messages:  messages,
 		})
 		if err != nil {
-			log.Printf("anthropic call failed: %v", err)
+			slog.Error("anthropic call failed", "error", err)
 			return Result{
 				Reply:    "I'm sorry, I'm having a technical issue. Could you try calling back in a moment?",
 				Metadata: map[string]any{"error": "llm_api_error"},
@@ -290,7 +290,7 @@ func (a *Agent) Respond(sess *session.Session) Result {
 		return Result{Reply: text, Metadata: metadata, EndCall: endCall}
 	}
 
-	log.Printf("tool-use loop hit iteration cap (session=%s)", sess.ID)
+	slog.Warn("tool-use loop hit iteration cap", "session", sess.ID)
 	return Result{
 		Reply:    "I'm having trouble completing that. Could you try again in a moment?",
 		Metadata: metadata,

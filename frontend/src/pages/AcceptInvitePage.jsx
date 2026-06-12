@@ -30,9 +30,8 @@ export default function AcceptInvitePage() {
           setInvite(data);
           setFullName(data.full_name || '');
         }
-      } catch (e) {
-        setFetchError('Network error. Please check your connection and try again.');
-      }
+      } catch { setFetchError('Network error. Please check your connection and try again.');
+       }
       setLoadingInvite(false);
     })();
   }, [token]);

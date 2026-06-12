@@ -43,7 +43,7 @@ function parseActivity(entry) {
         label: j.label,
       };
     }
-  } catch (_) { /* legacy plain-text */ }
+  } catch { /* legacy plain-text */  }
   if (!parsed) {
     const status = (line.match(/—\s*([A-Z][A-Z_-]+)/) || [])[1] || '';
     parsed = {
@@ -55,11 +55,11 @@ function parseActivity(entry) {
       label: line,
     };
   }
-  parsed.raw = parsed.label;
+  parsed.raw = parsed.label.replace(/\s*\(\s*\)/g, '');
   return parsed;
 }
 
-export default function LogsTab({ API_URL, authToken, apiFetch }) {
+export default function LogsTab({ API_URL, apiFetch }) {
   const { fetchSseTicket } = useAuth();
   const [mode, setMode] = useState('activity');
   const [filter, setFilter] = useState('');
@@ -91,6 +91,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   useEffect(() => {
     if (activityEsRef.current) activityEsRef.current.close();
     const cid = campaignFilter || 'all';
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActivityLogs([]);
     setStreamStatus('connecting');
     let cancelled = false;
@@ -199,6 +200,7 @@ export default function LogsTab({ API_URL, authToken, apiFetch }) {
   const safePage = Math.min(page, totalPages);
   const pageLogs = reversedLogs.slice((safePage - 1) * PER_PAGE, safePage * PER_PAGE);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setPage(1); }, [statusFilter, campaignFilter, dateFrom, dateTo, search]);
 
   const handleClear = () => {
