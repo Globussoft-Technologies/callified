@@ -243,7 +243,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) 
         {/* How it works note */}
         {(status === 'connecting' || status === 'waiting') && (
           <p style={{ color: T.sub, fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5, background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
-            Exotel is dialing the customer's phone. When they pick up, audio will flow through your browser mic &amp; speakers — <strong>no phone needed</strong>.
+            Exotel is dialing the customer's phone. <strong>Please wait for “Connected” before speaking</strong> — your mic is muted until then to prevent audio from buffering during ringing.
           </p>
         )}
 

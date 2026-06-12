@@ -30,6 +30,41 @@ func pcmRMS(pcm []byte) float64 {
 	return math.Sqrt(sum / float64(n))
 }
 
+// rmsStdDev returns the population standard deviation of vals.
+func rmsStdDev(vals []float64) float64 {
+	n := len(vals)
+	if n == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range vals {
+		sum += v
+	}
+	mean := sum / float64(n)
+	var sqDiff float64
+	for _, v := range vals {
+		d := v - mean
+		sqDiff += d * d
+	}
+	return math.Sqrt(sqDiff / float64(n))
+}
+
+// isLikelySpeech returns true when recent frames are loud AND have enough
+// amplitude variation to be speech rather than a ringback tone.
+func isLikelySpeech(rmsWindow []float64, minRMS, minStdDev float64) bool {
+	if len(rmsWindow) < 10 {
+		return false
+	}
+	// Use the last 10 frames (~200 ms).
+	recent := rmsWindow[len(rmsWindow)-10:]
+	for _, v := range recent {
+		if v < minRMS {
+			return false
+		}
+	}
+	return rmsStdDev(recent) > minStdDev
+}
+
 // bridgeSendRealtime sends a PCM frame to the bridge channel.
 // If the buffer is full it drops the oldest frame and enqueues the new one,
 // keeping the relay real-time instead of accumulating stale audio.
@@ -135,11 +170,15 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 
 	agentDone := make(chan struct{})
 
-	// Agent → Exotel: read base64 PCM-16 from agent browser and send to Exotel.
-	// Goroutine starts immediately so the WebSocket stays alive and agent
-	// disconnection is detected even while we wait for the customer to answer.
-	// Audio processing only begins after "connected" is sent below.
+	// Agent → Exotel: read base64 PCM-16 from agent browser and send to Exotel
+	// in paced 20 ms frames. Without pacing, the browser sends small chunks
+	// (~11.6 ms at 44.1 kHz) as fast as it produces them; Exotel queues them
+	// and plays them back with growing delay, causing the agent's later words
+	// to reach the customer many seconds late.
 	var customerAudioReady atomic.Bool
+	agentPCM := make(chan []byte, 100) // decoded PCM-16 from browser
+
+	// Read goroutine: decode browser audio and push to agentPCM.
 	go func() {
 		defer close(agentDone)
 		for {
@@ -168,20 +207,55 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			if decErr != nil || len(rawPCM) == 0 {
 				continue
 			}
-			// Convert PCM-16 → μ-law when the Exotel session uses μ-law encoding.
-			// (Voicebot applet uses PCM-16 directly; Passthru/Twilio uses μ-law.)
-			var audioBytes []byte
-			if useUlaw {
-				audioBytes = audio.PCMToUlaw(rawPCM)
-			} else {
-				audioBytes = rawPCM
+			select {
+			case agentPCM <- rawPCM:
+			default:
+				// Channel full: drop newest frame to keep relay real-time.
 			}
-			frame, _ := json.Marshal(map[string]interface{}{
-				"event":   "media",
-				frameKey:  streamSid,
-				"media":   map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
-			})
-			sess.SendText(frame) //nolint:errcheck
+		}
+	}()
+
+	// Send goroutine: accumulate PCM and emit one 20 ms frame every 20 ms.
+	// 20 ms @ 8 kHz, 16-bit = 160 samples = 320 bytes.
+	const pcmFrameSize = 320
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		var buf []byte
+		for {
+			select {
+			case pcm, ok := <-agentPCM:
+				if !ok {
+					return
+				}
+				buf = append(buf, pcm...)
+				// Cap buffer at ~200 ms to prevent backlog on network bursts.
+				if len(buf) > pcmFrameSize*10 {
+					buf = buf[len(buf)-pcmFrameSize*10:]
+				}
+			case <-ticker.C:
+				if len(buf) < pcmFrameSize {
+					continue
+				}
+				framePCM := buf[:pcmFrameSize]
+				buf = buf[pcmFrameSize:]
+				// Convert PCM-16 → μ-law when the Exotel session uses μ-law encoding.
+				// (Voicebot applet uses PCM-16 directly; Passthru/Twilio uses μ-law.)
+				var audioBytes []byte
+				if useUlaw {
+					audioBytes = audio.PCMToUlaw(framePCM)
+				} else {
+					audioBytes = framePCM
+				}
+				frame, _ := json.Marshal(map[string]interface{}{
+					"event":  "media",
+					frameKey: streamSid,
+					"media":  map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
+				})
+				sess.SendText(frame) //nolint:errcheck
+			case <-agentDone:
+				return
+			}
 		}
 	}()
 
@@ -193,9 +267,15 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	// browser audio from accumulating in Exotel's buffer during ringing.
 	//
 	// Three signals can open the gate (first one wins):
-	//  1. Customer speech detected in BridgeCh (RMS > 500) — primary, fast (~1s)
+	//  1. Customer speech detected in BridgeCh (loud + variable amplitude) — primary
 	//  2. Exotel "in-progress" webhook via Redis — secondary
 	//  3. 30s absolute fallback (customer silent throughout or webhook not configured)
+	//
+	// Ringback tones/music can be loud and sustained, so we also require:
+	//    - at least 4s have passed since the first Exotel media frame (the phone
+	//      needs time to ring before a human can answer), and
+	//    - the recent frames have high amplitude variation (speech modulates;
+	//      a pure ringback tone is steady).
 
 	// Redis webhook signal (fires if Exotel status webhook arrives)
 	answeredCh := make(chan struct{}, 1)
@@ -211,6 +291,8 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	fallback := time.NewTimer(30 * time.Second)
 	defer fallback.Stop()
 	connectedSent := false
+	var firstMediaTime time.Time
+	rmsWindow := make([]float64, 0, 50) // rolling RMS history
 
 	// Exotel → Agent relay loop. Also detects customer speech to trigger "connected".
 	for {
@@ -230,14 +312,27 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			}
 			// Customer speech detected → open agent mic gate immediately.
 			// During ringing Exotel sends near-silence (RMS < 50); real speech
-			// from an answered customer is reliably above 500.
-			if !connectedSent && pcmRMS(pcm) > 500 {
-				connectedSent = true
-				customerAudioReady.Store(true)
-				fallback.Stop()
-				h.log.Info("bridge: customer speech detected — sending connected",
-					zap.String("call_sid", callSid))
-				send(map[string]string{"type": "status", "status": "connected"})
+			// from an answered customer is reliably above 500. We also wait at
+			// least 4s after the first media frame and require amplitude variance
+			// to avoid opening the gate on a ringback tone or music.
+			if !connectedSent {
+				if firstMediaTime.IsZero() {
+					firstMediaTime = time.Now()
+				}
+				rms := pcmRMS(pcm)
+				rmsWindow = append(rmsWindow, rms)
+				if len(rmsWindow) > 50 {
+					rmsWindow = rmsWindow[len(rmsWindow)-50:]
+				}
+				if time.Since(firstMediaTime) >= 4*time.Second && isLikelySpeech(rmsWindow, 500, 100) {
+					connectedSent = true
+					customerAudioReady.Store(true)
+					fallback.Stop()
+					h.log.Info("bridge: customer speech detected — sending connected",
+						zap.String("call_sid", callSid),
+						zap.Float64("rms_stddev", rmsStdDev(rmsWindow[len(rmsWindow)-10:])))
+					send(map[string]string{"type": "status", "status": "connected"})
+				}
 			}
 
 		case <-answeredCh:

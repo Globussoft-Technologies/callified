@@ -301,16 +301,19 @@ func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status st
 // @Success     200  "OK"
 // @Router      /webhook/exotel/status [post]
 func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		w.WriteHeader(http.StatusOK)
-		return
+	// Exotel sends status callbacks as either application/x-www-form-urlencoded
+	// or multipart/form-data. ParseMultipartForm handles both.
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		// Fall back to ParseForm for malformed bodies; still return 200 so Exotel
+		// doesn't retry aggressively.
+		_ = r.ParseForm()
 	}
 
-	callSid := coalesceStr(r.FormValue("CallSid"), r.FormValue("sid"))
-	callStatus := coalesceStr(r.FormValue("Status"), r.FormValue("CallStatus"))
-	recordingURL := r.FormValue("RecordingUrl")
+	callSid := firstNonEmpty(r.FormValue("CallSid"), r.FormValue("sid"), r.FormValue("call_sid"))
+	callStatus := firstNonEmpty(r.FormValue("Status"), r.FormValue("CallStatus"), r.FormValue("call_status"), r.FormValue("DetailedStatus"))
+	recordingURL := firstNonEmpty(r.FormValue("RecordingUrl"), r.FormValue("recording_url"))
 	var callDurationS float64
-	if d := coalesceStr(r.FormValue("CallDuration"), r.FormValue("Duration")); d != "" {
+	if d := firstNonEmpty(r.FormValue("CallDuration"), r.FormValue("Duration"), r.FormValue("call_duration")); d != "" {
 		fmt.Sscanf(d, "%f", &callDurationS)
 	}
 
@@ -318,6 +321,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("exotelStatus: received",
 		zap.String("call_sid", callSid),
 		zap.String("raw_status", callStatus),
+		zap.String("content_type", r.Header.Get("Content-Type")),
 		zap.String("all_form", r.Form.Encode()),
 	)
 
