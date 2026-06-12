@@ -79,7 +79,15 @@ export function AuthProvider({ children }) {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email, password })
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'Login failed');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const err = new Error(data.error || data.detail || 'Login failed');
+      err.code = data.code || null;
+      err.expiresAt = data.expires_at || null;
+      err.plan = data.plan || null;
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);

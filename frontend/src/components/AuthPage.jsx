@@ -12,13 +12,27 @@ export default function AuthPage() {
   const [authForm, setAuthForm] = useState({ org_name: '', full_name: '', email: '', password: '' });
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState('');
+  const [subscriptionError, setSubscriptionError] = useState(null);
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setAuthError(''); setAuthLoading(true);
+    setAuthError('');
+    setSubscriptionError(null);
+    setAuthLoading(true);
     try {
       await login(authForm.email, authForm.password);
-    } catch (err) { setAuthError(err.message); }
+    } catch (err) {
+      if (err.status === 403 && ['SUBSCRIPTION_EXPIRED', 'SUBSCRIPTION_NOT_FOUND', 'SUBSCRIPTION_INACTIVE'].includes(err.code)) {
+        setSubscriptionError({
+          code: err.code,
+          message: err.message,
+          expiresAt: err.expiresAt,
+          plan: err.plan,
+        });
+      } else {
+        setAuthError(err.message);
+      }
+    }
     setAuthLoading(false);
   };
 
@@ -106,6 +120,40 @@ export default function AuthPage() {
           {forgotSuccess && (
             <div style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: '8px', padding: '10px 14px', marginBottom: '1rem', color: '#86efac', fontSize: '0.85rem' }}>
               {forgotSuccess}
+            </div>
+          )}
+
+          {subscriptionError && (
+            <div style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1rem', color: '#fcd34d' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                <span style={{ fontSize: '1.5rem' }}>⚠️</span>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#fbbf24' }}>
+                  {subscriptionError.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Subscription Required'}
+                </h3>
+              </div>
+              <p style={{ margin: '0 0 1rem 0', fontSize: '0.9rem', lineHeight: 1.5 }}>
+                {subscriptionError.message}
+              </p>
+              {subscriptionError.expiresAt && (
+                <p style={{ margin: '0 0 1rem 0', fontSize: '0.8rem', color: '#fde68a' }}>
+                  Expired on: {new Date(subscriptionError.expiresAt).toLocaleDateString()}
+                </p>
+              )}
+              <button
+                onClick={() => window.location.href = 'mailto:support@globussoft.com?subject=Subscription Renewal Request'}
+                style={{
+                  background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: 600,
+                  padding: '10px 18px',
+                }}
+              >
+                📧 Contact Support to Renew
+              </button>
             </div>
           )}
 

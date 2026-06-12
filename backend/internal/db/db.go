@@ -28,7 +28,11 @@ func New(dsn string) (*DB, error) {
 	if err := pool.Ping(); err != nil {
 		return nil, fmt.Errorf("db.New: ping: %w", err)
 	}
-	return &DB{pool: pool}, nil
+	d := &DB{pool: pool}
+	if err := d.EnsureAdminSubscriptionsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure admin subscriptions table: %w", err)
+	}
+	return d, nil
 }
 
 // Close closes the underlying connection pool.

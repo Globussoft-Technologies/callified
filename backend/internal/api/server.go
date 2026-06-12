@@ -148,6 +148,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// campaign read endpoints — Agents need to see + dial campaign leads,
 	// Viewers should only have CRM.
 	adminOrAgent := s.requireRole("Admin", "Agent")
+	// superAdmin gates the subscription management endpoints.
+	superAdmin := s.requireSuperAdmin
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/auth/signup", s.signup)
@@ -160,6 +162,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/sso/jwt", s.ssoJWT)
 	mux.HandleFunc("GET /api/auth/sso/api-key", s.ssoAPIKey)
 	mux.HandleFunc("GET /api/auth/token", s.apiKeyToken)
+
+	// ── Subscription Management (Super Admin) ─────────────────────────────────
+	mux.HandleFunc("POST /api/admin/subscriptions", superAdmin(s.createOrUpdateSubscription))
+	mux.HandleFunc("GET /api/admin/subscriptions/{email}", superAdmin(s.getSubscription))
 
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux

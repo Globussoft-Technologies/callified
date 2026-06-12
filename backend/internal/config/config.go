@@ -26,6 +26,9 @@ type Config struct {
 	// JWT auth (shared secret with Python FastAPI)
 	JWTSecret string `env:"JWT_SECRET_KEY"`
 
+	// Subscription management
+	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""` // Email allowed to manage subscriptions
+
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`
 	GeminiModel   string `env:"GEMINI_MODEL"    envDefault:"gemini-2.5-flash"`

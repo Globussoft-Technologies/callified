@@ -145,6 +145,16 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Block login for non-super-admins if subscription is missing/expired/inactive.
+	if subErr, err := s.checkSubscription(user.Email); err != nil {
+		s.logger.Sugar().Errorw("login: checkSubscription", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if subErr != nil {
+		writeSubscriptionError(w, subErr)
+		return
+	}
+
 	token, err := s.mintToken(user.Email, user.OrgID, user.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -204,12 +214,13 @@ func userResponse(s *Server, user *db.User) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":        user.ID,
-		"email":     user.Email,
-		"full_name": user.FullName,
-		"role":      user.Role,
-		"org_id":    user.OrgID,
-		"org_name":  orgName,
+		"id":            user.ID,
+		"email":         user.Email,
+		"full_name":     user.FullName,
+		"role":          user.Role,
+		"org_id":        user.OrgID,
+		"org_name":      orgName,
+		"is_super_admin": s.isSuperAdmin(user.Email),
 	}
 }
 

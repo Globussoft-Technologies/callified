@@ -29,6 +29,8 @@ const MORE_ADMIN_TABS = [
   { id: 'receptionist', label: 'Receptionist',    path: '/receptionist', testid: 'tab-receptionist' },
 ];
 
+const SUPER_ADMIN_TAB = { id: 'subscriptions', label: 'Subscriptions', path: '/subscriptions', testid: 'tab-subscriptions' };
+
 const font = "'DM Sans', sans-serif";
 
 export default function TopHeader({ userRole, currentUser, handleLogout }) {
@@ -165,6 +167,21 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
                     {t.label}
                   </button>
                 ))}
+                {currentUser?.is_super_admin && (
+                  <button key={SUPER_ADMIN_TAB.id} data-testid={SUPER_ADMIN_TAB.testid} role="menuitem"
+                    onClick={() => goTo(SUPER_ADMIN_TAB.path)}
+                    style={{
+                      display: 'flex', alignItems: 'center',
+                      padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
+                      background: activeTab === SUPER_ADMIN_TAB.id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                      border: 'none', borderRadius: 6,
+                      color: activeTab === SUPER_ADMIN_TAB.id ? '#6366f1' : '#374151',
+                      fontSize: 13, fontWeight: activeTab === SUPER_ADMIN_TAB.id ? 700 : 500,
+                      fontFamily: font,
+                    }}>
+                    {SUPER_ADMIN_TAB.label}
+                  </button>
+                )}
               </div>
             )}
           </div>
