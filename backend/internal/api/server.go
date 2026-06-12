@@ -164,8 +164,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/token", s.apiKeyToken)
 
 	// ── Subscription Management (Super Admin) ─────────────────────────────────
+	mux.HandleFunc("GET /api/admin/subscriptions", superAdmin(s.listAdminSubscriptions))
 	mux.HandleFunc("POST /api/admin/subscriptions", superAdmin(s.createOrUpdateSubscription))
 	mux.HandleFunc("GET /api/admin/subscriptions/{email}", superAdmin(s.getSubscription))
+
+	// ── Feature Flags (Super Admin) ───────────────────────────────────────────
+	mux.HandleFunc("POST /api/admin/feature-flags", superAdmin(s.setUserFeatureFlag))
+	mux.HandleFunc("GET /api/admin/feature-flags/{email}", superAdmin(s.getUserFeatureFlag))
+	mux.HandleFunc("DELETE /api/admin/feature-flags/{email}", superAdmin(s.deleteUserFeatureFlag))
 
 	// ── Leads ─────────────────────────────────────────────────────────────────
 	// Literal paths must be registered before the {id} wildcard so the mux
@@ -256,7 +262,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/product-images/{filename}", s.serveProductImage)
 
 	// ── Recordings ────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/recordings/{filename}", auth(s.serveRecording))
+	mux.HandleFunc("GET /api/recordings/{filename...}", auth(s.serveRecording))
 	// Browser-side MediaRecorder upload (Opus/webm at native sample rate).
 	// Handler exists in misc.go; the route was missing, so the browser POST
 	// was 404'ing and the high-quality recording was being lost — only the

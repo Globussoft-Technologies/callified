@@ -112,6 +112,41 @@ type AdminSubscriptionStatus struct {
 	Plan      string    `json:"plan,omitempty"`
 }
 
+// ListAdminSubscriptions returns all admin subscriptions, ordered by most recently updated.
+func (d *DB) ListAdminSubscriptions() ([]*AdminSubscription, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, admin_email, expires_at, COALESCE(plan,'standard'), is_active, created_at, updated_at
+		FROM admin_subscriptions
+		ORDER BY updated_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var subs []*AdminSubscription
+	for rows.Next() {
+		s := &AdminSubscription{}
+		var expiresAt sql.NullTime
+		var createdAt sql.NullTime
+		var updatedAt sql.NullTime
+		if err := rows.Scan(&s.ID, &s.AdminEmail, &expiresAt, &s.Plan, &s.IsActive, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if expiresAt.Valid {
+			s.ExpiresAt = expiresAt.Time
+		}
+		if createdAt.Valid {
+			s.CreatedAt = createdAt.Time
+		}
+		if updatedAt.Valid {
+			s.UpdatedAt = updatedAt.Time
+		}
+		subs = append(subs, s)
+	}
+	return subs, rows.Err()
+}
+
 // ValidateAdminSubscription checks whether the given admin email has an active, non-expired subscription.
 func (d *DB) ValidateAdminSubscription(email string) (*AdminSubscriptionStatus, error) {
 	sub, err := d.GetAdminSubscriptionByEmail(email)

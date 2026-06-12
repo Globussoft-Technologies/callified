@@ -26,6 +26,7 @@ import TeamPage from './pages/TeamPage';
 import ReceptionistPage from './pages/ReceptionistPage';
 import ExotelAccountsPage from './pages/ExotelAccountsPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
+import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import RequireRole from './components/RequireRole';
 import './index.css';
 import { API_URL } from './constants/api';
@@ -34,12 +35,14 @@ import { useAuth } from './contexts/AuthContext';
 import { useOrg } from './contexts/OrgContext';
 import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
+import { useHideAiFeatures } from './hooks/useHideAiFeatures';
 
 export default function App() {
   const { authToken, currentUser, apiFetch, logout } = useAuth();
   const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
+  const hideAiFeatures = useHideAiFeatures();
 
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
@@ -150,13 +153,13 @@ export default function App() {
             campaigns={campaigns} fetchCampaigns={fetchCampaigns}
           />
         } />
-        <Route path="/ops" element={<OpsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/analytics" element={<AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/whatsapp" element={<WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />} />
-        <Route path="/integrations" element={<IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/monitor" element={<MonitorPage API_URL={API_URL} />} />
-        <Route path="/knowledge" element={<KnowledgePage API_URL={API_URL} />} />
-        <Route path="/sandbox" element={<SandboxPage API_URL={API_URL} />} />
+        <Route path="/ops" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <OpsPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/analytics" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/whatsapp" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />} />
+        <Route path="/integrations" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
+        <Route path="/monitor" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} />} />
+        <Route path="/knowledge" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <KnowledgePage API_URL={API_URL} />} />
+        <Route path="/sandbox" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />} />
         <Route path="/products" element={
           <ProductsPage
             apiFetch={apiFetch} API_URL={API_URL}
@@ -170,17 +173,22 @@ export default function App() {
             selectedOrg={selectedOrg} orgTimezone={orgTimezone}
           />
         } />
-        <Route path="/logs" element={<LogsPage API_URL={API_URL} authToken={authToken} apiFetch={apiFetch} />} />
+        <Route path="/logs" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <LogsPage API_URL={API_URL} authToken={authToken} apiFetch={apiFetch} />} />
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/billing" element={<BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/dnd" element={<DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/scheduled" element={<ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/team" element={<TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/receptionist" element={<ReceptionistPage />} />
+        <Route path="/billing" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/dnd" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/scheduled" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
+        <Route path="/team" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
         <Route path="/subscriptions" element={
           <RequireRole allow={['Admin', 'SuperAdmin']}>
             <SubscriptionsPage apiFetch={apiFetch} />
+          </RequireRole>
+        } />
+        <Route path="/feature-flags" element={
+          <RequireRole allow={['Admin', 'SuperAdmin']}>
+            <FeatureFlagsPage apiFetch={apiFetch} />
           </RequireRole>
         } />
         <Route path="/rag" element={<Navigate to="/knowledge" replace />} />

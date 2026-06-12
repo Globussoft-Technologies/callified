@@ -29,7 +29,7 @@ const EMPTY_FORM = {
   provider: 'exotel',
   name: '',
   // Exotel fields
-  api_key: '', api_token: '', account_sid: '', caller_id: '', app_id: '',
+  api_key: '', api_token: '', account_sid: '', caller_id: '', app_id: '', app_type: 'exoml',
   // Twilio-only
   api_secret: '',
 };
@@ -48,6 +48,8 @@ export default function ExotelAccountsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [showApiToken, setShowApiToken] = useState(false);
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -64,7 +66,7 @@ export default function ExotelAccountsPage() {
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
-  const openAdd = () => { setForm(EMPTY_FORM); setEditingId(null); setError(''); setShowForm(true); };
+  const openAdd = () => { setForm(EMPTY_FORM); setEditingId(null); setError(''); setShowForm(true); setShowApiKey(false); setShowApiToken(false); };
   const openEdit = (a) => {
     setForm({
       provider: a.provider || 'exotel',
@@ -75,12 +77,15 @@ export default function ExotelAccountsPage() {
       account_sid: a.account_sid,
       caller_id: a.caller_id,
       app_id: a.app_id || '',
+      app_type: a.app_type || 'exoml',
     });
     setEditingId(a.id);
     setError('');
     setShowForm(true);
+    setShowApiKey(false);
+    setShowApiToken(false);
   };
-  const closeForm = () => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); setError(''); };
+  const closeForm = () => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); setError(''); setShowApiKey(false); setShowApiToken(false); };
 
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
@@ -200,13 +205,27 @@ export default function ExotelAccountsPage() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
                   <label style={labelStyle}>API Key <span style={{ color: T.red }}>*</span></label>
-                  <input style={inputStyle} placeholder="API Key" type="password"
-                    value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
+                  <div style={{ position: 'relative' }}>
+                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="API Key" type={showApiKey ? 'text' : 'password'}
+                      value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
+                    <button type="button" onClick={() => setShowApiKey(v => !v)}
+                      aria-label={showApiKey ? 'Hide API Key' : 'Show API Key'}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.accent, fontSize: 12, fontWeight: 600, padding: 2 }}>
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label style={labelStyle}>API Token <span style={{ color: T.red }}>*</span></label>
-                  <input style={inputStyle} placeholder="API Token" type="password"
-                    value={form.api_token} onChange={e => setField('api_token', e.target.value)} />
+                  <div style={{ position: 'relative' }}>
+                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="API Token" type={showApiToken ? 'text' : 'password'}
+                      value={form.api_token} onChange={e => setField('api_token', e.target.value)} />
+                    <button type="button" onClick={() => setShowApiToken(v => !v)}
+                      aria-label={showApiToken ? 'Hide API Token' : 'Show API Token'}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.accent, fontSize: 12, fontWeight: 600, padding: 2 }}>
+                      {showApiToken ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label style={labelStyle}>Account SID <span style={{ color: T.red }}>*</span></label>
@@ -223,6 +242,20 @@ export default function ExotelAccountsPage() {
                   <input style={inputStyle} placeholder="e.g. 1244808"
                     value={form.app_id} onChange={e => setField('app_id', e.target.value)} />
                 </div>
+                <div>
+                  <label style={labelStyle}>App Type</label>
+                  <select
+                    style={inputStyle}
+                    value={form.app_type || 'exoml'}
+                    onChange={e => setField('app_type', e.target.value)}
+                  >
+                    <option value="exoml">Legacy ExoML (XML)</option>
+                    <option value="voicebot">AgentStream Voicebot (JSON)</option>
+                  </select>
+                  <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
+                    Use AgentStream for modern Exotel Voicebot flows.
+                  </div>
+                </div>
               </div>
             )}
 
@@ -236,8 +269,15 @@ export default function ExotelAccountsPage() {
                 </div>
                 <div>
                   <label style={labelStyle}>Auth Token <span style={{ color: T.red }}>*</span></label>
-                  <input style={inputStyle} placeholder="Auth Token" type="password"
-                    value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
+                  <div style={{ position: 'relative' }}>
+                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="Auth Token" type={showApiKey ? 'text' : 'password'}
+                      value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
+                    <button type="button" onClick={() => setShowApiKey(v => !v)}
+                      aria-label={showApiKey ? 'Hide Auth Token' : 'Show Auth Token'}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.muted, fontSize: 16, padding: 2 }}>
+                      {showApiKey ? '🙈' : '👁️'}
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label style={labelStyle}>API Key SID <span style={{ color: T.red }}>*</span></label>
@@ -322,6 +362,7 @@ export default function ExotelAccountsPage() {
                     <span>Account: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.account_sid}</span></span>
                     <span>Caller: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>
                     {a.app_id && <span>App: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
+                    {a.provider !== 'twilio' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
                     <span>Key: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.api_key.slice(0, 8)}…</span></span>
                   </div>
                 </div>

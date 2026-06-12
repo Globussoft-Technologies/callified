@@ -66,6 +66,7 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		TTSVoiceID:  voiceID,
 		TTSLanguage: lang,
 		IsBridge:    true,
+		UserEmail:   ac.Email,
 	}
 
 	callSid, err := s.initiator.Initiate(r.Context(), data)

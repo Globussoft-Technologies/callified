@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -21,6 +23,8 @@ export default function SettingsTab({
   setSystemPromptCustom, setPromptDirty,
   orgTimezone
 }) {
+  const hideAiFeatures = useHideAiFeatures();
+  const navigate = useNavigate();
   const [callActions, setCallActions] = useState({
     dial: true,
     browserCall: true,
@@ -45,7 +49,11 @@ export default function SettingsTab({
   };
 
   const saveCallActions = () => {
-    localStorage.setItem('callified_call_actions', JSON.stringify(callActions));
+    const toSave = hideAiFeatures
+      ? { dial: false, browserCall: true, simWebCall: false }
+      : callActions;
+    localStorage.setItem('callified_call_actions', JSON.stringify(toSave));
+    setCallActions(toSave);
     setCallActionsSaved(true);
     setTimeout(() => setCallActionsSaved(false), 3000);
   };
@@ -72,17 +80,19 @@ export default function SettingsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          <span style={{ color: T.amber }}>AI Voice</span> Settings
+          {hideAiFeatures ? 'Settings' : <><span style={{ color: T.amber }}>AI Voice</span> Settings</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Configure how the AI pronounces product names, brand names, and technical terms during calls.
+          {hideAiFeatures
+            ? 'Configure call action visibility and other preferences.'
+            : 'Configure how the AI pronounces product names, brand names, and technical terms during calls.'}
         </p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
         {/* Pronunciation Guide */}
-        <div style={card}>
+        {!hideAiFeatures && (<div style={card}>
           <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>🗣️ Pronunciation Guide</h3>
           <p style={{ margin: '0 0 20px', fontSize: 13, color: T.muted }}>
             Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
@@ -169,10 +179,10 @@ export default function SettingsTab({
               </tbody>
             </table>
           )}
-        </div>
+        </div>)}
 
         {/* How it works */}
-        <div style={{
+        {!hideAiFeatures && (<div style={{
           ...card,
           background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
           boxShadow: 'none',
@@ -185,10 +195,10 @@ export default function SettingsTab({
             <br /><br />
             <strong style={{ color: T.text }}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
           </p>
-        </div>
+        </div>)}
 
         {/* System Prompt */}
-        {selectedOrg && (
+        {!hideAiFeatures && selectedOrg && (
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
@@ -256,8 +266,29 @@ export default function SettingsTab({
           </div>
         )}
 
+        {/* Provider Accounts shortcut for non-AI users */}
+        {hideAiFeatures && (
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>Provider Accounts</h3>
+            </div>
+            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+              Manage your Exotel telephony provider accounts.
+            </p>
+            <button
+              onClick={() => navigate('/exotel-accounts')}
+              style={{
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                borderRadius: 8, color: '#fff', padding: '10px 18px',
+                cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+              }}>
+              Manage Provider Accounts
+            </button>
+          </div>
+        )}
+
         {/* Call Action Visibility */}
-        <div style={card}>
+        {!hideAiFeatures && (<div style={card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>☎️ Call Action Visibility</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -279,7 +310,22 @@ export default function SettingsTab({
             Choose which call buttons appear in the lead action row on the campaign page.
           </p>
 
-          {[
+          {hideAiFeatures ? (
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8,
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions.browserCall}
+                readOnly
+                style={{ width: 18, height: 18, cursor: 'default' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>🎙 Browser Call</span>
+            </label>
+          ) : ([
             { key: 'dial', label: '📞 Dial' },
             { key: 'browserCall', label: '🎙 Browser Call' },
             { key: 'simWebCall', label: '🌐 Sim Web Call' },
@@ -298,8 +344,8 @@ export default function SettingsTab({
               />
               <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>{label}</span>
             </label>
-          ))}
-        </div>
+          )))}
+        </div>)}
 
       </div>
     </div>

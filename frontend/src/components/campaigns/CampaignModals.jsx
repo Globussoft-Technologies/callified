@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -26,6 +27,7 @@ export default function CampaignModals({
   editCampaignError, setEditCampaignError,
   setCreateError,
 }) {
+  const hideAiFeatures = useHideAiFeatures();
   const [nameTouched, setNameTouched] = useState(false);
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
@@ -68,7 +70,7 @@ export default function CampaignModals({
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
 
             {/* Template selector */}
-            <div style={{marginBottom: '1.5rem'}}>
+            {!hideAiFeatures && (<div style={{marginBottom: '1.5rem'}}>
               <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '8px'}}>Start from a template (optional)</label>
               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '8px'}}>
                 {CAMPAIGN_TEMPLATES.map(tpl => {
@@ -115,7 +117,7 @@ export default function CampaignModals({
                   </div>
                 </div>
               )}
-            </div>
+            </div>)}
 
             <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
               <form onSubmit={e => {
@@ -182,8 +184,8 @@ export default function CampaignModals({
                   <select className="form-input" value={createForm.channel || 'voice'}
                     onChange={e => setCreateForm({...createForm, channel: e.target.value})}
                     style={{width: '100%'}}>
-                    <option value="voice">📞 Voice Call (AI Phone)</option>
-                    <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
+                    <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                    {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
                 {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
@@ -367,8 +369,8 @@ export default function CampaignModals({
                 <select className="form-input" value={editCampaignForm.channel || 'voice'}
                   onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
                   style={{width: '100%'}}>
-                  <option value="voice">📞 Voice Call (AI Phone)</option>
-                  <option value="whatsapp">💬 WhatsApp (AI Chat)</option>
+                  <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                  {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>

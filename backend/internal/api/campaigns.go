@@ -456,12 +456,12 @@ func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fname))
 	wr := csv.NewWriter(w)
 	_ = wr.Write([]string{
-		"Name", "Phone", "Campaign", "Call Type", "Call Date/Time",
+		"Name", "Phone", "Campaign", "Lead Status", "Call Type", "Call Date/Time",
 		"Duration (s)", "Outcome", "Follow-up Note", "Recording Filename", "Recording URL",
 	})
 	for _, e := range entries {
 		_ = wr.Write([]string{
-			e.Name, e.Phone, campaign.Name, e.CallType, e.CreatedAt,
+			e.Name, e.Phone, campaign.Name, e.LeadStatus, e.CallType, e.CreatedAt,
 			fmt.Sprintf("%.0f", e.Duration), e.Outcome, e.FollowUpNote,
 			e.RecordingFilename, e.RecordingURL,
 		})
@@ -856,7 +856,7 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID)
+	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
 
 	// StatusCallback delivers recording URL + final status when the call ends.
 	ac := getAuth(r)
@@ -914,7 +914,7 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 // This is needed because Exotel does not reliably include RecordingUrl in the
 // StatusCallback for two-party (From+To) calls.
 func (s *Server) pollHumanCallRecording(callSid, apiKey, apiToken, accountSID, callerID, appID string, leadID, campaignID, orgID int64, initialWait time.Duration) {
-	client := dial.NewExotelClient(apiKey, apiToken, accountSID, callerID, appID)
+	client := dial.NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, "")
 	ctx := context.Background()
 
 	time.Sleep(initialWait)

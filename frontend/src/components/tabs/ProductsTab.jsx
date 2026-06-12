@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useToast, useConfirm } from '../../contexts/UIContext';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -38,6 +39,7 @@ export default function ProductsTab({
   const loadedProductIds = React.useRef(new Set());
   const [nameError, setNameError] = useState('');
   const fileInputRefs = React.useRef({});
+  const hideAiFeatures = useHideAiFeatures();
 
   const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
   const setWebsiteUrl = (productId, url) =>
@@ -203,10 +205,10 @@ export default function ProductsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          📦 <span style={{ color: T.cyan }}>Product</span> Knowledge
+          {hideAiFeatures ? '📦 Products' : <>📦 <span style={{ color: T.cyan }}>Product</span> Knowledge</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Manage your products. The AI learns from this to have informed conversations.
+          {hideAiFeatures ? 'Manage your products.' : 'Manage your products. The AI learns from this to have informed conversations.'}
         </p>
       </div>
 
@@ -323,7 +325,7 @@ export default function ProductsTab({
                       )}
                     </div>
 
-                    {/* Website URL + Scrape */}
+                    {!hideAiFeatures && (
                     <div style={{ marginBottom: 12 }}>
                       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                         <div style={{ flex: 1 }}>
@@ -351,9 +353,9 @@ export default function ProductsTab({
                         </div>
                       )}
                     </div>
+                    )}
 
-                    {/* Expand section */}
-                    <div>
+                    {!hideAiFeatures && <div>
                       <button
                         onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}
                         style={{
@@ -557,7 +559,7 @@ export default function ProductsTab({
                           </div>
                         </div>
                       )}
-                    </div>
+                    </div>}
 
                   </div>
                 );

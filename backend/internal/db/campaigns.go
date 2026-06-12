@@ -3,8 +3,52 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 )
+
+// EnsureCampaignsTable creates the campaigns table if it doesn't exist and adds
+// any columns that may be missing on legacy schemas.
+func (d *DB) EnsureCampaignsTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS campaigns (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			org_id BIGINT NOT NULL,
+			product_id BIGINT DEFAULT NULL,
+			name VARCHAR(255) NOT NULL,
+			status VARCHAR(50) DEFAULT 'active',
+			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+			tts_provider VARCHAR(50) DEFAULT NULL,
+			tts_voice_id VARCHAR(255) DEFAULT NULL,
+			tts_language VARCHAR(10) DEFAULT NULL,
+			lead_source VARCHAR(100) DEFAULT NULL,
+			channel VARCHAR(20) NOT NULL DEFAULT 'voice',
+			exotel_account_id BIGINT DEFAULT NULL,
+			INDEX idx_org_id (org_id),
+			INDEX idx_product_id (product_id),
+			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
+			FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+	`)
+	if err != nil {
+		return err
+	}
+	columns := []struct{ name, def string }{
+		{"tts_provider", "VARCHAR(50) DEFAULT NULL"},
+		{"tts_voice_id", "VARCHAR(255) DEFAULT NULL"},
+		{"tts_language", "VARCHAR(10) DEFAULT NULL"},
+		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
+		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
+		{"exotel_account_id", "BIGINT DEFAULT NULL"},
+	}
+	for _, col := range columns {
+		_, alterErr := d.pool.Exec(fmt.Sprintf("ALTER TABLE campaigns ADD COLUMN %s %s", col.name, col.def))
+		if alterErr != nil && !strings.Contains(alterErr.Error(), "Duplicate column name") {
+			return alterErr
+		}
+	}
+	return nil
+}
 
 // Campaign mirrors the campaigns table (joined with products.name).
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
@@ -446,6 +490,7 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 type RecordingExportRow struct {
 	Name              string
 	Phone             string
+	LeadStatus        string
 	CallType          string
 	CreatedAt         string
 	Duration          float64
@@ -463,6 +508,7 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow
 		SELECT
 			TRIM(CONCAT(COALESCE(l.first_name,''), ' ', COALESCE(l.last_name,''))) AS name,
 			COALESCE(l.phone,''),
+			COALESCE(l.status, ''),
 			COALESCE(ct.tts_language,''),
 			COALESCE(ct.call_duration_s, 0),
 			COALESCE(ct.recording_url, ''),
@@ -488,7 +534,7 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow
 	for rows.Next() {
 		var e RecordingExportRow
 		var ttsLang string
-		if err := rows.Scan(&e.Name, &e.Phone, &ttsLang, &e.Duration, &e.RecordingURL,
+		if err := rows.Scan(&e.Name, &e.Phone, &e.LeadStatus, &ttsLang, &e.Duration, &e.RecordingURL,
 			&e.CreatedAt, &e.FollowUpNote, &e.Outcome); err != nil {
 			return nil, err
 		}
@@ -576,6 +622,7 @@ type ExotelCreds struct {
 	AccountSID string `json:"exotel_account_sid"`
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
+	AppType    string `json:"exotel_app_type"`
 }
 
 // IsSet returns true when the minimum required fields for the provider are set.

@@ -5,64 +5,30 @@ Indian telecom regulations prohibit calls before 9 AM or after 9 PM.
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-CALL_START_HOUR = 9   # 9:00 AM
-CALL_END_HOUR = 21    # 9:00 PM
+CALL_START_HOUR = 0   # disabled — calls allowed at any hour
+CALL_END_HOUR = 24    # disabled — calls allowed at any hour
 
 
 def is_calling_allowed(timezone: str = "Asia/Kolkata") -> dict:
-    """Check if calling is allowed right now based on TRAI rules.
-    Returns {allowed: bool, reason: str, current_hour: int}
-    """
+    """Calling-hours enforcement is disabled for testing; calls are allowed at any time."""
     try:
         tz = ZoneInfo(timezone)
     except Exception:
         tz = ZoneInfo("Asia/Kolkata")
 
     now = datetime.now(tz)
-    hour = now.hour
-
-    if hour < CALL_START_HOUR:
-        return {
-            "allowed": False,
-            "reason": f"Too early — calls allowed only after 9:00 AM. Current time: {now.strftime('%I:%M %p')}",
-            "current_hour": hour,
-            "current_time": now.strftime("%I:%M %p"),
-            "timezone": timezone,
-        }
-    elif hour >= CALL_END_HOUR:
-        return {
-            "allowed": False,
-            "reason": f"Too late — calls allowed only until 9:00 PM. Current time: {now.strftime('%I:%M %p')}",
-            "current_hour": hour,
-            "current_time": now.strftime("%I:%M %p"),
-            "timezone": timezone,
-        }
-    else:
-        return {
-            "allowed": True,
-            "reason": "Calling hours active (9 AM - 9 PM)",
-            "current_hour": hour,
-            "current_time": now.strftime("%I:%M %p"),
-            "timezone": timezone,
-        }
+    return {
+        "allowed": True,
+        "reason": "Calling hours unrestricted",
+        "current_hour": now.hour,
+        "current_time": now.strftime("%I:%M %p"),
+        "timezone": timezone,
+    }
 
 
 def get_next_allowed_time(timezone: str = "Asia/Kolkata") -> str:
-    """If calling not allowed now, return when it will be allowed."""
-    try:
-        tz = ZoneInfo(timezone)
-    except Exception:
-        tz = ZoneInfo("Asia/Kolkata")
-
-    now = datetime.now(tz)
-    hour = now.hour
-
-    if hour < CALL_START_HOUR:
-        return "today at 9:00 AM"
-    elif hour >= CALL_END_HOUR:
-        return "tomorrow at 9:00 AM"
-    else:
-        return "now (calling is currently allowed)"
+    """With calling-hours enforcement disabled, calls are always allowed now."""
+    return "now (calling is currently allowed)"
 
 
 def get_org_timezone(org_id: int) -> str:

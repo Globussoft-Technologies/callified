@@ -22,6 +22,19 @@ import (
 // apostrophe, period only; 1–50 chars; must contain at least one alphanumeric.
 var pronAllowed = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .'\-]{0,49}$`)
 
+// sanitizeEmailForPath converts an email into a safe directory name.
+func sanitizeEmailForPath(email string) string {
+	var b strings.Builder
+	for _, c := range strings.ToLower(email) {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
+}
+
 // ── GET /api/tasks ───────────────────────────────────────────────────────────
 
 // @Summary     List tasks
@@ -196,9 +209,11 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 
-// ── GET /api/recordings/{filename} ───────────────────────────────────────────
+// ── GET /api/recordings/{filepath} ───────────────────────────────────────────
 // Serves stereo WAV recordings from the recordings directory.
 // Auth-gated so recordings are not publicly accessible.
+// Supports both legacy flat URLs (/api/recordings/filename.wav) and the new
+// per-user segregated URLs (/api/recordings/user_email/filename.wav).
 
 // @Summary     Serve recording
 // @Description Streams a call recording WAV file. Auth-gated.
@@ -211,15 +226,30 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 // @Failure     401  {object}  ErrorResponse
 // @Router      /api/recordings/{filename} [get]
 func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
-	filename := r.PathValue("filename")
+	relPath := r.PathValue("filename")
 
-	// Reject path traversal: no slashes, no ".." segments
-	if strings.ContainsAny(filename, "/\\") || strings.Contains(filename, "..") {
+	// Reject path traversal: no ".." segments anywhere
+	if strings.Contains(relPath, "..") {
 		writeError(w, http.StatusBadRequest, "invalid filename")
 		return
 	}
+	// Clean the path and ensure it stays under the recordings directory.
+	relPath = filepath.Clean("/" + relPath)
+	if relPath == "/" {
+		writeError(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
+	relPath = relPath[1:] // strip leading slash added for Clean
 
-	fullPath := filepath.Join(s.cfg.RecordingsDir, filename)
+	fullPath := filepath.Join(s.cfg.RecordingsDir, relPath)
+	// Backward compatibility: if the segregated path doesn't exist, fall back
+	// to the legacy flat location in the recordings root.
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		legacyPath := filepath.Join(s.cfg.RecordingsDir, filepath.Base(relPath))
+		if _, err2 := os.Stat(legacyPath); err2 == nil {
+			fullPath = legacyPath
+		}
+	}
 	http.ServeFile(w, r, fullPath)
 }
 
@@ -299,18 +329,26 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if recURL == "" {
-		if err := os.MkdirAll(s.cfg.RecordingsDir, 0o755); err != nil {
+		baseDir := s.cfg.RecordingsDir
+		urlPrefix := "/api/recordings/"
+		ac := getAuth(r)
+		if ac.Email != "" {
+			userDir := sanitizeEmailForPath(ac.Email)
+			baseDir = filepath.Join(baseDir, userDir)
+			urlPrefix = "/api/recordings/" + userDir + "/"
+		}
+		if err := os.MkdirAll(baseDir, 0o755); err != nil {
 			s.logger.Sugar().Errorw("uploadRecording: mkdir", "err", err)
 			writeError(w, http.StatusInternalServerError, "mkdir failed")
 			return
 		}
-		fpath := filepath.Join(s.cfg.RecordingsDir, fname)
+		fpath := filepath.Join(baseDir, fname)
 		if err := os.WriteFile(fpath, data, 0644); err != nil {
 			s.logger.Sugar().Errorw("uploadRecording: write", "err", err, "path", fpath)
 			writeError(w, http.StatusInternalServerError, "write failed")
 			return
 		}
-		recURL = "/api/recordings/" + fname
+		recURL = urlPrefix + fname
 		s.logger.Sugar().Infow("uploadRecording: saved locally", "path", fpath, "bytes", len(data), "lead_id", leadIDStr)
 	}
 

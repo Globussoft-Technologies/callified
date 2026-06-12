@@ -32,6 +32,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		AccountSID string `json:"account_sid"`
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
+		AppType    string `json:"app_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -40,13 +41,20 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.Provider == "" {
 		req.Provider = "exotel"
 	}
+	if req.AppType == "" {
+		req.AppType = "exoml"
+	}
 	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); err != "" {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if req.Provider == "exotel" && req.AppType != "exoml" && req.AppType != "voicebot" {
+		writeError(w, http.StatusBadRequest, "app_type must be 'exoml' or 'voicebot'")
+		return
+	}
 	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType)
 	if err != nil {
 		s.logger.Sugar().Errorw("createExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -73,6 +81,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		AccountSID string `json:"account_sid"`
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
+		AppType    string `json:"app_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -81,13 +90,20 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.Provider == "" {
 		req.Provider = "exotel"
 	}
+	if req.AppType == "" {
+		req.AppType = "exoml"
+	}
 	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
+	if req.Provider == "exotel" && req.AppType != "exoml" && req.AppType != "voicebot" {
+		writeError(w, http.StatusBadRequest, "app_type must be 'exoml' or 'voicebot'")
+		return
+	}
 	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID); err != nil {
+		req.AccountSID, req.CallerID, req.AppID, req.AppType); err != nil {
 		s.logger.Sugar().Errorw("updateExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

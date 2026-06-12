@@ -85,6 +85,7 @@ export function AuthProvider({ children }) {
       err.code = data.code || null;
       err.expiresAt = data.expires_at || null;
       err.plan = data.plan || null;
+      err.supportEmail = data.support_email || null;
       err.status = res.status;
       throw err;
     }
@@ -96,12 +97,24 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  // Helper: true when the current user should not see AI-related UI sections.
+  const hideAiFeatures = Boolean(currentUser?.hide_ai_features);
+
   const signup = async (orgName, fullName, email, password) => {
     const res = await fetch(`${API_URL}/auth/signup`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ org_name: orgName, full_name: fullName, email, password })
     });
-    if (!res.ok) throw new Error((await res.json()).detail || 'Signup failed');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const err = new Error(data.error || data.detail || 'Signup failed');
+      err.code = data.code || null;
+      err.expiresAt = data.expires_at || null;
+      err.plan = data.plan || null;
+      err.supportEmail = data.support_email || null;
+      err.status = res.status;
+      throw err;
+    }
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
@@ -133,7 +146,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures }}>
       {children}
     </AuthContext.Provider>
   );

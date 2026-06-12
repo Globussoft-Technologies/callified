@@ -17,27 +17,37 @@ type ExotelClient struct {
 	accountSID string
 	callerID   string
 	appID      string
+	appType    string // "exoml" (legacy XML) or "voicebot" (AgentStream JSON)
 	client     *http.Client
 }
 
 // NewExotelClient creates an Exotel REST client.
-func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *ExotelClient {
+// appType should be "exoml" for legacy ExoML XML flows or "voicebot" for
+// modern AgentStream Voicebot flows that expect a JSON dynamic URL response.
+func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType string) *ExotelClient {
+	if appType == "" {
+		appType = "exoml"
+	}
 	return &ExotelClient{
 		apiKey:     apiKey,
 		apiToken:   apiToken,
 		accountSID: accountSID,
 		callerID:   callerID,
 		appID:      appID,
+		appType:    appType,
 		client:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
-// exomlURL is ignored — Exotel rejects arbitrary URLs in the Url field; only
-// the Exotel-hosted app URL (http://my.exotel.com/exoml/start/{appID}) works.
-// The dashboard app referenced by appID must have a Passthru applet pointing
-// at {PUBLIC_SERVER_URL}/webhook/exotel — that's what triggers our handler to
-// return the WebSocket-streaming ExoML when the lead answers.
+// The dashboard app/flow referenced by appID must route the answered call to
+// our WebSocket endpoint:
+//   - exoml   (legacy): Passthru applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
+//                       and expects XML <Connect><Stream url="..."/>.</Connect>
+//   - voicebot (modern): Voicebot applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
+//                        and expects JSON {"url":"wss://..."}.
+// Per-call context (lead_id, name, phone) is hydrated by wshandler from Redis
+// instead of being passed through this URL.
 // callbackURL receives status events (answered, completed, etc.).
 //
 // Do NOT send "To" in this flow — Exotel rejects Url + To with 400
@@ -49,12 +59,13 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
 
-	// Always use the Exotel-hosted app URL. Custom URLs (even on our own
-	// domain) are silently rejected — the call rings, the lead picks up,
-	// then drops because Exotel never fetched ExoML. Per-call context
-	// (lead_id, name, phone) is hydrated by wshandler from Redis instead
-	// of being passed through this URL.
-	exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+	// Modern AgentStream Voicebot flows use /{sid}/exoml/start_voice/{flow_id}.
+	// Legacy ExoML apps use /exoml/start/{app_id}.
+	if e.appType == "voicebot" {
+		exomlURL = fmt.Sprintf("http://my.exotel.com/%s/exoml/start_voice/%s", e.accountSID, e.appID)
+	} else {
+		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+	}
 
 	phone := ExotelPhone(toPhone)
 	form := url.Values{}

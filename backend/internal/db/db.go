@@ -32,6 +32,18 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureAdminSubscriptionsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure admin subscriptions table: %w", err)
 	}
+	if err := d.EnsureUserFeatureFlagsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure user feature flags table: %w", err)
+	}
+	if err := d.EnsureOrgExotelAccountsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure org exotel accounts table: %w", err)
+	}
+	if err := d.EnsureProductsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure products table: %w", err)
+	}
+	if err := d.EnsureCampaignsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure campaigns table: %w", err)
+	}
 	return d, nil
 }
 

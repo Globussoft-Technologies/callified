@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -177,6 +178,47 @@ func (d *DB) SaveOrganizationVoiceSettings(orgID int64, vs VoiceSettings) error 
 		`UPDATE organizations SET tts_provider=?, tts_voice_id=?, tts_language=? WHERE id=?`,
 		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage), orgID)
 	return err
+}
+
+// EnsureProductsTable creates the products table if it doesn't exist and adds
+// any columns that may be missing on legacy schemas.
+func (d *DB) EnsureProductsTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS products (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			org_id BIGINT NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			website_url TEXT,
+			scraped_info LONGTEXT,
+			manual_notes LONGTEXT,
+			agent_persona LONGTEXT,
+			call_flow_instructions LONGTEXT,
+			image_urls LONGTEXT,
+			manual_images LONGTEXT,
+			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_org_id (org_id),
+			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+	`)
+	if err != nil {
+		return err
+	}
+	// Add columns that may be missing on older schemas. Run each ALTER
+	// separately and ignore "Duplicate column name" errors so this stays safe
+	// on MySQL/MariaDB versions that don't support ADD COLUMN IF NOT EXISTS.
+	columns := []struct{ name, def string }{
+		{"agent_persona", "LONGTEXT"},
+		{"call_flow_instructions", "LONGTEXT"},
+		{"image_urls", "LONGTEXT"},
+		{"manual_images", "LONGTEXT"},
+	}
+	for _, col := range columns {
+		_, alterErr := d.pool.Exec(fmt.Sprintf("ALTER TABLE products ADD COLUMN %s %s", col.name, col.def))
+		if alterErr != nil && !strings.Contains(alterErr.Error(), "Duplicate column name") {
+			return alterErr
+		}
+	}
+	return nil
 }
 
 // ProductImage holds a manually uploaded image with a human-readable label.

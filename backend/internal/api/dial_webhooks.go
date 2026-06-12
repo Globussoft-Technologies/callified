@@ -118,6 +118,17 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Determine whether the calling Exotel app/flow is a legacy ExoML app
+	// (expects XML) or a modern AgentStream Voicebot flow (expects JSON).
+	// Priority: Redis pending call -> DB lookup by flow_id/app_id -> legacy default.
+	appType := pending.AppType
+	if appType == "" {
+		appType = s.db.GetExotelAppTypeByAppID(firstNonEmptyStr(q.Get("flow_id"), q.Get("app_id"), q.Get("AppId")))
+	}
+	if appType == "" {
+		appType = "exoml"
+	}
+
 	// Fall back to whatever the Passthru applet happened to forward when
 	// Redis didn't have a record. (Empty values just produce empty query
 	// params — the WS handler's handleStartEvent still backfills from
@@ -147,25 +158,36 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 	ttsVoiceID := pending.TTSVoiceID
 	ttsLanguage := pending.TTSLanguage
 
-	wsURL := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-	wsURL = fmt.Sprintf(
-		"%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%d&campaign_id=%d&org_id=%d&tts_provider=%s&voice=%s&tts_language=%s",
-		wsURL,
-		url.QueryEscape(name),
-		url.QueryEscape(interest),
-		url.QueryEscape(phoneOut),
-		leadID,
-		campaignID,
-		orgID,
-		url.QueryEscape(ttsProvider),
-		url.QueryEscape(ttsVoiceID),
-		url.QueryEscape(ttsLanguage),
-	)
+	wsBase := strings.Replace(s.cfg.PublicServerURL, "https://", "wss://", 1)
+	wsBase = strings.Replace(wsBase, "http://", "ws://", 1)
+
+	var wsURL string
+	if appType == "voicebot" {
+		// AgentStream Voicebot applet expects a JSON response {"url":"wss://..."}.
+		// Keep the WSS URL short: call context arrives in the WebSocket start event
+		// and is hydrated from Redis, so we don't need query params here.
+		wsURL = fmt.Sprintf("%s/media-stream", wsBase)
+	} else {
+		// Legacy ExoML Passthru applet expects XML <Connect><Stream url="..."/>.</Connect>.
+		wsURL = fmt.Sprintf(
+			"%s/media-stream?name=%s&interest=%s&phone=%s&lead_id=%d&campaign_id=%d&org_id=%d&tts_provider=%s&voice=%s&tts_language=%s",
+			wsBase,
+			url.QueryEscape(name),
+			url.QueryEscape(interest),
+			url.QueryEscape(phoneOut),
+			leadID,
+			campaignID,
+			orgID,
+			url.QueryEscape(ttsProvider),
+			url.QueryEscape(ttsVoiceID),
+			url.QueryEscape(ttsLanguage),
+		)
+	}
 
 	s.logger.Info("exotelXML: serving ExoML",
 		zap.String("call_sid", callSid),
 		zap.String("redis_hit", hitKey),
+		zap.String("app_type", appType),
 		zap.Int64("lead_id", leadID),
 		zap.Int64("campaign_id", campaignID),
 		zap.Int64("org_id", orgID),
@@ -175,6 +197,13 @@ func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
 		zap.String("ws_url", wsURL),
 		zap.String("remote_addr", r.RemoteAddr),
 	)
+
+	if appType == "voicebot" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"url":"%s"}`, wsURL)))
+		return
+	}
 
 	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -554,9 +583,18 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 		return fmt.Errorf("read body: %w", err)
 	}
 
+	// Try to find the initiating user's email so we can segregate the recording.
+	userDir := ""
+	if pending, ok := s.store.GetPendingCall(context.Background(), callSid); ok && pending.UserEmail != "" {
+		userDir = sanitizeEmailForPath(pending.UserEmail)
+	}
+
 	var localURL string
 	if s.s3 != nil {
 		s3Key := "recordings/" + filename
+		if userDir != "" {
+			s3Key = "recordings/" + userDir + "/" + filename
+		}
 		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
 		if err != nil {
 			s.logger.Warn("downloadRecording: S3 upload failed", zap.Error(err))
@@ -568,12 +606,18 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 	}
 
 	if localURL == "" {
-		destPath := filepath.Join(s.cfg.RecordingsDir, filename)
-		_ = os.MkdirAll(s.cfg.RecordingsDir, 0755)
+		baseDir := s.cfg.RecordingsDir
+		urlPrefix := "/api/recordings/"
+		if userDir != "" {
+			baseDir = filepath.Join(baseDir, userDir)
+			urlPrefix = "/api/recordings/" + userDir + "/"
+		}
+		destPath := filepath.Join(baseDir, filename)
+		_ = os.MkdirAll(baseDir, 0755)
 		if err := os.WriteFile(destPath, data, 0644); err != nil {
 			return fmt.Errorf("write file: %w", err)
 		}
-		localURL = fmt.Sprintf("/api/recordings/%s", filename)
+		localURL = urlPrefix + filename
 	}
 	if err := s.db.UpdateCallLogRecordingURL(callSid, localURL); err != nil {
 		s.logger.Warn("downloadRecording: UpdateCallLogRecordingURL", zap.Error(err))

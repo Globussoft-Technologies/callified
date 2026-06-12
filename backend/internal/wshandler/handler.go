@@ -646,6 +646,10 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					sess.TTSLanguage = info.TTSLanguage
 					sess.Language = info.TTSLanguage
 				}
+				// Carry credit-bypass flag from the dial initiator so post-call
+				// deduction can be skipped for unlimited manual calls.
+				sess.SkipCredits = info.SkipCredits
+				sess.UserEmail = info.UserEmail
 				// Rebuild SystemPrompt and GreetingText now that we know the
 				// real campaign/org/lead. The initial initializeCall ran
 				// before the start event with all-zero IDs (Exotel's Passthru
@@ -957,6 +961,8 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		ChatHistory: sess.HistorySnapshot(),
 		DurationS:   float32(time.Since(sess.CallStart).Seconds()),
 		StereoWav:   wavBytes,
+		SkipCredits: sess.SkipCredits,
+		UserEmail:   sess.UserEmail,
 	}
 	go h.recordingSvc.SaveAndAnalyze(ctx, req)
 }

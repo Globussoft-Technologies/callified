@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import navLogo from '../assets/tg_image_3608761279.png';
+import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
+
+// Tabs that should be hidden when AI features are disabled for the user.
+const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
 
 const AGENT_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
@@ -29,7 +33,10 @@ const MORE_ADMIN_TABS = [
   { id: 'receptionist', label: 'Receptionist',    path: '/receptionist', testid: 'tab-receptionist' },
 ];
 
-const SUPER_ADMIN_TAB = { id: 'subscriptions', label: 'Subscriptions', path: '/subscriptions', testid: 'tab-subscriptions' };
+const SUPER_ADMIN_TABS = [
+  { id: 'subscriptions', label: 'Subscriptions', path: '/subscriptions', testid: 'tab-subscriptions' },
+  { id: 'feature-flags', label: 'Feature Flags', path: '/feature-flags', testid: 'tab-feature-flags' },
+];
 
 const font = "'DM Sans', sans-serif";
 
@@ -37,11 +44,14 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
+  const hideAiFeatures = useHideAiFeatures();
 
   const [callingStatus, setCallingStatus] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
+  const notifRef = useRef(null);
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -66,10 +76,22 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [moreOpen]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setMoreOpen(false); }, [location.pathname]);
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onDocClick = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [notifOpen]);
 
-  const moreActive = MORE_ADMIN_TABS.some(t => t.id === activeTab);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setMoreOpen(false); setNotifOpen(false); }, [location.pathname]);
+
+  const visibleMoreTabs = hideAiFeatures
+    ? MORE_ADMIN_TABS.filter(t => !AI_TAB_IDS.has(t.id))
+    : MORE_ADMIN_TABS;
+  const moreActive = visibleMoreTabs.some(t => t.id === activeTab);
   const goTo = (path) => { setMoreOpen(false); navigate(path); };
 
   const userName = currentUser?.full_name || currentUser?.email || '';
@@ -124,67 +146,80 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
-        {userRole === 'Admin' && PRIMARY_ADMIN_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {userRole === 'Admin' && PRIMARY_ADMIN_TABS
+          .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
+          .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
         {userRole === 'Admin' && (
-          <div ref={moreRef} style={{ position: 'relative' }}>
-            <button
-              data-testid="tab-more"
-              onClick={() => setMoreOpen(o => !o)}
-              aria-haspopup="true"
-              aria-expanded={moreOpen}
-              style={{
-                background: moreActive ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)',
-                border: '1px solid rgba(99,102,241,0.2)',
-                borderRadius: 20, cursor: 'pointer',
-                padding: '5px 14px', fontSize: 13,
-                fontWeight: 600, color: '#6366f1',
-                fontFamily: font, whiteSpace: 'nowrap',
-                display: 'flex', alignItems: 'center', gap: 4,
-              }}>
-              More <span style={{ fontSize: '0.7em' }}>▾</span>
-            </button>
-            {moreOpen && (
-              <div role="menu" style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '220px',
-                background: '#ffffff', border: '1px solid #e5e7eb',
-                borderRadius: 10, padding: 6,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
-                display: 'flex', flexDirection: 'column', gap: 2,
-              }}>
-                {MORE_ADMIN_TABS.map(t => (
-                  <button key={t.id} data-testid={t.testid} role="menuitem"
-                    onClick={() => goTo(t.path)}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
-                      background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
-                      border: 'none', borderRadius: 6,
-                      color: activeTab === t.id ? '#6366f1' : '#374151',
-                      fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
-                      fontFamily: font,
-                    }}>
-                    {t.label}
-                  </button>
-                ))}
-                {currentUser?.is_super_admin && (
-                  <button key={SUPER_ADMIN_TAB.id} data-testid={SUPER_ADMIN_TAB.testid} role="menuitem"
-                    onClick={() => goTo(SUPER_ADMIN_TAB.path)}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
-                      background: activeTab === SUPER_ADMIN_TAB.id ? 'rgba(99,102,241,0.08)' : 'transparent',
-                      border: 'none', borderRadius: 6,
-                      color: activeTab === SUPER_ADMIN_TAB.id ? '#6366f1' : '#374151',
-                      fontSize: 13, fontWeight: activeTab === SUPER_ADMIN_TAB.id ? 700 : 500,
-                      fontFamily: font,
-                    }}>
-                    {SUPER_ADMIN_TAB.label}
-                  </button>
+          (() => {
+            const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
+            const allMoreTabs = [...visibleMoreTabs, ...superAdminTabs];
+            if (allMoreTabs.length === 1) {
+              const t = allMoreTabs[0];
+              return tabBtn(t.id, t.label, t.path, t.testid);
+            }
+            if (allMoreTabs.length === 0) return null;
+            return (
+              <div ref={moreRef} style={{ position: 'relative' }}>
+                <button
+                  data-testid="tab-more"
+                  onClick={() => setMoreOpen(o => !o)}
+                  aria-haspopup="true"
+                  aria-expanded={moreOpen}
+                  style={{
+                    background: moreActive ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)',
+                    border: '1px solid rgba(99,102,241,0.2)',
+                    borderRadius: 20, cursor: 'pointer',
+                    padding: '5px 14px', fontSize: 13,
+                    fontWeight: 600, color: '#6366f1',
+                    fontFamily: font, whiteSpace: 'nowrap',
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}>
+                  More <span style={{ fontSize: '0.7em' }}>▾</span>
+                </button>
+                {moreOpen && (
+                  <div role="menu" style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '220px',
+                    background: '#ffffff', border: '1px solid #e5e7eb',
+                    borderRadius: 10, padding: 6,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
+                    display: 'flex', flexDirection: 'column', gap: 2,
+                  }}>
+                    {visibleMoreTabs.map(t => (
+                      <button key={t.id} data-testid={t.testid} role="menuitem"
+                        onClick={() => goTo(t.path)}
+                        style={{
+                          display: 'flex', alignItems: 'center',
+                          padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
+                          background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                          border: 'none', borderRadius: 6,
+                          color: activeTab === t.id ? '#6366f1' : '#374151',
+                          fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
+                          fontFamily: font,
+                        }}>
+                        {t.label}
+                      </button>
+                    ))}
+                    {superAdminTabs.map(t => (
+                      <button key={t.id} data-testid={t.testid} role="menuitem"
+                        onClick={() => goTo(t.path)}
+                        style={{
+                          display: 'flex', alignItems: 'center',
+                          padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
+                          background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                          border: 'none', borderRadius: 6,
+                          color: activeTab === t.id ? '#6366f1' : '#374151',
+                          fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
+                          fontFamily: font,
+                        }}>
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            );
+          })()
         )}
       </nav>
 
@@ -192,7 +227,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 8 }}>
 
         {/* AI Active status */}
-        {callingStatus && (
+        {!hideAiFeatures && callingStatus && (
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             fontSize: 13, fontWeight: 600, fontFamily: font,
@@ -207,16 +242,40 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
         )}
 
         {/* Bell */}
-        <div style={{ position: 'relative', cursor: 'pointer', width: 22, height: 22 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-          </svg>
-          <span style={{
-            position: 'absolute', top: -2, right: -2,
-            width: 7, height: 7, borderRadius: '50%',
-            background: '#ef4444', border: '1.5px solid #fff',
-          }} />
+        <div ref={notifRef} style={{ position: 'relative' }}>
+          <div
+            data-testid="header-bell"
+            onClick={() => setNotifOpen(o => !o)}
+            style={{ position: 'relative', cursor: 'pointer', width: 22, height: 22 }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            <span style={{
+              position: 'absolute', top: -2, right: -2,
+              width: 7, height: 7, borderRadius: '50%',
+              background: '#ef4444', border: '1.5px solid #fff',
+            }} />
+          </div>
+          {notifOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 8px)', right: -10, minWidth: '280px', maxWidth: '320px',
+              background: '#ffffff', border: '1px solid #e5e7eb', borderRadius: 12,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
+              padding: '12px 0',
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '0 16px 10px', borderBottom: '1px solid #f3f4f6',
+              }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: font }}>Notifications</span>
+              </div>
+              <div style={{ padding: '20px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13, fontFamily: font }}>
+                No new notifications
+              </div>
+            </div>
+          )}
         </div>
 
         {/* User avatar + name */}

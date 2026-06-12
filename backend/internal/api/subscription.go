@@ -56,6 +56,42 @@ func (s *Server) requireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
+// @Summary     List all subscriptions
+// @Description Super-admin endpoint to fetch all admin subscriptions.
+// @Tags        admin
+// @Produce     json
+// @Success     200   {array}   AdminSubscriptionResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/admin/subscriptions [get]
+func (s *Server) listAdminSubscriptions(w http.ResponseWriter, r *http.Request) {
+	subs, err := s.db.ListAdminSubscriptions()
+	if err != nil {
+		s.logger.Sugar().Errorw("listAdminSubscriptions failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to list subscriptions")
+		return
+	}
+
+	now := time.Now().UTC()
+	resp := make([]AdminSubscriptionResponse, 0, len(subs))
+	for _, sub := range subs {
+		statusText := "active"
+		if !sub.IsActive {
+			statusText = "inactive"
+		} else if sub.ExpiresAt.Before(now) || sub.ExpiresAt.Equal(now) {
+			statusText = "expired"
+		}
+		resp = append(resp, AdminSubscriptionResponse{
+			AdminEmail: sub.AdminEmail,
+			ExpiresAt:  sub.ExpiresAt,
+			Plan:       sub.Plan,
+			IsActive:   sub.IsActive,
+			Status:     statusText,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // @Summary     Create or update subscription
 // @Description Super-admin endpoint to set or extend a subscription for an admin email.
 // @Tags        admin
@@ -162,10 +198,11 @@ func (s *Server) getAdminSubscription(w http.ResponseWriter, r *http.Request) {
 
 // subscriptionError is a structured error for subscription failures.
 type subscriptionError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	ExpiresAt string `json:"expires_at,omitempty"`
-	Plan      string `json:"plan,omitempty"`
+	Code         string `json:"code"`
+	Message      string `json:"message"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	Plan         string `json:"plan,omitempty"`
+	SupportEmail string `json:"support_email,omitempty"`
 }
 
 // checkSubscription validates the admin's subscription during login.
@@ -174,39 +211,47 @@ func (s *Server) checkSubscription(email string) (*subscriptionError, error) {
 	if err != nil {
 		return nil, err
 	}
+	support := s.cfg.SupportEmail
+	if support == "" {
+		support = "support@callified.ai"
+	}
 	if !status.Found {
 		return &subscriptionError{
-			Code:    "SUBSCRIPTION_NOT_FOUND",
-			Message: "No active subscription found for this account. Please contact support to activate your subscription.",
+			Code:         "SUBSCRIPTION_NOT_FOUND",
+			Message:      "No active subscription found for this account. Please contact support to activate your subscription.",
+			SupportEmail: support,
 		}, nil
 	}
 	if status.Expired {
 		return &subscriptionError{
-			Code:       "SUBSCRIPTION_EXPIRED",
-			Message:    "Your subscription expired on " + status.ExpiresAt.UTC().Format("2006-01-02") + ". Please renew to continue.",
-			ExpiresAt:  status.ExpiresAt.UTC().Format(time.RFC3339),
-			Plan:       status.Plan,
+			Code:         "SUBSCRIPTION_EXPIRED",
+			Message:      "Your subscription expired on " + status.ExpiresAt.UTC().Format("2006-01-02") + ". Please renew to continue.",
+			ExpiresAt:    status.ExpiresAt.UTC().Format(time.RFC3339),
+			Plan:         status.Plan,
+			SupportEmail: support,
 		}, nil
 	}
 	if !status.Active {
 		return &subscriptionError{
-			Code:    "SUBSCRIPTION_INACTIVE",
-			Message: "Your subscription is currently inactive. Please contact support.",
-			Plan:    status.Plan,
+			Code:         "SUBSCRIPTION_INACTIVE",
+			Message:      "Your subscription is currently inactive. Please contact support.",
+			Plan:         status.Plan,
+			SupportEmail: support,
 		}, nil
 	}
 	return nil, nil
 }
 
 // writeSubscriptionError sends a 403 response with subscription error details.
-func writeSubscriptionError(w http.ResponseWriter, err *subscriptionError) {
+func (s *Server) writeSubscriptionError(w http.ResponseWriter, err *subscriptionError) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error":      err.Message,
-		"code":       err.Code,
-		"expires_at": err.ExpiresAt,
-		"plan":       err.Plan,
+		"error":         err.Message,
+		"code":          err.Code,
+		"expires_at":    err.ExpiresAt,
+		"plan":          err.Plan,
+		"support_email": err.SupportEmail,
 	})
 }
 

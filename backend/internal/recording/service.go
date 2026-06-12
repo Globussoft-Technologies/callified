@@ -34,6 +34,11 @@ type SaveRequest struct {
 	ChatHistory []llm.ChatMessage
 	DurationS   float32
 	StereoWav   []byte // nil → no server-side recording
+	// SkipCredits=true: do not deduct this call from the org's prepaid balance.
+	SkipCredits bool
+	// UserEmail is the agent/admin who initiated the call; recordings are saved
+	// under a per-user subfolder.
+	UserEmail string
 }
 
 // Service handles post-call analysis.
@@ -75,7 +80,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 1. Save WAV to disk (if recorded server-side).
 	recordingURL := ""
 	if len(req.StereoWav) > 0 {
-		recordingURL = s.saveWAV(req.StreamSid, req.StereoWav)
+		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, req.StereoWav)
 	}
 
 	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
@@ -134,11 +139,12 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 
 	// 5b. Deduct call duration from the org's prepaid credit balance.
 	// Skipped automatically for web-sim calls (CallSid == "") so only real
-	// telephony calls are billed. Idempotent on the call_sid — if the
-	// recording pipeline runs twice for the same call (race between Exotel's
-	// "completed" callback and the WS-side finalize), the second call is a
-	// no-op.
-	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 {
+	// telephony calls are billed. Also skipped when SkipCredits is set
+	// (unlimited manual calls for AI-hidden users). Idempotent on the call_sid
+	// — if the recording pipeline runs twice for the same call (race between
+	// Exotel's "completed" callback and the WS-side finalize), the second call
+	// is a no-op.
+	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 && !req.SkipCredits {
 		if charge, balance, err := s.database.DeductCallCredits(req.OrgID, req.CallSid, float64(req.DurationS)); err != nil {
 			s.log.Warn("recording: DeductCallCredits failed",
 				zap.String("call_sid", req.CallSid), zap.Error(err))
@@ -149,6 +155,11 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 				zap.Int64("balance_after_paise", balance),
 				zap.Float32("duration_s", req.DurationS))
 		}
+	} else if req.SkipCredits {
+		s.log.Info("recording: skipping credit deduction for unlimited manual call",
+			zap.String("call_sid", req.CallSid),
+			zap.Int64("org_id", req.OrgID),
+			zap.Float32("duration_s", req.DurationS))
 	}
 
 	// 6. Auto-DND if clearly negative + "do not call" intent.
@@ -186,7 +197,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 
 // ── WAV saving ────────────────────────────────────────────────────────────────
 
-func (s *Service) saveWAV(streamSid string, data []byte) string {
+func (s *Service) saveWAV(streamSid, userEmail string, data []byte) string {
 	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
 
 	if s.s3 != nil {
@@ -204,16 +215,27 @@ func (s *Service) saveWAV(streamSid string, data []byte) string {
 	if s.cfg.RecordingsDir == "" {
 		return ""
 	}
-	if err := os.MkdirAll(s.cfg.RecordingsDir, 0755); err != nil {
+
+	// Segregate recordings into per-user folders when the initiating agent's
+	// email is known. Fall back to the root recordings directory otherwise.
+	baseDir := s.cfg.RecordingsDir
+	urlPrefix := "/api/recordings/"
+	if userEmail != "" {
+		userDir := sanitizeForPath(userEmail)
+		baseDir = filepath.Join(baseDir, userDir)
+		urlPrefix = "/api/recordings/" + userDir + "/"
+	}
+
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		s.log.Warn("recording: mkdir failed", zap.Error(err))
 		return ""
 	}
-	path := filepath.Join(s.cfg.RecordingsDir, filename)
+	path := filepath.Join(baseDir, filename)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		s.log.Warn("recording: WriteFile failed", zap.Error(err))
 		return ""
 	}
-	return "/api/recordings/" + filename
+	return urlPrefix + filename
 }
 
 // ── Gemini analysis ───────────────────────────────────────────────────────────
@@ -391,6 +413,11 @@ func sanitize(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// sanitizeForPath turns an email into a safe directory name.
+func sanitizeForPath(s string) string {
+	return sanitize(strings.ToLower(s))
 }
 
 func min(a, b int) int {

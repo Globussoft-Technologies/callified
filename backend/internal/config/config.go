@@ -28,6 +28,7 @@ type Config struct {
 
 	// Subscription management
 	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""` // Email allowed to manage subscriptions
+	SupportEmail    string `env:"SUPPORT_EMAIL"     envDefault:"support@callified.ai"` // Shown on subscription renewal prompts
 
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`

@@ -77,6 +77,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		TTSProvider: vs.TTSProvider,
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
+		UserEmail:   ac.Email,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -135,6 +136,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		TTSProvider: vs.TTSProvider,
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
+		UserEmail:   ac.Email,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -229,6 +231,7 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: vs.TTSProvider,
 			TTSVoiceID:  vs.TTSVoiceID,
 			TTSLanguage: vs.TTSLanguage,
+			UserEmail:   ac.Email,
 		})
 	}
 
@@ -338,6 +341,7 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: vs.TTSProvider,
 			TTSVoiceID:  vs.TTSVoiceID,
 			TTSLanguage: vs.TTSLanguage,
+			UserEmail:   ac.Email,
 		})
 	}
 

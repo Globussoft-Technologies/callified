@@ -28,6 +28,11 @@ type CallSession struct {
 	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
 	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
 	IsBridge bool
+	// SkipCredits=true: this call should not be charged against the org's
+	// prepaid balance (unlimited manual calls for AI-hidden users).
+	SkipCredits bool
+	// UserEmail is the agent/admin who initiated the call.
+	UserEmail string
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").

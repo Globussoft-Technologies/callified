@@ -46,6 +46,14 @@ type PendingCallInfo struct {
 	// IsBridge=true means the call is a browser-to-phone bridge: skip AI pipeline,
 	// relay audio between Exotel and the agent's browser WebSocket.
 	IsBridge bool `json:"is_bridge,omitempty"`
+	// AppType is the Exotel app/flow type: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON).
+	AppType string `json:"app_type,omitempty"`
+	// SkipCredits=true means the call should not be charged against the org's
+	// prepaid balance (e.g. unlimited manual calls for AI-hidden users).
+	SkipCredits bool `json:"skip_credits,omitempty"`
+	// UserEmail is the agent/admin who initiated the call. Used to segregate
+	// recordings into per-user folders.
+	UserEmail string `json:"user_email,omitempty"`
 }
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).

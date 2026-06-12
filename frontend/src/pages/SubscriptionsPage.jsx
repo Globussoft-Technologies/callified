@@ -14,12 +14,34 @@ export default function SubscriptionsPage({ apiFetch }) {
   const [lookupEmail, setLookupEmail] = useState('');
   const [subscription, setSubscription] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [listLoading, setListLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const fetchSubscriptions = async () => {
+    setListLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/admin/subscriptions`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load subscriptions');
+      setSubscriptions(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message);
+    }
+    setListLoading(false);
+  };
 
   // Default expiry to 30 days from now
   useEffect(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
     setExpiresAt(d.toISOString().slice(0, 16));
+  }, []);
+
+  // Load all subscriptions on mount
+  useEffect(() => {
+    fetchSubscriptions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const showMessage = (text, type = 'success') => {
@@ -46,6 +68,7 @@ export default function SubscriptionsPage({ apiFetch }) {
       if (!res.ok) throw new Error(data.error || 'Failed to save subscription');
       showMessage(`Subscription ${data.status} for ${data.admin_email} until ${new Date(data.expires_at).toLocaleDateString()}`);
       setEmail('');
+      fetchSubscriptions();
     } catch (err) {
       setError(err.message);
     }
@@ -291,6 +314,94 @@ export default function SubscriptionsPage({ apiFetch }) {
             {loading ? 'Saving...' : 'Save Subscription'}
           </button>
         </form>
+      </div>
+
+      {/* All Subscriptions */}
+      <div style={cardStyle}>
+        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: '#111827' }}>
+          All Subscriptions
+        </h2>
+        <div style={{ marginBottom: '1rem' }}>
+          <input
+            type="text"
+            placeholder="Search by email..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={inputStyle}
+          />
+        </div>
+        {listLoading ? (
+          <div style={{ textAlign: 'center', padding: '1rem', color: '#6b7280' }}>Loading...</div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e5e7eb', textAlign: 'left' }}>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Email</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Plan</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Status</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Expires At</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {subscriptions
+                  .filter(s => s.admin_email.toLowerCase().includes(searchQuery.toLowerCase()))
+                  .map(s => (
+                    <tr key={s.admin_email} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td style={{ padding: '10px 8px' }}>{s.admin_email}</td>
+                      <td style={{ padding: '10px 8px', textTransform: 'capitalize' }}>{s.plan}</td>
+                      <td style={{ padding: '10px 8px' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '2px 8px',
+                          borderRadius: 12,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          background: s.status === 'active' ? '#dcfce7' : s.status === 'expired' ? '#fee2e2' : '#fef3c7',
+                          color: s.status === 'active' ? '#166534' : s.status === 'expired' ? '#991b1b' : '#92400e',
+                        }}>
+                          {s.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '10px 8px' }}>{new Date(s.expires_at).toLocaleString()}</td>
+                      <td style={{ padding: '10px 8px' }}>
+                        <button
+                          onClick={() => {
+                            setEmail(s.admin_email);
+                            setPlan(s.plan || 'standard');
+                            setIsActive(s.is_active);
+                            const d = new Date(s.expires_at);
+                            setExpiresAt(d.toISOString().slice(0, 16));
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          style={{
+                            background: 'rgba(99,102,241,0.08)',
+                            border: '1px solid rgba(99,102,241,0.3)',
+                            color: '#6366f1',
+                            borderRadius: 6,
+                            padding: '4px 10px',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                {subscriptions.filter(s => s.admin_email.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: '20px 8px', textAlign: 'center', color: '#6b7280' }}>
+                      {searchQuery ? 'No subscriptions match your search.' : 'No subscriptions found.'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Instructions */}

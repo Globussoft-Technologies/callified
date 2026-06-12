@@ -3,6 +3,7 @@ import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import BrowserCallModal from './BrowserCallModal';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
@@ -378,6 +379,8 @@ export default function CampaignDetail({
   const [browserCallDialing, setBrowserCallDialing] = useState(false);
   // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
 
+  const hideAiFeatures = useHideAiFeatures();
+
   // Call-action visibility from Settings page (localStorage).
   const [visibleCallActions, setVisibleCallActions] = useState({
     dial: true,
@@ -385,6 +388,10 @@ export default function CampaignDetail({
     simWebCall: true,
   });
   useEffect(() => {
+    if (hideAiFeatures) {
+      setVisibleCallActions({ dial: false, browserCall: true, simWebCall: false });
+      return;
+    }
     try {
       const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
       setVisibleCallActions({
@@ -393,7 +400,7 @@ export default function CampaignDetail({
         simWebCall: saved.simWebCall !== false,
       });
     } catch { /* ignore */ }
-  }, []);
+  }, [hideAiFeatures]);
 
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
@@ -525,8 +532,8 @@ export default function CampaignDetail({
         ))}
       </div>
 
-      {/* Voice Settings — hidden for WhatsApp campaigns */}
-      {selectedCampaign.channel !== 'whatsapp' && (
+      {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
+      {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔊 Voice Settings</span>
@@ -674,8 +681,8 @@ export default function CampaignDetail({
         </div>
       )}
 
-      {/* Live Dial Events Feed */}
-      <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
+      {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
+      {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>📡 Live Campaign Activity</span>
           {liveEvents.length > 0 && (
@@ -698,7 +705,7 @@ export default function CampaignDetail({
             </div>
           ))
         )}
-      </div>
+      </div>}
 
       {/* Quick Add Lead Form */}
       <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
@@ -780,7 +787,7 @@ export default function CampaignDetail({
         {qaApiErr && <span style={{ color: T.red, fontSize: '0.75rem', width: '100%', marginTop: 4 }}>{qaApiErr}</span>}
       </div>
 
-      {selectedCampaign.channel === 'whatsapp' && (
+      {selectedCampaign.channel === 'whatsapp' && !hideAiFeatures && (
         <div style={{ marginBottom: 14 }}>
           <WhatsAppBlastPanel campaignId={selectedCampaign.id} apiFetch={apiFetch} API_URL={API_URL} />
         </div>
@@ -808,7 +815,7 @@ export default function CampaignDetail({
           }}>
           ⬇ Export Recordings
         </button>
-        {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+        {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
@@ -824,7 +831,7 @@ export default function CampaignDetail({
             📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
             try {
@@ -836,7 +843,7 @@ export default function CampaignDetail({
             } catch { toast('Failed');  }
           }}>
           📞 Dial All ({campaignLeads.length})
-        </button>
+        </button>}
       </div>
 
       {/* Tab Switcher */}
@@ -844,9 +851,9 @@ export default function CampaignDetail({
         {[
           { id: 'leads',   label: `👥 Leads (${campaignLeads.length})`,   activeColor: T.accent },
           { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
-          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7' },
-          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber  },
-        ].map(tab => (
+          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
+          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
+        ].filter(tab => !tab.hidden).map(tab => (
           <button key={tab.id}
             onClick={() => {
               if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
@@ -1291,7 +1298,7 @@ export default function CampaignDetail({
                       </div>
                     </td>
                   </tr>
-                  {(lead.follow_up_note || editingNote?.leadId === lead.id || generatedNote?.leadId === lead.id) && (
+                  {!hideAiFeatures && (lead.follow_up_note || editingNote?.leadId === lead.id || generatedNote?.leadId === lead.id) && (
                     <tr>
                       <td colSpan="5" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>

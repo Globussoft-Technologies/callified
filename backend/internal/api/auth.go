@@ -86,6 +86,18 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Block signup for non-super-admins if subscription is missing/expired/inactive.
+	if !s.isSuperAdmin(req.Email) {
+		if subErr, err := s.checkSubscription(req.Email); err != nil {
+			s.logger.Sugar().Errorw("signup: checkSubscription", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		} else if subErr != nil {
+			s.writeSubscriptionError(w, subErr)
+			return
+		}
+	}
+
 	token, err := s.mintToken(req.Email, orgID, role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -146,13 +158,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Block login for non-super-admins if subscription is missing/expired/inactive.
-	if subErr, err := s.checkSubscription(user.Email); err != nil {
-		s.logger.Sugar().Errorw("login: checkSubscription", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	} else if subErr != nil {
-		writeSubscriptionError(w, subErr)
-		return
+	if !s.isSuperAdmin(user.Email) {
+		if subErr, err := s.checkSubscription(user.Email); err != nil {
+			s.logger.Sugar().Errorw("login: checkSubscription", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		} else if subErr != nil {
+			s.writeSubscriptionError(w, subErr)
+			return
+		}
 	}
 
 	token, err := s.mintToken(user.Email, user.OrgID, user.Role)
@@ -214,13 +228,14 @@ func userResponse(s *Server, user *db.User) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":            user.ID,
-		"email":         user.Email,
-		"full_name":     user.FullName,
-		"role":          user.Role,
-		"org_id":        user.OrgID,
-		"org_name":      orgName,
-		"is_super_admin": s.isSuperAdmin(user.Email),
+		"id":              user.ID,
+		"email":           user.Email,
+		"full_name":       user.FullName,
+		"role":            user.Role,
+		"org_id":          user.OrgID,
+		"org_name":        orgName,
+		"is_super_admin":  s.isSuperAdmin(user.Email),
+		"hide_ai_features": s.db.ShouldHideAiFeatures(user.Email),
 	}
 }
 

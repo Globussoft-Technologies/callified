@@ -104,6 +104,7 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: provider,
 			TTSVoiceID:  voiceID,
 			TTSLanguage: lang,
+			UserEmail:   ac.Email,
 		}
 		callSid, err := s.initiator.Initiate(r.Context(), data)
 		if err != nil {
