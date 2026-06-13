@@ -146,16 +146,18 @@ export default function CampaignsTab({
   };
 
   const handleViewCampaign = (campaign) => {
+    console.log('[CampaignsTab] handleViewCampaign', campaign?.id);
     setSelectedCampaign(campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
     fetchCallLog(campaign.id);
     fetchCampVoice(campaign.id);
-    startEventStream(campaign.id);
+    startEventStream(campaign.id).catch(() => {});
     setDetailTab('leads');
   };
 
   const handleBack = () => {
+    console.log('[CampaignsTab] handleBack');
     stopEventStream();
     setView('list');
     setSelectedCampaign(null);
@@ -207,7 +209,7 @@ export default function CampaignsTab({
   };
 
   const stopEventStream = () => {
-    if (eventSourceRef.current) { eventSourceRef.current.abort(); eventSourceRef.current = null; }
+    if (eventSourceRef.current) { eventSourceRef.current.close(); eventSourceRef.current = null; }
   };
 
   const handleCreateCampaign = async (e) => {
