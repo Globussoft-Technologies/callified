@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
@@ -15,7 +15,7 @@ export default function CampaignsTab({
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket } = useAuth();
-  const { showToast } = useToast();
+  const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
   const [view, setView] = useState('list'); // 'list' or 'detail'
@@ -327,8 +327,8 @@ export default function CampaignsTab({
           channel: editCampaignForm.channel || 'voice'
         }));
       }
-      showToast('Campaign updated');
-    } catch (e) { console.error(e); showToast('Failed to update campaign', 'error'); }
+      toast('Campaign updated');
+    } catch (e) { console.error(e); toast('Failed to update campaign', 'error'); }
     setLoading(false);
   };
 
@@ -371,7 +371,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch { showToast('Save failed');  }
+    } catch { toast('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -424,7 +424,7 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      showToast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);
