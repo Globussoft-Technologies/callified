@@ -5,25 +5,21 @@ import { useVoice } from '../contexts/VoiceContext';
 export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, setSavedVoiceName } = useVoice();
 
+export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
   // Pronunciation State
   const [pronunciations, setPronunciations] = useState([]);
   const [pronFormData, setPronFormData] = useState({ word: '', phonetic: '' });
-  const [pronError, setPronError] = useState({ word: '', phonetic: '', api: '' });
+  const [pronError, setPronError] = useState('');
 
   // System Prompt State
   const [systemPromptAuto, setSystemPromptAuto] = useState('');
   const [systemPromptCustom, setSystemPromptCustom] = useState('');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
-  const [promptSaveStatus, setPromptSaveStatus] = useState(null);
-
-  useEffect(() => {
-    fetchPronunciations();
-    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
-  }, [selectedOrg]);
+  const [promptSaved, setPromptSaved] = useState(false);
 
   const fetchPronunciations = async () => {
-    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch { /* ignore */ }
   };
 
   const fetchSystemPrompt = async (orgId) => {
@@ -33,25 +29,24 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       setSystemPromptAuto(data.auto_generated || '');
       setSystemPromptCustom(data.custom_prompt || '');
       setPromptDirty(false);
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
+
+  useEffect(() => {
+     
+    fetchPronunciations();
+    if (selectedOrg) fetchSystemPrompt(selectedOrg.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrg]);
 
   const handleAddPronunciation = async (e) => {
     e.preventDefault();
-    const word = pronFormData.word.trim().replace(/\s+/g, ' ');
-    const phonetic = pronFormData.phonetic.trim().replace(/\s+/g, ' ');
-    const errors = { word: '', phonetic: '', api: '' };
-    const PRON_SAFE = /^[\w\s\-'.]+$/u;
-    if (!word) errors.word = 'Written word is required.';
-    if (!phonetic) errors.phonetic = 'Phonetic spelling is required.';
-    if (word && !PRON_SAFE.test(word)) errors.word = "Only letters, digits, spaces, hyphens, apostrophes, and dots are allowed.";
-    if (phonetic && !PRON_SAFE.test(phonetic)) errors.phonetic = "Only letters, digits, spaces, hyphens, apostrophes, and dots are allowed.";
-    if (!errors.word && word.length > 100) errors.word = 'Written word must be 100 characters or fewer.';
-    if (!errors.phonetic && phonetic.length > 200) errors.phonetic = 'Phonetic spelling must be 200 characters or fewer.';
-    if (word && phonetic && !errors.word && !errors.phonetic && word.toLowerCase() === phonetic.toLowerCase())
-      errors.phonetic = 'Phonetic spelling must differ from the written word.';
-    if (errors.word || errors.phonetic) { setPronError(errors); return; }
-    setPronError({ word: '', phonetic: '', api: '' });
+    if (!pronFormData.word.trim() || !pronFormData.phonetic.trim()) return;
+    if (pronFormData.word.trim().toLowerCase() === pronFormData.phonetic.trim().toLowerCase()) {
+      setPronError('The written word and phonetic version cannot be identical.');
+      return;
+    }
+    setPronError('');
     try {
       const res = await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
@@ -77,112 +72,30 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
     } catch(e) { console.error(e); }
   };
 
-  const [voiceSaving, setVoiceSaving] = useState(false);
-
-  // SMTP Settings State
-  const [smtpSettings, setSmtpSettings] = useState({ smtp_host: '', smtp_port: 587, smtp_user: '', smtp_password: '', smtp_from_name: 'Callified AI', app_url: '' });
-  const [smtpSaving, setSmtpSaving] = useState(false);
-  const [smtpSaveStatus, setSmtpSaveStatus] = useState(null);
-  const [smtpTesting, setSmtpTesting] = useState(false);
-  const [smtpTestResult, setSmtpTestResult] = useState(null);
-
-  useEffect(() => {
-    if (selectedOrg) fetchSmtpSettings(selectedOrg.id);
-  }, [selectedOrg]);
-
-  const fetchSmtpSettings = async (orgId) => {
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${orgId}/smtp-settings`);
-      if (res.ok) setSmtpSettings(await res.json());
-    } catch(e) {}
-  };
-
-  const handleSaveSmtp = async () => {
-    if (!selectedOrg) return;
-    setSmtpSaving(true); setSmtpSaveStatus(null);
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/smtp-settings`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(smtpSettings),
-      });
-      setSmtpSaveStatus(res.ok ? 'saved' : 'error');
-      if (res.ok) setTimeout(() => setSmtpSaveStatus(null), 4000);
-    } catch(e) { setSmtpSaveStatus('error'); }
-    setSmtpSaving(false);
-  };
-
-  const handleTestSmtp = async () => {
-    if (!selectedOrg) return;
-    setSmtpTesting(true); setSmtpTestResult(null);
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/smtp-test`, { method: 'POST' });
-      const data = await res.json();
-      setSmtpTestResult({ ok: data.status === 'ok', message: data.message });
-    } catch(e) { setSmtpTestResult({ ok: false, message: 'Network error' }); }
-    setSmtpTesting(false);
-  };
-
-  const handleSaveOrgVoice = async ({ provider, voiceId, language, voiceName }) => {
-    if (!selectedOrg) return;
-    setVoiceSaving(true);
-    try {
-      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/voice-settings`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_provider: provider, tts_voice_id: voiceId, tts_language: language })
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setActiveVoiceProvider(provider);
-      setActiveVoiceId(voiceId);
-      setActiveLanguage(language);
-      if (voiceName) setSavedVoiceName(voiceName);
-      return true;
-    } catch (e) {
-      return false;
-    } finally {
-      setVoiceSaving(false);
-    }
-  };
-
   const handleSaveSystemPrompt = async () => {
     if (!selectedOrg) return;
     setPromptSaving(true);
-    setPromptSaveStatus(null);
-    try {
-      await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
-        method: 'PUT', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ custom_prompt: systemPromptCustom })
-      });
-      setPromptDirty(false);
-      setPromptSaveStatus('saved');
-      setTimeout(() => setPromptSaveStatus(null), 4000);
-    } catch(e) {
-      setPromptSaveStatus('error');
-    } finally {
-      setPromptSaving(false);
-    }
+    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ custom_prompt: systemPromptCustom })
+    });
+    setPromptSaving(false);
+    setPromptDirty(false);
+    setPromptSaved(true);
+    setTimeout(() => setPromptSaved(false), 3000);
   };
 
   return (
     <SettingsTab
       orgTimezone={orgTimezone}
       handleAddPronunciation={handleAddPronunciation} pronFormData={pronFormData}
-      setPronFormData={setPronFormData} pronunciations={pronunciations}
-      pronError={pronError} setPronError={setPronError}
+      setPronFormData={setPronFormData} pronError={pronError} setPronError={setPronError}
+      pronunciations={pronunciations}
       handleDeletePronunciation={handleDeletePronunciation} selectedOrg={selectedOrg}
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
-      promptSaving={promptSaving} promptSaveStatus={promptSaveStatus}
-      systemPromptAuto={systemPromptAuto}
+      promptSaving={promptSaving} promptSaved={promptSaved} systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
       setPromptDirty={setPromptDirty}
-      activeVoiceProvider={activeVoiceProvider}
-      activeVoiceId={activeVoiceId}
-      activeLanguage={activeLanguage}
-      handleSaveOrgVoice={handleSaveOrgVoice}
-      voiceSaving={voiceSaving}
-      smtpSettings={smtpSettings} setSmtpSettings={setSmtpSettings}
-      smtpSaving={smtpSaving} smtpSaveStatus={smtpSaveStatus}
-      smtpTesting={smtpTesting} smtpTestResult={smtpTestResult}
-      handleSaveSmtp={handleSaveSmtp} handleTestSmtp={handleTestSmtp}
     />
   );
 }

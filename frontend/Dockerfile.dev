@@ -1,0 +1,4 @@
+# Dev shim — used by docker-compose.override.yml to override the production
+# multi-stage build so the dev stack gets plain node:20-alpine (Vite HMR)
+# instead of the nginx production image.
+FROM node:20-alpine

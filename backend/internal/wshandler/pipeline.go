@@ -1,0 +1,343 @@
+package wshandler
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/globussoft/callified-backend/internal/metrics"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
+	"github.com/globussoft/callified-backend/internal/tts"
+)
+
+// runPipeline reads transcripts from sess.Transcripts, debounces them, and
+// dispatches exactly one goroutine per debounce window to call the LLM.
+// Using a pending-slot channel avoids the goroutine-per-transcript pattern
+// that previously spawned 5–8 sleeping goroutines per utterance.
+// Runs until ctx is cancelled or sess.Transcripts is closed.
+func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider, store *rstore.Store) {
+	// pending holds the most recent transcript waiting to be dispatched.
+	// Capacity 1: new transcripts overwrite the previous one before dispatch.
+	pending := make(chan string, 1)
+
+	// Dispatcher: drains pending after a 150ms quiet window.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case transcript, ok := <-pending:
+				if !ok {
+					return
+				}
+				// Wait for the debounce window, then check if a newer
+				// transcript replaced this one in the pipeline.
+				ts := sess.StampTranscript()
+				time.Sleep(150 * time.Millisecond)
+				if sess.LastTranscript() == ts {
+					go processTranscript(ctx, sess, transcript, ts, provider, store)
+				}
+			}
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case transcript, ok := <-sess.Transcripts:
+			if !ok {
+				return
+			}
+			// Non-blocking send: drop the previous pending transcript if the
+			// dispatcher hasn't consumed it yet (newer utterance supersedes it).
+			select {
+			case pending <- transcript:
+			default:
+				// Drain and replace with the newer transcript.
+				select {
+				case <-pending:
+				default:
+				}
+				pending <- transcript
+			}
+		}
+	}
+}
+
+// processTranscript is the per-turn logic: takeover check → backchannel → LLM → TTS queue.
+// ts is the debounce stamp set by the dispatcher in runPipeline — the dispatcher
+// already waited 150ms and confirmed it's still current before calling us.
+// Mirrors Python's _process_transcript in ws_handler.py.
+func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
+	// --- Voicemail detection (highest priority — runs before LLM, takeover, etc.) ---
+	// If the carrier picks up with "you have reached…" / "leave a message after the
+	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
+	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
+	if sess.HangupRequested() {
+		return // already heading for hangup; nothing more to do
+	}
+	if isVoicemail(transcript) {
+		handleVoicemail(ctx, sess, transcript)
+		return
+	}
+
+	// --- Check manager takeover ---
+	if store.GetTakeover(ctx, sess.StreamSid) {
+		return
+	}
+
+	// --- PostTTS cooldown: wait if TTS just finished ---
+	if ms := sess.MsSinceTTSEnd(); ms < 200 {
+		time.Sleep(time.Duration(200-ms) * time.Millisecond)
+	}
+
+	// --- Acquire LLM lock (one turn at a time) ---
+	sess.llmMu.Lock()
+	defer sess.llmMu.Unlock()
+	// Re-check stamp after acquiring lock: a newer transcript may have arrived
+	// while this goroutine was waiting for the lock.
+	if sess.LastTranscript() != ts || sess.HangupRequested() {
+		return
+	}
+
+	// --- Broadcast user transcript to monitor connections ---
+	sess.BroadcastTranscript("user", transcript)
+
+	// --- Inject whispers (manager hints) as additional context ---
+	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
+	for _, w := range whispers {
+		sess.AppendHistory("user", "[Manager hint]: "+w)
+	}
+
+	// --- Record user transcript in history ---
+	sess.AppendHistory("user", transcript)
+	history := sess.HistorySnapshot()
+
+	// --- Call LLM (streaming) with latency tracking ---
+	responseBuilder := strings.Builder{}
+	hasHangup := false
+	firstChunk := true
+	tPreLLM := time.Now()
+
+	var err error
+	if provider != nil {
+		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
+			Transcript:   transcript,
+			SystemPrompt: sess.SystemPrompt,
+			History:      history[:max(0, len(history)-1)], // exclude the turn we just added
+			Language:     sess.Language,
+			MaxTokens:    sess.MaxTokens(transcript),
+		}, func(chunk llm.SentenceChunk) {
+			if firstChunk && chunk.Text != "" {
+				// Record LLM TTFB: time from transcript to first sentence chunk
+				metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
+				firstChunk = false
+				// New response starting — clear barge-in so TTS worker stops
+				// discarding sentences and the agent can speak again.
+				sess.SetBargeIn(false)
+			}
+			if chunk.HasHangup {
+				hasHangup = true
+				sess.RequestHangup()
+			}
+			if chunk.Text != "" {
+				responseBuilder.WriteString(chunk.Text)
+				responseBuilder.WriteString(" ")
+				select {
+				case sess.TTSSentences <- chunk.Text:
+				case <-ctx.Done():
+				}
+			}
+		})
+	}
+
+	// Record total LLM round-trip latency (metric name kept for dashboard compatibility)
+	metrics.GRPCLatency.Observe(time.Since(tPreLLM).Seconds())
+
+	if err != nil && !errors.Is(err, context.Canceled) {
+		sess.Log.Error("pipeline: ProcessTranscript error", zap.Error(err))
+	}
+
+	// --- Record AI response in history and broadcast to monitors ---
+	if resp := strings.TrimSpace(responseBuilder.String()); resp != "" {
+		sess.AppendHistory("model", resp)
+		sess.BroadcastTranscript("agent", resp)
+	}
+
+	// --- Signal TTS worker that HANGUP follows the last sentence ---
+	if hasHangup {
+		select {
+		case sess.TTSSentences <- "": // empty = hangup sentinel
+		case <-ctx.Done():
+		}
+	}
+}
+
+// runTTSWorker reads sentences from sess.TTSSentences, calls the TTS provider,
+// and sends the resulting PCM audio to the phone via the WebSocket.
+// An empty sentence ("") is the HANGUP sentinel: drain + grace period + close.
+//
+// The provider is looked up on the session each iteration (rather than closed
+// over at worker start) so that handleStartEvent can swap the instance when
+// the Redis-hydrated campaign uses a different provider than the pre-loaded
+// default. Without this, a call whose campaign is configured for SmallestAI
+// but whose default was Sarvam would always synthesise via Sarvam.
+func runTTSWorker(ctx context.Context, sess *CallSession) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sentence, ok := <-sess.TTSSentences:
+			if !ok {
+				return
+			}
+			if sentence == "" {
+				// HANGUP sentinel: wait for remaining audio then close
+				remaining := sess.PlaybackTracker.RemainingDuration()
+				sess.Log.Info("hangup: waiting for playback drain",
+					zap.Duration("remaining", remaining))
+				waitStart := time.Now()
+				select {
+				case <-time.After(remaining + 7*time.Second):
+				case <-ctx.Done():
+				}
+				metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+				sess.WS.Close() //nolint:errcheck
+				return
+			}
+			// Safety: bridge sessions must never synthesise AI audio —
+			// the agent's browser mic is the audio source, not TTS.
+			if sess.IsBridge {
+				sess.Log.Warn("tts worker: dropping sentence for bridge session — should not happen",
+					zap.String("sentence", sentence))
+				continue
+			}
+			// Discard sentences queued before barge-in — customer interrupted,
+			// old agent response is stale.
+			if sess.IsBargeInActive() {
+				sess.Log.Info("barge-in: discarding stale sentence", zap.String("text", sentence))
+				continue
+			}
+			provider := sess.TTSInstance()
+			if provider == nil {
+				sess.Log.Warn("TTS worker: no provider available, dropping sentence",
+					zap.String("sentence", sentence))
+				continue
+			}
+			synthesizeAndSend(ctx, sess, provider, sentence)
+		}
+	}
+}
+
+// synthesizeAndSend calls the TTS provider for one sentence and streams
+// the resulting PCM audio to the phone via the WebSocket.
+func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Provider, sentence string) {
+	ttsCtx, cancel := context.WithCancel(ctx)
+	sess.SetCancelTTS(cancel)
+	defer cancel()
+
+	sess.SetTTSPlaying(true)
+	sess.MarkTTSNewUtterance()
+	defer func() {
+		sess.SetTTSPlaying(false)
+		sess.MarkTTSEnd()
+	}()
+
+	tPreTTS := time.Now()
+	firstChunk := true
+
+	// Debug trace so we can confirm what language each utterance was
+	// synthesized in. If the user reports "AI spoke Hindi but I saved Telugu"
+	// this log line shows whether sess.TTSLanguage was actually carried
+	// through, vs. being lost / overridden somewhere upstream. Cheap to keep
+	// in production — fires once per agent utterance, not per audio chunk.
+	sess.Log.Info("tts: synthesize",
+		zap.String("language", sess.TTSLanguage),
+		zap.String("voice_id", sess.TTSVoiceID),
+		zap.String("provider_kind", fmt.Sprintf("%T", provider)),
+		zap.Int("text_len", len(sentence)),
+	)
+
+	err := provider.Synthesize(ttsCtx, sentence, sess.TTSLanguage, sess.TTSVoiceID,
+		func(pcm8k []byte) {
+			if firstChunk {
+				metrics.TTSFirstByteLatency.Observe(time.Since(tPreTTS).Seconds())
+				firstChunk = false
+			}
+			sendAudioFrame(sess, pcm8k)
+		},
+	)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		sess.Log.Warn("TTS error", zap.String("sentence", sentence), zap.Error(err))
+	}
+}
+
+// sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
+// Handles ulaw conversion for Exotel and JSON framing differences.
+func sendAudioFrame(sess *CallSession, pcm8k []byte) {
+	// Drop frames immediately on barge-in so the wsMu write queue doesn't fill
+	// up with stale audio behind the {"type":"clear"} control message.
+	if sess.IsBargeInActive() {
+		return
+	}
+	// Record for server-side stereo WAV
+	sess.AppendTTSChunk(pcm8k)
+	// Feed echo canceller (ulaw representation)
+	sess.EchoCanceller.FeedTTS(audio.PCMToUlaw(pcm8k))
+
+	// Encode audio. The codec choice is decoupled from sess.IsExotel because
+	// the Voicebot applet — although carrier-served — speaks PCM-16 LE just
+	// like the browser web-sim. See handleStartEvent for the per-call
+	// detection that sets UseUlaw.
+	var audioBytes []byte
+	if sess.UseUlaw {
+		audioBytes = audio.PCMToUlaw(pcm8k)
+	} else {
+		audioBytes = pcm8k
+	}
+	sess.PlaybackTracker.AddBytes(len(audioBytes))
+
+	// JSON envelope casing follows the same split: μ-law (Twilio/Stream
+	// Passthru) uses camelCase streamSid; PCM-16 (Voicebot/web-sim) uses
+	// snake_case stream_sid.
+	var frameKey string
+	if sess.UseUlaw {
+		frameKey = "streamSid"
+	} else {
+		frameKey = "stream_sid"
+	}
+
+	payloadB64 := base64.StdEncoding.EncodeToString(audioBytes)
+	frame, _ := json.Marshal(map[string]interface{}{
+		"event":   "media",
+		frameKey:  sess.StreamSid,
+		"media":   map[string]string{"payload": payloadB64},
+	})
+	_ = sess.SendText(frame)
+
+	// Relay a copy of the agent's outbound audio to any attached monitors so
+	// external consumers can render / play back what the AI is saying.
+	if sess.hasMonitors() {
+		format := "pcm16_8k"
+		if sess.UseUlaw {
+			format = "ulaw_8k"
+		}
+		sess.BroadcastAudio("agent", payloadB64, format)
+	}
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

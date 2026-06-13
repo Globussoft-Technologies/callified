@@ -297,6 +297,7 @@ async def handle_media_stream(websocket: WebSocket):
     _debounce_delay = 0.15  # 150ms debounce — near-instant response
     _last_tts_end_time = [0.0]  # Track when TTS last finished, to give user breathing room
     _tts_playing = [False]  # True while TTS is actively sending audio — suppress STT echo
+    _active_process_task = [None]  # Tracks in-flight _process_transcript asyncio.Task for barge-in cancellation
     _recording_mic_chunks = []
     _recording_tts_chunks = []
 
@@ -394,13 +395,25 @@ async def handle_media_stream(websocket: WebSocket):
         logging.getLogger("uvicorn.error").error(f"[STT ERROR] Deepgram fired an error: {error}")
 
     def on_speech_started(self, **kwargs):
+        # Clear echo-suppression flags immediately in this thread so that the
+        # final transcript arriving in on_message (50-200ms later, same thread)
+        # is never blocked by a stale _tts_playing or _last_tts_end_time check.
+        _tts_playing[0] = False
+        _last_tts_end_time[0] = 0
         if stream_sid:
             asyncio.run_coroutine_threadsafe(
                 websocket.send_text(json.dumps({"event": "clear", "streamSid": stream_sid})),
                 loop,
             )
-        if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
-            loop.call_soon_threadsafe(active_tts_tasks[stream_sid].cancel)
+        def _cancel_pipeline():
+            # Cancel in-flight LLM task so barge-in transcript can acquire _llm_lock.
+            # asyncio.Task cancellation propagates CancelledError through async with _llm_lock,
+            # which calls __aexit__ and releases the lock automatically.
+            if _active_process_task[0] and not _active_process_task[0].done():
+                _active_process_task[0].cancel()
+            if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
+                active_tts_tasks[stream_sid].cancel()
+        loop.call_soon_threadsafe(_cancel_pipeline)
 
     # ── Dual-STT: shared processing after merge picks the best transcript ──
     def _do_process_stt(sentence, result):
@@ -463,11 +476,98 @@ async def handle_media_stream(websocket: WebSocket):
             return
         conv_logger = logging.getLogger("uvicorn.error")
 
-        # ── Voicemail detection — highest priority, before all other checks ──
-        if not _voicemail_detected[0] and _is_voicemail(sentence, time.time() - _call_start_time):
-            _voicemail_detected[0] = True
-            _hangup_requested[0] = True
-            conv_logger.info(f"[VOICEMAIL] Detected: '{sentence[:80]}' — leaving pitch and hanging up")
+            async def _process_transcript():
+                try:
+                    t_start = time.time()
+                    _last_transcript_time[0] = t_start
+
+                    # Brief cooldown after TTS ends so user can start speaking
+                    time_since_tts = t_start - _last_tts_end_time[0]
+                    if time_since_tts < 0.2:
+                        await asyncio.sleep(0.2 - time_since_tts)
+
+                    await asyncio.sleep(_debounce_delay)
+                    if _last_transcript_time[0] != t_start:
+                        logging.getLogger("uvicorn.error").info("[DEBOUNCE] Skipping older transcript — newer one pending.")
+                        return
+                    if _llm_lock.locked():
+                        logging.getLogger("uvicorn.error").info("[TURN_GUARD] Skipping — LLM already processing.")
+                        return
+
+                    async with _llm_lock:
+                        if stream_sid:
+                            for monitor in monitor_connections.get(stream_sid, set()):
+                                try:
+                                    await monitor.send_json({"type": "transcript", "role": "user", "text": sentence})
+                                except Exception:
+                                    pass
+                            if redis_store.get_takeover(stream_sid):
+                                return
+                            pending = redis_store.pop_all_whispers(stream_sid)
+                            if pending:
+                                for whisper in pending:
+                                    chat_history.append({"role": "user", "parts": [{"text": f"Manager Whisper: {whisper}. Acknowledge this implicitly in your next response."}]})
+
+                        # RAG via Local FAISS
+                        rag_context = ""
+                        if _call_org_id:
+                            try:
+                                import rag
+                                context = rag.retrieve_context(sentence, _call_org_id, top_k=2)
+                                if context:
+                                    rag_context = "\n\n[COMPANY KNOWLEDGE - Check if this has facts relevant to the discussion and explicitly use it]:\n" + context
+                            except Exception as e:
+                                conv_logger.error(f"RAG FAISS lookup error: {e}")
+
+                        t_pre_llm = time.time()
+                        final_system_instruction = dynamic_context + rag_context
+
+                        # Start TTS Worker Queue for Streaming Pipeline
+                        tts_queue = asyncio.Queue()
+                        
+                        # [Phase 2: Conversational Backchanneling]
+                        # Only inject a filler word if the user spoke a meaningful sentence (>2 words)
+                        if len(sentence.split()) > 2:
+                            import random
+                            if random.random() < 0.6:  # 60% chance to trigger a human filler
+                                fillers = ["Hmm...", "Achha...", "Okay...", "Haan..."]
+                                await tts_queue.put(random.choice(fillers))
+                        
+                        async def tts_worker():
+                            try:
+                                while True:
+                                    sentence = await tts_queue.get()
+                                    if sentence is None:
+                                        break
+                                    _tts_playing[0] = True
+                                    await synthesize_and_send_audio(
+                                        text=sentence,
+                                        stream_sid=stream_sid,
+                                        websocket=websocket,
+                                        tts_provider_override=_tts_provider_override,
+                                        tts_voice_override=_tts_voice_override,
+                                        tts_language_override=_tts_language_override
+                                    )
+                                    _tts_playing[0] = False
+                                    _last_tts_end_time[0] = time.time()
+                                    tts_queue.task_done()
+                            except asyncio.CancelledError:
+                                _tts_playing[0] = False
+                                # Don't update _last_tts_end_time here — on_speech_started
+                                # already reset it to 0 so the barge-in transcript isn't suppressed.
+                            except Exception as e:
+                                conv_logger.error(f"TTS Worker Error: {e}")
+
+                        if stream_sid in active_tts_tasks and not active_tts_tasks[stream_sid].done():
+                            active_tts_tasks[stream_sid].cancel()
+                            try:
+                                await active_tts_tasks[stream_sid]
+                            except (asyncio.CancelledError, Exception):
+                                pass
+                                
+                        worker_task = asyncio.create_task(tts_worker())
+                        if stream_sid:
+                            active_tts_tasks[stream_sid] = worker_task
 
             async def _leave_voicemail_and_hangup():
                 # Cancel any active TTS (greeting may still be playing)
@@ -740,33 +840,9 @@ async def handle_media_stream(websocket: WebSocket):
                             except Exception:
                                 pass
 
-                    # AI Physical Disconnect Command Handler
-                    if "[HANGUP]" in full_response:
-                        _hangup_requested[0] = True
-                        conv_logger.info("[COMMAND] LLM explicitly commanded a websocket disconnect.")
-                        if stream_sid:
-                            call_logger.call_event(stream_sid, "LLM_HANGUP", "AI explicitly ended the call block.")
-                        try:
-                            await asyncio.wait_for(worker_task, timeout=15)
-                            conv_logger.info("[HANGUP] TTS drain complete, closing connection.")
-                        except (asyncio.TimeoutError, Exception):
-                            conv_logger.info("[HANGUP] TTS drain timed out, forcing close.")
-                        await asyncio.sleep(7)
-                        try:
-                            await websocket.close()
-                        except Exception:
-                            pass
-                        return
-                except Exception as e:
-                    import traceback
-                    conv_logger.error(f"Error streaming LLM response: {e}")
-                    conv_logger.error(traceback.format_exc())
-                    await tts_queue.put(None)
-                    return
-        except Exception as _crash:
-            import traceback
-            logging.getLogger("uvicorn.error").error(f"[SYSTEM FATAL] _process_transcript SILENT CRASH: {_crash}")
-            logging.getLogger("uvicorn.error").error(traceback.format_exc())
+            def _sched():
+                _active_process_task[0] = asyncio.create_task(_process_transcript())
+            loop.call_soon_threadsafe(_sched)
 
     dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
     dg_connection.on(LiveTranscriptionEvents.Transcript, on_message_primary)

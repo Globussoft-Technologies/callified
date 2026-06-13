@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import CampaignsTab from '../components/tabs/CampaignsTab';
 import TranscriptModal from '../components/modals/TranscriptModal';
-import { useToast } from '../contexts/ToastContext';
+import { useToast } from '../contexts/UIContext';
 
 export default function CampaignsPage({
   apiFetch, API_URL, selectedOrg, orgTimezone, orgProducts,
@@ -11,6 +11,7 @@ export default function CampaignsPage({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   campaigns, fetchCampaigns
 }) {
+  const toast = useToast();
   // Leads for adding to campaigns (the global leads pool)
   const [leads, setLeads] = useState([]);
 
@@ -18,7 +19,6 @@ export default function CampaignsPage({
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
-  const [noteError, setNoteError] = useState('');
 
   // Transcript state (for campaign lead transcripts)
   const [transcriptLead, setTranscriptLead] = useState(null);
@@ -27,21 +27,24 @@ export default function CampaignsPage({
 
   useEffect(() => {
     fetchLeads();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchLeads = async () => {
     try {
       const res = await apiFetch(`${API_URL}/leads`);
       setLeads(await res.json());
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
 
   const handleViewTranscripts = async (lead) => {
     setTranscriptLead(lead);
     try {
       const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts`);
-      setTranscripts(await res.json());
-    } catch(e) { setTranscripts([]); }
+      if (!res.ok) { setTranscripts([]); return; }
+      const data = await res.json();
+      setTranscripts(Array.isArray(data) ? data : []);
+    } catch { setTranscripts([]);  }
   };
 
   const handleNote = (lead) => {
@@ -52,24 +55,27 @@ export default function CampaignsPage({
 
   const handleSaveNote = async () => {
     if (!noteLead) return;
-    if (!noteText.trim()) { setNoteError('Note cannot be empty.'); return; }
+    const trimmed = noteText.trim();
+    if (!trimmed) { toast('Note cannot be empty'); return; }
     setNoteSaving(true);
-    setNoteError('');
     try {
       const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: noteText.trim() })
+        body: JSON.stringify({ note: trimmed })
       });
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        showToast(d.detail || `Save failed (${res.status})`, 'error');
-      } else {
-        setNoteLead(null);
-        showToast('Note saved');
+        let msg = `Failed to save note (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
+        toast(msg);
+        return;
       }
+      setNoteLead(null);
+      setNoteText('');
     } catch(e) {
-      showToast('Network error — note not saved', 'error');
+      toast('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
     }
     setNoteSaving(false);
   };
@@ -92,6 +98,7 @@ export default function CampaignsPage({
       <TranscriptModal
         transcriptLead={transcriptLead} setTranscriptLead={setTranscriptLead}
         transcripts={transcripts} orgTimezone={orgTimezone}
+        onRefresh={handleViewTranscripts}
       />
 
       {/* Note Modal for campaign leads */}

@@ -1,0 +1,425 @@
+package db
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Lead mirrors the leads table.
+type Lead struct {
+	ID           int64   `json:"id"`
+	OrgID        int64   `json:"org_id"`
+	FirstName    string  `json:"first_name"`
+	LastName     string  `json:"last_name"`
+	Phone        string  `json:"phone"`
+	Source       string  `json:"source"`
+	Status       string  `json:"status"`
+	FollowUpNote string  `json:"follow_up_note"`
+	Interest     string  `json:"interest"`
+	ExternalID   string  `json:"external_id"`
+	CRMProvider  string  `json:"crm_provider"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
+	l := &Lead{}
+	var orgID, followUpNote, interest, extID, crmProvider sql.NullString
+	var orgIDInt sql.NullInt64
+	err := row.Scan(
+		&l.ID, &orgIDInt, &l.FirstName, &l.LastName, &l.Phone,
+		&l.Source, &l.Status, &followUpNote, &interest, &extID, &crmProvider,
+		&l.CreatedAt,
+	)
+	_ = orgID
+	if err != nil {
+		return nil, err
+	}
+	if orgIDInt.Valid {
+		l.OrgID = orgIDInt.Int64
+	}
+	l.FollowUpNote = followUpNote.String
+	l.Interest = interest.String
+	l.ExternalID = extID.String
+	l.CRMProvider = crmProvider.String
+	return l, nil
+}
+
+const leadCols = `id, org_id, first_name, COALESCE(last_name,''), phone,
+	COALESCE(source,''), COALESCE(status,'new'), COALESCE(follow_up_note,''),
+	COALESCE(interest,''), COALESCE(external_id,''), COALESCE(crm_provider,''),
+	DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')`
+
+// leadColsL is leadCols prefixed with table alias "l" for use in JOIN queries.
+const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
+	COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.follow_up_note,''),
+	COALESCE(l.interest,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
+	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
+
+// GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
+func (d *DB) GetAllLeads(orgID int64) ([]Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads`
+	var args []any
+	if orgID != 0 {
+		q += ` WHERE org_id = ?`
+		args = append(args, orgID)
+	}
+	q += ` ORDER BY created_at DESC`
+	return queryLeads(d.pool, q, args...)
+}
+
+// SearchLeads full-text searches by name/phone in the given org.
+func (d *DB) SearchLeads(query string, orgID int64) ([]Lead, error) {
+	like := "%" + query + "%"
+	q := `SELECT ` + leadCols + ` FROM leads WHERE (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)`
+	args := []any{like, like, like}
+	if orgID != 0 {
+		q += ` AND org_id = ?`
+		args = append(args, orgID)
+	}
+	q += ` ORDER BY created_at DESC LIMIT 100`
+	return queryLeads(d.pool, q, args...)
+}
+
+// GetLeadByID fetches one lead. Returns nil when not found.
+func (d *DB) GetLeadByID(id int64) (*Lead, error) {
+	row := d.pool.QueryRow(`SELECT `+leadCols+` FROM leads WHERE id = ?`, id)
+	l, err := scanLead(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return l, err
+}
+
+// GetLeadByPhone fetches one lead by phone number. Returns nil when not found.
+// Used by the live-feed label fallback when the carrier's call_sid didn't
+// match a Redis pending entry but the start event still exposes the phone.
+func (d *DB) GetLeadByPhone(phone string) (*Lead, error) {
+	row := d.pool.QueryRow(`SELECT `+leadCols+` FROM leads WHERE phone = ? LIMIT 1`, phone)
+	l, err := scanLead(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return l, err
+}
+
+// GetLeadByPhoneOrg fetches one lead by phone within a single org. The plain
+// GetLeadByPhone is fine as an internal lookup (used by leadLabel for any
+// lead in any org), but anything driven by an authenticated user MUST scope
+// to their org_id — otherwise a non-Admin agent could enumerate other tenants'
+// leads by phone. orgID == 0 falls back to global match for backward compat
+// (legacy single-tenant deployments where leads.org_id is NULL).
+func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64) (*Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads WHERE phone = ?`
+	args := []any{phone}
+	if orgID > 0 {
+		q += ` AND (org_id = ? OR org_id IS NULL)`
+		args = append(args, orgID)
+	}
+	q += ` LIMIT 1`
+	row := d.pool.QueryRow(q, args...)
+	l, err := scanLead(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return l, err
+}
+
+// CreateLead inserts a new lead. Returns the new ID.
+func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
+	res, err := d.pool.Exec(
+		`INSERT INTO leads (org_id, first_name, last_name, phone, source, interest)
+		 VALUES (?,?,?,?,?,?)`,
+		nullInt64(orgID), firstName, lastName, phone, source, nullString(interest),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateLead updates mutable lead fields. Returns true if a row was changed.
+func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest string, orgID int64) (bool, error) {
+	res, err := d.pool.Exec(
+		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?
+		 WHERE id=? AND (org_id=? OR org_id IS NULL)`,
+		firstName, lastName, phone, source, nullString(interest), id, orgID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// DeleteLead deletes a lead scoped to the given org. Returns true if deleted.
+func (d *DB) DeleteLead(id, orgID int64) (bool, error) {
+	res, err := d.pool.Exec(
+		`DELETE FROM leads WHERE id=? AND (org_id=? OR org_id IS NULL)`, id, orgID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// UpdateLeadStatus sets the status column.
+func (d *DB) UpdateLeadStatus(id int64, status string) error {
+	_, err := d.pool.Exec(`UPDATE leads SET status=? WHERE id=?`, status, id)
+	return err
+}
+
+// UpdateLeadNote sets the follow_up_note column.
+func (d *DB) UpdateLeadNote(id int64, note string) error {
+	_, err := d.pool.Exec(`UPDATE leads SET follow_up_note=? WHERE id=?`, note, id)
+	return err
+}
+
+// BulkCreateLeads inserts multiple leads, skipping duplicates. Returns (imported, errors).
+func (d *DB) BulkCreateLeads(rows []LeadImportRow, orgID int64) (int, []string) {
+	var imported int
+	var errs []string
+	for i, r := range rows {
+		_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", orgID)
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "Duplicate") || strings.Contains(msg, "1062") {
+				msg = "duplicate phone"
+			}
+			errs = append(errs, fmt.Sprintf("Row %d: %s", i+2, msg[:min(len(msg), 50)]))
+		} else {
+			imported++
+		}
+	}
+	return imported, errs
+}
+
+// LeadImportRow holds one CSV row for bulk import.
+type LeadImportRow struct {
+	FirstName string
+	LastName  string
+	Phone     string
+	Source    string
+}
+
+// Document mirrors the documents table.
+type Document struct {
+	ID         int64  `json:"id"`
+	LeadID     int64  `json:"lead_id"`
+	FileName   string `json:"file_name"`
+	FileURL    string `json:"file_url"`
+	UploadedAt string `json:"uploaded_at"`
+}
+
+// GetDocumentsByLead returns all documents for a lead.
+func (d *DB) GetDocumentsByLead(leadID int64) ([]Document, error) {
+	rows, err := d.pool.Query(
+		`SELECT id, lead_id, file_name, file_url, DATE_FORMAT(uploaded_at,'%Y-%m-%d %H:%i:%s')
+		 FROM documents WHERE lead_id=? ORDER BY uploaded_at DESC`, leadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var docs []Document
+	for rows.Next() {
+		var doc Document
+		if err := rows.Scan(&doc.ID, &doc.LeadID, &doc.FileName, &doc.FileURL, &doc.UploadedAt); err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, rows.Err()
+}
+
+// CreateDocument inserts a document record.
+func (d *DB) CreateDocument(leadID int64, fileName, fileURL string) error {
+	_, err := d.pool.Exec(
+		`INSERT INTO documents (lead_id, file_name, file_url) VALUES (?,?,?)`,
+		leadID, fileName, fileURL)
+	return err
+}
+
+// Transcript mirrors call_transcripts.
+//
+// Transcript is the MySQL JSON column — we use json.RawMessage so it passes
+// through encoding/json unmolested (as a real JSON array), instead of being
+// re-encoded as a JSON string. The frontend's TranscriptModal does
+// `Array.isArray(t.transcript)` and iterates directly, so the API must send
+// an array, not an escaped string. Python's MySQL driver decodes JSON natively
+// (returns list[dict]), and FastAPI serialises it the same way — this matches
+// that behavior so the modal renders transcript bubbles.
+type Transcript struct {
+	ID            int64           `json:"id"`
+	LeadID        int64           `json:"lead_id"`
+	CampaignID    int64           `json:"campaign_id"`
+	Transcript    json.RawMessage `json:"transcript"`
+	RecordingURL  string          `json:"recording_url"`
+	TTSLanguage   string          `json:"tts_language"`
+	CallDurationS float64         `json:"call_duration_s"`
+	CreatedAt     string          `json:"created_at"`
+}
+
+// GetTranscriptsByLead returns all transcripts for a lead.
+func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
+	rows, err := d.pool.Query(
+		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		        COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		        COALESCE(tts_language,''),
+		        COALESCE(call_duration_s,0),
+		        DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		 FROM call_transcripts WHERE lead_id=? ORDER BY created_at DESC`, leadID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Transcript
+	for rows.Next() {
+		var t Transcript
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+// GetRecentCallTimeline returns the most recent call transcripts for an org (across all leads).
+func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error) {
+	rows, err := d.pool.Query(`
+		SELECT ct.id, COALESCE(ct.lead_id,0), COALESCE(ct.campaign_id,0),
+		COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
+		COALESCE(ct.tts_language,''),
+		COALESCE(ct.call_duration_s,0),
+		DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts ct
+		JOIN leads l ON ct.lead_id=l.id
+		WHERE l.org_id=?
+		ORDER BY ct.created_at DESC LIMIT ?`, orgID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Transcript
+	for rows.Next() {
+		var t Transcript
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript,
+			&t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+// SaveCallTranscript inserts a call transcript row and returns the new ID.
+// transcriptJSON should be a JSON array of {role,text} objects.
+// ttsLanguage is the BCP-47-ish language code the call was conducted in
+// (hi, mr, bn, gu, pa, ta, te, kn, ml, en); empty string stores NULL.
+//
+// orgID is the owning org. If the caller passes 0 we fall back to the lead's
+// org — this matters because web-sim calls don't hit the Redis hydration path
+// that populates sess.OrgID, so without the fallback every web-sim row would
+// land with org_id=NULL and get filtered out of the Analytics dashboard.
+func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
+	if orgID == 0 && leadID > 0 {
+		_ = d.pool.QueryRow(`SELECT org_id FROM leads WHERE id=?`, leadID).Scan(&orgID)
+	}
+	res, err := d.pool.Exec(
+		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, transcript, recording_url, tts_language, call_duration_s)
+		 VALUES (?,?,?,?,?,?,?)`,
+		nullInt64(leadID), nullInt64(campaignID), nullInt64(orgID),
+		transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// GetTranscriptByID fetches a single transcript by its primary key.
+// Returns (nil, nil) when no row matches.
+func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''),
+		       COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts WHERE id=?`, id)
+	var t Transcript
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &t, err
+}
+
+// UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
+func (d *DB) UpdateCallTranscriptRecording(transcriptID int64, recordingURL string) error {
+	_, err := d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
+	return err
+}
+
+// UpdateHumanCallTranscriptRecording finds the human-call transcript stub
+// (identified by the "Human call" system message) for a given lead+campaign and
+// sets its recording_url. Falls back to a call_sid match in call_logs if the
+// transcript can be correlated.
+func (d *DB) UpdateHumanCallTranscriptRecording(leadID, campaignID int64, callSid, recordingURL string) error {
+	// Find the most recent transcript stub for this lead+campaign that has no recording yet.
+	var transcriptID int64
+	err := d.pool.QueryRow(`
+		SELECT id FROM call_transcripts
+		WHERE lead_id=? AND campaign_id=? AND recording_url IS NULL
+		  AND transcript LIKE '%Human call%'
+		ORDER BY created_at DESC LIMIT 1`, leadID, campaignID).Scan(&transcriptID)
+	if err != nil {
+		return err
+	}
+	_, err = d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
+	return err
+}
+
+// UpdateHumanCallTranscriptDuration updates call_duration_s for the most recent
+// human-call stub for a given lead+campaign (matched by call_sid via call_logs).
+func (d *DB) UpdateHumanCallTranscriptDuration(callSid string, durationS float64) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_transcripts ct
+		JOIN call_logs cl ON cl.lead_id=ct.lead_id AND cl.campaign_id=ct.campaign_id
+		SET ct.call_duration_s=?
+		WHERE cl.call_sid=? AND ct.transcript LIKE '%Human call%'
+		  AND ct.call_duration_s=0
+		ORDER BY ct.created_at DESC
+		LIMIT 1`, durationS, callSid)
+	return err
+}
+
+// helpers
+
+func queryLeads(pool *sql.DB, q string, args ...any) ([]Lead, error) {
+	rows, err := pool.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var leads []Lead
+	for rows.Next() {
+		l, err := scanLead(rows)
+		if err != nil {
+			return nil, err
+		}
+		leads = append(leads, *l)
+	}
+	return leads, rows.Err()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// ensure time import is used
+var _ = time.Now

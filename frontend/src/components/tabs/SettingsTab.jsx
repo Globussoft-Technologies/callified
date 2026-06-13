@@ -1,388 +1,353 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
-import { useToast } from '../../contexts/ToastContext';
-import { INDIAN_VOICES, INDIAN_LANGUAGES } from '../../constants/voices';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
-const PROMPT_SOFT_WARN = 6000;  // chars — yellow warning zone
-const PROMPT_HARD_WARN = 8000;  // chars — red, AI may truncate
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
+  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
+  padding: '24px 28px',
+};
 
 export default function SettingsTab({
-  handleAddPronunciation, pronFormData, setPronFormData, pronunciations, handleDeletePronunciation,
-  pronError, setPronError,
+  handleAddPronunciation, pronFormData, setPronFormData, pronError, setPronError, pronunciations, handleDeletePronunciation,
   selectedOrg,
-  promptDirty, handleSaveSystemPrompt, promptSaving, promptSaveStatus, systemPromptAuto, systemPromptCustom,
+  promptDirty, handleSaveSystemPrompt, promptSaving, promptSaved, systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
-  orgTimezone,
-  activeVoiceProvider, activeVoiceId, activeLanguage,
-  handleSaveOrgVoice, voiceSaving,
-  smtpSettings, setSmtpSettings,
-  smtpSaving, smtpSaveStatus,
-  smtpTesting, smtpTestResult,
-  handleSaveSmtp, handleTestSmtp,
+  orgTimezone
 }) {
-  const { showToast } = useToast();
-  const [localProvider, setLocalProvider] = React.useState(activeVoiceProvider || 'elevenlabs');
-  const [localVoiceId, setLocalVoiceId] = React.useState(activeVoiceId || '');
-  const [localLanguage, setLocalLanguage] = React.useState(activeLanguage || 'hi');
-  const [confirmDeletePronId, setConfirmDeletePronId] = React.useState(null);
+  const hideAiFeatures = useHideAiFeatures();
+  const navigate = useNavigate();
+  const [callActions, setCallActions] = useState({
+    dial: true,
+    browserCall: true,
+    simWebCall: true,
+  });
+  const [callActionsSaved, setCallActionsSaved] = useState(false);
 
-  React.useEffect(() => {
-    if (activeVoiceProvider) setLocalProvider(activeVoiceProvider);
-    if (activeVoiceId) setLocalVoiceId(activeVoiceId);
-    if (activeLanguage) setLocalLanguage(activeLanguage);
-  }, [activeVoiceProvider, activeVoiceId, activeLanguage]);
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
+      setCallActions({
+        dial: saved.dial !== false,
+        browserCall: saved.browserCall !== false,
+        simWebCall: saved.simWebCall !== false,
+      });
+    } catch { /* ignore */ }
+  }, []);
 
-  const handleProviderChange = (p) => {
-    setLocalProvider(p);
-    const firstVoice = INDIAN_VOICES[p]?.[0];
-    if (firstVoice) setLocalVoiceId(firstVoice.id);
+  const handleCallActionChange = (key) => {
+    setCallActions(prev => ({ ...prev, [key]: !prev[key] }));
+    setCallActionsSaved(false);
   };
 
-  const handleVoiceSave = async () => {
-    const voices = INDIAN_VOICES[localProvider] || [];
-    const found = voices.find(v => v.id === localVoiceId);
-    const ok = await handleSaveOrgVoice({ provider: localProvider, voiceId: localVoiceId, language: localLanguage, voiceName: found?.name || '' });
-    if (ok) showToast('Voice & language settings saved!');
-    else showToast('Failed to save voice settings', 'error');
+  const saveCallActions = () => {
+    const toSave = hideAiFeatures
+      ? { dial: false, browserCall: true, simWebCall: false }
+      : callActions;
+    localStorage.setItem('callified_call_actions', JSON.stringify(toSave));
+    setCallActions(toSave);
+    setCallActionsSaved(true);
+    setTimeout(() => setCallActionsSaved(false), 3000);
   };
+
+  const labelStyle = { fontSize: 13, fontWeight: 600, color: T.sub, marginBottom: 6, display: 'block', fontFamily: T.font };
+  const inputStyle = {
+    width: '100%', padding: '10px 14px', borderRadius: 8, fontSize: 13,
+    border: `1px solid ${T.border}`, background: '#f9fafb', color: T.text,
+    fontFamily: T.font, outline: 'none', boxSizing: 'border-box',
+  };
+  const thStyle = {
+    fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+    letterSpacing: '0.07em', padding: '0 0 10px', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`,
+  };
+  const tdStyle = {
+    fontSize: 13, color: T.sub, padding: '11px 0',
+    borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
+  };
+
   return (
-    <div style={{padding: '1rem', maxWidth: '800px', margin: '0 auto'}}>
-      <div className="wa-header" style={{borderBottom: '1px solid rgba(255,255,255,0.05)', marginBottom: '2rem'}}>
-        <h3><span style={{color: '#f59e0b'}}>AI Voice</span> Settings</h3>
-        <p>Configure how the AI pronounces product names, brand names, and technical terms during calls.</p>
+    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Page title */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+          {hideAiFeatures ? 'Settings' : <><span style={{ color: T.amber }}>AI Voice</span> Settings</>}
+        </h2>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+          {hideAiFeatures
+            ? 'Configure call action visibility and other preferences.'
+            : 'Configure how the AI pronounces product names, brand names, and technical terms during calls.'}
+        </p>
       </div>
 
-      {/* Voice & Language Settings */}
-      {selectedOrg && (
-        <div className="glass-panel" style={{marginBottom: '2rem'}}>
-          <h4 style={{marginTop: 0, marginBottom: '0.5rem', fontSize: '1.1rem', fontWeight: 600}}>🎙️ Voice & Language Settings</h4>
-          <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
-            These settings apply to CRM sim web calls and as the default for new campaigns.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {/* Pronunciation Guide */}
+        {!hideAiFeatures && (<div style={card}>
+          <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>🗣️ Pronunciation Guide</h3>
+          <p style={{ margin: '0 0 20px', fontSize: 13, color: T.muted }}>
+            Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
           </p>
-          <div style={{display: 'flex', gap: '1rem', flexWrap: 'wrap'}}>
-            {/* Provider */}
-            <div style={{flex: 1, minWidth: '140px'}}>
-              <label style={{display: 'block', fontSize: '0.78rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Provider</label>
-              <div style={{display: 'flex', gap: '6px'}}>
-                {Object.keys(INDIAN_VOICES).map(key => (
-                  <button key={key} onClick={() => handleProviderChange(key)}
-                    style={{flex: 1, padding: '8px 10px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem', border: 'none',
-                      background: localProvider === key ? 'linear-gradient(135deg, #8b5cf6, #6d28d9)' : 'rgba(255,255,255,0.05)',
-                      color: localProvider === key ? '#fff' : '#94a3b8', transition: 'all 0.2s', textTransform: 'capitalize'}}>
-                    {key === 'elevenlabs' ? 'ElevenLabs' : key === 'smallest' ? 'Smallest AI' : 'Sarvam'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div style={{display: 'flex', gap: '1rem', marginTop: '1rem', flexWrap: 'wrap'}}>
-            {/* Voice */}
-            <div style={{flex: 2, minWidth: '200px'}}>
-              <label style={{display: 'block', fontSize: '0.78rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Voice</label>
-              <select className="form-input" value={localVoiceId} onChange={e => setLocalVoiceId(e.target.value)} style={{width: '100%', fontSize: '0.9rem'}}>
-                {(INDIAN_VOICES[localProvider] || []).map(v => (
-                  <option key={v.id} value={v.id}>{v.name}</option>
-                ))}
-              </select>
-            </div>
-            {/* Language */}
-            <div style={{flex: 1, minWidth: '140px'}}>
-              <label style={{display: 'block', fontSize: '0.78rem', color: '#64748b', fontWeight: 600, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em'}}>Language</label>
-              <select className="form-input" value={localLanguage} onChange={e => setLocalLanguage(e.target.value)} style={{width: '100%', fontSize: '0.9rem'}}>
-                {INDIAN_LANGUAGES.map(l => (
-                  <option key={l.code} value={l.code}>{l.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div style={{marginTop: '1rem'}}>
-            <button className="btn-primary"
-              style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.9rem', padding: '10px 24px'}}
-              onClick={handleVoiceSave} disabled={voiceSaving}>
-              {voiceSaving ? '⏳ Saving...' : '💾 Save Voice & Language'}
-            </button>
-          </div>
-        </div>
-      )}
 
-      <div className="glass-panel" style={{marginBottom: '2rem'}}>
-        <h4 style={{marginTop: 0, marginBottom: '1.5rem', fontSize: '1.1rem', fontWeight: 600}}>🗣️ Pronunciation Guide</h4>
-        <p style={{color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem'}}>
-          Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
-        </p>
-
-        <form onSubmit={handleAddPronunciation} style={{marginBottom: '2rem'}}>
-          <div style={{display: 'flex', gap: '12px', alignItems: 'flex-start'}}>
-            <div className="form-group" style={{marginBottom: 0, flex: 1}}>
-              <label>Written Word</label>
+          <form onSubmit={handleAddPronunciation} style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Written Word</label>
               <input
-                className="form-input"
-                value={pronFormData.word}
-                onChange={e => {
-                  setPronFormData({...pronFormData, word: e.target.value});
-                  if (pronError?.word) setPronError(p => ({...p, word: ''}));
-                }}
+                required value={pronFormData.word}
+                onChange={e => { setPronFormData({ ...pronFormData, word: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Adsgpt"
-                maxLength={100}
                 data-testid="pron-word"
-                style={pronError?.word ? {borderColor: 'rgba(239,68,68,0.6)', boxShadow: '0 0 0 3px rgba(239,68,68,0.15)'} : undefined}
+                style={inputStyle}
               />
-              {pronError?.word && (
-                <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#fca5a5'}}>{pronError.word}</p>
-              )}
             </div>
-            <div style={{fontSize: '1.5rem', color: '#64748b', paddingTop: '34px'}}>→</div>
-            <div className="form-group" style={{marginBottom: 0, flex: 1}}>
-              <label>How to Pronounce</label>
+            <div style={{ fontSize: 20, color: T.muted, paddingBottom: 10 }}>→</div>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>How to Pronounce</label>
               <input
-                className="form-input"
-                value={pronFormData.phonetic}
-                onChange={e => {
-                  setPronFormData({...pronFormData, phonetic: e.target.value});
-                  if (pronError?.phonetic) setPronError(p => ({...p, phonetic: ''}));
-                }}
+                required value={pronFormData.phonetic}
+                onChange={e => { setPronFormData({ ...pronFormData, phonetic: e.target.value }); if (pronError) setPronError(''); }}
                 placeholder="e.g. Ads G P T"
-                maxLength={200}
                 data-testid="pron-phonetic"
-                style={pronError?.phonetic ? {borderColor: 'rgba(239,68,68,0.6)', boxShadow: '0 0 0 3px rgba(239,68,68,0.15)'} : undefined}
+                style={inputStyle}
               />
-              {pronError?.phonetic && (
-                <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#fca5a5'}}>{pronError.phonetic}</p>
-              )}
             </div>
-            <button data-testid="add-rule-btn" type="submit" className="btn-primary" style={{height: '46px', padding: '0 20px', whiteSpace: 'nowrap', marginTop: '28px', flexShrink: 0}}>
+            <button data-testid="add-rule-btn" type="submit"
+              style={{
+                height: 42, padding: '0 20px', borderRadius: 8, border: 'none',
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                color: '#fff', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}>
               + Add Rule
             </button>
-          </div>
-          {pronError?.api && (
-            <div style={{
-              marginTop: '12px', padding: '10px 14px', borderRadius: '8px',
-              background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-              color: '#fca5a5', fontSize: '0.85rem',
-            }}>
-              {pronError.api}
-            </div>
+          </form>
+          {pronError && (
+            <p style={{ margin: '-12px 0 16px', fontSize: 12, fontWeight: 600, color: '#ef4444' }}>
+              {pronError}
+            </p>
           )}
-        </form>
 
-        {pronunciations.length === 0 ? (
-          <div style={{padding: '2rem', textAlign: 'center', color: '#64748b', background: 'rgba(0,0,0,0.2)', borderRadius: '8px'}}>
-            No pronunciation rules added yet. Add one above to get started!
-          </div>
-        ) : (
-          <table className="leads-table">
-            <thead>
-              <tr>
-                <th>Written Word</th>
-                <th>AI Says</th>
-                <th>Added</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pronunciations.map(p => (
-                <tr key={p.id}>
-                  <td style={{fontWeight: 600, color: '#e2e8f0', fontFamily: 'monospace'}}>{p.word}</td>
-                  <td style={{color: '#4ade80', fontStyle: 'italic'}}>🔊 "{p.phonetic}"</td>
-                  <td style={{color: '#94a3b8', fontSize: '0.85rem'}}>{formatDate(p.created_at, orgTimezone)}</td>
-                  <td>
-                    {confirmDeletePronId === p.id ? (
-                      <span style={{display: 'flex', gap: '6px', alignItems: 'center'}}>
-                        <span style={{fontSize: '0.8rem', color: '#fca5a5'}}>Remove?</span>
-                        <button onClick={() => { handleDeletePronunciation(p.id); setConfirmDeletePronId(null); }}
-                          style={{background: '#ef4444', border: 'none', color: '#fff', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600}}>Yes</button>
-                        <button onClick={() => setConfirmDeletePronId(null)}
-                          style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.75rem'}}>No</button>
-                      </span>
-                    ) : (
-                      <button
-                        className="btn-call"
-                        style={{background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)', padding: '4px 12px', fontSize: '0.8rem'}}
-                        onClick={() => setConfirmDeletePronId(p.id)}
-                      >
-                        🗑️ Remove
-                      </button>
-                    )}
-                  </td>
+          {pronunciations.length === 0 ? (
+            <div style={{
+              padding: '2rem', textAlign: 'center', color: T.muted,
+              background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`,
+            }}>
+              No pronunciation rules added yet. Add one above to get started!
+            </div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>Written Word</th>
+                  <th style={thStyle}>AI Says</th>
+                  <th style={thStyle}>Added</th>
+                  <th style={thStyle}>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div className="glass-panel" style={{background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.15)'}}>
-        <h4 style={{marginTop: 0, color: '#f59e0b', fontSize: '0.95rem'}}>💡 How it works</h4>
-        <p style={{color: '#94a3b8', fontSize: '0.85rem', margin: 0, lineHeight: 1.7}}>
-          The pronunciation guide is injected into the AI's prompt at the start of every call.
-          When the AI generates a response containing a mapped word, it will use the phonetic version instead.
-          The TTS engine then speaks the phonetic text, resulting in correct pronunciation.
-          <br/><br/>
-          <strong style={{color: '#e2e8f0'}}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
-        </p>
-      </div>
-
-
-
-      {/* SMTP / Email Settings */}
-      {selectedOrg && smtpSettings !== undefined && (
-        <div className="glass-panel" style={{marginBottom: '2rem'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-            <div>
-              <h4 style={{marginTop: 0, marginBottom: '4px', fontSize: '1.1rem', fontWeight: 600}}>✉️ Email / SMTP Settings</h4>
-              <p style={{margin: 0, color: '#94a3b8', fontSize: '0.83rem'}}>Used for team invites, password resets, and notifications.</p>
-            </div>
-            <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-              {smtpSaveStatus === 'saved' && <span style={{fontSize: '0.8rem', color: '#22c55e', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', padding: '4px 10px', borderRadius: '6px'}}>✓ Saved</span>}
-              {smtpSaveStatus === 'error' && <span style={{fontSize: '0.8rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 10px', borderRadius: '6px'}}>⚠ Save failed</span>}
-            </div>
-          </div>
-
-          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px'}}>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>SMTP Host</label>
-              <input className="form-input" placeholder="smtp.gmail.com"
-                value={smtpSettings.smtp_host || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_host: e.target.value}))} />
-            </div>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>SMTP Port</label>
-              <input className="form-input" type="number" placeholder="587"
-                value={smtpSettings.smtp_port || 587} onChange={e => setSmtpSettings(s => ({...s, smtp_port: e.target.value}))} />
-            </div>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>SMTP Username (Email)</label>
-              <input className="form-input" placeholder="you@gmail.com"
-                value={smtpSettings.smtp_user || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_user: e.target.value}))} />
-            </div>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>SMTP Password / App Password</label>
-              <input className="form-input" type="password" placeholder="••••••••"
-                value={smtpSettings.smtp_password || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_password: e.target.value}))} />
-            </div>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>From Name</label>
-              <input className="form-input" placeholder="Callified AI"
-                value={smtpSettings.smtp_from_name || ''} onChange={e => setSmtpSettings(s => ({...s, smtp_from_name: e.target.value}))} />
-            </div>
-            <div className="form-group" style={{marginBottom: 0}}>
-              <label>App URL (used in email links)</label>
-              <input className="form-input" placeholder="https://test.callified.ai"
-                value={smtpSettings.app_url || ''} onChange={e => setSmtpSettings(s => ({...s, app_url: e.target.value}))} />
-            </div>
-          </div>
-
-          {smtpTestResult && (
-            <div style={{
-              marginBottom: '12px', padding: '10px 14px', borderRadius: '8px', fontSize: '0.85rem',
-              background: smtpTestResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-              border: `1px solid ${smtpTestResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-              color: smtpTestResult.ok ? '#86efac' : '#fca5a5',
-            }}>
-              {smtpTestResult.ok ? '✓' : '✗'} {smtpTestResult.message}
-            </div>
+              </thead>
+              <tbody>
+                {pronunciations.map((p, i) => {
+                  const isLast = i === pronunciations.length - 1;
+                  const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
+                  return (
+                    <tr key={p.id}>
+                      <td style={{ ...rowTd, fontWeight: 600, color: T.text, fontFamily: T.mono }}>{p.word}</td>
+                      <td style={{ ...rowTd, color: T.green, fontStyle: 'italic' }}>🔊 "{p.phonetic}"</td>
+                      <td style={{ ...rowTd, color: T.muted }}>{formatDate(p.created_at, orgTimezone)}</td>
+                      <td style={rowTd}>
+                        <button
+                          onClick={() => handleDeletePronunciation(p.id)}
+                          style={{
+                            background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
+                            color: T.red, borderRadius: 6, padding: '4px 12px',
+                            cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                          }}>
+                          🗑️ Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
+        </div>)}
 
-          <div style={{display: 'flex', gap: '10px', marginTop: '4px'}}>
-            <button className="btn-primary"
-              style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.9rem', padding: '10px 24px'}}
-              onClick={handleSaveSmtp} disabled={smtpSaving}>
-              {smtpSaving ? '⏳ Saving...' : '💾 Save SMTP Settings'}
-            </button>
-            <button className="btn-primary"
-              style={{background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', fontSize: '0.9rem', padding: '10px 20px'}}
-              onClick={handleTestSmtp} disabled={smtpTesting}>
-              {smtpTesting ? '⏳ Sending...' : '🧪 Send Test Email'}
-            </button>
-          </div>
-          <p style={{margin: '10px 0 0', fontSize: '0.75rem', color: '#64748b'}}>
-            For Gmail: enable 2FA, then create an <strong style={{color: '#94a3b8'}}>App Password</strong> at myaccount.google.com/apppasswords and use it here.
+        {/* How it works */}
+        {!hideAiFeatures && (<div style={{
+          ...card,
+          background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
+          boxShadow: 'none',
+        }}>
+          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: T.amber }}>💡 How it works</h4>
+          <p style={{ color: T.sub, fontSize: 13, margin: 0, lineHeight: 1.7 }}>
+            The pronunciation guide is injected into the AI's prompt at the start of every call.
+            When the AI generates a response containing a mapped word, it will use the phonetic version instead.
+            The TTS engine then speaks the phonetic text, resulting in correct pronunciation.
+            <br /><br />
+            <strong style={{ color: T.text }}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
           </p>
-        </div>
-      )}
+        </div>)}
 
-      {/* System Prompt Preview & Edit */}
-      {selectedOrg && (
-        <div className="glass-panel" style={{marginBottom: '2rem'}}>
-          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem'}}>
-            <h4 style={{marginTop: 0, marginBottom: 0, fontSize: '1.1rem', fontWeight: 600}}>🤖 AI System Prompt</h4>
-            <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-              {promptSaveStatus === 'saved' && (
-                <span style={{fontSize: '0.8rem', color: '#22c55e', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', padding: '4px 10px', borderRadius: '6px'}}>✓ Saved</span>
-              )}
-              {promptSaveStatus === 'error' && (
-                <span style={{fontSize: '0.8rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', padding: '4px 10px', borderRadius: '6px'}}>⚠ Save failed — try again</span>
-              )}
-              {promptDirty && (
-                <button className="btn-primary" style={{background: 'linear-gradient(135deg, #10b981, #059669)', fontSize: '0.85rem', padding: '6px 14px'}}
-                  onClick={handleSaveSystemPrompt} disabled={promptSaving}>
-                  {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
-                </button>
-              )}
-            </div>
-          </div>
-          <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.</p>
-
-          {systemPromptAuto && !systemPromptCustom && (
-            <div style={{marginBottom: '1rem'}}>
-              <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, color: '#22d3ee', fontSize: '0.85rem'}}>📄 Auto-Generated from Products</label>
-              <div style={{background: 'rgba(0,0,0,0.3)', padding: '12px', borderRadius: '8px',
-                border: '1px solid rgba(34, 211, 238, 0.15)', whiteSpace: 'pre-wrap',
-                color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6, maxHeight: '200px', overflowY: 'auto'}}>
-                {systemPromptAuto}
+        {/* System Prompt */}
+        {!hideAiFeatures && selectedOrg && (
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                {!promptDirty && promptSaved && (
+                  <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+                )}
+                {promptDirty && (
+                  <button
+                    onClick={handleSaveSystemPrompt} disabled={promptSaving}
+                    style={{
+                      background: 'linear-gradient(135deg, #10b981, #059669)', border: 'none',
+                      borderRadius: 8, color: '#fff', padding: '8px 16px',
+                      cursor: promptSaving ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                      opacity: promptSaving ? 0.7 : 1,
+                    }}>
+                    {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
+                  </button>
+                )}
               </div>
             </div>
-          )}
+            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+              This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.
+            </p>
 
-          <div>
-            <label style={{display: 'block', marginBottom: '6px', fontWeight: 600, fontSize: '0.85rem'}}>✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}</label>
-            <textarea className="form-input" rows={8}
-              placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
-              value={systemPromptCustom}
-              onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
-              style={{resize: 'vertical', minHeight: '120px', fontSize: '0.85rem', lineHeight: 1.6,
-                borderColor: systemPromptCustom.length > PROMPT_HARD_WARN ? '#ef4444'
-                  : systemPromptCustom.length > PROMPT_SOFT_WARN ? '#f59e0b' : undefined}} />
-
-            {/* ── Point 1: char / token counter ── */}
-            {(() => {
-              const chars  = systemPromptCustom.length;
-              const tokens = Math.round(chars / 4);
-              const pct    = Math.min(chars / PROMPT_HARD_WARN * 100, 100);
-              const color  = chars > PROMPT_HARD_WARN ? '#ef4444'
-                           : chars > PROMPT_SOFT_WARN ? '#f59e0b'
-                           : chars > 4000            ? '#fb923c'
-                           : '#22c55e';
-              return (
-                <div style={{marginTop: '6px'}}>
-                  {/* progress bar */}
-                  <div style={{height: '3px', background: 'rgba(255,255,255,0.07)', borderRadius: '2px', overflow: 'hidden', marginBottom: '5px'}}>
-                    <div style={{height: '100%', width: `${pct}%`, background: color, borderRadius: '2px', transition: 'width 0.15s, background 0.15s'}} />
-                  </div>
-                  {/* counter row */}
-                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                    <span style={{fontSize: '0.75rem', color}}>
-                      {chars.toLocaleString()} chars · ~{tokens.toLocaleString()} tokens
-                      {/* ── Point 2: soft-cap warnings ── */}
-                      {chars > PROMPT_HARD_WARN && (
-                        <span style={{marginLeft: '8px', fontWeight: 600}}>⚠ Exceeds {PROMPT_HARD_WARN.toLocaleString()} char limit — AI may silently truncate context</span>
-                      )}
-                      {chars > PROMPT_SOFT_WARN && chars <= PROMPT_HARD_WARN && (
-                        <span style={{marginLeft: '8px'}}>— approaching limit, consider trimming</span>
-                      )}
-                      {chars > 4000 && chars <= PROMPT_SOFT_WARN && (
-                        <span style={{marginLeft: '8px', color: '#fb923c'}}>— getting long</span>
-                      )}
-                    </span>
-                    <span style={{fontSize: '0.7rem', color: '#475569'}}>{PROMPT_HARD_WARN.toLocaleString()} char max</span>
-                  </div>
+            {systemPromptAuto && !systemPromptCustom && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ ...labelStyle, color: T.accent }}>📄 Auto-Generated from Products</label>
+                <div style={{
+                  background: T.bg, padding: 12, borderRadius: 8,
+                  border: `1px solid ${T.border}`, whiteSpace: 'pre-wrap',
+                  color: T.sub, fontSize: 13, lineHeight: 1.6, maxHeight: 200, overflowY: 'auto',
+                  fontFamily: T.mono,
+                }}>
+                  {systemPromptAuto}
                 </div>
-              );
-            })()}
+              </div>
+            )}
 
-            <p style={{color: '#64748b', fontSize: '0.75rem', marginTop: '8px', marginBottom: 0}}>If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.</p>
+            <div>
+              <label style={labelStyle}>
+                ✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}
+              </label>
+              <textarea
+                rows={8}
+                placeholder={systemPromptAuto || 'Add product info, scrape a website, then customize the prompt here...'}
+                value={systemPromptCustom}
+                onChange={e => { setSystemPromptCustom(e.target.value); setPromptDirty(true); }}
+                style={{
+                  ...inputStyle, resize: 'vertical', minHeight: 120, lineHeight: 1.6,
+                  fontFamily: T.mono,
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: (systemPromptCustom || '').length > 8000 ? '#ef4444' : '#9ca3af' }}>
+                  {(systemPromptCustom || '').length.toLocaleString()} chars
+                  {(systemPromptCustom || '').length > 8000 && ' — approaching token limit'}
+                </span>
+              </div>
+              <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
+                If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Provider Accounts shortcut for non-AI users */}
+        {hideAiFeatures && (
+          <div style={card}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>Provider Accounts</h3>
+            </div>
+            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+              Manage your Exotel telephony provider accounts.
+            </p>
+            <button
+              onClick={() => navigate('/exotel-accounts')}
+              style={{
+                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                borderRadius: 8, color: '#fff', padding: '10px 18px',
+                cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+              }}>
+              Manage Provider Accounts
+            </button>
+          </div>
+        )}
+
+        {/* Call Action Visibility */}
+        {!hideAiFeatures && (<div style={card}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>☎️ Call Action Visibility</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {callActionsSaved && (
+                <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+              )}
+              <button
+                onClick={saveCallActions}
+                style={{
+                  background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                  borderRadius: 8, color: '#fff', padding: '8px 16px',
+                  cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
+                }}>
+                💾 Save
+              </button>
+            </div>
+          </div>
+          <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
+            Choose which call buttons appear in the lead action row on the campaign page.
+          </p>
+
+          {hideAiFeatures ? (
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8,
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions.browserCall}
+                readOnly
+                style={{ width: 18, height: 18, cursor: 'default' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>🎙 Browser Call</span>
+            </label>
+          ) : ([
+            { key: 'dial', label: '📞 Dial' },
+            { key: 'browserCall', label: '🎙 Browser Call' },
+            { key: 'simWebCall', label: '🌐 Sim Web Call' },
+          ].map(({ key, label }) => (
+            <label key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${T.border}`, marginBottom: 10,
+              background: '#f9fafb',
+            }}>
+              <input
+                type="checkbox"
+                checked={callActions[key]}
+                onChange={() => handleCallActionChange(key)}
+                style={{ width: 18, height: 18, cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>{label}</span>
+            </label>
+          )))}
+        </div>)}
+
+      </div>
     </div>
   );
 }

@@ -34,15 +34,27 @@ type SaveRequest struct {
 	ChatHistory []llm.ChatMessage
 	DurationS   float32
 	StereoWav   []byte // nil → no server-side recording
+	// SkipCredits=true: do not deduct this call from the org's prepaid balance.
+	SkipCredits bool
+	// UserEmail is the agent/admin who initiated the call; recordings are saved
+	// under a per-user subfolder.
+	UserEmail string
 }
 
 // Service handles post-call analysis.
+// s3Uploader is a minimal interface so the recording package doesn't need to
+// import the storage package directly (avoids any future cycle).
+type s3Uploader interface {
+	UploadPublic(ctx context.Context, key string, data []byte) (string, error)
+}
+
 type Service struct {
 	database   *db.DB
 	llm        *llm.Provider
 	dispatcher *webhook.Dispatcher
 	cfg        *config.Config
 	log        *zap.Logger
+	s3         s3Uploader // nil when S3 is not configured
 }
 
 // New creates a Service.
@@ -56,6 +68,9 @@ func New(database *db.DB, llmProvider *llm.Provider, dispatcher *webhook.Dispatc
 	}
 }
 
+// SetS3Uploader wires in an S3 client after construction.
+func (s *Service) SetS3Uploader(u s3Uploader) { s.s3 = u }
+
 // SaveAndAnalyze runs the full post-call pipeline asynchronously.
 // It is fire-and-forget from the WebSocket handler's perspective — call it in a goroutine.
 func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
@@ -65,7 +80,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 1. Save WAV to disk (if recorded server-side).
 	recordingURL := ""
 	if len(req.StereoWav) > 0 {
-		recordingURL = s.saveWAV(req.StreamSid, req.StereoWav)
+		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, req.StereoWav)
 	}
 
 	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
@@ -110,6 +125,8 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.Sentiment = a.Sentiment
 			review.AppointmentBooked = a.AppointmentBooked
 			review.FailureReason = a.FailureReason
+			review.WhatWentWell = a.WhatWentWell
+			review.WhatWentWrong = a.WhatWentWrong
 			review.Summary = a.Summary
 			review.Insights = a.Insights
 		}
@@ -118,6 +135,31 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 5. Save call review.
 	if err := s.database.SaveCallReview(review); err != nil {
 		s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+	}
+
+	// 5b. Deduct call duration from the org's prepaid credit balance.
+	// Skipped automatically for web-sim calls (CallSid == "") so only real
+	// telephony calls are billed. Also skipped when SkipCredits is set
+	// (unlimited manual calls for AI-hidden users). Idempotent on the call_sid
+	// — if the recording pipeline runs twice for the same call (race between
+	// Exotel's "completed" callback and the WS-side finalize), the second call
+	// is a no-op.
+	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 && !req.SkipCredits {
+		if charge, balance, err := s.database.DeductCallCredits(req.OrgID, req.CallSid, float64(req.DurationS)); err != nil {
+			s.log.Warn("recording: DeductCallCredits failed",
+				zap.String("call_sid", req.CallSid), zap.Error(err))
+		} else if charge > 0 {
+			s.log.Info("recording: credits deducted",
+				zap.String("call_sid", req.CallSid),
+				zap.Int64("charge_paise", charge),
+				zap.Int64("balance_after_paise", balance),
+				zap.Float32("duration_s", req.DurationS))
+		}
+	} else if req.SkipCredits {
+		s.log.Info("recording: skipping credit deduction for unlimited manual call",
+			zap.String("call_sid", req.CallSid),
+			zap.Int64("org_id", req.OrgID),
+			zap.Float32("duration_s", req.DurationS))
 	}
 
 	// 6. Auto-DND if clearly negative + "do not call" intent.
@@ -155,32 +197,63 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 
 // ── WAV saving ────────────────────────────────────────────────────────────────
 
-func (s *Service) saveWAV(streamSid string, data []byte) string {
+func (s *Service) saveWAV(streamSid, userEmail string, data []byte) string {
+	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
+
+	if s.s3 != nil {
+		s3Key := "recordings/" + filename
+		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
+		if err != nil {
+			s.log.Warn("recording: S3 upload failed", zap.Error(err))
+			// Fall through to local save.
+		} else {
+			s.log.Info("recording: uploaded to S3", zap.String("url", publicURL))
+			return publicURL
+		}
+	}
+
 	if s.cfg.RecordingsDir == "" {
 		return ""
 	}
-	if err := os.MkdirAll(s.cfg.RecordingsDir, 0755); err != nil {
+
+	// Segregate recordings into per-user folders when the initiating agent's
+	// email is known. Fall back to the root recordings directory otherwise.
+	baseDir := s.cfg.RecordingsDir
+	urlPrefix := "/api/recordings/"
+	if userEmail != "" {
+		userDir := sanitizeForPath(userEmail)
+		baseDir = filepath.Join(baseDir, userDir)
+		urlPrefix = "/api/recordings/" + userDir + "/"
+	}
+
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		s.log.Warn("recording: mkdir failed", zap.Error(err))
 		return ""
 	}
-	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
-	path := filepath.Join(s.cfg.RecordingsDir, filename)
+	path := filepath.Join(baseDir, filename)
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		s.log.Warn("recording: WriteFile failed", zap.Error(err))
 		return ""
 	}
-	return "/api/recordings/" + filename
+	return urlPrefix + filename
 }
 
 // ── Gemini analysis ───────────────────────────────────────────────────────────
 
+// Analysis is the exported view of the LLM scoring output. Used by the API
+// layer's on-demand conclusion endpoint without importing internal types.
+type Analysis = analysis
+
 type analysis struct {
-	QualityScore      float64 `json:"quality_score"`
-	Sentiment         string  `json:"sentiment"`
-	AppointmentBooked bool    `json:"appointment_booked"`
-	FailureReason     string  `json:"failure_reason"`
-	Summary           string  `json:"summary"`
-	Insights          string  `json:"insights"`
+	QualityScore                float64 `json:"quality_score"`
+	Sentiment                   string  `json:"sentiment"`
+	AppointmentBooked           bool    `json:"appointment_booked"`
+	FailureReason               string  `json:"failure_reason"`
+	WhatWentWell                string  `json:"what_went_well"`
+	WhatWentWrong               string  `json:"what_went_wrong"`
+	Summary                     string  `json:"summary"`
+	Insights                    string  `json:"insights"`
+	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
 const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the provided transcript and return ONLY a JSON object with these exact keys:
@@ -188,15 +261,28 @@ const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the 
 - "sentiment": "positive", "neutral", or "negative" (customer sentiment at end)
 - "appointment_booked": true or false
 - "failure_reason": string (why the call didn't convert, empty string if it did)
+- "what_went_well": string (1 sentence on what the agent did well)
+- "what_went_wrong": string (1 sentence on what the agent could improve)
 - "summary": string (1-2 sentence call summary)
 - "insights": string (key coaching insight for the agent)
-Return ONLY valid JSON. No markdown, no explanation.`
+Return ONLY valid JSON. No markdown, no explanation. Keep each string under 200 chars.`
+
+// AnalyzeCall is the public wrapper around analyzeCall. Used by the API
+// layer for on-demand conclusion generation without importing internal types.
+func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
+	return s.analyzeCall(ctx, history)
+}
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)
 	userMsg := llm.ChatMessage{Role: "user", Text: "Analyze this call transcript:\n\n" + transcript}
 
-	raw, err := s.llm.GenerateResponse(ctx, analysisSystemPrompt, []llm.ChatMessage{userMsg}, 512)
+	// 1500 tokens is enough for the 8-key JSON object including 200-char
+	// strings each. The previous 512 cap truncated mid-key, causing every
+	// post-call analysis to fail JSON parsing → all reviews saved with
+	// quality_score=0, sentiment="neutral" defaults. Issue: empty insight
+	// columns in the Call Insights tab.
+	raw, err := s.llm.GenerateResponse(ctx, analysisSystemPrompt, []llm.ChatMessage{userMsg}, 1500)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +413,11 @@ func sanitize(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// sanitizeForPath turns an email into a safe directory name.
+func sanitizeForPath(s string) string {
+	return sanitize(strings.ToLower(s))
 }
 
 func min(a, b int) int {

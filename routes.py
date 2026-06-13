@@ -114,6 +114,7 @@ class CampaignCreate(BaseModel):
     name: str
     product_id: Optional[int] = None
     lead_source: Optional[str] = None
+    channel: str = "voice"
 
     @field_validator('name')
     @classmethod
@@ -130,6 +131,7 @@ class CampaignUpdate(BaseModel):
     status: Optional[str] = None
     lead_source: Optional[str] = None
     product_id: Optional[int] = None
+    channel: Optional[str] = None
 
     @field_validator('name')
     @classmethod
@@ -1521,23 +1523,7 @@ def api_get_campaigns(current_user: dict = Depends(get_current_user_or_api_key))
 def api_create_campaign(data: CampaignCreate, current_user: dict = Depends(get_current_user)):
     _require_admin(current_user)
     org_id = current_user.get("org_id")
-    # Enforce per-plan campaign limit
-    from billing import get_org_subscription
-    sub = get_org_subscription(org_id)
-    if sub and sub.get("max_campaigns") is not None:
-        active_count = sum(
-            1 for c in get_campaigns_by_org(org_id)
-            if (c.get("status") or "active") == "active"
-        )
-        limit = sub["max_campaigns"]
-        if active_count >= limit:
-            plan_name = sub.get("plan_name", "current")
-            raise HTTPException(
-                status_code=403,
-                detail=f"Your {plan_name} plan allows up to {limit} active campaign{'s' if limit != 1 else ''}. "
-                       f"Upgrade your plan to create more.",
-            )
-    campaign_id = create_campaign(org_id, data.product_id, data.name, data.lead_source)
+    campaign_id = create_campaign(org_id, data.product_id, data.name, data.lead_source, data.channel)
     return {"status": "success", "id": campaign_id}
 
 @api_router.get("/api/campaigns/{campaign_id}")
@@ -1550,10 +1536,7 @@ def api_get_campaign(campaign_id: int, current_user: dict = Depends(get_current_
 
 @api_router.put("/api/campaigns/{campaign_id}")
 def api_update_campaign(campaign_id: int, data: CampaignUpdate, current_user: dict = Depends(get_current_user)):
-    _require_admin(current_user)
-    org_id = current_user.get("org_id")
-    _get_campaign_or_403(campaign_id, org_id)
-    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id, org_id=org_id)
+    update_campaign(campaign_id, name=data.name, status=data.status, lead_source=data.lead_source, product_id=data.product_id, channel=data.channel)
     return {"status": "success"}
 
 @api_router.delete("/api/campaigns/{campaign_id}")

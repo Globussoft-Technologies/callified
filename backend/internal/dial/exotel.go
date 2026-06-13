@@ -17,27 +17,37 @@ type ExotelClient struct {
 	accountSID string
 	callerID   string
 	appID      string
+	appType    string // "exoml" (legacy XML) or "voicebot" (AgentStream JSON)
 	client     *http.Client
 }
 
 // NewExotelClient creates an Exotel REST client.
-func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID string) *ExotelClient {
+// appType should be "exoml" for legacy ExoML XML flows or "voicebot" for
+// modern AgentStream Voicebot flows that expect a JSON dynamic URL response.
+func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType string) *ExotelClient {
+	if appType == "" {
+		appType = "exoml"
+	}
 	return &ExotelClient{
 		apiKey:     apiKey,
 		apiToken:   apiToken,
 		accountSID: accountSID,
 		callerID:   callerID,
 		appID:      appID,
+		appType:    appType,
 		client:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
-// exomlURL is ignored — Exotel rejects arbitrary URLs in the Url field; only
-// the Exotel-hosted app URL (http://my.exotel.com/exoml/start/{appID}) works.
-// The dashboard app referenced by appID must have a Passthru applet pointing
-// at {PUBLIC_SERVER_URL}/webhook/exotel — that's what triggers our handler to
-// return the WebSocket-streaming ExoML when the lead answers.
+// The dashboard app/flow referenced by appID must route the answered call to
+// our WebSocket endpoint:
+//   - exoml   (legacy): Passthru applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
+//                       and expects XML <Connect><Stream url="..."/>.</Connect>
+//   - voicebot (modern): Voicebot applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
+//                        and expects JSON {"url":"wss://..."}.
+// Per-call context (lead_id, name, phone) is hydrated by wshandler from Redis
+// instead of being passed through this URL.
 // callbackURL receives status events (answered, completed, etc.).
 //
 // Do NOT send "To" in this flow — Exotel rejects Url + To with 400
@@ -49,12 +59,13 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
 		e.accountSID)
 
-	// Always use the Exotel-hosted app URL. Custom URLs (even on our own
-	// domain) are silently rejected — the call rings, the lead picks up,
-	// then drops because Exotel never fetched ExoML. Per-call context
-	// (lead_id, name, phone) is hydrated by wshandler from Redis instead
-	// of being passed through this URL.
-	exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+	// Modern AgentStream Voicebot flows use /{sid}/exoml/start_voice/{flow_id}.
+	// Legacy ExoML apps use /exoml/start/{app_id}.
+	if e.appType == "voicebot" {
+		exomlURL = fmt.Sprintf("http://my.exotel.com/%s/exoml/start_voice/%s", e.accountSID, e.appID)
+	} else {
+		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+	}
 
 	phone := ExotelPhone(toPhone)
 	form := url.Values{}
@@ -81,9 +92,6 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
-	fmt.Printf("[exotel] InitiateCall request: From=%s CallerId=%s Url=%s CallType=trans\n", phone, e.callerID, exomlURL)
-	fmt.Printf("[exotel] InitiateCall response status=%d body=%s\n", resp.StatusCode, string(body))
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("exotel: status %d: %s", resp.StatusCode, string(body))
 	}
@@ -97,6 +105,90 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 		return "", fmt.Errorf("exotel: no Sid in response: %s", string(body))
 	}
 	return sid, nil
+}
+
+// InitiateHumanCall dials agentPhone first (two-party bridge, no Url).
+// Exotel calls the agent; once the agent picks up, Exotel calls customerPhone
+// and bridges both parties. Url is intentionally omitted — Exotel overrides
+// any custom Url with the App's configured Passthru URL, which would route the
+// call into the AI stream instead of bridging the customer. From+To without Url
+// is the standard Exotel two-legged call and works reliably.
+func (e *ExotelClient) InitiateHumanCall(ctx context.Context, agentPhone, customerPhone, callbackURL string) (string, error) {
+	endpoint := fmt.Sprintf(
+		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
+		e.accountSID)
+
+	form := url.Values{}
+	form.Set("From", ExotelPhone(agentPhone))
+	form.Set("To", ExotelPhone(customerPhone))
+	form.Set("CallerId", e.callerID)
+	form.Set("CallType", "trans")
+	form.Set("Record", "true")
+	if callbackURL != "" {
+		form.Set("StatusCallback", callbackURL)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("exotel: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(e.apiKey, e.apiToken)
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("exotel: human call: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("exotel: status %d: %s", resp.StatusCode, string(body))
+	}
+	sid := extractNestedJSON(string(body), "Call", "Sid")
+	if sid == "" {
+		sid = extractJSON(string(body), "Sid")
+	}
+	if sid == "" {
+		return "", fmt.Errorf("exotel: no Sid in response: %s", string(body))
+	}
+	return sid, nil
+}
+
+// FetchRecordingURL fetches call details from Exotel and returns RecordingUrl
+// when the call is completed and a recording is available.
+// Returns ("", nil) when not ready yet; error only on network/auth failures.
+// Exotel stores RecordingUrl in the Call object at /Calls/{sid}.json —
+// NOT in the /Calls/{sid}/Recordings.json sub-resource.
+func (e *ExotelClient) FetchRecordingURL(ctx context.Context, callSid string) (string, error) {
+	endpoint := fmt.Sprintf(
+		"https://api.exotel.com/v1/Accounts/%s/Calls/%s.json",
+		e.accountSID, callSid)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(e.apiKey, e.apiToken)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return "", nil
+	}
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("exotel call fetch: status %d: %s", resp.StatusCode, string(body))
+	}
+	// Response: {"Call": {"Status":"completed", "RecordingUrl":"https://...", ...}}
+	status := extractNestedJSON(string(body), "Call", "Status")
+	if status != "completed" {
+		return "", nil // call not finished yet
+	}
+	recURL := extractNestedJSON(string(body), "Call", "RecordingUrl")
+	return recURL, nil
 }
 
 // NormalizePhone converts an Indian phone number to E.164 format (+91XXXXXXXXXX).

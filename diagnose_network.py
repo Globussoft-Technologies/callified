@@ -1,10 +1,11 @@
 import socket
 import requests
 import paramiko
+import os
 
-host = "163.227.174.141"
-username = "empcloud-development"
-password = "rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u"
+host = os.environ.get("DEPLOY_HOST", "163.227.174.141")
+username = os.environ.get("DEPLOY_USER", "empcloud-development")
+password = os.environ.get("DEPLOY_PASSWORD")
 
 print("--- DNS RESOLUTION ---")
 try:
@@ -18,7 +19,7 @@ client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 client.connect(host, username=username, password=password, timeout=10)
 
-client.exec_command("echo 'rSPa3izkYPtAjCFLa5cqPDpsFvV071KN9u' | sudo -S journalctl -u callified-ai.service -n 150 --no-pager > /tmp/jlog.txt")
+client.exec_command("echo {password} | sudo -S journalctl -u callified-ai.service -n 150 --no-pager > /tmp/jlog.txt")
 import time; time.sleep(2)
 _, stdout, _ = client.exec_command("cat /tmp/jlog.txt")
 print(stdout.read().decode().strip()[-2000:])

@@ -83,18 +83,15 @@ deploy.tar.gz
 # Local docs (not for repo)
 DEPLOYMENT.md
 server-missing-files.md
-
-# User-uploaded knowledge PDFs (served at runtime, not stored in repo)
-knowledge_uploads/
-
+# PLAN-crm-integration.md
 # Local SQLite databases
 *.db
 
 # Logs
 *.log
 
-# Compiled Go binaries (built locally, not source)
+# Compiled Go binaries (built locally and on testgo, not source)
 backend/bin/
 
-# Go backend env
-backend/.env
+# Kubernetes (local-only deployment, has secrets)
+kubernetes/

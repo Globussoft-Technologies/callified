@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import IntegrationsTab from '../components/tabs/IntegrationsTab';
+import { useToast } from '../contexts/UIContext';
 
 const CRM_SCHEMAS = {
   "Salesforce": [{ key: "client_id", label: "OAuth Client ID", type: "text" }, { key: "client_secret", label: "OAuth Client Secret", type: "password" }, { key: "instance_url", label: "Instance Base URL", type: "text" }],
@@ -14,6 +15,7 @@ const CRM_SCHEMAS = {
 };
 
 export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
+  const toast = useToast();
   const [integrations, setIntegrations] = useState([]);
   const [intFormData, setIntFormData] = useState({ provider: 'HubSpot', credentials: {} });
   const [loading, setLoading] = useState(false);
@@ -28,11 +30,13 @@ export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
   }, [toast]);
 
   const fetchIntegrations = async () => {
-    try { const res = await apiFetch(`${API_URL}/integrations`); setIntegrations(await res.json()); } catch(e){}
+    try { const res = await apiFetch(`${API_URL}/integrations`); const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []); } catch { /* ignore */ }
   };
 
   useEffect(() => {
+     
     fetchIntegrations();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleCreateIntegration = async (e) => {
@@ -71,9 +75,10 @@ export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
       setIntFormData({ provider: 'HubSpot', credentials: {} });
       setToast({ type: 'success', message: 'Integration saved successfully!' });
       fetchIntegrations();
+      toast("Integration saved successfully!");
     } catch(e) {
       console.error(e);
-      setToast({ type: 'error', message: 'Save rejected — unable to reach the server. Please try again.' });
+      toast("Failed to save integration.");
     }
     setLoading(false);
   };

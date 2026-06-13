@@ -19,6 +19,18 @@ const (
 	callTTL   = time.Hour
 )
 
+// displayTZ is the timezone used for human-readable timestamps embedded in
+// SSE labels (Live Campaign Activity, Live Logs). Server runs in UTC, but
+// operators are in IST — formatting in the right zone here avoids
+// frontend reparsing of an already-baked string. Falls back to a fixed
+// +05:30 offset if Asia/Kolkata isn't in the system tzdata.
+var displayTZ = func() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Kolkata"); err == nil {
+		return loc
+	}
+	return time.FixedZone("IST", 5*3600+30*60)
+}()
+
 // PendingCallInfo mirrors the dict stored by python's set_pending_call().
 type PendingCallInfo struct {
 	Name          string `json:"name"`
@@ -31,6 +43,17 @@ type PendingCallInfo struct {
 	TTSProvider   string `json:"tts_provider"`
 	TTSVoiceID    string `json:"tts_voice_id"`
 	TTSLanguage   string `json:"tts_language"`
+	// IsBridge=true means the call is a browser-to-phone bridge: skip AI pipeline,
+	// relay audio between Exotel and the agent's browser WebSocket.
+	IsBridge bool `json:"is_bridge,omitempty"`
+	// AppType is the Exotel app/flow type: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON).
+	AppType string `json:"app_type,omitempty"`
+	// SkipCredits=true means the call should not be charged against the org's
+	// prepaid balance (e.g. unlimited manual calls for AI-hidden users).
+	SkipCredits bool `json:"skip_credits,omitempty"`
+	// UserEmail is the agent/admin who initiated the call. Used to segregate
+	// recordings into per-user folders.
+	UserEmail string `json:"user_email,omitempty"`
 }
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).
@@ -248,11 +271,7 @@ func (s *Store) EmitCampaignEvent(ctx context.Context, campaignID int64, leadNam
 		icon = "📋"
 	}
 	now := time.Now().UTC()
-	namePart := leadName
-	if phone != "" {
-		namePart = leadName + " (" + phone + ")"
-	}
-	label := fmt.Sprintf("%s [%s] %s — %s", icon, now.Local().Format("15:04:05"), namePart, strings.ToUpper(eventType))
+	label := fmt.Sprintf("%s [%s] %s (%s) — %s", icon, now.In(displayTZ).Format("15:04:05"), leadName, phone, strings.ToUpper(eventType))
 	if detail != "" {
 		label += " | " + detail
 	}
@@ -393,4 +412,102 @@ func (s *Store) GetLiveLogs(ctx context.Context, n int) ([]string, error) {
 		n = 100
 	}
 	return s.rdb.LRange(ctx, key("live-logs"), int64(-n), -1).Result()
+}
+
+// ─── Raw Key Access ──────────────────────────────────────────────────────────
+// Direct get/set for arbitrary keys (e.g. per-lead voice cache). Mirrors
+// redis_store.py get_raw / set_raw. Keys are NOT prefixed — callers pass the
+// full key. In-memory fallback is intentionally absent: the voice cache is
+// best-effort persistence, and a missing Redis just means no cache, not an
+// error path.
+
+// GetRaw returns (value, true) on a hit, ("", false) on miss or no Redis.
+func (s *Store) GetRaw(ctx context.Context, k string) (string, bool) {
+	if s.rdb == nil {
+		return "", false
+	}
+	v, err := s.rdb.Get(ctx, k).Result()
+	if err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// SetRaw stores value at key with optional TTL. ttl == 0 means no expiry.
+// Errors are swallowed (and logged) — callers treat the cache as best-effort.
+func (s *Store) SetRaw(ctx context.Context, k, v string, ttl time.Duration) {
+	if s.rdb == nil {
+		return
+	}
+	var err error
+	if ttl > 0 {
+		err = s.rdb.SetEx(ctx, k, v, ttl).Err()
+	} else {
+		err = s.rdb.Set(ctx, k, v, 0).Err()
+	}
+	if err != nil && s.log != nil {
+		s.log.Warn("redis: SetRaw failed", zap.String("key", k), zap.Error(err))
+	}
+}
+
+// DeleteRaw removes a single Redis key. Best-effort: errors are logged, not
+// returned, because the caller (cache invalidation) can tolerate a miss.
+func (s *Store) DeleteRaw(ctx context.Context, k string) {
+	if s.rdb == nil {
+		return
+	}
+	if err := s.rdb.Del(ctx, k).Err(); err != nil && s.log != nil {
+		s.log.Warn("redis: DeleteRaw failed", zap.String("key", k), zap.Error(err))
+	}
+}
+
+// LeadVoiceTTL is how long the per-lead voice override is remembered.
+// Mirrors ws_handler.py 4aa3fa3: 90 days, so a lead reliably hears the same
+// agent voice across follow-up calls.
+const LeadVoiceTTL = 90 * 24 * time.Hour
+
+// MarkBridgeAnswered records that the customer answered the bridge call.
+// Called from the Exotel status webhook when Status=in-progress.
+func (s *Store) MarkBridgeAnswered(ctx context.Context, callSid string) {
+	if s.rdb != nil {
+		s.rdb.Set(ctx, "bridge:answered:"+callSid, "1", 5*time.Minute)
+	}
+}
+
+// WaitBridgeAnswered polls until MarkBridgeAnswered fires for callSid, or
+// until timeout. Returns true if answered, false if timed out or cancelled.
+func (s *Store) WaitBridgeAnswered(ctx context.Context, callSid string, timeout time.Duration) bool {
+	if s.rdb == nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if val, _ := s.rdb.Get(ctx, "bridge:answered:"+callSid).Result(); val == "1" {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return false
+}
+
+// ResolveLeadVoice returns the voice ID to use for a call to leadID. If a
+// previously-used voice is cached, it wins (consistency over campaign default).
+// Otherwise currentVoice is cached for next time.
+// leadID == 0 disables the cache. Returns (voiceID, fromCache).
+func (s *Store) ResolveLeadVoice(ctx context.Context, leadID int64, currentVoice string) (string, bool) {
+	if leadID == 0 || currentVoice == "" {
+		return currentVoice, false
+	}
+	k := fmt.Sprintf("lead_voice:%d", leadID)
+	if cached, ok := s.GetRaw(ctx, k); ok && cached != "" {
+		// Refresh TTL on hit so active leads don't expire.
+		s.SetRaw(ctx, k, cached, LeadVoiceTTL)
+		return cached, true
+	}
+	s.SetRaw(ctx, k, currentVoice, LeadVoiceTTL)
+	return currentVoice, false
 }

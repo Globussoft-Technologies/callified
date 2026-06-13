@@ -6,7 +6,7 @@ import { AuthProvider } from './contexts/AuthContext'
 import { OrgProvider } from './contexts/OrgContext'
 import { VoiceProvider } from './contexts/VoiceContext'
 import { CallProvider } from './contexts/CallContext'
-import { ToastProvider } from './contexts/ToastContext'
+import { UIProvider } from './contexts/UIContext'
 import { BrowserRouter } from 'react-router-dom'
 
 class ErrorBoundary extends Component {
@@ -32,17 +32,17 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
-        <AuthProvider>
-          <OrgProvider>
-            <VoiceProvider>
-              <CallProvider>
-                <ToastProvider>
+        <UIProvider>
+          <AuthProvider>
+            <OrgProvider>
+              <VoiceProvider>
+                <CallProvider>
                   <App />
-                </ToastProvider>
-              </CallProvider>
-            </VoiceProvider>
-          </OrgProvider>
-        </AuthProvider>
+                </CallProvider>
+              </VoiceProvider>
+            </OrgProvider>
+          </AuthProvider>
+        </UIProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </StrictMode>,

@@ -13,18 +13,31 @@ export function CallProvider({ children }) {
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
+  // rechargePrompt holds the backend's "insufficient credits" message when
+  // a 402 comes back from the dial endpoints. Rendered as a themed modal
+  // (matches the app's dark glass-panel UI) instead of the native browser
+  // confirm() dialog, which used the OS theme and looked out of place.
+  const [rechargePrompt, setRechargePrompt] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
-    setDialingId('global');
+    setDialingId(lead.id);
     try {
       const res = await apiFetch(`${API_URL}/dial/${lead.id}`, { method: "POST" });
       const data = await res.json();
-      alert(`Status: ${data.message || 'Connecting call...'}`);
-    } catch(e) {
-      alert("Failed to hit the dialer API. Check console.");
-    }
+      if (!res.ok) {
+        const msg = data.error || `Dial failed (HTTP ${res.status})`;
+        if (res.status === 402) {
+          setRechargePrompt(msg);
+        } else {
+          alert(msg);
+        }
+      } else {
+        alert(`Status: ${data.message || 'Connecting call...'}`);
+      }
+    } catch { alert("Failed to hit the dialer API. Check console.");
+     }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
@@ -38,7 +51,9 @@ export function CallProvider({ children }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
       webCallAudioCtxRef.current = audioContext;
 
@@ -115,13 +130,18 @@ export function CallProvider({ children }) {
         };
 
         let nextPlayTime = audioContext.currentTime;
+        let activeSources = [];
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            // Mute mic while AI is talking to prevent echo feedback
-            micMuted = true;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
+          if (data.type === 'clear') {
+            // Backend barge-in — stop all queued audio immediately
+            console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
+            activeSources = [];
+            nextPlayTime = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
+          } else if (data.event === 'media') {
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -145,14 +165,13 @@ export function CallProvider({ children }) {
             if (audioContext.currentTime > nextPlayTime) nextPlayTime = audioContext.currentTime;
             destSource.start(nextPlayTime);
             nextPlayTime += buffer.duration;
+            activeSources.push(destSource);
+            destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            // Unmute mic 500ms after last TTS chunk finishes playing
-            const remainingPlayMs = Math.max(0, (nextPlayTime - audioContext.currentTime) * 1000) + 500;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, remainingPlayMs);
-          } else if (data.event === 'clear') {
-            nextPlayTime = audioContext.currentTime; // Discard TTS queue on barge-in
-            micMuted = false; // Immediately unmute on barge-in clear
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
+            }
           }
         };
 
@@ -194,8 +213,23 @@ export function CallProvider({ children }) {
   const handleCampaignDial = useCallback(async (lead, campaignId) => {
     setDialingId(lead.id);
     try {
-      await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
-    } catch(e) {}
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
+      if (!res.ok) {
+        // Surface the backend error so silent failures (especially the
+        // 402 "insufficient credits" gate) don't look like nothing happened.
+        const body = await res.json().catch(() => ({}));
+        const msg = body.error || `Dial failed (HTTP ${res.status})`;
+        if (res.status === 402) {
+          // Insufficient credits — show the themed recharge modal instead
+          // of native confirm() (which renders in the OS theme and clashes).
+          setRechargePrompt(msg);
+        } else {
+          alert(msg);
+        }
+      }
+    } catch(e) {
+      alert('Network error: ' + (e?.message || 'unknown'));
+    }
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
@@ -211,10 +245,12 @@ export function CallProvider({ children }) {
     try {
       const vRes = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
       campVoice = await vRes.json();
-    } catch(e) {}
+    } catch { /* ignore */ }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        });
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
       webCallAudioCtxRef.current = audioContext;
 
@@ -289,12 +325,18 @@ export function CallProvider({ children }) {
         };
 
         let nextPlayTime = audioContext.currentTime;
+        let activeSources = [];
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
-          if (data.event === 'media') {
-            micMuted = true;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
-
+          if (data.type === 'clear') {
+            // Backend barge-in — stop all queued audio immediately
+            console.log('[barge-in] clear received, stopping', activeSources.length, 'sources');
+            activeSources.forEach(s => { try { s.stop(); } catch { /* ignore */ } });
+            activeSources = [];
+            nextPlayTime = audioContext.currentTime;
+            if (unmuteTimer) { clearTimeout(unmuteTimer); unmuteTimer = null; }
+            micMuted = false;
+          } else if (data.event === 'media') {
             const audioStr = window.atob(data.media.payload);
             const audioBytes = new Uint8Array(audioStr.length);
             for (let i = 0; i < audioStr.length; i++) {
@@ -317,13 +359,13 @@ export function CallProvider({ children }) {
             if (audioContext.currentTime > nextPlayTime) nextPlayTime = audioContext.currentTime;
             destSource.start(nextPlayTime);
             nextPlayTime += buffer.duration;
+            activeSources.push(destSource);
+            destSource.onended = () => { activeSources = activeSources.filter(s => s !== destSource); };
 
-            const remainingPlayMs = Math.max(0, (nextPlayTime - audioContext.currentTime) * 1000) + 500;
-            unmuteTimer = setTimeout(() => { micMuted = false; }, remainingPlayMs);
-          } else if (data.event === 'clear') {
-            nextPlayTime = audioContext.currentTime;
-            micMuted = false;
-            if (unmuteTimer) clearTimeout(unmuteTimer);
+            // Unmute mic once, 400ms after the first chunk — don't reset on every chunk
+            if (micMuted && !unmuteTimer) {
+              unmuteTimer = setTimeout(() => { micMuted = false; unmuteTimer = null; }, 400);
+            }
           }
         };
 
@@ -370,10 +412,65 @@ export function CallProvider({ children }) {
       handleCampaignDial, handleCampaignWebCall
     }}>
       {children}
+      {rechargePrompt && (
+        <div onClick={() => setRechargePrompt(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 10000, padding: '1rem'
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            maxWidth: '440px', width: '100%', padding: '1.75rem',
+            background: '#0f172a',
+            border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '12px',
+            boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset',
+            color: '#e2e8f0',
+          }}>
+            <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px'}}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%',
+                background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.2rem',
+              }}>⚠️</div>
+              <div>
+                <h3 style={{margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#fca5a5'}}>Recharge Required</h3>
+                <div style={{fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px'}}>Outbound calls are paused</div>
+              </div>
+            </div>
+            <p style={{
+              margin: '0 0 18px 0', fontSize: '0.9rem', lineHeight: 1.55,
+              color: '#cbd5e1',
+            }}>
+              {rechargePrompt}
+            </p>
+            <p style={{
+              margin: '0 0 20px 0', fontSize: '0.85rem', color: '#94a3b8',
+            }}>
+              Open <strong style={{color: '#a5b4fc'}}>Billing</strong> to add call credits and continue dialing.
+            </p>
+            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
+              <button onClick={() => setRechargePrompt(null)} style={{
+                padding: '8px 16px', borderRadius: '8px', cursor: 'pointer',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(148,163,184,0.2)',
+                color: '#cbd5e1', fontSize: '0.85rem', fontWeight: 600,
+              }}>Cancel</button>
+              <button onClick={() => { setRechargePrompt(null); window.location.assign('/billing'); }} style={{
+                padding: '8px 18px', borderRadius: '8px', cursor: 'pointer',
+                background: 'linear-gradient(135deg, #6366f1, #22d3ee)',
+                border: 'none', color: '#fff', fontSize: '0.85rem', fontWeight: 700,
+                boxShadow: '0 6px 16px rgba(99,102,241,0.35)',
+              }}>Open Billing →</button>
+            </div>
+          </div>
+        </div>
+      )}
     </CallContext.Provider>
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useCall() {
   const ctx = useContext(CallContext);
   if (!ctx) throw new Error('useCall must be used within CallProvider');

@@ -403,6 +403,25 @@ def init_db():
     ''')
 
     cursor.execute('''
+        CREATE TABLE IF NOT EXISTS team_invites (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            token VARCHAR(255) NOT NULL UNIQUE,
+            org_id INT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            full_name VARCHAR(255) NOT NULL DEFAULT '',
+            role VARCHAR(32) NOT NULL DEFAULT 'Agent',
+            invited_by_user_id INT,
+            expires_at DATETIME NOT NULL,
+            accepted_at DATETIME,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
+            FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
+            INDEX idx_team_invites_org (org_id),
+            INDEX idx_team_invites_email (email)
+        )
+    ''')
+
+    cursor.execute('''
         CREATE TABLE IF NOT EXISTS webhooks (
             id INT AUTO_INCREMENT PRIMARY KEY,
             org_id INT NOT NULL,
@@ -508,19 +527,18 @@ def init_db():
     except Exception:
         pass  # Already nullable or campaigns table doesn't exist yet
 
-    # --- Add org_id to pronunciation_guide for per-org isolation ---
-    try:
-        cursor.execute("ALTER TABLE pronunciation_guide ADD COLUMN org_id INT DEFAULT NULL")
-    except Exception:
-        pass  # Column already exists
-    try:
-        cursor.execute("ALTER TABLE pronunciation_guide DROP INDEX word")
-    except Exception:
-        pass  # Index already dropped or doesn't exist
-    try:
-        cursor.execute("ALTER TABLE pronunciation_guide ADD UNIQUE KEY word_org (word, org_id)")
-    except Exception:
-        pass  # Index already exists
+    # --- Per-campaign Exotel credentials (dynamic creds per campaign) ---
+    for col, definition in [
+        ("exotel_api_key",     "VARCHAR(255) DEFAULT NULL"),
+        ("exotel_api_token",   "VARCHAR(255) DEFAULT NULL"),
+        ("exotel_account_sid", "VARCHAR(100) DEFAULT NULL"),
+        ("exotel_caller_id",   "VARCHAR(20)  DEFAULT NULL"),
+        ("exotel_app_id",      "VARCHAR(50)  DEFAULT NULL"),
+    ]:
+        try:
+            cursor.execute(f"ALTER TABLE campaigns ADD COLUMN {col} {definition}")
+        except Exception:
+            pass  # Column already exists
 
     conn.close()
 
@@ -1168,12 +1186,12 @@ def count_admins_in_org(org_id: int) -> int:
 
 # --- CAMPAIGNS ---
 
-def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None):
+def create_campaign(org_id: int, product_id: int, name: str, lead_source: str = None, channel: str = "voice"):
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO campaigns (org_id, product_id, name, lead_source) VALUES (%s, %s, %s, %s)",
-        (org_id, product_id, name, lead_source)
+        "INSERT INTO campaigns (org_id, product_id, name, lead_source, channel) VALUES (%s, %s, %s, %s, %s)",
+        (org_id, product_id, name, lead_source, channel or "voice")
     )
     last_id = cursor.lastrowid
     conn.close()
@@ -1211,7 +1229,7 @@ def get_campaign_by_id(campaign_id: int, org_id: int = None) -> Dict:
     return row
 
 
-def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None, org_id: int = None):
+def update_campaign(campaign_id: int, name: str = None, status: str = None, lead_source: str = None, product_id: int = None, channel: str = None):
     conn = get_conn()
     cursor = conn.cursor()
     org_filter = " AND org_id = %s" if org_id else ""
@@ -1223,7 +1241,9 @@ def update_campaign(campaign_id: int, name: str = None, status: str = None, lead
     if lead_source is not None:
         cursor.execute(f"UPDATE campaigns SET lead_source = %s WHERE id = %s{org_filter}", (lead_source or None, campaign_id) + org_vals)
     if product_id is not None:
-        cursor.execute(f"UPDATE campaigns SET product_id = %s WHERE id = %s{org_filter}", (product_id, campaign_id) + org_vals)
+        cursor.execute("UPDATE campaigns SET product_id = %s WHERE id = %s", (product_id, campaign_id))
+    if channel is not None:
+        cursor.execute("UPDATE campaigns SET channel = %s WHERE id = %s", (channel, campaign_id))
     conn.close()
     return True
 

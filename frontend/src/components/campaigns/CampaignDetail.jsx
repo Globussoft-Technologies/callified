@@ -1,6 +1,136 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
+import AuthAudio from '../AuthAudio';
+import { useToast, useConfirm } from '../../contexts/UIContext';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import BrowserCallModal from './BrowserCallModal';
+// import TwilioBrowserCallModal from './TwilioBrowserCallModal';
+
+const T = {
+  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  accent: '#6366f1', pink: '#ec4899', green: '#10b981',
+  amber: '#f59e0b', red: '#ef4444', wa: '#25D366',
+  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+};
+
+const card = {
+  background: T.card, border: `1px solid ${T.border}`,
+  borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+};
+
+function withDate(label, tsMs) {
+  const d = new Date(tsMs);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = d.getFullYear();
+  const dateStr = `${dd}/${mm}/${yyyy}`;
+  if (/\[\d{2}:\d{2}:\d{2}\]/.test(label)) {
+    return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
+  }
+  return `[${dateStr}] ${label}`;
+}
+
+function linkify(text) {
+  if (!text) return text;
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((p, i) =>
+    /^https?:\/\//.test(p)
+      ? <a key={i} href={p} target="_blank" rel="noreferrer"
+          style={{ color: '#6366f1', textDecoration: 'underline', wordBreak: 'break-all' }}
+          onClick={e => e.stopPropagation()}>{p}</a>
+      : p
+  );
+}
+
+// ── WhatsApp Blast Panel ──────────────────────────────────────────────────────
+function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
+  const [blasting, setBlasting] = useState(false);
+  const [job, setJob] = useState(null);
+  const [error, setError] = useState('');
+  const pollRef = useRef(null);
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const pollStatus = (jobId) => {
+    stopPoll();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/wa/campaign-blast/status/${jobId}`);
+        const data = await res.json();
+        setJob(data);
+        if (data.status !== 'running') stopPoll();
+      } catch { stopPoll();  }
+    }, 2000);
+  };
+
+  useEffect(() => () => stopPoll(), []);
+
+  const handleBlast = async () => {
+    setError('');
+    setBlasting(true);
+    setJob(null);
+    try {
+      const res = await apiFetch(`${API_URL}/wa/campaign-blast/${campaignId}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || 'Blast failed'); setBlasting(false); return; }
+      if (data.sent !== undefined && data.total === 0) {
+        setJob({ status: 'done', total: 0, sent: 0, failed: 0, errors: [] });
+        setBlasting(false);
+        return;
+      }
+      setJob({ status: 'running', total: data.total, sent: 0, failed: 0, errors: [] });
+      pollStatus(data.job_id);
+    } catch { setError('Network error');  }
+    setBlasting(false);
+  };
+
+  const isRunning = job?.status === 'running';
+  const isDone = job?.status === 'done';
+  const progress = job ? Math.round(((job.sent + job.failed) / Math.max(job.total, 1)) * 100) : 0;
+
+  return (
+    <div style={{ marginBottom: '1rem' }}>
+      {error && (
+        <div style={{ background: '#fee2e2', border: `1px solid #fca5a5`, color: T.red, borderRadius: 8, padding: '10px 14px', marginBottom: 10, fontSize: '0.85rem' }}>
+          ⚠️ {error}
+        </div>
+      )}
+      {!isRunning && !isDone && (
+        <button
+          style={{ background: `linear-gradient(135deg, ${T.wa}, #128C7E)`, border: 'none', color: '#fff', fontSize: '0.85rem', padding: '8px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontFamily: T.font }}
+          disabled={blasting}
+          onClick={handleBlast}>
+          {blasting ? 'Starting...' : '💬 Send to New Leads'}
+        </button>
+      )}
+      {(isRunning || isDone) && (
+        <div style={{ ...card, padding: '12px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.85rem', color: T.sub }}>
+            <span>{isRunning ? '⏳ Sending...' : '✅ Blast complete'}</span>
+            <span style={{ color: T.muted }}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
+          </div>
+          <div style={{ background: T.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
+            <div style={{ width: `${progress}%`, height: '100%', background: `linear-gradient(90deg, ${T.wa}, #128C7E)`, transition: 'width 0.4s' }} />
+          </div>
+          {isDone && job.failed > 0 && (
+            <div style={{ marginTop: 8, fontSize: '0.75rem', color: T.amber }}>
+              {job.errors?.slice(0, 3).map((e, i) => <div key={i}>{e}</div>)}
+              {job.errors?.length > 3 && <div>…and {job.errors.length - 3} more</div>}
+            </div>
+          )}
+          {isDone && (
+            <button onClick={() => { setJob(null); setError(''); }}
+              style={{ marginTop: 8, background: '#fff', border: `1px solid ${T.border}`, color: T.muted, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem', fontFamily: T.font }}>
+              Send Again
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AuthAudioPlayer({ src, style }) {
   const [blobUrl, setBlobUrl] = React.useState(null);
@@ -49,7 +179,7 @@ export default function CampaignDetail({
   campaignLeads, callLog, detailTab, setDetailTab,
   handleBack, fetchCampaignLeads, fetchCallLog, fetchCampaigns,
   statusBadge, getProductName, getCampaignStats,
-  campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, voiceSaveStatus = 'idle',
+  campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead,
@@ -61,12 +191,164 @@ export default function CampaignDetail({
   handleEditCampaign
 }) {
   const stats = getCampaignStats(selectedCampaign);
+  const toast = useToast();
+  const confirm = useConfirm();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
   const [billingUsage, setBillingUsage] = useState(null);
   const [retries, setRetries] = useState([]);
   const [retriesLoading, setRetriesLoading] = useState(false);
+  const [scheduleLead, setScheduleLead] = useState(null);
+  const [scheduleAt, setScheduleAt] = useState('');
+  const [scheduleNotes, setScheduleNotes] = useState('');
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
+
+
+  const [editingNote, setEditingNote] = useState(null);
+  const [generatedNote, setGeneratedNote] = useState(null);
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteGenerating, setNoteGenerating] = useState(false);
+
+  const handleGenerateNote = async (lead) => {
+    setNoteGenerating(true);
+    setGeneratedNote(null);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/generate-followup-note`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast(data.error || 'Could not generate note'); return; }
+      setGeneratedNote({ leadId: lead.id, text: data.note || '', recordingUrl: data.recording_url || '', recordingFilename: data.recording_filename || '' });
+      setEditingNote(null);
+    } catch (e) {
+      toast('Failed to generate note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteGenerating(false);
+    }
+  };
+
+  const handleSaveInlineNote = async (lead) => {
+    if (!editingNote) return;
+    const trimmed = editingNote.text.trim();
+    setNoteSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Failed to save (HTTP ${res.status})`);
+        return;
+      }
+      lead.follow_up_note = trimmed;
+      setEditingNote(null);
+      setGeneratedNote(null);
+    } catch (e) {
+      toast('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const [waSendingId, setWaSendingId] = useState(null);
+  const [waSendStatus, setWaSendStatus] = useState({}); // lead.id → 'sent' | 'error'
+
+  const handleSendWA = async (lead) => {
+    setWaSendingId(lead.id);
+    setWaSendStatus(s => ({ ...s, [lead.id]: null }));
+    try {
+      const res = await apiFetch(`${API_URL}/wa/campaign-blast/${selectedCampaign.id}/send-one`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_id: lead.id }),
+      });
+      setWaSendStatus(s => ({ ...s, [lead.id]: res.ok ? 'sent' : 'error' }));
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Send failed (HTTP ${res.status})`);
+      }
+    } catch {
+      setWaSendStatus(s => ({ ...s, [lead.id]: 'error' }));
+      toast('Network error — could not reach server');
+    }
+    setWaSendingId(null);
+  };
+
+  const [qaName, setQaName] = useState('');
+  const [qaPhone, setQaPhone] = useState('');
+  const [qaNameErr, setQaNameErr] = useState('');
+  const [qaPhoneErr, setQaPhoneErr] = useState('');
+  const [qaApiErr, setQaApiErr] = useState('');
+
+  const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
+  const handleDialClick = async (lead) => {
+    onCampaignDial(lead, selectedCampaign.id);
+    try {
+      const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(lead.phone || '')}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.is_dnd) return;
+      setDndBlockedLeadIds(prev => {
+        const next = new Set(prev);
+        next.add(lead.id);
+        return next;
+      });
+      setTimeout(() => {
+        setDndBlockedLeadIds(prev => {
+          if (!prev.has(lead.id)) return prev;
+          const next = new Set(prev);
+          next.delete(lead.id);
+          return next;
+        });
+      }, 2000);
+    } catch { /* network/permission — silently skip badge */  }
+  };
+
+  const handleHumanCallDial = async () => {
+    if (!humanCallLead || !humanCallPhone.trim()) return;
+    localStorage.setItem('humanCallAgentPhone', humanCallPhone.trim());
+    setHumanCallStatus('dialing');
+    setHumanCallError('');
+    try {
+      const res = await apiFetch(
+        `${API_URL}/campaigns/${selectedCampaign.id}/human-call/${humanCallLead.id}`,
+        { method: 'POST', body: JSON.stringify({ agent_phone: humanCallPhone.trim() }) }
+      );
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
+      setHumanCallStatus('done');
+      setTimeout(() => { setHumanCallLead(null); setHumanCallStatus('idle'); }, 2000);
+    } catch (e) {
+      setHumanCallError(e.message || 'Dial failed');
+      setHumanCallStatus('error');
+    }
+  };
+
+  const handleBrowserCallStart = async (lead) => {
+    // Exotel only: server dials the customer, then we relay audio over WebSocket.
+    setBrowserCallLead(lead);
+    setBrowserCallSid(null);
+    setBrowserCallDialing(true);
+    try {
+      const res = await apiFetch(
+        `${API_URL}/campaigns/${selectedCampaign.id}/leads/${lead.id}/browser-call`,
+        { method: 'POST' }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setBrowserCallSid(data.call_sid);
+    } catch (e) {
+      setBrowserCallLead(null);
+      alert('Browser call failed: ' + (e.message || 'Unknown error'));
+    } finally {
+      setBrowserCallDialing(false);
+    }
+  };
 
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }
@@ -204,80 +486,190 @@ export default function CampaignDetail({
 
   const fetchInsights = async () => {
     setInsightsLoading(true);
+    setInsightsError('');
     try {
       const [insightsRes, reviewsRes] = await Promise.all([
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
       ]);
-      if (insightsRes.ok) setCallInsights(await insightsRes.json());
-      if (reviewsRes.ok) setCallReviews(await reviewsRes.json());
-    } catch (e) { console.error('Failed to fetch insights', e); }
+      if (!insightsRes.ok) {
+        setCallInsights(null);
+        setInsightsError(`Insights endpoint returned ${insightsRes.status}`);
+      } else {
+        setCallInsights(await insightsRes.json());
+      }
+      if (!reviewsRes.ok) {
+        setCallReviews([]);
+        if (!insightsError) setInsightsError(`Reviews endpoint returned ${reviewsRes.status}`);
+      } else {
+        setCallReviews(await reviewsRes.json());
+      }
+    } catch (e) {
+      console.error('Failed to fetch insights', e);
+      setInsightsError('Network error loading call insights');
+    }
     setInsightsLoading(false);
   };
 
+  const fetchRetries = async () => {
+    setRetriesLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
+      const data = await res.json();
+      setRetries(Array.isArray(data) ? data : (data?.retries || []));
+    } catch (e) { console.error('Failed to fetch retries', e); }
+    setRetriesLoading(false);
+  };
+
   useEffect(() => {
+     
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailTab, selectedCampaign.id]);
 
-  // Fetch billing usage for the widget
   useEffect(() => {
     const fetchBilling = async () => {
       try {
         const res = await apiFetch(`${API_URL}/billing/usage`);
         const data = await res.json();
         if (data && data.has_subscription) setBillingUsage(data);
-      } catch (e) { /* no subscription — ignore */ }
+      } catch { /* no subscription — ignore */  }
     };
     fetchBilling();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchRetries = async () => {
-    setRetriesLoading(true);
+  // ── Exotel account selector state ─────────────────────────────────────────
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
+  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
+  const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
+
+  const [humanCallLead, setHumanCallLead] = useState(null); // lead being human-called
+  const [humanCallPhone, setHumanCallPhone] = useState(() => localStorage.getItem('humanCallAgentPhone') || '');
+  const [humanCallStatus, setHumanCallStatus] = useState('idle'); // idle | dialing | done | error
+  const [humanCallError, setHumanCallError] = useState('');
+
+  const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call (Exotel)
+  const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API (Exotel)
+  const [browserCallDialing, setBrowserCallDialing] = useState(false);
+  // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
+
+  const hideAiFeatures = useHideAiFeatures();
+
+  // Call-action visibility from Settings page (localStorage).
+  const [visibleCallActions, setVisibleCallActions] = useState({
+    dial: true,
+    browserCall: true,
+    simWebCall: true,
+  });
+  useEffect(() => {
+    if (hideAiFeatures) {
+      setVisibleCallActions({ dial: false, browserCall: true, simWebCall: false });
+      return;
+    }
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
-      setRetries(await res.json());
-    } catch (e) { console.error('Failed to fetch retries', e); }
-    setRetriesLoading(false);
+      const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
+      setVisibleCallActions({
+        dial: saved.dial !== false,
+        browserCall: saved.browserCall !== false,
+        simWebCall: saved.simWebCall !== false,
+      });
+    } catch { /* ignore */ }
+  }, [hideAiFeatures]);
+
+  useEffect(() => {
+    if (selectedCampaign.channel === 'whatsapp') return;
+    // Fetch all org accounts
+    apiFetch(`${API_URL}/exotel-accounts`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setOrgExotelAccounts(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    // Fetch which account is linked to this campaign
+    apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaign.id]);
+
+  const handleSaveExotelAccount = async () => {
+    setExotelAccountSaveStatus('saving');
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exotel_account_id: selectedExotelAccountId ? parseInt(selectedExotelAccountId) : 0 }),
+      });
+      setExotelAccountSaveStatus(res.ok ? 'saved' : 'error');
+    } catch { setExotelAccountSaveStatus('error'); }
+    setTimeout(() => setExotelAccountSaveStatus('idle'), 2000);
   };
 
   const scoreColor = (s) => {
-    if (s >= 4) return '#22c55e';
-    if (s >= 3) return '#f59e0b';
+    if (s >= 4) return T.green;
+    if (s >= 3) return T.amber;
     if (s >= 2) return '#f97316';
-    return '#ef4444';
+    return T.red;
   };
 
   const sentimentColor = (s) => {
-    if (s === 'positive') return '#22c55e';
+    if (s === 'positive') return T.green;
     if (s === 'neutral') return '#60a5fa';
     if (s === 'negative') return '#f97316';
-    if (s === 'annoyed') return '#ef4444';
-    return '#94a3b8';
+    if (s === 'annoyed') return T.red;
+    return T.muted;
   };
 
-  // Build a map of transcript_id -> review for the call log badges
   const reviewByTranscript = {};
   callReviews.forEach(r => { reviewByTranscript[r.transcript_id] = r; });
 
+  // ── shared mini styles ──────────────────────────────────────────
+  const btnPrimary = {
+    background: T.accent, border: 'none', color: '#fff',
+    borderRadius: 8, padding: '8px 18px', cursor: 'pointer',
+    fontSize: 13, fontWeight: 600, fontFamily: T.font,
+  };
+  const btnGhost = {
+    background: '#fff', border: `1px solid ${T.border}`, color: T.sub,
+    borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+    fontSize: 12, fontWeight: 600, fontFamily: T.font,
+  };
+  const inputStyle = {
+    padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
+    fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none',
+  };
+  const thStyle = {
+    padding: '10px 14px', fontSize: 11, fontWeight: 600, color: T.muted,
+    textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left',
+    borderBottom: `1px solid ${T.border}`, background: T.bg,
+  };
+  const tdStyle = { padding: '11px 14px', fontSize: 13, color: T.sub, borderBottom: `1px solid ${T.border}` };
+
   return (
-    <div style={{padding: '1rem'}}>
+    <div style={{ padding: '24px 28px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+
+      {/* Back */}
       <button onClick={handleBack}
-        style={{background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, marginBottom: '1rem', padding: 0}}>
-        &larr; Back to Campaigns
+        style={{ background: 'none', border: 'none', color: T.accent, cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, marginBottom: '1.25rem', padding: 0, fontFamily: T.font }}>
+        ← Back to Campaigns
       </button>
 
-      <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.5rem', flexWrap: 'wrap'}}>
-        <h2 style={{margin: 0, color: '#e2e8f0'}}>{selectedCampaign.name}</h2>
-        {selectedCampaign.product_id && (
-          <span className="badge" style={{background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.75rem', padding: '2px 10px', borderRadius: '12px'}}>
+      {/* Campaign header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>{selectedCampaign.name}</h2>
+        {selectedCampaign.product_id > 0 ? (
+          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#0891b2', background: 'rgba(8,145,178,0.1)' }}>
             {getProductName(selectedCampaign.product_id)}
+          </span>
+        ) : (
+          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.amber, background: 'rgba(245,158,11,0.1)' }}>
+            ⚠ No product linked
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
         <button onClick={() => handleEditCampaign(selectedCampaign)}
-          style={{background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)',
-            color: '#facc15', borderRadius: '6px', padding: '4px 12px', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600}}>
+          style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
           Edit Campaign
         </button>
         <select className="form-input" value={selectedCampaign.lead_source || ''}
@@ -289,7 +681,7 @@ export default function CampaignDetail({
             });
             setSelectedCampaign({...selectedCampaign, lead_source: src});
           }}
-          style={{width: 'auto', height: '28px', fontSize: '0.75rem', padding: '2px 8px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0', borderRadius: '6px'}}>
+          style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
           <option value="">No Source</option>
           <option value="facebook">Facebook / Meta</option>
           <option value="google">Google Ads</option>
@@ -301,199 +693,242 @@ export default function CampaignDetail({
         </select>
       </div>
 
-      <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
-        <div className="glass-panel metric-card"><div className="metric-label">Total Leads</div><div className="metric-value">{stats.total}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Called</div><div className="metric-value">{stats.called}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Qualified</div><div className="metric-value">{stats.qualified}</div></div>
-        <div className="glass-panel metric-card"><div className="metric-label">Appointments</div><div className="metric-value">{stats.booked}</div></div>
+      {/* Metrics grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+        {[
+          { label: 'Total Leads', val: stats.total, color: T.accent },
+          { label: 'Called', val: stats.called, color: T.sub },
+          { label: 'Qualified', val: stats.qualified, color: T.pink },
+          { label: 'Appointments', val: stats.booked, color: T.green },
+        ].map(s => (
+          <div key={s.label} style={{ ...card, padding: '18px 20px' }}>
+            <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{s.label}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Voice Settings */}
-      <div className="glass-panel" style={{marginBottom: '1.5rem', padding: '12px 16px'}}>
-        <div style={{display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'}}>
-          <span style={{fontSize: '0.8rem', color: '#64748b', fontWeight: 600, whiteSpace: 'nowrap'}}>🔊 Campaign Voice Settings</span>
-          <select className="form-input" value={campVoice.tts_provider}
-            onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '100px'}}>
-            <option value="">-- Provider --</option>
-            <option value="elevenlabs">ElevenLabs</option>
-            <option value="sarvam">Sarvam AI</option>
-            <option value="smallest">Smallest AI</option>
-          </select>
-          <select className="form-input" value={campVoice.tts_voice_id}
-            onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '160px'}}>
-            <option value="">-- Voice --</option>
-            {(() => {
-              const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
-              const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
-              const recommended = voices.filter(v => recs.includes(v.id));
-              const others = voices.filter(v => !recs.includes(v.id));
-              return (<>
-                {recommended.length > 0 && <optgroup label="★ Recommended">
-                  {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
-                </optgroup>}
-                {recommended.length > 0 && <optgroup label="All Voices">
-                  {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </optgroup>}
-                {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </>);
-            })()}
-          </select>
-          <select className="form-input" value={campVoice.tts_language}
-            onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
-            style={{width: 'auto', height: '32px', fontSize: '0.8rem', padding: '4px 8px', minWidth: '90px'}}>
-            <option value="">-- Language --</option>
-            {INDIAN_LANGUAGES.map(l => (
-              <option key={l.code} value={l.code}>{l.name}</option>
-            ))}
-          </select>
-          <button
-            style={{
-              background: voiceSaveStatus === 'saved' ? 'linear-gradient(135deg,#22c55e,#16a34a)' : voiceSaveStatus === 'error' ? 'linear-gradient(135deg,#ef4444,#b91c1c)' : 'linear-gradient(135deg,#8b5cf6,#6d28d9)',
-              border: 'none', color: '#fff', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px',
-              cursor: voiceSaveStatus === 'saving' ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', minWidth: '60px',
-              opacity: voiceSaveStatus === 'saving' ? 0.7 : 1, transition: 'all 0.2s'
-            }}
-            onClick={handleSaveCampVoice}
-            disabled={voiceSaveStatus === 'saving'}>
-            {voiceSaveStatus === 'saving' ? 'Saving…' : voiceSaveStatus === 'saved' ? 'Saved ✓' : voiceSaveStatus === 'error' ? 'Error ✗' : 'Save'}
-          </button>
-          <button style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', fontSize: '0.75rem', padding: '6px 10px', borderRadius: '6px', cursor: 'pointer', whiteSpace: 'nowrap'}}
-            onClick={handleResetCampVoice}>Reset to Org Default</button>
-        </div>
-        <div style={{fontSize: '0.7rem', color: '#a78bfa', marginTop: '6px'}}>
-          {campVoice.tts_provider
-            ? `Current: ${campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs' : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI' : 'Smallest AI'} - ${(INDIAN_VOICES[campVoice.tts_provider] || []).find(v => v.id === campVoice.tts_voice_id)?.name || campVoice.tts_voice_id || 'none'}`
-            : 'Using org default'}
-        </div>
-        {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
-          <div style={{fontSize: '0.65rem', color: '#22d3ee', marginTop: '4px'}}>
-            ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+      {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
+      {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
+        <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔊 Voice Settings</span>
+            <select className="form-input" value={campVoice.tts_provider}
+              onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
+              style={{ ...inputStyle, height: 32, minWidth: 110 }}>
+              <option value="">-- Provider --</option>
+              <option value="elevenlabs">ElevenLabs</option>
+              <option value="sarvam">Sarvam AI</option>
+              <option value="smallest">Smallest AI</option>
+            </select>
+            <select className="form-input" value={campVoice.tts_voice_id}
+              onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
+              style={{ ...inputStyle, height: 32, minWidth: 160 }}>
+              <option value="">-- Voice --</option>
+              {(() => {
+                const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
+                const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
+                const recommended = voices.filter(v => recs.includes(v.id));
+                const others = voices.filter(v => !recs.includes(v.id));
+                return (<>
+                  {recommended.length > 0 && <optgroup label="★ Recommended">
+                    {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
+                  </optgroup>}
+                  {recommended.length > 0 && <optgroup label="All Voices">
+                    {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </optgroup>}
+                  {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </>);
+              })()}
+            </select>
+            <select className="form-input" value={campVoice.tts_language}
+              onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
+              style={{ ...inputStyle, height: 32, minWidth: 100 }}>
+              <option value="">-- Language --</option>
+              {INDIAN_LANGUAGES.map(l => (
+                <option key={l.code} value={l.code}>{l.name}</option>
+              ))}
+            </select>
+            <button style={{
+                background: campVoiceSaveStatus === 'saved' ? T.green
+                  : campVoiceSaveStatus === 'error' ? T.red
+                  : T.accent,
+                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                cursor: campVoiceSaveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+                opacity: campVoiceSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
+              }}
+              disabled={campVoiceSaveStatus === 'saving'}
+              onClick={handleSaveCampVoice}>
+              {campVoiceSaveStatus === 'saving' ? 'Saving…'
+                : campVoiceSaveStatus === 'saved' ? '✓ Saved'
+                : campVoiceSaveStatus === 'error' ? '✗ Failed'
+                : 'Save'}
+            </button>
+            <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>
           </div>
-        )}
-      </div>
+          <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>
+            {campVoice.tts_provider
+              ? (() => {
+                  const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
+                    : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
+                    : 'Smallest AI';
+                  const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
+                    .find(v => v.id === campVoice.tts_voice_id)?.name
+                    || campVoice.tts_voice_id || 'none';
+                  const langLabel = INDIAN_LANGUAGES
+                    .find(l => l.code === campVoice.tts_language)?.name
+                    || campVoice.tts_language;
+                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '');
+                })()
+              : 'Using org default'}
+          </div>
+          {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
+            <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}>
+              ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Exotel Account — hidden for WhatsApp campaigns */}
+      {selectedCampaign.channel !== 'whatsapp' && (
+        <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
+          <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+            📞 Provider Account
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <select
+              className="form-input"
+              value={selectedExotelAccountId}
+              onChange={e => setSelectedExotelAccountId(e.target.value)}
+              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
+              <option value="">-- Use platform default --</option>
+              {orgExotelAccounts.map(a => (
+                <option key={a.id} value={String(a.id)}>
+                  {'[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
+                </option>
+              ))}
+            </select>
+            <button
+              style={{
+                background: exotelAccountSaveStatus === 'saved' ? T.green : exotelAccountSaveStatus === 'error' ? T.red : T.accent,
+                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
+                cursor: exotelAccountSaveStatus === 'saving' ? 'wait' : 'pointer',
+                opacity: exotelAccountSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
+              }}
+              disabled={exotelAccountSaveStatus === 'saving'}
+              onClick={handleSaveExotelAccount}>
+              {exotelAccountSaveStatus === 'saving' ? 'Saving…' : exotelAccountSaveStatus === 'saved' ? '✓ Saved' : exotelAccountSaveStatus === 'error' ? '✗ Failed' : 'Save'}
+            </button>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
+            {selectedExotelAccountId
+              ? (() => {
+                  const a = orgExotelAccounts.find(x => String(x.id) === selectedExotelAccountId);
+                  return a ? `Using: ${a.name} · Account: ${a.account_sid} · Caller: ${a.caller_id}` : 'Account selected';
+                })()
+              : orgExotelAccounts.length === 0
+                ? 'No saved accounts — go to More → Provider Accounts to add one'
+                : 'No account selected — calls will not go through'}
+          </div>
+        </div>
+      )}
 
       {/* Billing Minutes Widget */}
       {billingUsage && (
         <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: '10px',
-          background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)',
-          borderRadius: '20px', padding: '6px 16px', marginBottom: '1rem',
+          display: 'inline-flex', alignItems: 'center', gap: 10,
+          background: 'rgba(99,102,241,0.06)', border: `1px solid rgba(99,102,241,0.2)`,
+          borderRadius: 20, padding: '6px 16px', marginBottom: 14,
         }}>
-          <span style={{fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600, whiteSpace: 'nowrap'}}>
-            {'\u23F1'} {billingUsage.minutes_remaining} / {billingUsage.minutes_included} min remaining
+          <span style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            ⏱ {billingUsage.minutes_remaining} / {billingUsage.minutes_included} min remaining
           </span>
-          <div style={{
-            width: '80px', height: '6px', background: 'rgba(100,116,139,0.3)',
-            borderRadius: '3px', overflow: 'hidden',
-          }}>
+          <div style={{ width: 80, height: 6, background: T.border, borderRadius: 3, overflow: 'hidden' }}>
             <div style={{
               width: `${Math.min(100, (billingUsage.minutes_used / billingUsage.minutes_included) * 100)}%`,
-              height: '100%', borderRadius: '3px',
+              height: '100%', borderRadius: 3,
               background: (billingUsage.minutes_used / billingUsage.minutes_included) > 0.9
-                ? '#ef4444' : (billingUsage.minutes_used / billingUsage.minutes_included) > 0.7
-                ? '#f59e0b' : '#6366f1',
+                ? T.red : (billingUsage.minutes_used / billingUsage.minutes_included) > 0.7
+                ? T.amber : T.accent,
               transition: 'width 0.5s ease',
             }} />
           </div>
         </div>
       )}
 
-      {/* Live Dial Events Feed — always visible */}
-      <div className="glass-panel" style={{marginBottom: '1rem', padding: '12px', maxHeight: '200px', overflowY: 'auto'}}>
-        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px'}}>
-          <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '1px'}}>📡 Live Campaign Activity</span>
-          <button onClick={async () => {
-            setLiveEvents([]);
-            try { await apiFetch(`${API_URL}/campaign-events/clear?campaign_id=${selectedCampaign?.id || 0}`, { method: 'POST' }); } catch(e) {}
-          }} style={{background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.7rem'}}>Clear</button>
+      {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
+      {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>📡 Live Campaign Activity</span>
+          {liveEvents.length > 0 && (
+            <button onClick={() => {
+              setLiveEvents([]);
+              try {
+                localStorage.setItem(`liveEventsClearedAt:${selectedCampaign.id}`, String(Date.now()));
+              } catch { /* ignore */ }
+            }} style={{ background: 'none', border: 'none', color: T.muted, cursor: 'pointer', fontSize: '0.7rem', fontFamily: T.font }}>Clear</button>
+          )}
         </div>
         {liveEvents.length === 0 ? (
-          <div style={{fontSize: '0.75rem', color: '#475569', fontStyle: 'italic', padding: '4px 0'}}>
-            Waiting for campaign activity...
+          <div style={{ fontSize: '0.75rem', color: T.muted, fontStyle: 'italic', padding: '4px 0' }}>
+            Listening for new events… start a dial to see activity here.
           </div>
         ) : (
           liveEvents.map((ev, i) => (
-            <div key={i} style={{fontSize: '0.8rem', color: '#e2e8f0', padding: '3px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontFamily: 'SFMono-Regular, Consolas, monospace'}}>
-              {ev}
+            <div key={i} style={{ fontSize: '0.8rem', color: T.sub, padding: '3px 0', borderBottom: `1px solid ${T.border}`, fontFamily: T.mono }}>
+              {withDate(ev.label, ev.ts)}
             </div>
           ))
         )}
-      </div>
+      </div>}
 
       {/* Quick Add Lead Form */}
-      <div className="glass-panel" style={{padding: '12px', marginBottom: '1rem', display: 'flex', gap: '8px', alignItems: 'flex-start', flexWrap: 'wrap'}}>
-        <span style={{fontSize: '0.8rem', color: '#94a3b8', fontWeight: 600, lineHeight: '32px'}}>➕ Quick Add:</span>
-
-        <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
+      <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
             onChange={e => {
-              // Allow letters, digits and spaces only
-              const val = e.target.value.replace(/[^a-zA-Z0-9 ]/g, '');
-              setQaName(val);
-              setQaErrors(p => ({...p, name: ''}));
+              const v = e.target.value;
+              setQaName(v);
+              const t = v.trim();
+              if (!t) setQaNameErr('');
+              else if (/\d/.test(t) || !/[A-Za-z]/.test(t)) setQaNameErr('Name must contain only letters');
+              else setQaNameErr('');
             }}
-            style={{width: '120px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
-              borderColor: qaErrors.name ? '#ef4444' : undefined}} />
-          {qaErrors.name && (
-            <span style={{fontSize: '0.7rem', color: '#ef4444', lineHeight: 1.2}}>{qaErrors.name}</span>
-          )}
+            style={{ ...inputStyle, width: 130, height: 32, border: qaNameErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+          {qaNameErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaNameErr}</span>}
         </div>
-
-        {/* Phone: accepts 10-digit Indian OR E.164 (+country…) */}
-        <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
-          <input className="form-input" placeholder="Phone"
-            value={qaPhone}
-            maxLength={16}
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <input className="form-input" placeholder="Phone (10 digits)" value={qaPhone}
+            inputMode="numeric" maxLength={10} pattern="\d{10}"
             onChange={e => {
-              let val = e.target.value;
-              if (val.startsWith('+')) {
-                // E.164 path: keep leading +, strip everything else that isn't a digit
-                val = '+' + val.slice(1).replace(/\D/g, '');
-                if (val.length > 16) val = val.slice(0, 16); // E.164 max = +15 digits
-              } else {
-                // Indian 10-digit path: digits only
-                val = val.replace(/\D/g, '').slice(0, 10);
+              const raw = e.target.value;
+              const v = raw.replace(/\D/g, '').slice(0, 10);
+              setQaPhone(v);
+              if (/\D/.test(raw)) {
+                setQaPhoneErr('Only digits are accepted');
+              } else if (qaPhoneErr) {
+                setQaPhoneErr('');
               }
-              setQaPhone(val);
-              setQaErrors(p => ({...p, phone: ''}));
             }}
-            style={{width: '185px', height: '32px', fontSize: '0.8rem', padding: '4px 8px',
-              borderColor: qaErrors.phone ? '#ef4444' : undefined}} />
-          {qaErrors.phone
-            ? <span style={{fontSize: '0.7rem', color: '#ef4444', lineHeight: 1.2}}>{qaErrors.phone}</span>
-            : <span style={{fontSize: '0.65rem', color: '#64748b', lineHeight: 1.2}}>10 digits or +[code][number]</span>
-          }
+            style={{ ...inputStyle, width: 160, height: 32, border: qaPhoneErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+          {qaPhoneErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaPhoneErr}</span>}
         </div>
-
-        <button className="btn-primary" style={{height: '32px', fontSize: '0.8rem', padding: '4px 12px'}}
-          disabled={qaLoading}
+        <button style={{ ...btnPrimary, height: 32, padding: '4px 14px' }}
           onClick={async () => {
             const name = qaName.trim();
-            const raw  = qaPhone.trim();
-
-            // Normalise: bare 10 digits → +91, otherwise use as-is
-            const fullPhone = /^\d{10}$/.test(raw) ? '+91' + raw : raw;
-
-            // --- client-side validation (no API call on failure) ---
-            const errors = {};
-            if (!name) errors.name = 'Name is required';
-            else if (!/[a-zA-Z]/.test(name)) errors.name = 'Name must contain at least one letter';
-            if (!raw) {
-              errors.phone = 'Phone is required';
-            } else if (/^\d+$/.test(raw) && raw.length !== 10) {
-              errors.phone = 'Indian numbers must be exactly 10 digits';
-            } else if (raw.startsWith('+') && !/^\+[1-9]\d{7,14}$/.test(raw)) {
-              errors.phone = 'E.164 format: +[country code][number] (8–15 digits total)';
-            } else if (!/^\d{10}$/.test(raw) && !/^\+[1-9]\d{7,14}$/.test(raw)) {
-              errors.phone = 'Enter 10 digits or E.164 format (e.g. +14155552671)';
-            }
-            // Reject invalid input before touching the backend
-            if (Object.keys(errors).length) { setQaErrors(errors); return; }
-
-            setQaLoading(true);
-            setQaStatus(null);
+            const phone = qaPhone.trim();
+            const nameErr = !name
+              ? 'Name is required'
+              : (!/[A-Za-z]/.test(name) || /\d/.test(name) ? 'Name must contain only letters' : '');
+            const phoneErr = !phone
+              ? 'Phone is required'
+              : (!/^\d{10}$/.test(phone) ? 'Indian numbers must be exactly 10 digits' : '');
+            setQaNameErr(nameErr);
+            setQaPhoneErr(phoneErr);
+            setQaApiErr('');
+            if (nameErr || phoneErr) return;
             try {
               const res = await apiFetch(`${API_URL}/leads`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -501,10 +936,17 @@ export default function CampaignDetail({
               });
               const data = await res.json();
               let leadId = data.id;
-              if (!leadId && data.message && data.message.includes('already exists')) {
-                const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(fullPhone)}`);
+              const errMsg = data.error || data.message || '';
+              const isDuplicate = res.status === 409 || errMsg.includes('already exists');
+              if (data.fields && typeof data.fields === 'object') {
+                if (data.fields.first_name) setQaNameErr(data.fields.first_name);
+                if (data.fields.phone) setQaPhoneErr(data.fields.phone);
+                if (!isDuplicate) return;
+              }
+              if (!leadId && isDuplicate) {
+                const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(phone)}`);
                 const found = await searchRes.json();
-                if (found.length > 0) leadId = found[0].id;
+                if (Array.isArray(found) && found.length > 0) leadId = found[0].id;
               }
               if (leadId) {
                 await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads`, {
@@ -513,166 +955,167 @@ export default function CampaignDetail({
                 });
                 setQaName('');
                 setQaPhone('');
-                setQaErrors({});
-                setQaStatus({ type: 'success', message: `${name} added!` });
                 fetchCampaignLeads(selectedCampaign.id);
                 fetchCampaigns();
-              } else {
-                setQaStatus({ type: 'error', message: data.message || 'Failed to add lead' });
-              }
-            } catch(e) {
-              setQaStatus({ type: 'error', message: 'Network error — please try again' });
-            } finally {
-              setQaLoading(false);
-            }
-          }}>
-          {qaLoading ? 'Adding...' : 'Add & Assign'}
-        </button>
-
-        {qaStatus && (
-          <span style={{
-            fontSize: '0.8rem', lineHeight: '32px', padding: '0 10px', borderRadius: '6px',
-            color: qaStatus.type === 'success' ? '#22c55e' : '#ef4444',
-            background: qaStatus.type === 'success' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-            border: `1px solid ${qaStatus.type === 'success' ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-          }}>
-            {qaStatus.type === 'success' ? '✓' : '⚠'} {qaStatus.message}
-          </span>
-        )}
+              } else if (!data.fields) { setQaApiErr(errMsg || `Error (${res.status})`); }
+            } catch(e) { setQaApiErr('Failed: ' + (e?.message || 'network error')); }
+          }}>Add & Assign</button>
+        {qaApiErr && <span style={{ color: T.red, fontSize: '0.75rem', width: '100%', marginTop: 4 }}>{qaApiErr}</span>}
       </div>
 
-      <div style={{display: 'flex', gap: '10px', marginBottom: confirmDialAction ? '0.5rem' : '1rem', flexWrap: 'wrap'}}>
-        <button className="btn-primary" onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
-        <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22d3ee, #06b6d4)'}}
+      {selectedCampaign.channel === 'whatsapp' && !hideAiFeatures && (
+        <div style={{ marginBottom: 14 }}>
+          <WhatsAppBlastPanel campaignId={selectedCampaign.id} apiFetch={apiFetch} API_URL={API_URL} />
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
+        <button style={{ ...btnPrimary, background: '#0891b2' }}
           onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
-        <a href={`${API_URL}/leads/sample-csv`} download style={{color: '#94a3b8', fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center'}}>📋 Sample CSV</a>
-        {campaignLeads.some(l => (l.status || '').startsWith('Call Failed')) && (
-          <button className="btn-call" style={{background: 'rgba(245,158,11,0.15)', color: '#f59e0b', borderColor: 'rgba(245,158,11,0.3)', fontSize: '0.85rem', padding: '8px 16px'}}
-            onClick={() => {
-              const count = campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length;
-              setConfirmDialAction({ type: 'redial', label: `Redial ${count} failed lead${count !== 1 ? 's' : ''}`, count });
-            }}>
-            🔄 Redial Failed ({campaignLeads.filter(l => (l.status || '').startsWith('Call Failed')).length})
-          </button>
-        )}
-        {campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
-          <button className="btn-primary" style={{background: 'linear-gradient(135deg, #22c55e, #16a34a)', fontSize: '0.85rem', padding: '8px 16px'}}
-            onClick={() => {
-              const count = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
-              setConfirmDialAction({ type: 'new', label: `Dial all ${count} new lead${count !== 1 ? 's' : ''}`, count });
+        <a href={`${API_URL}/leads/sample-csv`} download style={{ color: T.muted, fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center' }}>📋 Sample CSV</a>
+        <button
+          style={{ ...btnPrimary, background: T.green }}
+          onClick={() => {
+            apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
+              .then(res => res.blob())
+              .then(blob => {
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `recordings_${(selectedCampaign.name || selectedCampaign.id).toString().replace(/\s+/g,'_')}.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              });
+          }}>
+          ⬇ Export Recordings
+        </button>
+        {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+          <button style={{ ...btnPrimary, background: T.green }}
+            onClick={async () => {
+              const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
+              if (!await confirm({ message: `Dial ALL ${newCount} new leads? (30s gap between calls)` })) return;
+              try {
+                const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
+                const data = await res.json();
+                toast(data.message || 'Dialing started');
+                const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
+                setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
+              } catch { toast('Dial failed');  }
             }}>
             📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        <button className="btn-primary" style={{background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', fontSize: '0.85rem', padding: '8px 16px'}}
-          onClick={() => setConfirmDialAction({ type: 'all', label: `Dial all ${campaignLeads.length} lead${campaignLeads.length !== 1 ? 's' : ''}`, count: campaignLeads.length })}>
+        {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+          onClick={async () => {
+            if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
+            try {
+              const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, { method: 'POST' });
+              const data = await res.json();
+              toast(data.message || 'Dialing started');
+              const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
+              setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
+            } catch { toast('Failed');  }
+          }}>
           📞 Dial All ({campaignLeads.length})
-        </button>
+        </button>}
       </div>
 
-      {confirmDialAction && (
-        <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1rem', padding: '10px 14px',
-          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '8px', flexWrap: 'wrap'}}>
-          <span style={{fontSize: '0.85rem', color: '#fbbf24', flex: 1}}>
-            ⚠ {confirmDialAction.label}? Calls are placed with a 30s gap to avoid spam.
-          </span>
-          <button
-            style={{background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#4ade80',
-              padding: '5px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600}}
-            onClick={async () => {
-              const action = confirmDialAction;
-              setConfirmDialAction(null);
-              try {
-                const url = action.type === 'redial'
-                  ? `${API_URL}/campaigns/${selectedCampaign.id}/redial-failed`
-                  : action.type === 'new'
-                    ? `${API_URL}/campaigns/${selectedCampaign.id}/dial-all`
-                    : `${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`;
-                await apiFetch(url, { method: 'POST' });
-                const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
-                setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
-              } catch(e) { console.error('Dial action failed', e); }
+      {/* Tab Switcher */}
+      <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content', marginBottom: 16 }}>
+        {[
+          { id: 'leads',   label: `👥 Leads (${campaignLeads.length})`,   activeColor: T.accent },
+          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
+          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
+          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
+        ].filter(tab => !tab.hidden).map(tab => (
+          <button key={tab.id}
+            onClick={() => {
+              if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
+              else setDetailTab(tab.id);
+            }}
+            style={{
+              padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600, fontFamily: T.font,
+              background: detailTab === tab.id ? tab.activeColor : 'transparent',
+              color: detailTab === tab.id ? '#fff' : T.muted,
+              transition: 'all 0.15s',
             }}>
-            Yes, proceed
+            {tab.label}
           </button>
-          <button
-            style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8',
-              padding: '5px 14px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.82rem'}}
-            onClick={() => setConfirmDialAction(null)}>
-            Cancel
-          </button>
+        ))}
+      </div>
+
+      {/* Call Log Tab — WhatsApp notice */}
+      {detailTab === 'calllog' && selectedCampaign.channel === 'whatsapp' && (
+        <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem', textAlign: 'center', color: T.muted }}>
+          💬 Conversation history is in the <strong style={{ color: T.wa }}>WhatsApp Comms</strong> tab.
         </div>
       )}
 
-      {/* Tab Switcher: Leads | Call Log */}
-      <div style={{display: 'flex', gap: '0', marginBottom: '1rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', width: 'fit-content'}}>
-        <button onClick={() => setDetailTab('leads')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'leads' ? 'rgba(99,102,241,0.2)' : 'transparent',
-            color: detailTab === 'leads' ? '#818cf8' : '#64748b'}}>
-          👥 Leads ({campaignLeads.length})
-        </button>
-        <button onClick={() => { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'calllog' ? 'rgba(34,197,94,0.2)' : 'transparent',
-            color: detailTab === 'calllog' ? '#22c55e' : '#64748b'}}>
-          📞 Call Log ({callLog.length})
-        </button>
-        <button onClick={() => setDetailTab('insights')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'insights' ? 'rgba(168,85,247,0.2)' : 'transparent',
-            color: detailTab === 'insights' ? '#a855f7' : '#64748b'}}>
-          📊 Call Insights
-        </button>
-        <button onClick={() => setDetailTab('retries')}
-          style={{padding: '8px 20px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem',
-            background: detailTab === 'retries' ? 'rgba(245,158,11,0.2)' : 'transparent',
-            color: detailTab === 'retries' ? '#f59e0b' : '#64748b'}}>
-          🔄 Retries
-        </button>
-      </div>
-
       {/* Call Log Table */}
-      {detailTab === 'calllog' && (
-        <div className="glass-panel" style={{overflowX: 'auto', marginBottom: '1.5rem'}}>
-          <table className="leads-table" style={{width: '100%'}}>
+      {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
+        <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 16px 0' }}>
+            <a
+              href={`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`}
+              download
+              onClick={e => {
+                e.preventDefault();
+                apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
+                  .then(res => res.blob())
+                  .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+              }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                background: T.green, color: '#fff', borderRadius: 7,
+                padding: '6px 16px', fontSize: '0.8rem', fontWeight: 600,
+                fontFamily: T.font, textDecoration: 'none', cursor: 'pointer',
+              }}>
+              ⬇ Export Recordings CSV
+            </a>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th>Lead</th>
-                <th>Phone</th>
-                <th>Source</th>
-                <th>Time</th>
-                <th>Outcome</th>
-                <th>Quality</th>
-                <th>Duration</th>
-                <th>Recording</th>
+                {['Lead','Phone','Source','Time','Outcome','Quality','Duration','Recording'].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {callLog.length === 0 ? (
-                <tr><td colSpan="8" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No calls made yet.</td></tr>
+                <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No calls made yet.</td></tr>
               ) : callLog.map(call => {
                 const review = reviewByTranscript[call.id];
                 const outcomeColors = {
-                  'Completed': '#22c55e', 'Connected': '#60a5fa', 'No Answer': '#f59e0b',
-                  'Busy': '#f97316', 'Failed': '#ef4444', 'DND Blocked': '#dc2626'
+                  'Completed': T.green, 'Connected': '#60a5fa', 'No Answer': T.amber,
+                  'Busy': '#f97316', 'Failed': T.red, 'DND Blocked': '#dc2626'
                 };
                 const outcomeBg = {
-                  'Completed': 'rgba(34,197,94,0.1)', 'Connected': 'rgba(96,165,250,0.1)', 'No Answer': 'rgba(245,158,11,0.1)',
+                  'Completed': 'rgba(16,185,129,0.1)', 'Connected': 'rgba(96,165,250,0.1)', 'No Answer': 'rgba(245,158,11,0.1)',
                   'Busy': 'rgba(249,115,22,0.1)', 'Failed': 'rgba(239,68,68,0.1)', 'DND Blocked': 'rgba(220,38,38,0.1)'
                 };
                 return (
                   <tr key={call.id}>
-                    <td style={{fontWeight: 600}}>{call.first_name} {call.last_name || ''}</td>
-                    <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{call.phone}</td>
-                    <td><span className="badge" style={{background: call.call_source === 'exotel' ? 'rgba(99,102,241,0.15)' : call.call_source === 'sim_web_call' ? 'rgba(34,197,94,0.15)' : undefined}}>{call.call_source === 'sim_web_call' ? '🌐 Web Call' : call.call_source === 'exotel' ? '📞 Exotel' : call.source || '-'}</span></td>
-                    <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{formatDateTime(call.created_at, orgTimezone)}</td>
-                    <td>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{call.first_name} {call.last_name || ''}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.mono, fontSize: '0.85rem' }}>{call.phone}</td>
+                    <td style={tdStyle}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{call.source || '-'}</span></td>
+                    <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted }}>{formatDateTime(call.created_at, orgTimezone)}</td>
+                    <td style={tdStyle}>
                       <span style={{
-                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
-                        color: outcomeColors[call.outcome] || '#94a3b8',
-                        background: outcomeBg[call.outcome] || 'rgba(148,163,184,0.1)',
-                        border: `1px solid ${outcomeColors[call.outcome] || '#94a3b8'}30`
+                        padding: '3px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                        color: outcomeColors[call.outcome] || T.muted,
+                        background: outcomeBg[call.outcome] || 'rgba(156,163,175,0.1)',
+                        border: `1px solid ${(outcomeColors[call.outcome] || T.muted)}30`
                       }}>
                         {call.outcome === 'Completed' && '✅ '}
                         {call.outcome === 'Connected' && '📞 '}
@@ -683,28 +1126,29 @@ export default function CampaignDetail({
                         {call.outcome}
                       </span>
                     </td>
-                    <td>
-                      {review ? (
-                        <span style={{
-                          padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem', fontWeight: 700,
-                          color: scoreColor(review.quality_score),
-                          background: `${scoreColor(review.quality_score)}18`,
-                          border: `1px solid ${scoreColor(review.quality_score)}40`
-                        }}>
-                          {'★'.repeat(review.quality_score)}{'☆'.repeat(5 - review.quality_score)}
-                        </span>
-                      ) : (
-                        <span style={{color: '#64748b', fontSize: '0.75rem'}}>--</span>
+                    <td style={tdStyle}>
+                      {review ? (() => {
+                        const q = Math.max(0, Math.min(5, Math.round(Number(review.quality_score) || 0)));
+                        return (
+                          <span style={{
+                            padding: '2px 8px', borderRadius: 10, fontSize: '0.75rem', fontWeight: 700,
+                            color: scoreColor(q), background: `${scoreColor(q)}18`, border: `1px solid ${scoreColor(q)}40`
+                          }}>
+                            {'★'.repeat(q)}{'☆'.repeat(5 - q)}
+                          </span>
+                        );
+                      })() : (
+                        <span style={{ color: T.muted, fontSize: '0.75rem' }}>--</span>
                       )}
                     </td>
-                    <td style={{fontSize: '0.85rem', color: call.call_duration_s > 0 ? '#e2e8f0' : '#64748b'}}>
+                    <td style={{ ...tdStyle, fontFamily: T.mono }}>
                       {call.call_duration_s > 0 ? `${Math.floor(call.call_duration_s / 60)}:${String(Math.floor(call.call_duration_s % 60)).padStart(2, '0')}` : '-'}
                     </td>
-                    <td>
+                    <td style={tdStyle}>
                       {call.recording_url ? (
-                        <AuthAudioPlayer src={call.recording_url} style={{height: '28px', width: '150px'}} />
+                        <AuthAudio preload="none" src={call.recording_url} className="call-log-audio" style={{ height: 36, width: 260 }} />
                       ) : (
-                        <span style={{color: '#64748b', fontSize: '0.8rem'}}>—</span>
+                        <span style={{ color: T.muted, fontSize: '0.8rem' }}>—</span>
                       )}
                     </td>
                   </tr>
@@ -717,51 +1161,48 @@ export default function CampaignDetail({
 
       {/* Call Insights Tab */}
       {detailTab === 'insights' && (
-        <div style={{marginBottom: '1.5rem'}}>
+        <div style={{ marginBottom: '1.5rem' }}>
           {insightsLoading ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading insights...</div>
-          ) : !callInsights || !callInsights.total_reviews ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No call reviews yet. Reviews are generated automatically after each call.</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>Loading insights...</div>
+          ) : insightsError ? (
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.red, border: `1px solid #fca5a5` }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Call Insights are temporarily unavailable</div>
+              <div style={{ fontSize: '0.8rem', color: T.muted }}>{insightsError}</div>
+            </div>
+          ) : !callInsights || callInsights.total_reviews === 0 ? (
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>No call reviews yet. Reviews are generated automatically after each call.</div>
           ) : (
             <>
               {/* Summary Cards */}
-              <div className="metrics-grid" style={{marginBottom: '1.5rem'}}>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Avg Quality Score</div>
-                  <div className="metric-value" style={{color: scoreColor(Math.round(callInsights.avg_quality_score))}}>
-                    {callInsights.avg_quality_score}/5
-                  </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Avg Quality Score</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: scoreColor(Math.round(callInsights.avg_quality_score)) }}>{callInsights.avg_quality_score}/5</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Appointment Rate</div>
-                  <div className="metric-value" style={{color: callInsights.appointment_rate > 30 ? '#22c55e' : '#f59e0b'}}>
-                    {callInsights.appointment_rate}%
-                  </div>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Appointment Rate</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: callInsights.appointment_rate > 30 ? T.green : T.amber }}>{callInsights.appointment_rate}%</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Calls Analyzed</div>
-                  <div className="metric-value">{callInsights.total_reviews}</div>
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Calls Analyzed</div>
+                  <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: T.text }}>{callInsights.total_reviews}</div>
                 </div>
-                <div className="glass-panel metric-card">
-                  <div className="metric-label">Top Sentiment</div>
-                  <div className="metric-value" style={{fontSize: '1.1rem', color: sentimentColor(
-                    Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0]
-                  )}}>
-                    {Object.entries(callInsights.sentiment_breakdown || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '-'}
+                <div style={{ ...card, padding: '18px 20px' }}>
+                  <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Top Sentiment</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: sentimentColor(Object.entries(callInsights.sentiment_breakdown || {}).sort((a,b)=>b[1]-a[1])[0]?.[0]) }}>
+                    {Object.entries(callInsights.sentiment_breakdown || {}).sort((a,b)=>b[1]-a[1])[0]?.[0] || '-'}
                   </div>
                 </div>
               </div>
 
               {/* Improvement Suggestions */}
               {callInsights.top_improvements && callInsights.top_improvements.length > 0 && (
-                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
-                  <div style={{fontSize: '0.85rem', color: '#a855f7', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
-                    Prompt Improvement Suggestions
-                  </div>
+                <div style={{ ...card, padding: 18, marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: '#a855f7', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Prompt Improvement Suggestions</div>
                   {callInsights.top_improvements.map((imp, i) => (
-                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(168,85,247,0.06)', borderRadius: '6px', borderLeft: '3px solid #a855f7', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                    <div key={i} style={{ padding: '8px 12px', marginBottom: 6, background: 'rgba(168,85,247,0.06)', borderRadius: 8, borderLeft: '3px solid #a855f7', fontSize: '0.85rem', color: T.sub }}>
                       {imp.suggestion}
-                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({imp.count}x)</span>
+                      <span style={{ color: T.muted, fontSize: '0.75rem', marginLeft: 8 }}>({imp.count}x)</span>
                     </div>
                   ))}
                 </div>
@@ -769,61 +1210,55 @@ export default function CampaignDetail({
 
               {/* Top Failure Reasons */}
               {callInsights.top_failure_reasons && callInsights.top_failure_reasons.length > 0 && (
-                <div className="glass-panel" style={{padding: '16px', marginBottom: '1.5rem'}}>
-                  <div style={{fontSize: '0.85rem', color: '#f97316', fontWeight: 700, marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
-                    Top Failure Reasons
-                  </div>
+                <div style={{ ...card, padding: 18, marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, color: '#f97316', fontWeight: 700, marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Top Failure Reasons</div>
                   {callInsights.top_failure_reasons.map((fr, i) => (
-                    <div key={i} style={{padding: '8px 12px', marginBottom: '6px', background: 'rgba(249,115,22,0.06)', borderRadius: '6px', borderLeft: '3px solid #f97316', fontSize: '0.85rem', color: '#e2e8f0'}}>
+                    <div key={i} style={{ padding: '8px 12px', marginBottom: 6, background: 'rgba(249,115,22,0.06)', borderRadius: 8, borderLeft: '3px solid #f97316', fontSize: '0.85rem', color: T.sub }}>
                       {fr.reason}
-                      <span style={{color: '#64748b', fontSize: '0.75rem', marginLeft: '8px'}}>({fr.count}x)</span>
+                      <span style={{ color: T.muted, fontSize: '0.75rem', marginLeft: 8 }}>({fr.count}x)</span>
                     </div>
                   ))}
                 </div>
               )}
 
               {/* Per-Call Reviews Table */}
-              <div className="glass-panel" style={{overflowX: 'auto'}}>
-                <table className="leads-table" style={{width: '100%'}}>
+              <div style={{ ...card, overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      <th>Lead</th>
-                      <th>Quality</th>
-                      <th>Appt Booked</th>
-                      <th>Date / Time</th>
-                      <th>Sentiment</th>
-                      <th>What Went Well</th>
-                      <th>What Went Wrong</th>
-                      <th>Failure Reason</th>
+                      {['Lead','Quality','Appt Booked','Date / Time','Sentiment','What Went Well','What Went Wrong','Failure Reason'].map(h => (
+                        <th key={h} style={thStyle}>{h}</th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
                     {callReviews.map(r => (
                       <tr key={r.id}>
-                        <td style={{fontWeight: 600}}>{r.first_name} {r.last_name || ''}</td>
-                        <td>
-                          <span style={{fontWeight: 700, color: scoreColor(r.quality_score), fontSize: '0.9rem'}}>
-                            {'★'.repeat(r.quality_score)}{'☆'.repeat(5 - r.quality_score)}
-                          </span>
+                        <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{r.first_name} {r.last_name || ''}</td>
+                        <td style={tdStyle}>
+                          {(() => {
+                            const q = Math.max(0, Math.min(5, Math.round(Number(r.quality_score) || 0)));
+                            return (
+                              <span style={{ fontWeight: 700, color: scoreColor(q), fontSize: '0.9rem' }}>
+                                {'★'.repeat(q)}{'☆'.repeat(5 - q)}
+                              </span>
+                            );
+                          })()}
                         </td>
-                        <td>
+                        <td style={tdStyle}>
                           <span style={{
-                            padding: '2px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
-                            color: r.appointment_booked ? '#22c55e' : '#f97316',
-                            background: r.appointment_booked ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
+                            padding: '2px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
+                            color: r.appointment_booked ? T.green : '#f97316',
+                            background: r.appointment_booked ? 'rgba(16,185,129,0.1)' : 'rgba(249,115,22,0.1)',
                           }}>
                             {r.appointment_booked ? 'Yes' : 'No'}
                           </span>
                         </td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap'}}>{r.created_at ? formatDateTime(r.created_at, orgTimezone) : '-'}</td>
-                        <td>
-                          <span style={{color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem'}}>
-                            {r.customer_sentiment}
-                          </span>
-                        </td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.what_went_well || '-'}</td>
-                        <td style={{fontSize: '0.8rem', color: '#f87171', maxWidth: '200px'}}>{r.what_went_wrong || '-'}</td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8', maxWidth: '200px'}}>{r.failure_reason || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, whiteSpace: 'nowrap' }}>{formatDateTime(r.created_at, orgTimezone)}</td>
+                        <td style={tdStyle}><span style={{ color: sentimentColor(r.customer_sentiment), fontWeight: 600, fontSize: '0.85rem' }}>{r.customer_sentiment}</span></td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, maxWidth: 200 }}>{r.what_went_well || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.red, maxWidth: 200 }}>{r.what_went_wrong || '-'}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted, maxWidth: 200 }}>{r.failure_reason || '-'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -836,41 +1271,39 @@ export default function CampaignDetail({
 
       {/* Retries Tab */}
       {detailTab === 'retries' && (
-        <div style={{marginBottom: '1.5rem'}}>
+        <div style={{ marginBottom: '1.5rem' }}>
           {retriesLoading ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#94a3b8'}}>Loading retry queue...</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>Loading retry queue...</div>
           ) : retries.length === 0 ? (
-            <div className="glass-panel" style={{padding: '2rem', textAlign: 'center', color: '#64748b'}}>No retries queued for this campaign.</div>
+            <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>No retries queued for this campaign.</div>
           ) : (
-            <div className="glass-panel" style={{overflowX: 'auto'}}>
-              <table className="leads-table" style={{width: '100%'}}>
+            <div style={{ ...card, overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th>Lead</th>
-                    <th>Phone</th>
-                    <th>Attempt</th>
-                    <th>Retry Time</th>
-                    <th>Status</th>
+                    {['Lead','Phone','Attempt','Retry Time','Status'].map(h => (
+                      <th key={h} style={thStyle}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
                   {retries.map(r => {
                     const retryStatusColors = {
-                      pending: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' },
-                      dialing: { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
-                      completed: { color: '#22c55e', bg: 'rgba(34,197,94,0.1)', border: 'rgba(34,197,94,0.3)' },
-                      exhausted: { color: '#ef4444', bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' },
+                      pending:   { color: T.amber, bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.3)' },
+                      dialing:   { color: '#60a5fa', bg: 'rgba(96,165,250,0.1)', border: 'rgba(96,165,250,0.3)' },
+                      completed: { color: T.green,  bg: 'rgba(16,185,129,0.1)', border: 'rgba(16,185,129,0.3)' },
+                      exhausted: { color: T.red,    bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.3)' },
                     };
                     const sc = retryStatusColors[r.status] || retryStatusColors.pending;
                     return (
                       <tr key={r.id}>
-                        <td style={{fontWeight: 600}}>{r.first_name || r.lead_name || '-'} {r.last_name || ''}</td>
-                        <td style={{fontFamily: 'SFMono-Regular, Consolas, monospace', color: '#cbd5e1', fontSize: '0.85rem'}}>{r.phone}</td>
-                        <td style={{fontSize: '0.85rem', color: '#e2e8f0', fontWeight: 600}}>{r.attempt || r.attempt_number || 1}/{r.max_attempts || 3}</td>
-                        <td style={{fontSize: '0.8rem', color: '#94a3b8'}}>{r.retry_time ? formatDateTime(r.retry_time, orgTimezone) : '-'}</td>
-                        <td>
+                        <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{r.first_name || r.lead_name || '-'} {r.last_name || ''}</td>
+                        <td style={{ ...tdStyle, fontFamily: T.mono, fontSize: '0.85rem' }}>{r.phone}</td>
+                        <td style={{ ...tdStyle, fontWeight: 600 }}>{r.attempt || r.attempt_number || 1}/{r.max_attempts || 3}</td>
+                        <td style={{ ...tdStyle, fontSize: '0.8rem', color: T.muted }}>{r.retry_time ? formatDateTime(r.retry_time, orgTimezone) : '-'}</td>
+                        <td style={tdStyle}>
                           <span style={{
-                            padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600,
+                            padding: '3px 10px', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600,
                             color: sc.color, background: sc.bg, border: `1px solid ${sc.border}`,
                           }}>
                             {r.status}
@@ -888,127 +1321,414 @@ export default function CampaignDetail({
 
       {/* Leads Table */}
       {detailTab === 'leads' && (
-      <div className="glass-panel" style={{overflowX: 'auto'}}>
-        <table className="leads-table" style={{width: '100%'}}>
-          <thead>
-            <tr>
-              <th>Name</th><th>Phone</th><th>Source</th><th>Status</th><th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {campaignLeads.length === 0 ? (
-              <tr><td colSpan="5" style={{textAlign: 'center', color: '#64748b', padding: '2rem'}}>No leads in this campaign yet. Add some to start dialing!</td></tr>
-            ) : campaignLeads.map(lead => (
-              <React.Fragment key={lead.id}>
+        <div style={{ ...card, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
               <tr>
-                <td style={{fontWeight: 600}}>{lead.first_name} {lead.last_name}</td>
-                <td>{lead.phone}</td>
-                <td>{lead.source || '-'}</td>
-                <td>
-                  <select className="form-input" value={lead.status || 'New'}
-                    onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
-                    style={{width: 'auto', height: '30px', fontSize: '0.75rem', padding: '2px 6px'}}>
-                    {['New','Contacted','Qualified','Appointment Set','Converted','Lost'].map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </td>
-                <td>
-                  <div style={{display: 'flex', gap: '6px', flexWrap: 'wrap'}}>
-                    <button className="btn-call"
-                      onClick={() => handleEditLead(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(250,204,21,0.15)', color: '#facc15', borderColor: 'rgba(250,204,21,0.3)'}}>
-                      ✏️ Edit
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => handleDialWithDndCheck(lead, selectedCampaign.id)}
-                      disabled={dialingId === lead.id}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: dialingId === lead.id ? 'not-allowed' : 'pointer', opacity: dialingId === lead.id ? 0.5 : 1}}>
-                      {dialingId === lead.id
-                        ? (ringingPhones.has(lead.phone) ? '🔔 Ringing...' : '📞 Dialing...')
-                        : '📞 Dial'}
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => handleWebCallWithDndCheck(lead, selectedCampaign.id)}
-                      disabled={dialingId === lead.id && webCallActive !== lead.id}
-                      style={{
-                        fontSize: '0.75rem', padding: '4px 10px', cursor: (dialingId === lead.id && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
-                        opacity: (dialingId === lead.id && webCallActive !== lead.id) ? 0.5 : 1,
-                        borderColor: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
-                        color: webCallActive === lead.id ? '#ef4444' : '#8b5cf6',
-                        background: webCallActive === lead.id ? 'rgba(239,68,68,0.1)' : 'rgba(139,92,246,0.1)'
-                      }}>
-                      {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
-                    </button>
-                    {dndBlocked[lead.id] && (
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '4px',
-                        fontSize: '0.72rem', fontWeight: 600, padding: '3px 10px',
-                        borderRadius: '6px', background: 'rgba(220,38,38,0.15)',
-                        border: '1px solid rgba(220,38,38,0.4)', color: '#fca5a5',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        🚫 DND — number blocked
-                      </span>
-                    )}
-                    <button className="btn-call"
-                      onClick={() => handleViewTranscripts(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
-                        background: lead.transcript_count > 0 ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.08)',
-                        color: lead.transcript_count > 0 ? '#22c55e' : '#64748b',
-                        borderColor: lead.transcript_count > 0 ? 'rgba(34,197,94,0.3)' : 'rgba(99,102,241,0.15)',
-                        fontWeight: lead.transcript_count > 0 ? 600 : 400}}>
-                      {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
-                      {lead.recording_count > 0 && ' 🔊'}
-                      {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => handleNote(lead)}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.15)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.3)'}}>
-                      📝 Note
-                    </button>
-                    <button className="btn-call"
-                      onClick={() => {
-                        const d = new Date();
-                        const pad = n => String(n).padStart(2, '0');
-                        setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                        setScheduleNotes('');
-                        setScheduleError('');
-                        setScheduleLead(lead);
-                      }}
-                      style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer', background: 'rgba(96,165,250,0.15)', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)'}}>
-                      📅 Schedule
-                    </button>
-                    {confirmRemoveLeadId === lead.id ? (
-                      <span style={{display: 'flex', gap: '6px', alignItems: 'center'}}>
-                        <span style={{fontSize: '0.75rem', color: '#fca5a5'}}>Remove?</span>
-                        <button onClick={() => { handleRemoveLead(lead.id); setConfirmRemoveLeadId(null); }}
-                          style={{background: '#ef4444', border: 'none', color: '#fff', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 600}}>Yes</button>
-                        <button onClick={() => setConfirmRemoveLeadId(null)}
-                          style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.15)', color: '#94a3b8', borderRadius: '5px', padding: '3px 10px', cursor: 'pointer', fontSize: '0.72rem'}}>No</button>
-                      </span>
-                    ) : (
-                      <button onClick={() => setConfirmRemoveLeadId(lead.id)}
-                        style={{fontSize: '0.75rem', padding: '4px 10px', cursor: 'pointer',
-                          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
-                          color: '#fca5a5', borderRadius: '6px'}}>
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </td>
+                {['Name','Phone','Source','Status','Action'].map(h => (
+                  <th key={h} style={thStyle}>{h}</th>
+                ))}
               </tr>
-              {lead.follow_up_note && (
-                <tr>
-                  <td colSpan="5" style={{padding: '12px 24px', background: 'rgba(0,0,0,0.2)', borderLeft: '3px solid #6366f1'}}>
-                    <div style={{fontSize: '0.8rem', color: '#94a3b8', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600}}>AI Follow-Up Note</div>
-                    <div style={{whiteSpace: 'pre-wrap', color: '#e2e8f0', fontSize: '0.85rem', lineHeight: 1.5}}>{lead.follow_up_note}</div>
-                  </td>
-                </tr>
-              )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {campaignLeads.length === 0 ? (
+                <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No leads in this campaign yet. Add some to start dialing!</td></tr>
+              ) : campaignLeads.map(lead => (
+                <React.Fragment key={lead.id}>
+                  <tr>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{lead.first_name} {lead.last_name}</td>
+                    <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
+                    <td style={tdStyle}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{lead.source || '-'}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      <select className="form-input" value={lead.status || 'New'}
+                        onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
+                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
+                        {['New','Contacted','Qualified','Appointment Set','Converted','Lost'].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td style={tdStyle}>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        <button
+                          onClick={() => handleEditLead(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          ✏️ Edit
+                        </button>
+                        {visibleCallActions.dial && (
+                          <button
+                            onClick={() => handleDialClick(lead)}
+                            disabled={dialingId === lead.id || webCallActive === lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
+                              opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
+                              background: 'rgba(16,185,129,0.08)', color: '#065f46',
+                              border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
+                            }}>
+                            {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
+                          </button>
+                        )}
+                        {/* Manual Call disabled — use Browser Call instead
+                        {selectedCampaign.channel !== 'whatsapp' && (
+                          <button
+                            onClick={() => { setHumanCallLead(lead); setHumanCallStatus('idle'); setHumanCallError(''); }}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: 'pointer',
+                              background: 'rgba(234,179,8,0.08)', color: '#854d0e',
+                              border: '1px solid rgba(234,179,8,0.3)', borderRadius: 6,
+                            }}>
+                            📲 Manual Call
+                          </button>
+                        )} */}
+                        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+                          <button
+                            onClick={() => handleBrowserCallStart(lead)}
+                            disabled={browserCallDialing}
+                            title="Call from browser mic — 1x cost"
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: browserCallDialing ? 'not-allowed' : 'pointer',
+                              opacity: browserCallDialing ? 0.6 : 1,
+                              background: 'rgba(99,102,241,0.08)', color: '#3730a3',
+                              border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6,
+                            }}>
+                            🎙 Browser Call
+                          </button>
+                        )}
+                        {selectedCampaign.channel === 'whatsapp' && (
+                          <button
+                            onClick={() => handleSendWA(lead)}
+                            disabled={waSendingId === lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: waSendingId === lead.id ? 'not-allowed' : 'pointer',
+                              opacity: waSendingId === lead.id ? 0.6 : 1,
+                              background: waSendStatus[lead.id] === 'sent' ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.08)',
+                              color: waSendStatus[lead.id] === 'error' ? '#dc2626' : '#065f46',
+                              border: `1px solid ${waSendStatus[lead.id] === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(37,211,102,0.35)'}`,
+                              borderRadius: 6,
+                            }}>
+                            {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
+                          </button>
+                        )}
+                        {visibleCallActions.simWebCall && (
+                          <button
+                            onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
+                            disabled={webCallActive != null && webCallActive !== lead.id}
+                            style={{
+                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
+                              opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
+                              borderRadius: 6,
+                              border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
+                              color: webCallActive === lead.id ? T.red : T.accent,
+                              background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
+                            }}>
+                            {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
+                          </button>
+                        )}
+                        {dndBlockedLeadIds.has(lead.id) && (
+                          <span title="This number is on the DND list — outbound dials are blocked"
+                            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                              background: '#fee2e2', color: T.red,
+                              border: '1px solid #fca5a5', fontWeight: 600,
+                              display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            🚫 DND — number blocked
+                          </span>
+                        )}
+                        <button
+                          onClick={() => handleViewTranscripts(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: lead.transcript_count > 0 ? 600 : 400,
+                            background: lead.transcript_count > 0 ? 'rgba(16,185,129,0.08)' : T.bg,
+                            color: lead.transcript_count > 0 ? '#065f46' : T.muted,
+                            border: lead.transcript_count > 0 ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
+                          }}>
+                          {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
+                          {lead.recording_count > 0 && ' 🔊'}
+                          {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
+                        </button>
+                        <button
+                          onClick={() => handleNote(lead)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          📝 Note
+                        </button>
+                        <button
+                          onClick={() => {
+                            setScheduleLead(lead);
+                            const d = new Date(Date.now() + 60 * 60 * 1000);
+                            const pad = n => String(n).padStart(2, '0');
+                            setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                            setScheduleNotes('');
+                          }}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          📅 Schedule
+                        </button>
+                        <button onClick={() => handleRemoveLead(lead.id)}
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                            background: '#fee2e2', border: '1px solid #fca5a5',
+                            color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
+                          Remove
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {!hideAiFeatures && (lead.follow_up_note || editingNote?.leadId === lead.id || generatedNote?.leadId === lead.id) && (
+                    <tr>
+                      <td colSpan="5" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <div style={{ fontSize: '0.8rem', color: T.muted, textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>✨ AI Follow-Up Note</div>
+                          {editingNote?.leadId !== lead.id && (
+                            <button
+                              onClick={() => handleGenerateNote(lead)}
+                              disabled={noteGenerating}
+                              style={{
+                                background: 'rgba(99,102,241,0.08)', border: `1px solid rgba(99,102,241,0.25)`,
+                                color: T.accent, borderRadius: 6, padding: '3px 12px',
+                                fontSize: '0.75rem', fontWeight: 600, cursor: noteGenerating ? 'wait' : 'pointer', fontFamily: T.font,
+                              }}>
+                              {noteGenerating ? '⏳ Generating…' : '↺ Regenerate'}
+                            </button>
+                          )}
+                        </div>
+                        {editingNote?.leadId === lead.id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <textarea
+                              autoFocus
+                              value={editingNote.text}
+                              onChange={e => setEditingNote({ ...editingNote, text: e.target.value })}
+                              rows={4}
+                              style={{
+                                width: '100%', padding: '8px 10px', borderRadius: 6,
+                                border: `1px solid ${T.accent}`, fontSize: '0.85rem',
+                                fontFamily: T.font, lineHeight: 1.5, resize: 'vertical',
+                                outline: 'none', color: T.text, boxSizing: 'border-box',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button onClick={() => handleSaveInlineNote(lead)} disabled={noteSaving} style={{
+                                background: T.accent, color: '#fff', border: 'none', borderRadius: 6,
+                                padding: '5px 16px', fontSize: '0.8rem', fontWeight: 600,
+                                cursor: noteSaving ? 'wait' : 'pointer', fontFamily: T.font,
+                              }}>{noteSaving ? 'Saving…' : 'Save'}</button>
+                              <button onClick={() => setEditingNote(null)} style={{
+                                background: 'transparent', color: T.muted, border: `1px solid ${T.border}`,
+                                borderRadius: 6, padding: '5px 16px', fontSize: '0.8rem',
+                                fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+                              }}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (() => {
+                          const noteData = generatedNote?.leadId === lead.id ? generatedNote : null;
+                          const noteText = noteData?.text || lead.follow_up_note;
+                          return (
+                            <div>
+                              <div
+                                onClick={() => setEditingNote({ leadId: lead.id, text: noteText, recordingUrl: noteData?.recordingUrl || '', recordingFilename: noteData?.recordingFilename || '' })}
+                                title="Click to edit"
+                                style={{
+                                  whiteSpace: 'pre-wrap', color: T.sub, fontSize: '0.85rem', lineHeight: 1.5,
+                                  cursor: 'text', padding: '4px 6px', borderRadius: 6, margin: '-4px -6px',
+                                  border: '1px solid transparent',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.border = `1px solid ${T.border}`; e.currentTarget.style.background = '#fff'; }}
+                                onMouseLeave={e => { e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.background = 'transparent'; }}
+                              >{linkify(noteText)}</div>
+                              {noteData?.recordingUrl && (
+                                <div style={{ marginTop: 8, fontSize: '0.75rem' }}>
+                                  <a href={noteData.recordingUrl} target="_blank" rel="noreferrer"
+                                    style={{ color: T.accent, textDecoration: 'underline', wordBreak: 'break-all' }}
+                                    onClick={e => e.stopPropagation()}>
+                                    {noteData.recordingUrl}
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Schedule Call Modal */}
+      {scheduleLead && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}
+        >
+          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Schedule Call</h3>
+              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
+                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Date &amp; Time
+                <input
+                  type="datetime-local"
+                  className="form-input"
+                  value={scheduleAt}
+                  onChange={e => { setScheduleAt(e.target.value); if (scheduleStatus.kind) setScheduleStatus({ kind: '', text: '' }); }}
+                  min={(() => {
+                    const d = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                  })()}
+                  style={{ ...inputStyle, width: '100%', marginTop: 6 }}
+                />
+              </label>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Notes (optional)
+                <textarea
+                  className="form-input"
+                  value={scheduleNotes}
+                  onChange={e => setScheduleNotes(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. follow-up on pricing discussion"
+                  style={{ ...inputStyle, width: '100%', marginTop: 6, resize: 'vertical' }}
+                />
+              </label>
+            </div>
+            {scheduleStatus.kind === 'error' && (
+              <div style={{
+                marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
+                background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
+              }}>
+                ⚠️ {scheduleStatus.text}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
+                style={{ ...btnGhost }}>
+                Cancel
+              </button>
+              <button
+                style={{ ...btnPrimary, opacity: (scheduleSaving || !scheduleAt) ? 0.6 : 1 }}
+                disabled={scheduleSaving || !scheduleAt}
+                onClick={async () => {
+                  if (!scheduleAt) return;
+                  if (new Date(scheduleAt).getTime() <= Date.now()) {
+                    setScheduleStatus({ kind: 'error', text: 'Please pick a future date and time.' });
+                    return;
+                  }
+                  setScheduleStatus({ kind: '', text: '' });
+                  setScheduleSaving(true);
+                  try {
+                    const serverTime = new Date(scheduleAt).toISOString();
+                    const res = await apiFetch(`${API_URL}/scheduled-calls`, {
+                      method: 'POST',
+                      headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({
+                        lead_id: scheduleLead.id,
+                        campaign_id: selectedCampaign.id,
+                        scheduled_at: serverTime,
+                        notes: scheduleNotes,
+                      }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json().catch(() => ({}));
+                      setScheduleStatus({ kind: 'error',
+                        text: 'Failed to schedule: ' + (data.error || data.detail || res.status) });
+                    } else {
+                      setScheduleLead(null);
+                      setScheduleStatus({ kind: '', text: '' });
+                    }
+                  } catch { setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.'  });
+                  }
+                  setScheduleSaving(false);
+                }}>
+                {scheduleSaving ? 'Scheduling…' : 'Schedule Call'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Human Call Modal */}
+      {/* Browser Call Modal — Exotel streaming relay */}
+      {browserCallLead && browserCallSid && (
+        <BrowserCallModal
+          lead={browserCallLead}
+          callSid={browserCallSid}
+          wsBaseUrl={(window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host}
+          onClose={() => { setBrowserCallLead(null); setBrowserCallSid(null); }}
+        />
+      )}
+
+      {/* Browser Call Modal — Twilio WebRTC (zero delay) [disabled] */}
+      {/* {twilioBrowserLead && (
+        <TwilioBrowserCallModal
+          lead={twilioBrowserLead}
+          campaignId={selectedCampaign.id}
+          callerPhone={orgExotelAccounts.find(a => String(a.id) === selectedExotelAccountId)?.caller_id || ''}
+          onClose={() => setTwilioBrowserLead(null)}
+        />
+      )} */}
+
+      {humanCallLead && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) { setHumanCallLead(null); setHumanCallStatus('idle'); } }}
+        >
+          <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📲 Manual Call</h3>
+              <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
+                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Calling <strong>{humanCallLead.first_name} {humanCallLead.last_name}</strong> — {humanCallLead.phone}
+            </p>
+            <p style={{ color: T.sub, fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5 }}>
+              Exotel will call <strong>your phone</strong> first. Pick up and you&apos;ll hear the customer&apos;s name announced, then be connected to them.
+            </p>
+            <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+              Your phone number
+              <input
+                type="tel"
+                className="form-input"
+                value={humanCallPhone}
+                onChange={e => setHumanCallPhone(e.target.value)}
+                placeholder="+91XXXXXXXXXX"
+                style={{ ...inputStyle, width: '100%', marginTop: 6 }}
+                onKeyDown={e => e.key === 'Enter' && handleHumanCallDial()}
+              />
+            </label>
+            {humanCallStatus === 'error' && (
+              <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: '#fee2e2', border: '1px solid #fca5a5', color: T.red }}>
+                ⚠️ {humanCallError}
+              </div>
+            )}
+            {humanCallStatus === 'done' && (
+              <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#065f46' }}>
+                ✅ Dialing your phone…
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
+                style={{ ...btnGhost }}>
+                Cancel
+              </button>
+              <button
+                disabled={humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()}
+                onClick={handleHumanCallDial}
+                style={{ ...btnPrimary, opacity: (humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()) ? 0.6 : 1 }}>
+                {humanCallStatus === 'dialing' ? '📞 Dialing…' : '📞 Call Me'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Schedule Call Modal */}

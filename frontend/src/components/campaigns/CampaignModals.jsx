@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
+import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
+import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -7,6 +9,7 @@ export default function CampaignModals({
   createForm, setCreateForm,
   handleCreateCampaign, loading, createError, orgProducts,
   selectedTemplate, setSelectedTemplate,
+  orgExotelAccounts,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
   availableLeads, selectedLeadIds, toggleLeadSelection,
@@ -21,27 +24,40 @@ export default function CampaignModals({
   showEditCampaignModal, setShowEditCampaignModal,
   editCampaignForm, setEditCampaignForm,
   handleSaveEditCampaign,
+  editCampaignError, setEditCampaignError,
+  setCreateError,
 }) {
+  const hideAiFeatures = useHideAiFeatures();
   const [nameTouched, setNameTouched] = useState(false);
+  const nameError = validateCampaignName(createForm.name);
+  const showNameError = nameTouched && !!nameError;
+
   const [editNameTouched, setEditNameTouched] = useState(false);
-  const [addLeadsError, setAddLeadsError] = useState('');
+  const editNameError = validateCampaignName(editCampaignForm?.name);
+  const showEditNameError = editNameTouched && !!editNameError;
 
-  // Allowed: letters, digits, spaces and safe punctuation. Blocks URLs, HTML, scripts.
-  const CAMPAIGN_NAME_RE = /^[a-zA-Z ]{1,100}$/;
-  const isValidCampaignName = (v) => CAMPAIGN_NAME_RE.test(v.trim());
-
-  const nameEmpty = !createForm.name.trim();
-  const nameInvalid = !nameEmpty && !isValidCampaignName(createForm.name);
-  const showNameEmptyError = nameTouched && nameEmpty;
-  const showNameInvalidError = nameTouched && nameInvalid;
-
-  const editNameEmpty = !editCampaignForm.name.trim();
-  const editNameInvalid = !editNameEmpty && !isValidCampaignName(editCampaignForm.name);
+  // Render-time dedupe: when the products table has duplicate (org_id, name)
+  // rows from before the API uniqueness check landed, the dropdown shows
+  // "EmpMonitor / EmpMonitor" with two ids. Hide the higher-id dups here so
+  // the dropdown is clean. The full list is kept in orgProducts so id-based
+  // lookups (campaign header badge etc.) still resolve.
+  const dedupedProducts = (() => {
+    const seen = new Map();
+    (orgProducts || []).forEach(p => {
+      const key = (p?.name || '').trim().toLowerCase();
+      if (!key) return;
+      const existing = seen.get(key);
+      if (!existing || p.id < existing.id) seen.set(key, p);
+    });
+    return Array.from(seen.values()).sort((a, b) => b.id - a.id);
+  })();
 
   const handleClose = () => {
     setNameTouched(false);
     setShowCreateModal(false);
     if (setSelectedTemplate) setSelectedTemplate(null);
+    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+    if (setCreateError) setCreateError('');
   };
 
   return (
@@ -54,7 +70,7 @@ export default function CampaignModals({
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
 
             {/* Template selector */}
-            <div style={{marginBottom: '1.5rem'}}>
+            {!hideAiFeatures && (<div style={{marginBottom: '1.5rem'}}>
               <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '8px'}}>Start from a template (optional)</label>
               <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '8px'}}>
                 {CAMPAIGN_TEMPLATES.map(tpl => {
@@ -101,10 +117,14 @@ export default function CampaignModals({
                   </div>
                 </div>
               )}
-            </div>
+            </div>)}
 
             <div style={{borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem'}}>
-              <form onSubmit={e => { setNameTouched(true); if (nameEmpty || nameInvalid) { e.preventDefault(); return; } handleCreateCampaign(e); }}>
+              <form onSubmit={e => {
+                setNameTouched(true);
+                if (nameError) { e.preventDefault(); return; }
+                handleCreateCampaign(e);
+              }}>
                 <div style={{marginBottom: '1rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                     Campaign Name <span style={{color: '#ef4444'}}>*</span>
@@ -113,8 +133,8 @@ export default function CampaignModals({
                     className="form-input"
                     placeholder="e.g. AdsGPT March Campaign"
                     value={createForm.name}
-                    maxLength={100}
-                    onChange={e => { setNameTouched(true); setCreateForm({...createForm, name: e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 100)}); }}
+                    maxLength={CAMPAIGN_NAME_MAX_LEN}
+                    onChange={e => { setNameTouched(true); setCreateForm({...createForm, name: e.target.value}); }}
                     onBlur={() => setNameTouched(true)}
                     style={{
                       width: '100%',
@@ -124,7 +144,7 @@ export default function CampaignModals({
                   />
                   {showNameEmptyError && (
                     <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
-                      Campaign name is required.
+                      {nameError}
                     </p>
                   )}
                   {showNameInvalidError && (
@@ -135,30 +155,19 @@ export default function CampaignModals({
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Product{' '}
-                    {selectedTemplate
-                      ? <span style={{color: '#60a5fa', fontSize: '0.75rem'}}>(required to apply prompt template)</span>
-                      : <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>}
+                    Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                    {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}> — required to apply prompt template</span>}
                   </label>
                   <select className="form-input" value={createForm.product_id}
                     onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
                     style={{width: '100%'}}>
                     <option value="">-- Select Product --</option>
-                    {(() => {
-                      const counts = {};
-                      orgProducts.forEach(p => { counts[p.name] = (counts[p.name] || 0) + 1; });
-                      return orgProducts.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {counts[p.name] > 1 ? `${p.name} (id ${p.id})` : p.name}
-                        </option>
-                      ));
-                    })()}
+                    {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Lead Source{' '}
-                    <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                    Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — where did these leads come from?)</span>
                   </label>
                   <select className="form-input" value={createForm.lead_source}
                     onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
@@ -173,6 +182,34 @@ export default function CampaignModals({
                     <option value="cold">Cold Outreach</option>
                   </select>
                 </div>
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Communication Channel <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — defaults to voice)</span>
+                  </label>
+                  <select className="form-input" value={createForm.channel || 'voice'}
+                    onChange={e => setCreateForm({...createForm, channel: e.target.value})}
+                    style={{width: '100%'}}>
+                    <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                    {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
+                  </select>
+                </div>
+                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
+                  <div style={{marginBottom: '1.5rem'}}>
+                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                      Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
+                    </label>
+                    <select className="form-input" value={createForm.exotel_account_id || ''}
+                      onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
+                      style={{width: '100%'}}>
+                      <option value="">-- Use default / set later --</option>
+                      {orgExotelAccounts.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} · {a.account_sid} · {a.caller_id}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {createError && (
                   <div style={{marginBottom: '1rem', padding: '10px 14px', borderRadius: '8px',
                     background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
@@ -185,7 +222,7 @@ export default function CampaignModals({
                     style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={loading || nameEmpty || nameInvalid}>
+                  <button type="submit" className="btn-primary" disabled={loading || !!nameError}>
                     {loading ? 'Creating...' : selectedTemplate ? 'Create from Template' : 'Create'}
                   </button>
                 </div>
@@ -238,9 +275,29 @@ export default function CampaignModals({
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
-            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem'}}>
+            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem'}}>
               Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
             </p>
+            <button
+              onClick={() => {
+                const csv = 'first_name,last_name,phone,source\nJohn,Doe,9876543210,google\n';
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'callified_leads_template.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              }}
+              style={{
+                background: 'transparent', border: 'none', color: '#818cf8',
+                cursor: 'pointer', fontSize: '0.8rem', padding: 0, marginBottom: '1rem',
+                textDecoration: 'underline',
+              }}>
+              Download Template
+            </button>
             <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files[0])}
               style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
@@ -258,58 +315,50 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => setShowEditCampaignModal(false)}>
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
-            <form onSubmit={e => { setEditNameTouched(true); if (editNameEmpty || editNameInvalid) { e.preventDefault(); return; } handleSaveEditCampaign(e); }}>
+            <form onSubmit={e => {
+              setEditNameTouched(true);
+              if (editNameError) { e.preventDefault(); return; }
+              handleSaveEditCampaign(e);
+            }}>
               <div style={{marginBottom: '1rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                   Campaign Name <span style={{color: '#ef4444'}}>*</span>
                 </label>
                 <input className="form-input" placeholder="e.g. AdsGPT March Campaign"
                   value={editCampaignForm.name}
-                  maxLength={100}
-                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 100)}); }}
+                  maxLength={CAMPAIGN_NAME_MAX_LEN}
+                  onChange={e => { setEditNameTouched(true); setEditCampaignForm({...editCampaignForm, name: e.target.value}); if (setEditCampaignError) setEditCampaignError(''); }}
                   onBlur={() => setEditNameTouched(true)}
                   style={{
                     width: '100%',
-                    borderColor: (editNameTouched && (editNameEmpty || editNameInvalid)) ? 'rgba(239,68,68,0.6)' : undefined,
-                    boxShadow: (editNameTouched && (editNameEmpty || editNameInvalid)) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
+                    borderColor: (showEditNameError || editCampaignError) ? 'rgba(239,68,68,0.6)' : undefined,
+                    boxShadow: (showEditNameError || editCampaignError) ? '0 0 0 3px rgba(239,68,68,0.15)' : undefined,
                   }} />
-                {editNameTouched && editNameEmpty && (
-                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>Campaign name is required.</p>
+                {showEditNameError && (
+                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>{editNameError}</p>
                 )}
-                {editNameTouched && editNameInvalid && (
-                  <p style={{margin: '4px 0 0', fontSize: '0.78rem', color: '#f87171'}}>
-                    Only letters, numbers, spaces and - _ ' . , ( ) # &amp; ! @ are allowed.
-                  </p>
+                {!showEditNameError && editCampaignError && (
+                  <p style={{margin: '4px 0 0', fontSize: 12, color: '#f87171'}}>{editCampaignError}</p>
                 )}
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                  Product{' '}
-                  <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                  Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
                 <select className="form-input" value={editCampaignForm.product_id}
                   onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
                   style={{width: '100%'}}>
                   <option value="">-- Select Product --</option>
-                  {(() => {
-                    const counts = {};
-                    orgProducts.forEach(p => { counts[p.name] = (counts[p.name] || 0) + 1; });
-                    return orgProducts.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {counts[p.name] > 1 ? `${p.name} (id ${p.id})` : p.name}
-                      </option>
-                    ));
-                  })()}
+                  {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                  Lead Source{' '}
-                  <span style={{color: '#64748b', fontSize: '0.75rem', fontWeight: 400}}>(optional)</span>
+                  Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
                 <select className="form-input" value={editCampaignForm.lead_source}
                   onChange={e => setEditCampaignForm({...editCampaignForm, lead_source: e.target.value})}
@@ -324,12 +373,21 @@ export default function CampaignModals({
                   <option value="cold">Cold Outreach</option>
                 </select>
               </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
+                <select className="form-input" value={editCampaignForm.channel || 'voice'}
+                  onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
+                  style={{width: '100%'}}>
+                  <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                  {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
+                </select>
+              </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-                <button type="button" onClick={() => setShowEditCampaignModal(false)}
+                <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" disabled={loading || editNameEmpty || editNameInvalid}>
+                <button type="submit" className="btn-primary" disabled={loading}>
                   {loading ? 'Saving...' : 'Save Changes'}
                 </button>
               </div>
@@ -352,8 +410,10 @@ export default function CampaignModals({
               <input className="form-input" value={editForm.last_name} onChange={e => setEditForm({...editForm, last_name: e.target.value})} />
             </div>
             <div className="form-group">
-              <label>Phone</label>
-              <input className="form-input" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+              <label>Phone (10 digits)</label>
+              <input className="form-input" value={editForm.phone}
+                inputMode="numeric" maxLength={10} pattern="\d{10}"
+                onChange={e => setEditForm({...editForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10)})} />
             </div>
             <div className="form-group">
               <label>Source</label>
@@ -361,7 +421,10 @@ export default function CampaignModals({
             </div>
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
-              <button className="btn-primary" onClick={handleSaveEdit}>Save</button>
+              <button className="btn-primary" onClick={() => {
+                if (!/^\d{10}$/.test(editForm.phone || '')) { alert('Phone must be exactly 10 digits'); return; }
+                handleSaveEdit();
+              }}>Save</button>
             </div>
           </div>
         </div>

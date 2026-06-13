@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useToast } from '../contexts/ToastContext';
+import { useToast, useConfirm } from '../contexts/UIContext';
 import CrmTab from '../components/tabs/CrmTab';
 import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
@@ -20,7 +20,8 @@ export default function CrmPage({
   userRole, authToken
 }) {
   const navigate = useNavigate();
-  const { showToast } = useToast();
+  const toast = useToast();
+  const confirm = useConfirm();
   // Lead State
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,7 +38,6 @@ export default function CrmPage({
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
-  const [noteError, setNoteError] = useState('');
 
   // Document Vault State
   const [activeLeadDocs, setActiveLeadDocs] = useState(null);
@@ -51,8 +51,18 @@ export default function CrmPage({
   const [transcriptLead, setTranscriptLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
 
+  // Org-wide dashboard summary (5 numbers). Fetched separately from /api/campaigns
+  // because that route is admin-only — Viewers / Agents need this aggregate
+  // endpoint to see real numbers on the CRM landing dashboard.
+  const [dashSummary, setDashSummary] = useState(null);
+
   useEffect(() => {
     fetchLeads();
+    apiFetch(`${API_URL}/dashboard/summary`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setDashSummary(d); })
+      .catch(() => { /* leave as null; CrmTab falls back to per-campaign sum */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchLeads = async () => {
@@ -72,7 +82,7 @@ export default function CrmPage({
       try {
         const res = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(query)}`);
         setLeads(await res.json());
-      } catch(e) {}
+      } catch { /* ignore */ }
     } else if (query.trim().length === 0) {
       fetchLeads();
     }
@@ -136,14 +146,14 @@ export default function CrmPage({
       fetchLeads();
       showToast('Lead updated successfully');
     } catch (e) {
-      showToast(e.message || 'Error updating lead', 'error');
+      toast(e.message);
       console.error('Error updating lead', e);
     }
     setLoading(false);
   };
 
   const handleDeleteLead = async (lead) => {
-    if (!window.confirm(`Are you sure you want to delete ${lead.first_name} ${lead.last_name}?`)) return;
+    if (!await confirm({ message: `Are you sure you want to delete ${lead.first_name} ${lead.last_name}?`, danger: true })) return;
     try {
       await apiFetch(`${API_URL}/leads/${lead.id}`, { method: 'DELETE' });
       fetchLeads();
@@ -157,7 +167,7 @@ export default function CrmPage({
     try {
       const res = await apiFetch(`${API_URL}/leads/${lead.id}/documents`);
       setDocs(await res.json());
-    } catch(e) {}
+    } catch { /* ignore */ }
   };
 
   const handleUploadDoc = async (e) => {
@@ -181,25 +191,28 @@ export default function CrmPage({
 
   const handleSaveNote = async () => {
     if (!noteLead) return;
-    if (!noteText.trim()) { setNoteError('Note cannot be empty.'); return; }
+    const trimmed = noteText.trim();
+    if (!trimmed) { toast('Note cannot be empty'); return; }
     setNoteSaving(true);
-    setNoteError('');
     try {
       const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: noteText.trim() })
+        body: JSON.stringify({ note: trimmed })
       });
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        showToast(d.detail || `Save failed (${res.status})`, 'error');
-      } else {
-        fetchLeads();
-        setNoteLead(null);
-        showToast('Note saved');
+        let msg = `Failed to save note (HTTP ${res.status})`;
+        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
+        toast(msg);
+        return;
       }
+      fetchLeads();
+      setNoteLead(null);
+      setNoteText('');
     } catch(e) {
-      showToast('Network error — note not saved', 'error');
+      toast('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteSaving(false);
     }
     setNoteSaving(false);
   };
@@ -220,8 +233,10 @@ export default function CrmPage({
     setTranscriptLead(lead);
     try {
       const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts`);
-      setTranscripts(await res.json());
-    } catch(e) { setTranscripts([]); }
+      if (!res.ok) { setTranscripts([]); return; }
+      const data = await res.json();
+      setTranscripts(Array.isArray(data) ? data : []);
+    } catch { setTranscripts([]);  }
   };
 
   return (
@@ -241,7 +256,8 @@ export default function CrmPage({
         handleDraftEmail={handleDraftEmail} dialingId={dialingId}
         webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
         campaigns={campaigns}
-        onCampaignClick={(campaign) => navigate('/campaigns', { state: { openCampaignId: campaign.id } })}
+        dashSummary={dashSummary}
+        onCampaignClick={(c) => navigate(`/campaigns?id=${c?.id ?? ''}`)}
       />
 
       <LeadModals
@@ -260,6 +276,7 @@ export default function CrmPage({
       <TranscriptModal
         transcriptLead={transcriptLead} setTranscriptLead={setTranscriptLead}
         transcripts={transcripts} orgTimezone={orgTimezone}
+        onRefresh={handleViewTranscripts}
       />
       <EmailDraftModal
         emailDraft={emailDraft} setEmailDraft={setEmailDraft}

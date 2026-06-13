@@ -15,8 +15,13 @@ export function OrgProvider({ children }) {
   const fetchOrgProducts = useCallback(async (orgId) => {
     try {
       const res = await apiFetch(`${API_URL}/organizations/${orgId}/products`);
-      setOrgProducts(await res.json());
-    } catch (e) {}
+      const list = await res.json();
+      // Keep the full list (dups and all) so that id-based lookups —
+      // getProductName(campaign.product_id), the campaign header badge —
+      // resolve correctly even when a campaign was bound to a duplicate
+      // row's id. Dropdowns dedupe at their render site instead.
+      setOrgProducts(Array.isArray(list) ? list : []);
+    } catch { /* ignore */ }
   }, [apiFetch]);
 
   const fetchOrgs = useCallback(async () => {
@@ -39,7 +44,7 @@ export function OrgProvider({ children }) {
         }
         fetchOrgProducts(data[0].id);
       }
-    } catch (e) {}
+    } catch { /* ignore */ }
   }, [apiFetch, selectedOrg, fetchOrgProducts]);
 
   // Auto-fetch orgs when user is authenticated
@@ -47,6 +52,7 @@ export function OrgProvider({ children }) {
     if (currentUser) {
       fetchOrgs();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser]);
 
   return (
@@ -62,6 +68,7 @@ export function OrgProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useOrg() {
   const ctx = useContext(OrgContext);
   if (!ctx) throw new Error('useOrg must be used within OrgProvider');

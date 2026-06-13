@@ -4,17 +4,19 @@ import { useToast } from '../../contexts/ToastContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
-  apiFetch, API_URL, selectedOrg,
+  apiFetch, API_URL,
   onCampaignDial, onCampaignWebCall,
   handleViewTranscripts, handleNote,
-  activeVoiceProvider, activeVoiceId, activeLanguage,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
-  const { showToast } = useToast();
+  const { fetchSseTicket } = useAuth();
+  const toast = useToast();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -24,7 +26,8 @@ export default function CampaignsTab({
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '' });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '' });
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
@@ -32,17 +35,46 @@ export default function CampaignsTab({
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
+  // ID of the campaign whose row is currently showing the inline "Delete? Yes No"
+  // prompt. Null when no row is in confirm mode.
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [editCampaignError, setEditCampaignError] = useState('');
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
-  const [voiceSaveStatus, setVoiceSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
 
-  const location = useLocation();
-  const navigate = useNavigate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetchCampaigns();
+    apiFetch(`${API_URL}/exotel-accounts`)
+      .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, []);
 
-  useEffect(() => { fetchCampaigns(); }, []);
+  // Open a specific campaign's detail directly when ?id=N is in the URL —
+  // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
+  // the right campaign instead of dropping the user on the list (issue #40).
+  // Runs whenever the campaigns array refreshes so we can resolve the id
+  // once the list has loaded; clears the param afterwards so a Back-to-list
+  // doesn't keep re-opening the same campaign.
+  useEffect(() => {
+    if (view === 'detail') return;
+    if (!Array.isArray(campaigns) || campaigns.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const idStr = params.get('id');
+    if (!idStr) return;
+    const id = parseInt(idStr, 10);
+    if (!Number.isFinite(id)) return;
+    const target = campaigns.find(c => c.id === id);
+    if (!target) return;
+    handleViewCampaign(target);
+    // Strip ?id= from the URL so refreshes / Back don't loop.
+    window.history.replaceState({}, '', window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaigns, view]);
 
   // Auto-open a specific campaign when navigated from the CRM dashboard.
   // After opening, clear the navigation state so that clicking "Back to Campaigns"
@@ -61,14 +93,14 @@ export default function CampaignsTab({
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
       setCampaignLeads(await res.json());
-    } catch (e) { setCampaignLeads([]); }
+    } catch { setCampaignLeads([]);  }
   };
 
   const fetchCallLog = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
       setCallLog(await res.json());
-    } catch (e) { setCallLog([]); }
+    } catch { setCallLog([]);  }
   };
 
   const fetchCampVoice = async (campaignId) => {
@@ -80,28 +112,27 @@ export default function CampaignsTab({
       } else {
         setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
       }
-    } catch (e) { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' }); }
+    } catch { setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: ''  }); }
   };
 
   const handleSaveCampVoice = async () => {
-    if (!selectedCampaign || voiceSaveStatus === 'saving') return;
-    setVoiceSaveStatus('saving');
+    if (!selectedCampaign) return;
+    setCampVoiceSaveStatus('saving');
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tts_provider: campVoice.tts_provider, tts_voice_id: campVoice.tts_voice_id, tts_language: campVoice.tts_language })
       });
-      if (res.ok) {
-        setVoiceSaveStatus('saved');
-        setTimeout(() => setVoiceSaveStatus('idle'), 2000);
-      } else {
-        setVoiceSaveStatus('error');
-        setTimeout(() => setVoiceSaveStatus('idle'), 3000);
+      if (!res.ok) {
+        setCampVoiceSaveStatus('error');
+        setTimeout(() => setCampVoiceSaveStatus(''), 3000);
+        return;
       }
-    } catch {
-      setVoiceSaveStatus('error');
-      setTimeout(() => setVoiceSaveStatus('idle'), 3000);
-    }
+      setCampVoiceSaveStatus('saved');
+      setTimeout(() => setCampVoiceSaveStatus(''), 2000);
+    } catch { setCampVoiceSaveStatus('error');
+      setTimeout(() => setCampVoiceSaveStatus(''), 3000);
+     }
   };
 
   const handleResetCampVoice = async () => {
@@ -132,39 +163,46 @@ export default function CampaignsTab({
     fetchCampaigns();
   };
 
-  const startEventStream = (campaignId) => {
+  const startEventStream = async (campaignId) => {
     stopEventStream();
-    const token = localStorage.getItem('authToken');
-    if (!token) return;
-    const ctrl = new AbortController();
-    eventSourceRef.current = ctrl;
-    (async () => {
+    let ticket;
+    try { ticket = await fetchSseTicket(); } catch { return;  }
+    const es = new EventSource(`${API_URL}/campaign-events?ticket=${encodeURIComponent(ticket)}&campaign_id=${campaignId}`);
+    es.onmessage = (e) => {
+      // Backend publishes a JSON envelope with a pre-formatted `label` field;
+      // legacy events arrive as plain strings, so fall back to the raw line
+      // when JSON parse fails or no label is present.
+      let display = e.data;
+      let ts = Date.now();
       try {
-        const res = await fetch(`${API_URL}/campaign-events?campaign_id=${campaignId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: ctrl.signal,
-        });
-        if (!res.ok) return;
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const lines = buf.split('\n');
-          buf = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            setLiveEvents(prev => [...prev.slice(-49), line.slice(6)]);
-          }
+        const j = JSON.parse(e.data);
+        if (j && j.label) display = j.label;
+        if (j && j.ts) {
+          const parsed = new Date(j.ts).getTime();
+          if (!Number.isNaN(parsed)) ts = parsed;
         }
-      } catch (e) {
-        if (e.name !== 'AbortError' && eventSourceRef.current === ctrl) {
-          setTimeout(() => startEventStream(campaignId), 3000);
-        }
-      }
-    })();
+      } catch { /* plain-text legacy event */  }
+      // Drop replayed events older than the user's last Clear timestamp for
+      // this campaign — the backend replays the last 20 events from Redis on
+      // every SSE connect, so without this filter a page reload would
+      // resurrect everything the user just cleared.
+      const clearedAt = parseInt(localStorage.getItem(`liveEventsClearedAt:${campaignId}`) || '0', 10);
+      if (clearedAt > 0 && ts <= clearedAt) return;
+      setLiveEvents(prev => [...prev.slice(-49), { ts, label: display }]);
+    };
+    // Don't call es.close() here — that prevents EventSource's built-in
+    // auto-reconnect. Cloudflare/nginx idle-timeout the SSE stream after
+    // ~30s of silence; we want the browser to transparently re-open so new
+    // call events still appear in the panel after the user clicks Clear or
+    // simply waits idle for a while.
+    es.onerror = (e) => {
+      // Native EventSource will set readyState to CLOSED only when the
+      // server explicitly returns a non-200; CONNECTING means a retry is
+      // already in flight. Just log so we can see it in DevTools.
+       
+      console.warn('campaign-events SSE error; readyState=', es.readyState, e);
+    };
+    eventSourceRef.current = es;
   };
 
   const stopEventStream = () => {
@@ -184,6 +222,8 @@ export default function CampaignsTab({
           name: createForm.name.trim(),
           product_id: createForm.product_id ? parseInt(createForm.product_id) : null,
           lead_source: createForm.lead_source || null,
+          channel: createForm.channel || 'voice',
+          exotel_account_id: createForm.exotel_account_id ? parseInt(createForm.exotel_account_id) : null,
         })
       });
 
@@ -221,7 +261,7 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '' });
+      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
@@ -234,27 +274,18 @@ export default function CampaignsTab({
     }
   };
 
-  const handleDeleteCampaign = async (campaignId) => {
+  const confirmDeleteCampaign = async (campaignId) => {
+    if (deleting) return;
+    setDeleting(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}`, { method: 'DELETE' });
-      setConfirmDeleteId(null);
+      setDeleteConfirmId(null);
       fetchCampaigns();
-    } catch (e) { console.error(e); }
-  };
-
-  const handleToggleStatus = async (campaign) => {
-    const nextStatus = campaign.status === 'active' ? 'paused' : 'active';
-    try {
-      await apiFetch(`${API_URL}/campaigns/${campaign.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      fetchCampaigns();
-      if (selectedCampaign?.id === campaign.id) {
-        setSelectedCampaign({ ...campaign, status: nextStatus });
-      }
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleEditCampaign = (campaign) => {
@@ -262,14 +293,16 @@ export default function CampaignsTab({
       id: campaign.id,
       name: campaign.name || '',
       product_id: campaign.product_id || '',
-      lead_source: campaign.lead_source || ''
+      lead_source: campaign.lead_source || '',
+      channel: campaign.channel || 'voice'
     });
+    setEditCampaignError('');
     setShowEditCampaignModal(true);
   };
 
   const handleSaveEditCampaign = async (e) => {
     e.preventDefault();
-    if (!editCampaignForm.name.trim()) return;
+    if (!editCampaignForm.name.trim()) { setEditCampaignError('Campaign name is required.'); return; }
     setLoading(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
@@ -278,7 +311,8 @@ export default function CampaignsTab({
         body: JSON.stringify({
           name: editCampaignForm.name.trim(),
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
-          lead_source: editCampaignForm.lead_source || null
+          lead_source: editCampaignForm.lead_source || null,
+          channel: editCampaignForm.channel || 'voice'
         })
       });
       setShowEditCampaignModal(false);
@@ -288,7 +322,8 @@ export default function CampaignsTab({
           ...prev,
           name: editCampaignForm.name.trim(),
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
-          lead_source: editCampaignForm.lead_source || null
+          lead_source: editCampaignForm.lead_source || null,
+          channel: editCampaignForm.channel || 'voice'
         }));
       }
       showToast('Campaign updated');
@@ -335,8 +370,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-      showToast('Lead updated');
-    } catch (e) { showToast('Save failed', 'error'); }
+    } catch { toast('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -389,7 +423,7 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      alert(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);
@@ -423,7 +457,7 @@ export default function CampaignsTab({
           setCampVoice={setCampVoice}
           handleSaveCampVoice={handleSaveCampVoice}
           handleResetCampVoice={handleResetCampVoice}
-          voiceSaveStatus={voiceSaveStatus}
+          campVoiceSaveStatus={campVoiceSaveStatus}
           INDIAN_VOICES={INDIAN_VOICES}
           INDIAN_LANGUAGES={INDIAN_LANGUAGES}
           liveEvents={liveEvents}
@@ -454,6 +488,7 @@ export default function CampaignsTab({
           handleCreateCampaign={handleCreateCampaign}
           loading={loading}
           orgProducts={orgProducts}
+          orgExotelAccounts={orgExotelAccounts}
           selectedTemplate={selectedTemplate}
           setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
@@ -477,62 +512,79 @@ export default function CampaignsTab({
           editCampaignForm={editCampaignForm}
           setEditCampaignForm={setEditCampaignForm}
           handleSaveEditCampaign={handleSaveEditCampaign}
+          editCampaignError={editCampaignError}
+          setEditCampaignError={setEditCampaignError}
         />
       </>
     );
   }
 
   // ─── LIST VIEW ───
+  const cardStyle = {
+    background: '#fff', border: '1px solid #e5e7eb',
+    borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+    padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12,
+  };
+  const smallBtn = (bg, color, border) => ({
+    padding: '5px 14px', borderRadius: 8, border: `1px solid ${border}`,
+    background: bg, color, fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', fontFamily: 'inherit',
+  });
+
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h2 style={{ margin: 0, color: '#e2e8f0' }}>📢 Campaigns</h2>
-        <button className="btn-primary" onClick={() => setShowCreateModal(true)}>+ Create Campaign</button>
+    <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+          Campaigns
+        </h2>
+        <button
+          onClick={() => setShowCreateModal(true)}
+          style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+          + Create Campaign
+        </button>
       </div>
 
       {campaigns.length === 0 ? (
-        <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem', color: '#64748b' }}>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
           No campaigns yet. Create one to start dialing!
         </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
           {campaigns.map(campaign => {
             const stats = getCampaignStats(campaign);
+            const calledPct = stats.total > 0 ? Math.round((stats.called / stats.total) * 100) : 0;
+            const typeColor = campaign.channel === 'whatsapp' ? '#25D366' : '#6366f1';
             return (
-              <div key={campaign.id} className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div key={campaign.id} style={cardStyle}>
+                {/* Card header: name + edit/delete */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '1.05rem', color: '#e2e8f0', marginBottom: '6px' }}>{campaign.name}</div>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-                      {campaign.product_id && (
-                        <span style={{ background: 'rgba(6,182,212,0.2)', color: '#22d3ee', fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
-                          {getProductName(campaign.product_id)}
-                        </span>
-                      )}
-                      {statusBadge(campaign.status || 'active')}
-                    </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', wordBreak: 'break-word', flex: 1, marginRight: 10 }}>
+                    {campaign.name}
                   </div>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {confirmDeleteId === campaign.id ? (
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    {deleteConfirmId === campaign.id ? (
                       <>
-                        <span style={{ fontSize: '0.7rem', color: '#fca5a5' }}>Delete?</span>
-                        <button onClick={() => handleDeleteCampaign(campaign.id)}
-                          style={{ background: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.5)', color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>
-                          Yes
+                        <span style={{ color: '#ef4444', fontSize: 12, alignSelf: 'center', fontWeight: 600 }}>Delete?</span>
+                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id); }}
+                          disabled={deleting}
+                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
+                          {deleting ? '…' : 'Yes'}
                         </button>
-                        <button onClick={() => setConfirmDeleteId(null)}
-                          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
+                          disabled={deleting}
+                          style={smallBtn('#fff', '#6b7280', '#e5e7eb')}>
                           No
                         </button>
                       </>
                     ) : (
                       <>
                         <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                          style={{ background: 'rgba(250,204,21,0.1)', border: '1px solid rgba(250,204,21,0.3)', color: '#facc15', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                          style={smallBtn('#fff', '#374151', '#e5e7eb')}>
                           Edit
                         </button>
-                        <button onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(campaign.id); }}
-                          style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', borderRadius: '6px', padding: '4px 8px', cursor: 'pointer', fontSize: '0.7rem' }}>
+                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(campaign.id); }}
+                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
                           Delete
                         </button>
                       </>
@@ -540,20 +592,50 @@ export default function CampaignsTab({
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', color: '#94a3b8' }}>
-                  <span>Total: <strong style={{ color: '#e2e8f0' }}>{stats.total}</strong></span>
-                  <span>Called: <strong style={{ color: '#e2e8f0' }}>{stats.called}</strong></span>
-                  <span>Qualified: <strong style={{ color: '#22c55e' }}>{stats.qualified}</strong></span>
-                  <span>Booked: <strong style={{ color: '#60a5fa' }}>{stats.booked}</strong></span>
+                {/* Badges */}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: typeColor, background: `${typeColor}18` }}>
+                    {campaign.channel === 'whatsapp' ? 'WhatsApp' : 'Voice'}
+                  </span>
+                  {campaign.product_id > 0 ? (
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#0891b2', background: 'rgba(8,145,178,0.1)' }}>
+                      {getProductName(campaign.product_id)}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#f59e0b', background: 'rgba(245,158,11,0.1)' }}>
+                      ⚠ No product
+                    </span>
+                  )}
+                  {statusBadge(campaign.status || 'active')}
                 </div>
 
-                <button onClick={() => handleViewCampaign(campaign)}
-                  style={{
-                    marginTop: 'auto', background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.3)',
-                    color: '#60a5fa', padding: '8px 0', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem'
-                  }}>
-                  View Leads
-                </button>
+                {/* Stats */}
+                <div style={{ display: 'flex', gap: 24 }}>
+                  {[
+                    { label: 'Total',     val: stats.total,     color: '#111827' },
+                    { label: 'Called',    val: stats.called,    color: '#111827' },
+                    { label: 'Qualified', val: stats.qualified, color: '#10b981' },
+                    { label: 'Booked',    val: stats.booked,    color: '#6366f1' },
+                  ].map(({ label, val, color }) => (
+                    <div key={label}>
+                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}: </span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: val === 0 ? '#9ca3af' : color }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress bar */}
+                <div style={{ height: 5, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${calledPct}%`, background: 'linear-gradient(90deg, #6366f1, #ec4899)', borderRadius: 3, transition: 'width 0.4s' }} />
+                </div>
+
+                {/* View Leads button */}
+                <div>
+                  <button onClick={() => handleViewCampaign(campaign)}
+                    style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: 0, fontFamily: 'inherit' }}>
+                    View Leads →
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -568,7 +650,9 @@ export default function CampaignsTab({
         handleCreateCampaign={handleCreateCampaign}
         loading={loading}
         createError={createError}
+        setCreateError={setCreateError}
         orgProducts={orgProducts}
+        orgExotelAccounts={orgExotelAccounts}
         selectedTemplate={selectedTemplate}
         setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}
@@ -592,7 +676,10 @@ export default function CampaignsTab({
         editCampaignForm={editCampaignForm}
         setEditCampaignForm={setEditCampaignForm}
         handleSaveEditCampaign={handleSaveEditCampaign}
+        editCampaignError={editCampaignError}
+        setEditCampaignError={setEditCampaignError}
       />
+
     </div>
   );
 }
