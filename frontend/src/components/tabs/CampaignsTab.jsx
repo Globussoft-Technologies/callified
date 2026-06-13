@@ -93,14 +93,18 @@ export default function CampaignsTab({
   const fetchCampaignLeads = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
-      setCampaignLeads(await res.json());
+      if (!res.ok) { setCampaignLeads([]); return; }
+      const data = await res.json();
+      setCampaignLeads(Array.isArray(data) ? data : []);
     } catch { setCampaignLeads([]);  }
   };
 
   const fetchCallLog = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
-      setCallLog(await res.json());
+      if (!res.ok) { setCallLog([]); return; }
+      const data = await res.json();
+      setCallLog(Array.isArray(data) ? data : []);
     } catch { setCallLog([]);  }
   };
 
@@ -146,7 +150,6 @@ export default function CampaignsTab({
   };
 
   const handleViewCampaign = (campaign) => {
-    console.log('[CampaignsTab] handleViewCampaign', campaign?.id);
     setSelectedCampaign(campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
@@ -157,7 +160,6 @@ export default function CampaignsTab({
   };
 
   const handleBack = () => {
-    console.log('[CampaignsTab] handleBack');
     stopEventStream();
     setView('list');
     setSelectedCampaign(null);
@@ -179,7 +181,7 @@ export default function CampaignsTab({
       let ts = Date.now();
       try {
         const j = JSON.parse(e.data);
-        if (j && j.label) display = j.label;
+        if (j && typeof j.label === 'string') display = j.label;
         if (j && j.ts) {
           const parsed = new Date(j.ts).getTime();
           if (!Number.isNaN(parsed)) ts = parsed;

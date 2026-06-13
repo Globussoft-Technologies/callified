@@ -21,7 +21,8 @@ const card = {
 };
 
 function withDate(label, tsMs) {
-  const d = new Date(tsMs);
+  label = String(label || '');
+  const d = new Date(tsMs || Date.now());
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = d.getFullYear();
@@ -842,7 +843,7 @@ export default function CampaignDetail({
         ) : (
           liveEvents.map((ev, i) => (
             <div key={i} style={{ fontSize: '0.8rem', color: T.sub, padding: '3px 0', borderBottom: `1px solid ${T.border}`, fontFamily: T.mono }}>
-              {withDate(ev.label, ev.ts)}
+              {withDate(ev?.label, ev?.ts)}
             </div>
           ))
         )}
