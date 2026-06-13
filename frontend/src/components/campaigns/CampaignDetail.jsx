@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
@@ -448,29 +448,6 @@ export default function CampaignDetail({
       return () => clearTimeout(t);
     }
   }, [qaStatus]);
-
-  // Derive which lead phones are currently ringing from SSE event strings.
-  // Requires a DIALING event to appear before RINGING so stale replayed events
-  // from a previous call never flip the button to "Ringing..." prematurely.
-  const ringingPhones = useMemo(() => {
-    const phones = new Set();
-    const dialed = new Set(); // phones that got a DIALING in this event window
-    for (const ev of liveEvents) {
-      const m = ev.match(/\((\d+)\)/);
-      if (!m) continue;
-      const phone = m[1];
-      if (/— (DIALING|RETRY_DIALING)/.test(ev)) {
-        dialed.add(phone);
-        phones.delete(phone); // reset ringing on any new dial attempt
-      } else if (ev.includes('— RINGING') && dialed.has(phone)) {
-        phones.add(phone); // only accept RINGING if we saw the DIALING first
-      } else if (/— (COMPLETED|NO-ANSWER|BUSY|FAILED|HANGUP|CONNECTED)/.test(ev)) {
-        phones.delete(phone);
-        dialed.delete(phone);
-      }
-    }
-    return phones;
-  }, [liveEvents]);
 
   const fetchInsights = async () => {
     setInsightsLoading(true);
