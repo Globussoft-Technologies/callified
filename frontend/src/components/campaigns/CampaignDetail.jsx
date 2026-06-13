@@ -205,6 +205,7 @@ export default function CampaignDetail({
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
+  const [qaStatus, setQaStatus] = useState(null);
 
 
   const [editingNote, setEditingNote] = useState(null);
