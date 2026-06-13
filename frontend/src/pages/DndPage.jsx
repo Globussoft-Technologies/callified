@@ -66,7 +66,6 @@ export default function DndPage({ apiFetch, API_URL }) {
   const [checkResult, setCheckResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState('');
-  const [addError, setAddError] = useState('');
   const [checkError, setCheckError] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(null);
   const perPage = 50;

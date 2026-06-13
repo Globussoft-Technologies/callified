@@ -353,13 +353,6 @@ export default function CampaignDetail({
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }
 
-  // Schedule Call state
-  const [scheduleLead, setScheduleLead] = useState(null);
-  const [scheduleAt, setScheduleAt] = useState('');
-  const [scheduleNotes, setScheduleNotes] = useState('');
-  const [scheduleSaving, setScheduleSaving] = useState(false);
-  const [scheduleError, setScheduleError] = useState('');
-
   // Refresh call log after sim web call ends — poll multiple times to catch
   // transcripts that are written asynchronously (Deepgram, WAV mux, DB write).
   const prevWebCallActiveRef = React.useRef(webCallActive);
@@ -445,13 +438,6 @@ export default function CampaignDetail({
     } catch (_) {}
     onCampaignWebCall(lead, campaignId);
   };
-
-  // Quick Add controlled state
-  const [qaName, setQaName] = useState('');
-  const [qaPhone, setQaPhone] = useState('');
-  const [qaErrors, setQaErrors] = useState({});
-  const [qaStatus, setQaStatus] = useState(null); // { type: 'success'|'error', message }
-  const [qaLoading, setQaLoading] = useState(false);
 
   // Auto-dismiss success toast after 4 s
   useEffect(() => {

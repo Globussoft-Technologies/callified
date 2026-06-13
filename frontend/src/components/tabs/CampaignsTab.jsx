@@ -5,7 +5,6 @@ import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,

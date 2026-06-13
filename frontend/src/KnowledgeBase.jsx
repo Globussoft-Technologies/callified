@@ -75,22 +75,6 @@ export default function KnowledgeBase({ apiUrl }) {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
-      if (!res.ok) { alert('File not available for download.'); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-    } catch (e) {
-      alert('Could not open file.');
-    }
-  };
-
-  const handleDelete = async (fileId, filename) => {
-    try {
-      const authToken = localStorage.getItem('authToken');
-      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
       setConfirmDeleteId(null);
       fetchFiles();
     } catch { /* ignore */ }

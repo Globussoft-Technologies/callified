@@ -1,9 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import SettingsTab from '../components/tabs/SettingsTab';
-import { useVoice } from '../contexts/VoiceContext';
-
-export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
-  const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, setSavedVoiceName } = useVoice();
 
 export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
   // Pronunciation State
@@ -48,21 +44,14 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
     }
     setPronError('');
     try {
-      const res = await apiFetch(`${API_URL}/pronunciation`, {
+      await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word, phonetic })
+        body: JSON.stringify(pronFormData)
       });
-      if (res.ok) {
-        setPronFormData({ word: '', phonetic: '' });
-        fetchPronunciations();
-      } else {
-        const data = await res.json();
-        setPronError(prev => ({ ...prev, api: data.detail || data.error || 'Failed to add rule' }));
-      }
-    } catch(e) {
-      setPronError(prev => ({ ...prev, api: 'Network error. Please try again.' }));
-    }
+      setPronFormData({ word: '', phonetic: '' });
+      fetchPronunciations();
+    } catch(e) { console.error(e); }
   };
 
   const handleDeletePronunciation = async (id) => {

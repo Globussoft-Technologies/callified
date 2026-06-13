@@ -178,8 +178,6 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setInviteSuccess('');
   };
 
-  const adminCount = members.filter(m => m.role === 'Admin').length;
-
   const handleInvite = async (e) => {
     e.preventDefault();
     setInviteError('');
@@ -374,49 +372,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   </button>
                 </div>
               </div>
-            ) : (
-              <form onSubmit={handleInvite}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <input
-                    placeholder="Full Name" required value={inviteForm.full_name}
-                    onChange={e => setInviteForm({ ...inviteForm, full_name: e.target.value })}
-                    style={inputStyle}
-                  />
-                  <input
-                    placeholder="Email" type="email" required value={inviteForm.email}
-                    onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
-                    style={inputStyle}
-                  />
-                  <select
-                    value={inviteForm.role}
-                    onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })}
-                    style={inputStyle}
-                  >
-                    <option value="Admin">Admin</option>
-                    <option value="Agent">Agent</option>
-                    <option value="Viewer">Viewer</option>
-                  </select>
-                  <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>
-                    An invite link will be generated. If email is configured, it will also be sent automatically.
-                  </p>
-                  {inviteError && <div style={{ color: '#fca5a5', fontSize: '0.85rem' }}>{inviteError}</div>}
-                  <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-                    <button type="button" onClick={() => { setShowInvite(false); setInviteError(''); }}
-                      style={{ background: 'rgba(148,163,184,0.15)', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '6px', color: '#94a3b8', padding: '8px 16px', cursor: 'pointer' }}>
-                      Cancel
-                    </button>
-                    <button type="submit" disabled={inviteLoading}
-                      style={{
-                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-                        borderRadius: '6px', color: '#fff', padding: '8px 20px', cursor: 'pointer', fontWeight: 600,
-                        opacity: inviteLoading ? 0.6 : 1,
-                      }}>
-                      {inviteLoading ? 'Generating...' : 'Generate Invite'}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
+            </form>
           </div>
         </div>
       )}
