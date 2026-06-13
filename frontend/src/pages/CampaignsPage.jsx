@@ -19,11 +19,11 @@ export default function CampaignsPage({
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState('');
 
   // Transcript state (for campaign lead transcripts)
   const [transcriptLead, setTranscriptLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
-  const { showToast } = useToast();
 
   useEffect(() => {
     fetchLeads();

@@ -29,8 +29,11 @@ export default function CampaignModals({
 }) {
   const hideAiFeatures = useHideAiFeatures();
   const [nameTouched, setNameTouched] = useState(false);
+  const [addLeadsError, setAddLeadsError] = useState('');
   const nameError = validateCampaignName(createForm.name);
   const showNameError = nameTouched && !!nameError;
+  const showNameEmptyError = showNameError && nameError.includes('required');
+  const showNameInvalidError = showNameError && !nameError.includes('required');
 
   const [editNameTouched, setEditNameTouched] = useState(false);
   const editNameError = validateCampaignName(editCampaignForm?.name);

@@ -118,6 +118,7 @@ export default function Sandbox() {
             int16Buffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
           }
           const bytes = new Uint8Array(int16Buffer.buffer);
+          let binary = '';
           for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
           ws.send(JSON.stringify({ event: 'media', media: { payload: window.btoa(binary) } }));
         };

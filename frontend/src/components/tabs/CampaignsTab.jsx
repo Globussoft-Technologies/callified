@@ -15,7 +15,9 @@ export default function CampaignsTab({
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket } = useAuth();
-  const toast = useToast();
+  const { showToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -369,7 +371,7 @@ export default function CampaignsTab({
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
-    } catch { toast('Save failed');  }
+    } catch { showToast('Save failed');  }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -422,7 +424,7 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+      showToast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
       setCsvFile(null);
       setShowCsvImportModal(false);
       fetchCampaignLeads(selectedCampaign.id);

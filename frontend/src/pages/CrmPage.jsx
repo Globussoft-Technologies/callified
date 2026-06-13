@@ -38,6 +38,7 @@ export default function CrmPage({
   const [noteLead, setNoteLead] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState('');
 
   // Document Vault State
   const [activeLeadDocs, setActiveLeadDocs] = useState(null);
@@ -144,7 +145,7 @@ export default function CrmPage({
       setEditModalOpen(false);
       setEditingLead(null);
       fetchLeads();
-      showToast('Lead updated successfully');
+      toast('Lead updated successfully');
     } catch (e) {
       toast(e.message);
       console.error('Error updating lead', e);

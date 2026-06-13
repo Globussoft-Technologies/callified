@@ -205,6 +205,7 @@ export default function CampaignDetail({
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
+  const [scheduleError, setScheduleError] = useState('');
   const [qaStatus, setQaStatus] = useState(null);
 
 
@@ -919,7 +920,7 @@ export default function CampaignDetail({
             try {
               const res = await apiFetch(`${API_URL}/leads`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ first_name: name, phone: fullPhone, source: 'Manual' })
+                body: JSON.stringify({ first_name: name, phone, source: 'Manual' })
               });
               const data = await res.json();
               let leadId = data.id;

@@ -277,7 +277,7 @@ function ConfigModal({ show, onClose, apiFetch, API_URL }) {
       return;
     }
     setSaving(true);
-    setSaveError('');
+    setError('');
     try {
       const productID = defaultProduct ? Number(defaultProduct) : null;
       const res = await apiFetch(`${API_URL}/wa/config`, {
