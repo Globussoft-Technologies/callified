@@ -87,7 +87,7 @@ export default function SubscriptionsPage({ apiFetch }) {
       setSubscription(data);
       // Pre-fill form for quick edit
       setEmail(data.admin_email);
-      setPlan(data.plan || 'standard');
+      setPlan(data.plan === 'manual' ? 'manual' : 'standard');
       setIsActive(data.is_active);
       const d = new Date(data.expires_at);
       setExpiresAt(d.toISOString().slice(0, 16));
@@ -279,9 +279,8 @@ export default function SubscriptionsPage({ apiFetch }) {
                 onChange={e => setPlan(e.target.value)}
                 style={inputStyle}
               >
-                <option value="standard">Standard</option>
-                <option value="professional">Professional</option>
-                <option value="enterprise">Enterprise</option>
+                <option value="standard">Standard (AI features enabled)</option>
+                <option value="manual">Manual calls only (AI features hidden)</option>
               </select>
             </div>
           </div>
@@ -369,7 +368,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                         <button
                           onClick={() => {
                             setEmail(s.admin_email);
-                            setPlan(s.plan || 'standard');
+                            setPlan(s.plan === 'manual' ? 'manual' : 'standard');
                             setIsActive(s.is_active);
                             const d = new Date(s.expires_at);
                             setExpiresAt(d.toISOString().slice(0, 16));

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/db"
@@ -120,10 +121,20 @@ func (s *Server) createOrUpdateSubscription(w http.ResponseWriter, r *http.Reque
 	if req.Plan == "" {
 		req.Plan = "standard"
 	}
+	req.Plan = strings.ToLower(strings.TrimSpace(req.Plan))
 
 	if err := s.db.CreateOrUpdateAdminSubscription(req.AdminEmail, req.ExpiresAt.UTC(), req.Plan, req.IsActive); err != nil {
 		s.logger.Sugar().Errorw("createOrUpdateSubscription failed", "err", err, "email", req.AdminEmail)
 		writeError(w, http.StatusInternalServerError, "failed to save subscription")
+		return
+	}
+
+	// Sync the AI-features flag with the chosen plan:
+	//   manual  -> hide AI features (manual calls only)
+	//   standard -> show AI features
+	if err := s.db.SetUserFeatureFlag(req.AdminEmail, req.Plan == "manual"); err != nil {
+		s.logger.Sugar().Errorw("setUserFeatureFlag after subscription save failed", "err", err, "email", req.AdminEmail)
+		writeError(w, http.StatusInternalServerError, "failed to sync feature flag")
 		return
 	}
 
