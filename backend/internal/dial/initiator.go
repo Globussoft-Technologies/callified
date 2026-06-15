@@ -250,3 +250,40 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 
 	return callSid, nil
 }
+
+// Hangup ends an in-progress carrier call. It resolves the campaign's provider
+// credentials (falling back to global config) and issues a provider-side hang-up
+// so the remote party's line is released when the agent clicks Hang Up.
+func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64) error {
+	if callSid == "" {
+		return fmt.Errorf("missing call sid")
+	}
+
+	var creds db.ExotelCreds
+	if campaignID > 0 {
+		creds, _ = i.db.GetCampaignExotelCreds(campaignID)
+	}
+
+	provider := creds.Provider
+	if provider == "" {
+		provider = i.cfg.DefaultProvider
+	}
+
+	switch provider {
+	case "twilio":
+		var client *TwilioClient
+		if creds.IsSet() {
+			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
+			client = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+		} else {
+			client = i.twilio
+		}
+		return client.Hangup(ctx, callSid)
+	default: // exotel
+		if !creds.IsSet() {
+			return fmt.Errorf("no Exotel credentials configured for this campaign")
+		}
+		client := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
+		return client.Hangup(ctx, callSid)
+	}
+}

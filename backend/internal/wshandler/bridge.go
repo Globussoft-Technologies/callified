@@ -1,6 +1,7 @@
 package wshandler
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -81,6 +82,30 @@ func bridgeSendRealtime(ch chan []byte, pcm []byte) {
 		case ch <- pcm:
 		default:
 		}
+	}
+}
+
+// hangupBridgeCall tears down the carrier side of a browser-to-phone bridge
+// when the agent clicks Hang Up in the browser. It issues a provider-side
+// hang-up and closes the Exotel/Twilio media stream so the remote party's
+// line is released even if the agent WebSocket disconnects first.
+func (h *Handler) hangupBridgeCall(ctx context.Context, callSid string, sess *CallSession) {
+	sess.RequestHangup()
+
+	if h.initiator != nil && sess.CampaignID > 0 {
+		if err := h.initiator.Hangup(ctx, callSid, sess.CampaignID); err != nil {
+			h.log.Warn("bridge: telephony hangup failed",
+				zap.String("call_sid", callSid),
+				zap.Int64("campaign_id", sess.CampaignID),
+				zap.Error(err))
+		} else {
+			h.log.Info("bridge: telephony hangup sent",
+				zap.String("call_sid", callSid))
+		}
+	}
+
+	if sess.WS != nil {
+		_ = sess.WS.Close()
 	}
 }
 
@@ -199,22 +224,24 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	// Read goroutine: decode browser audio and push to agentPCM.
 	go func() {
 		defer close(agentDone)
+		defer close(agentPCM)
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				return
 			}
-			// Discard frames that arrive before "connected" is sent.
-			// In practice the browser's connectedRef guard prevents sending
-			// any audio before it receives "connected", so this is a safety net.
-			if !customerAudioReady.Load() {
-				continue
-			}
 			var data map[string]interface{}
 			if json.Unmarshal(msg, &data) != nil {
 				continue
 			}
-			if data["type"] != "audio" {
+			msgType, _ := data["type"].(string)
+			// Agent explicitly hung up — tear down the carrier call and stop relaying.
+			if msgType == "hangup" {
+				h.hangupBridgeCall(r.Context(), callSid, sess)
+				return
+			}
+			// Discard non-audio frames and frames that arrive before "connected".
+			if msgType != "audio" || !customerAudioReady.Load() {
 				continue
 			}
 			payload, _ := data["payload"].(string)
@@ -240,14 +267,18 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		started := false
 		for {
 			if !started {
-				pcm, ok := <-agentPCM
-				if !ok {
+				select {
+				case pcm, ok := <-agentPCM:
+					if !ok {
+						return
+					}
+					buf = append(buf, pcm...)
+					started = true
+					nextFrameTime = time.Now().Add(20 * time.Millisecond)
+					continue
+				case <-agentDone:
 					return
 				}
-				buf = append(buf, pcm...)
-				started = true
-				nextFrameTime = time.Now().Add(20 * time.Millisecond)
-				continue
 			}
 
 			// If we have a full frame, send it on the aligned clock.
@@ -264,12 +295,14 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 				} else {
 					audioBytes = framePCM
 				}
-				frame, _ := json.Marshal(map[string]interface{}{
-					"event":  "media",
-					frameKey: streamSid,
-					"media":  map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
-				})
-				sess.SendText(frame) //nolint:errcheck
+				if !sess.HangupRequested() {
+					frame, _ := json.Marshal(map[string]interface{}{
+						"event":  "media",
+						frameKey: streamSid,
+						"media":  map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
+					})
+					sess.SendText(frame) //nolint:errcheck
+				}
 				nextFrameTime = nextFrameTime.Add(20 * time.Millisecond)
 				continue
 			}

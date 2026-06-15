@@ -249,6 +249,14 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) 
   }, []);
 
   const handleHangup = () => {
+    // Tell the backend to hang up the carrier leg so the customer's phone
+    // line is actually released. Closing the WebSocket alone only tears down
+    // the agent's browser connection.
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(JSON.stringify({ type: 'hangup' }));
+      } catch { /* ignore */ }
+    }
     stopAll();
     setStatus('ended');
   };

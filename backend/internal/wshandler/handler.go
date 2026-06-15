@@ -17,6 +17,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/globussoft/callified-backend/internal/db"
+	"github.com/globussoft/callified-backend/internal/dial"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/prompt"
@@ -40,10 +41,16 @@ type Handler struct {
 	store         *rstore.Store
 	db            *db.DB        // for lead lookups when Redis pending-call info is sparse
 	provider      *llm.Provider // Phase 0: native Go LLM
+	initiator     *dial.Initiator // optional: used to hang up bridge calls from browser
 	ttsKeys       map[string]string
 	log           *zap.Logger
 	sessions      sync.Map // stream_sid → *CallSession (for monitor WebSocket)
 	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
+}
+
+// SetInitiator wires the dial initiator after main has constructed it.
+func (h *Handler) SetInitiator(i *dial.Initiator) {
+	h.initiator = i
 }
 
 // New creates a Handler wired to the provided dependencies.

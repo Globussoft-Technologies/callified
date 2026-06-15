@@ -156,6 +156,38 @@ func (e *ExotelClient) InitiateHumanCall(ctx context.Context, agentPhone, custom
 	return sid, nil
 }
 
+// Hangup ends an in-progress Exotel call by setting its status to completed.
+// This is the carrier-side hang-up used by the browser-to-phone bridge when
+// the agent clicks Hang Up in the browser UI.
+func (e *ExotelClient) Hangup(ctx context.Context, callSid string) error {
+	endpoint := fmt.Sprintf(
+		"https://api.exotel.com/v1/Accounts/%s/Calls/%s",
+		e.accountSID, callSid)
+
+	form := url.Values{}
+	form.Set("Status", "completed")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("exotel: build hangup request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(e.apiKey, e.apiToken)
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("exotel: hangup request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("exotel: hangup status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // FetchRecordingURL fetches call details from Exotel and returns RecordingUrl
 // when the call is completed and a recording is available.
 // Returns ("", nil) when not ready yet; error only on network/auth failures.

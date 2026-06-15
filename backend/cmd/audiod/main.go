@@ -92,6 +92,7 @@ func main() {
 	if database != nil && recordingSvc != nil {
 		// re-use the webhook dispatcher already created above for recording
 		initiator = dial.New(cfg, store, database, webhook.New(database, logger), logger)
+		wsHandler.SetInitiator(initiator)
 	}
 
 	// RAG client + WA agent (Phase 3C)

@@ -70,3 +70,34 @@ func (t *TwilioClient) InitiateCall(ctx context.Context, toPhone, twimlURL, stat
 	}
 	return sid, nil
 }
+
+// Hangup ends an in-progress Twilio call by updating its status to completed.
+// Used by the browser-to-phone bridge when the agent hangs up from the UI.
+func (t *TwilioClient) Hangup(ctx context.Context, callSid string) error {
+	endpoint := fmt.Sprintf(
+		"https://api.twilio.com/2010-04-01/Accounts/%s/Calls/%s.json",
+		t.accountSID, callSid)
+
+	form := url.Values{}
+	form.Set("Status", "completed")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return fmt.Errorf("twilio: build hangup request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(t.accountSID, t.authToken)
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("twilio: hangup request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("twilio: hangup status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
