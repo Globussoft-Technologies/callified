@@ -229,17 +229,17 @@ export default function ExotelAccountsPage() {
                 </div>
                 <div>
                   <label style={labelStyle}>Account SID <span style={{ color: T.red }}>*</span></label>
-                  <input style={inputStyle} placeholder="e.g. globussoft3"
+                  <input style={inputStyle} placeholder="your_account_sid"
                     value={form.account_sid} onChange={e => setField('account_sid', e.target.value)} />
                 </div>
                 <div>
                   <label style={labelStyle}>Caller ID <span style={{ color: T.red }}>*</span></label>
-                  <input style={inputStyle} placeholder="e.g. 09513886363"
+                  <input style={inputStyle} placeholder="your_caller_id"
                     value={form.caller_id} onChange={e => setField('caller_id', e.target.value)} />
                 </div>
                 <div>
                   <label style={labelStyle}>App ID</label>
-                  <input style={inputStyle} placeholder="e.g. 1244808"
+                  <input style={inputStyle} placeholder="your_app_id"
                     value={form.app_id} onChange={e => setField('app_id', e.target.value)} />
                 </div>
                 <div>
