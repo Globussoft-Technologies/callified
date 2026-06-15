@@ -20,6 +20,7 @@ export default function CampaignsTab({
   const navigate = useNavigate();
   const { campaignId: routeCampaignId } = useParams();
   const [view, setView] = useState('list'); // 'list' or 'detail'
+  const [autoOpened, setAutoOpened] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
   const [callLog, setCallLog] = useState([]);
@@ -92,11 +93,14 @@ export default function CampaignsTab({
   }, [location.state?.openCampaignId, campaigns]);
 
   // Auto-open the campaign from the /campaigns/:campaignId route.
+  // Using autoOpened prevents the list view from flashing and stops repeated attempts.
   useEffect(() => {
-    if (!routeCampaignId || !campaigns?.length || view === 'detail') return;
+    if (!routeCampaignId || autoOpened) return;
     const id = parseInt(routeCampaignId, 10);
+    if (!campaigns?.length) return;
     const target = campaigns.find(c => c.id === id);
     if (target) {
+      setAutoOpened(true);
       setSelectedCampaign(target);
       setView('detail');
       fetchCampaignLeads(target.id);
@@ -105,10 +109,11 @@ export default function CampaignsTab({
       startEventStream(target.id).catch(() => {});
       setDetailTab('leads');
     } else {
+      setAutoOpened(true);
       navigate('/campaigns', { replace: true });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeCampaignId, campaigns, view]);
+  }, [routeCampaignId, campaigns, autoOpened]);
 
   const fetchCampaignLeads = async (campaignId) => {
     try {
@@ -552,6 +557,14 @@ export default function CampaignsTab({
   }
 
   // ─── LIST VIEW ───
+  if (routeCampaignId && view !== 'detail' && !autoOpened) {
+    return (
+      <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ color: '#6b7280', fontSize: 14 }}>Loading campaign…</div>
+      </div>
+    );
+  }
+
   const cardStyle = {
     background: '#fff', border: '1px solid #e5e7eb',
     borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
