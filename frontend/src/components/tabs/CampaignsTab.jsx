@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useToast } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
@@ -18,6 +18,7 @@ export default function CampaignsTab({
   const toast = useToast();
   const location = useLocation();
   const navigate = useNavigate();
+  const { campaignId: routeCampaignId } = useParams();
   const [view, setView] = useState('list'); // 'list' or 'detail'
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
@@ -90,6 +91,25 @@ export default function CampaignsTab({
     }
   }, [location.state?.openCampaignId, campaigns]);
 
+  // Auto-open the campaign from the /campaigns/:campaignId route.
+  useEffect(() => {
+    if (!routeCampaignId || !campaigns?.length || view === 'detail') return;
+    const id = parseInt(routeCampaignId, 10);
+    const target = campaigns.find(c => c.id === id);
+    if (target) {
+      setSelectedCampaign(target);
+      setView('detail');
+      fetchCampaignLeads(target.id);
+      fetchCallLog(target.id);
+      fetchCampVoice(target.id);
+      startEventStream(target.id).catch(() => {});
+      setDetailTab('leads');
+    } else {
+      navigate('/campaigns', { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeCampaignId, campaigns, view]);
+
   const fetchCampaignLeads = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
@@ -150,6 +170,9 @@ export default function CampaignsTab({
   };
 
   const handleViewCampaign = (campaign) => {
+    if (routeCampaignId && campaign?.id !== parseInt(routeCampaignId, 10)) {
+      navigate(`/campaigns/${campaign.id}`, { replace: true });
+    }
     setSelectedCampaign(campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
@@ -161,6 +184,10 @@ export default function CampaignsTab({
 
   const handleBack = () => {
     stopEventStream();
+    if (routeCampaignId) {
+      navigate('/campaigns');
+      return;
+    }
     setView('list');
     setSelectedCampaign(null);
     setCampaignLeads([]);
@@ -636,7 +663,7 @@ export default function CampaignsTab({
 
                 {/* View Leads button */}
                 <div>
-                  <button onClick={() => handleViewCampaign(campaign)}
+                  <button onClick={() => navigate(`/campaigns/${campaign.id}`)}
                     style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: 0, fontFamily: 'inherit' }}>
                     View Leads →
                   </button>

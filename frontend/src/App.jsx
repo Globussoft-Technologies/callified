@@ -170,6 +170,20 @@ export default function App() {
             />
           </AdminOnly>
         } />
+        <Route path="/campaigns/:campaignId" element={
+          <AdminOnly>
+            <CampaignsPage
+              apiFetch={apiFetch} API_URL={API_URL}
+              selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
+              dialingId={dialingId} webCallActive={webCallActive}
+              handleCampaignDial={handleCampaignDial} handleCampaignWebCall={handleCampaignWebCall}
+              activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}
+              activeLanguage={activeLanguage}
+              INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
+              campaigns={campaigns} fetchCampaigns={fetchCampaigns}
+            />
+          </AdminOnly>
+        } />
         <Route path="/ops" element={<AdminOnly><OpsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
         <Route path="/analytics" element={<AdminOnly><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
         <Route path="/whatsapp" element={<AdminOnly><WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} /></AdminOnly>} />
