@@ -96,3 +96,4 @@ backend/bin/
 # Kubernetes (local-only deployment, has secrets)
 kubernetes/
 frontend-dist.tar.gz
+backend/audiod
