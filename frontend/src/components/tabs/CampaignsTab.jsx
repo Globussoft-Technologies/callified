@@ -97,6 +97,7 @@ export default function CampaignsTab({
   useEffect(() => {
     if (!routeCampaignId && view === 'detail') {
       stopEventStream();
+      setAutoOpened(false);
       setView('list');
       setSelectedCampaign(null);
       setCampaignLeads([]);
@@ -203,6 +204,7 @@ export default function CampaignsTab({
 
   const handleBack = () => {
     stopEventStream();
+    setAutoOpened(false);
     setView('list');
     setSelectedCampaign(null);
     setCampaignLeads([]);

@@ -48,6 +48,8 @@ export default function App() {
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
   const hideAiFeatures = useHideAiFeatures();
 
+  const location = useLocation();
+
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
 
@@ -94,7 +96,6 @@ export default function App() {
   }, [currentUser, userRole]);
 
   // ─── PUBLIC ROUTES (no auth required) ───
-  const location = useLocation();
   if (location.pathname === '/reset-password') {
     return <ResetPasswordPage />;
   }
@@ -160,6 +161,7 @@ export default function App() {
         <Route path="/campaigns" element={
           <AdminOnly userRole={userRole}>
             <CampaignsPage
+              key={location.pathname}
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
               dialingId={dialingId} webCallActive={webCallActive}
@@ -174,6 +176,7 @@ export default function App() {
         <Route path="/campaigns/:campaignId" element={
           <AdminOnly userRole={userRole}>
             <CampaignsPage
+              key={location.pathname}
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
               dialingId={dialingId} webCallActive={webCallActive}
