@@ -92,6 +92,20 @@ export default function CampaignsTab({
     }
   }, [location.state?.openCampaignId, campaigns]);
 
+  // If the user leaves the /campaigns/:campaignId route (Back button or manual URL change),
+  // reset to list view so the same component instance doesn't keep showing the detail.
+  useEffect(() => {
+    if (!routeCampaignId && view === 'detail') {
+      stopEventStream();
+      setView('list');
+      setSelectedCampaign(null);
+      setCampaignLeads([]);
+      setLiveEvents([]);
+      fetchCampaigns();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeCampaignId, view]);
+
   // Auto-open the campaign from the /campaigns/:campaignId route.
   // Using autoOpened prevents the list view from flashing and stops repeated attempts.
   useEffect(() => {
@@ -189,14 +203,14 @@ export default function CampaignsTab({
 
   const handleBack = () => {
     stopEventStream();
-    if (routeCampaignId) {
-      navigate('/campaigns');
-      return;
-    }
     setView('list');
     setSelectedCampaign(null);
     setCampaignLeads([]);
     setLiveEvents([]);
+    if (routeCampaignId) {
+      navigate('/campaigns');
+      return;
+    }
     fetchCampaigns();
   };
 
