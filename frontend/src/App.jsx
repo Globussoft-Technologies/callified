@@ -37,6 +37,10 @@ import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
 import { useHideAiFeatures } from './hooks/useHideAiFeatures';
 
+function AdminOnly({ children, userRole }) {
+  return userRole === 'Admin' ? children : <Navigate to="/crm" replace />;
+}
+
 export default function App() {
   const { authToken, currentUser, apiFetch, logout, loading } = useAuth();
   const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
@@ -46,9 +50,6 @@ export default function App() {
 
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
-
-  const AdminOnly = ({ children }) =>
-    userRole === 'Admin' ? children : <Navigate to="/crm" replace />;
 
   const [campaigns, setCampaigns] = useState([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -157,7 +158,7 @@ export default function App() {
           />
         } />
         <Route path="/campaigns" element={
-          <AdminOnly>
+          <AdminOnly userRole={userRole}>
             <CampaignsPage
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
@@ -171,7 +172,7 @@ export default function App() {
           </AdminOnly>
         } />
         <Route path="/campaigns/:campaignId" element={
-          <AdminOnly>
+          <AdminOnly userRole={userRole}>
             <CampaignsPage
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgTimezone={orgTimezone} orgProducts={orgProducts}
@@ -184,15 +185,15 @@ export default function App() {
             />
           </AdminOnly>
         } />
-        <Route path="/ops" element={<AdminOnly><OpsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/analytics" element={<AdminOnly><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/whatsapp" element={<AdminOnly><WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} /></AdminOnly>} />
-        <Route path="/integrations" element={<AdminOnly><IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} /></AdminOnly>} />
-        <Route path="/monitor" element={<AdminOnly><MonitorPage API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/knowledge" element={<AdminOnly><KnowledgePage API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/sandbox" element={<AdminOnly><SandboxPage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/ops" element={<AdminOnly userRole={userRole}><OpsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/analytics" element={<AdminOnly userRole={userRole}><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/whatsapp" element={<AdminOnly userRole={userRole}><WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} /></AdminOnly>} />
+        <Route path="/integrations" element={<AdminOnly userRole={userRole}><IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} /></AdminOnly>} />
+        <Route path="/monitor" element={<AdminOnly userRole={userRole}><MonitorPage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/knowledge" element={<AdminOnly userRole={userRole}><KnowledgePage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/sandbox" element={<AdminOnly userRole={userRole}><SandboxPage API_URL={API_URL} /></AdminOnly>} />
         <Route path="/products" element={
-          <AdminOnly>
+          <AdminOnly userRole={userRole}>
             <ProductsPage
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgs={orgs}
