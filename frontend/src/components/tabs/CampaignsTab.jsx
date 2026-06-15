@@ -107,6 +107,9 @@ export default function CampaignsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeCampaignId, view]);
 
+  // Close any active SSE stream when this component unmounts.
+  useEffect(() => () => stopEventStream(), []);
+
   // Auto-open the campaign from the /campaigns/:campaignId route.
   // Using autoOpened prevents the list view from flashing and stops repeated attempts.
   useEffect(() => {
