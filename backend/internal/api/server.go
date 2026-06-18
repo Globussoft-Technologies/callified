@@ -89,8 +89,13 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
 	if cfg.S3Bucket != "" && cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
-		srv.s3 = storage.NewS3Client(cfg.S3Region, cfg.S3Bucket, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey)
-		logger.Sugar().Infow("S3 storage enabled", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+		if cfg.OCINamespace != "" {
+			srv.s3 = storage.NewOracleClient(cfg.S3Region, cfg.S3Bucket, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey, cfg.OCINamespace, cfg.OCIEndpoint)
+			logger.Sugar().Infow("Oracle Cloud Object Storage enabled", "bucket", cfg.S3Bucket, "region", cfg.S3Region, "namespace", cfg.OCINamespace)
+		} else {
+			srv.s3 = storage.NewS3Client(cfg.S3Region, cfg.S3Bucket, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey)
+			logger.Sugar().Infow("S3 storage enabled", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
+		}
 	}
 	return srv
 }
