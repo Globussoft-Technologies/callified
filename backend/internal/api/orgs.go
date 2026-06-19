@@ -18,6 +18,55 @@ import (
 	"github.com/globussoft/callified-backend/internal/db"
 )
 
+// authorizeOrg returns true if the caller is allowed to access the given org.
+// Super-admins may access any org; regular users may only access their own.
+func (s *Server) authorizeOrg(w http.ResponseWriter, r *http.Request, orgID int64) bool {
+	ac := getAuth(r)
+	if ac.OrgID == orgID {
+		return true
+	}
+	if s.isSuperAdmin(ac.Email) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "forbidden")
+	return false
+}
+
+// authorizeProduct returns true if the product belongs to the caller's org
+// (or the caller is a super-admin). Writes the response and returns false on
+// denial or error.
+func (s *Server) authorizeProduct(w http.ResponseWriter, r *http.Request, productID int64) (*db.Product, bool) {
+	ac := getAuth(r)
+	if s.isSuperAdmin(ac.Email) {
+		product, err := s.db.GetProductByID(productID)
+		if err != nil {
+			s.logger.Sugar().Errorw("authorizeProduct", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return nil, false
+		}
+		if product == nil {
+			writeError(w, http.StatusNotFound, "product not found")
+			return nil, false
+		}
+		return product, true
+	}
+	product, err := s.db.GetProductByID(productID)
+	if err != nil {
+		s.logger.Sugar().Errorw("authorizeProduct", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil, false
+	}
+	if product == nil {
+		writeError(w, http.StatusNotFound, "product not found")
+		return nil, false
+	}
+	if product.OrgID != ac.OrgID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return nil, false
+	}
+	return product, true
+}
+
 // ── GET /api/organizations ───────────────────────────────────────────────────
 
 // @Summary     List organizations
@@ -347,6 +396,9 @@ func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.authorizeOrg(w, r, id) {
+		return
+	}
 	products, err := s.db.GetProductsByOrg(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("listProducts", "err", err)
@@ -383,6 +435,9 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 	orgID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid org id")
+		return
+	}
+	if !s.authorizeOrg(w, r, orgID) {
 		return
 	}
 	var req productCreateRequest
@@ -440,6 +495,9 @@ func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if _, ok := s.authorizeProduct(w, r, id); !ok {
+		return
+	}
 	var req productUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -473,6 +531,9 @@ func (s *Server) deleteProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if _, ok := s.authorizeProduct(w, r, id); !ok {
+		return
+	}
 	if err := s.db.DeleteProduct(id); err != nil {
 		s.logger.Sugar().Errorw("deleteProduct", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -498,6 +559,9 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if _, ok := s.authorizeProduct(w, r, id); !ok {
 		return
 	}
 	persona, callFlow, err := s.db.GetProductPrompt(id)
@@ -532,6 +596,9 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if _, ok := s.authorizeProduct(w, r, id); !ok {
 		return
 	}
 	var body struct {
@@ -1606,9 +1673,8 @@ func (s *Server) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 
 	publicURL := strings.TrimRight(s.cfg.PublicServerURL, "/") + "/api/product-images/" + filename
 
-	product, err := s.db.GetProductByID(id)
-	if err != nil || product == nil {
-		writeError(w, http.StatusNotFound, "product not found")
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
 		return
 	}
 	newImage := db.ProductImage{URL: publicURL, Label: label}
@@ -1632,6 +1698,9 @@ func (s *Server) updateProductImages(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if _, ok := s.authorizeProduct(w, r, id); !ok {
 		return
 	}
 	var images []db.ProductImage
@@ -1662,14 +1731,13 @@ func (s *Server) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
+		return
+	}
 	idx, err := strconv.Atoi(r.PathValue("index"))
 	if err != nil || idx < 0 {
 		writeError(w, http.StatusBadRequest, "invalid index")
-		return
-	}
-	product, err := s.db.GetProductByID(id)
-	if err != nil || product == nil {
-		writeError(w, http.StatusNotFound, "product not found")
 		return
 	}
 	if idx >= len(product.ManualImages) {

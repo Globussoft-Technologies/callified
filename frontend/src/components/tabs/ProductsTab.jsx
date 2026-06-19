@@ -197,7 +197,7 @@ export default function ProductsTab({
     updateProductPrompt(productId, 'saving', false);
   };
 
-  const orgName = selectedOrg ? selectedOrg.name : (orgs && orgs.length > 0 ? orgs[0].name : 'No organization linked');
+  const orgName = selectedOrg ? selectedOrg.name : 'No organization selected';
 
   return (
     <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>

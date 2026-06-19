@@ -66,7 +66,7 @@ export default function ExotelAccountsPage() {
 
   useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
 
-  const openAdd = () => { setForm(EMPTY_FORM); setEditingId(null); setError(''); setShowForm(true); setShowApiKey(false); setShowApiToken(false); };
+  const openAdd = () => { setForm({ ...EMPTY_FORM }); setEditingId(null); setError(''); setShowForm(true); setShowApiKey(false); setShowApiToken(false); };
   const openEdit = (a) => {
     setForm({
       provider: a.provider || 'exotel',
@@ -207,6 +207,7 @@ export default function ExotelAccountsPage() {
                   <label style={labelStyle}>API Key <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
                     <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="API Key" type={showApiKey ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
                     <button type="button" onClick={() => setShowApiKey(v => !v)}
                       aria-label={showApiKey ? 'Hide API Key' : 'Show API Key'}
@@ -219,6 +220,7 @@ export default function ExotelAccountsPage() {
                   <label style={labelStyle}>API Token <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
                     <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="API Token" type={showApiToken ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={form.api_token} onChange={e => setField('api_token', e.target.value)} />
                     <button type="button" onClick={() => setShowApiToken(v => !v)}
                       aria-label={showApiToken ? 'Hide API Token' : 'Show API Token'}
@@ -271,6 +273,7 @@ export default function ExotelAccountsPage() {
                   <label style={labelStyle}>Auth Token <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
                     <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="Auth Token" type={showApiKey ? 'text' : 'password'}
+                      autoComplete="new-password"
                       value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
                     <button type="button" onClick={() => setShowApiKey(v => !v)}
                       aria-label={showApiKey ? 'Hide Auth Token' : 'Show Auth Token'}
@@ -287,6 +290,7 @@ export default function ExotelAccountsPage() {
                 <div>
                   <label style={labelStyle}>API Secret <span style={{ color: T.red }}>*</span></label>
                   <input style={inputStyle} placeholder="API Secret" type="password"
+                    autoComplete="new-password"
                     value={form.api_secret} onChange={e => setField('api_secret', e.target.value)} />
                 </div>
                 <div>

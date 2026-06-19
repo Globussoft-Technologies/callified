@@ -940,7 +940,6 @@ export default function CampaignDetail({
         <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
         <button style={{ ...btnPrimary, background: '#0891b2' }}
           onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
-        <a href={`${API_URL}/leads/sample-csv`} download style={{ color: T.muted, fontSize: '0.8rem', textDecoration: 'underline', alignSelf: 'center' }}>📋 Sample CSV</a>
         <button
           style={{ ...btnPrimary, background: T.green }}
           onClick={() => {
@@ -955,7 +954,7 @@ export default function CampaignDetail({
                 URL.revokeObjectURL(url);
               });
           }}>
-          ⬇ Export Recordings
+          ⬇ Export
         </button>
         {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
@@ -1046,7 +1045,7 @@ export default function CampaignDetail({
                 padding: '6px 16px', fontSize: '0.8rem', fontWeight: 600,
                 fontFamily: T.font, textDecoration: 'none', cursor: 'pointer',
               }}>
-              ⬇ Export Recordings CSV
+              ⬇ Export CSV
             </a>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1302,7 +1301,25 @@ export default function CampaignDetail({
               ) : campaignLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
-                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>{lead.first_name} {lead.last_name}</td>
+                    <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <span>{lead.first_name} {lead.last_name}</span>
+                        {lead.follow_up_note && (
+                          <span
+                            title={lead.follow_up_note}
+                            style={{
+                              fontSize: 10, fontWeight: 600, fontFamily: T.font,
+                              padding: '2px 8px', borderRadius: 12,
+                              background: 'rgba(168,85,247,0.12)', color: '#6b21a8',
+                              border: '1px solid rgba(168,85,247,0.25)',
+                              cursor: 'help', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            📝 {lead.follow_up_note.slice(0, 24)}{lead.follow_up_note.length > 24 ? '…' : ''}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>
                       <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{lead.source || '-'}</span>
@@ -1311,7 +1328,7 @@ export default function CampaignDetail({
                       <select className="form-input" value={lead.status || 'New'}
                         onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
-                        {['New','Contacted','Qualified','Appointment Set','Converted','Lost'].map(s => <option key={s} value={s}>{s}</option>)}
+                        {['New','Contacted','Connected','Interested','Not Interested','Qualified','Appointment Set','Converted','Lost','Junk'].map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </td>
                     <td style={tdStyle}>

@@ -94,7 +94,13 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), req.ExotelAccountID)
+	exotelAccountID := req.ExotelAccountID
+	if exotelAccountID == 0 {
+		if accounts, acctErr := s.db.GetOrgExotelAccounts(ac.OrgID); acctErr == nil && len(accounts) > 0 {
+			exotelAccountID = accounts[0].ID
+		}
+	}
+	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), exotelAccountID)
 	if err != nil {
 		s.logger.Sugar().Errorw("createCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -29,6 +29,11 @@ export function OrgProvider({ children }) {
       const res = await apiFetch(`${API_URL}/organizations`);
       const data = await res.json();
       setOrgs(data);
+      // If the previously selected org is no longer in the allowed list, clear it.
+      if (selectedOrg && !data.find(o => o.id === selectedOrg.id)) {
+        setSelectedOrg(null);
+        setOrgProducts([]);
+      }
       // Auto-select user's org if only one
       if (data.length === 1 && !selectedOrg) {
         setSelectedOrg(data[0]);
@@ -46,6 +51,17 @@ export function OrgProvider({ children }) {
       }
     } catch { /* ignore */ }
   }, [apiFetch, selectedOrg, fetchOrgProducts]);
+
+  // Reset org state when the logged-in user changes or logs out.
+  useEffect(() => {
+    if (!currentUser) {
+      setOrgs([]);
+      setSelectedOrg(null);
+      setOrgProducts([]);
+      setOrgTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser]);
 
   // Auto-fetch orgs when user is authenticated
   useEffect(() => {

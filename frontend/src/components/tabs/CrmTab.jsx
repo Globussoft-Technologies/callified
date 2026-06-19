@@ -206,10 +206,14 @@ export default function CrmTab({
         const statusColors = {
           'New':             { bg: 'rgba(148,163,184,0.12)', color: T.muted },
           'Contacted':       { bg: 'rgba(99,102,241,0.1)',   color: T.accent },
+          'Connected':       { bg: 'rgba(99,102,241,0.1)',   color: T.accent },
+          'Interested':      { bg: 'rgba(16,185,129,0.1)',   color: T.green },
+          'Not Interested':  { bg: 'rgba(239,68,68,0.1)',    color: T.red },
           'Qualified':       { bg: 'rgba(16,185,129,0.1)',   color: T.green },
           'Appointment Set': { bg: 'rgba(245,158,11,0.1)',   color: T.amber },
           'Converted':       { bg: 'rgba(16,185,129,0.15)',  color: T.green },
           'Lost':            { bg: 'rgba(239,68,68,0.1)',    color: T.red },
+          'Junk':            { bg: 'rgba(156,163,175,0.15)', color: T.muted },
         };
 
         return (
