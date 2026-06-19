@@ -98,6 +98,11 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 					role = u.Role
 				}
 			}
+			// Super-admins can access any role-gated endpoint.
+			if s.isSuperAdmin(ac.Email) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			for _, want := range allowed {
 				if role == want {
 					next.ServeHTTP(w, r)

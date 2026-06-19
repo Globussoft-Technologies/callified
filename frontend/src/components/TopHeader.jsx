@@ -146,11 +146,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
-        {userRole === 'Admin' && PRIMARY_ADMIN_TABS
+        {(userRole === 'Admin' || userRole === 'SuperAdmin') && PRIMARY_ADMIN_TABS
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
-        {userRole === 'Admin' && (
+        {(userRole === 'Admin' || userRole === 'SuperAdmin') && (
           (() => {
             const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
             const allMoreTabs = [...visibleMoreTabs, ...superAdminTabs];

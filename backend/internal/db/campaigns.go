@@ -138,6 +138,49 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 	return list, rows.Err()
 }
 
+// GetAllCampaigns is the super-admin variant of GetCampaignsByOrg: it returns
+// campaigns across every org, newest first.
+func (d *DB) GetAllCampaigns() ([]Campaign, error) {
+	const statsSub = `
+		SELECT
+			cl.campaign_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
+			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		GROUP BY cl.campaign_id`
+
+	rows, err := d.pool.Query(
+		`SELECT `+campaignCols+`,
+			COALESCE(s.total,0), COALESCE(s.called,0),
+			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
+		FROM campaigns c
+		LEFT JOIN products p ON c.product_id = p.id
+		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		ORDER BY c.created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Campaign
+	for rows.Next() {
+		c := Campaign{}
+		stats := CampaignStats{}
+		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
+			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
+			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
+		); err != nil {
+			return nil, err
+		}
+		c.Stats = &stats
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
 // GetCampaignByID fetches one campaign. Returns nil when not found.
 // LEFT JOIN to products mirrors GetCampaignsByOrg — a campaign with a NULL
 // or deleted product_id is still a valid row to fetch (e.g. the user is
@@ -392,6 +435,28 @@ func (d *DB) GetOrgDashboardSummary(orgID int64) (OrgDashboardSummary, error) {
 		JOIN leads l ON l.id = cl.lead_id
 		JOIN campaigns c ON c.id = cl.campaign_id
 		WHERE c.org_id=?`, orgID,
+	).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
+	return s, err
+}
+
+// GetAllDashboardSummary returns the same 5 dashboard numbers summed across
+// every organization. Used for the global super-admin dashboard view.
+func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
+	var s OrgDashboardSummary
+	if err := d.pool.QueryRow(
+		`SELECT COUNT(*) FROM campaigns WHERE status='active'`,
+	).Scan(&s.Campaigns); err != nil {
+		return s, err
+	}
+	err := d.pool.QueryRow(`
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
+			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
+			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		JOIN campaigns c ON c.id = cl.campaign_id`,
 	).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
 	return s, err
 }

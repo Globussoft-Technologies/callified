@@ -74,8 +74,8 @@ export default function CrmTab({
   const totalQualified    = dashSummary?.qualified     ?? campaigns.reduce((s, c) => s + (c.stats?.qualified    || 0), 0);
   const totalAppointments = dashSummary?.appointments  ?? campaigns.reduce((s, c) => s + (c.stats?.appointments || 0), 0);
 
-  const canSeeCampaigns = userRole === 'Admin' || userRole === 'Agent';
-  const isAdmin = userRole === 'Admin';
+  const canSeeCampaigns = userRole === 'Admin' || userRole === 'SuperAdmin' || userRole === 'Agent';
+  const isAdmin = userRole === 'Admin' || userRole === 'SuperAdmin';
 
   const [activeModal, setActiveModal] = useState(null);
   const [modalSearch, setModalSearch] = useState('');

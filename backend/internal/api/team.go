@@ -36,7 +36,13 @@ const inviteTokenTTL = 72 * time.Hour
 // @Router      /api/dashboard/summary [get]
 func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	summary, err := s.db.GetOrgDashboardSummary(ac.OrgID)
+	var summary db.OrgDashboardSummary
+	var err error
+	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
+		summary, err = s.db.GetAllDashboardSummary()
+	} else {
+		summary, err = s.db.GetOrgDashboardSummary(ac.OrgID)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("dashboardSummary", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

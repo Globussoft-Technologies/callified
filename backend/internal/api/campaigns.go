@@ -33,7 +33,13 @@ import (
 // @Router      /api/campaigns [get]
 func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	campaigns, err := s.db.GetCampaignsByOrg(ac.OrgID)
+	var campaigns []db.Campaign
+	var err error
+	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
+		campaigns, err = s.db.GetAllCampaigns()
+	} else {
+		campaigns, err = s.db.GetCampaignsByOrg(ac.OrgID)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaigns", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

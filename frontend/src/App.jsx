@@ -38,7 +38,7 @@ import { useCall } from './contexts/CallContext';
 import { useHideAiFeatures } from './hooks/useHideAiFeatures';
 
 function AdminOnly({ children, userRole }) {
-  return userRole === 'Admin' ? children : <Navigate to="/crm" replace />;
+  return (userRole === 'Admin' || userRole === 'SuperAdmin') ? children : <Navigate to="/crm" replace />;
 }
 
 export default function App() {
@@ -78,8 +78,7 @@ export default function App() {
     // For Admin + Agent re-fetch whenever the role changes (e.g. Admin
     // promoted/demoted this user mid-session) so a freshly-allowed user
     // doesn't see an empty campaigns list left over from a Viewer phase.
-    if (userRole === 'Admin' || userRole === 'Agent') {
-       
+    if (userRole === 'Admin' || userRole === 'SuperAdmin' || userRole === 'Agent') {
       fetchCampaigns();
     } else {
       setCampaigns([]);
