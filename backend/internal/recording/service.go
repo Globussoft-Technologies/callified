@@ -77,10 +77,18 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// Use a background context so cleanup isn't cancelled when the WS connection closes.
 	ctx = context.Background()
 
+	// Resolve campaign name for the recording subfolder.
+	campaignName := ""
+	if req.CampaignID > 0 && s.database != nil {
+		if c, err := s.database.GetCampaignByID(req.CampaignID); err == nil && c != nil {
+			campaignName = c.Name
+		}
+	}
+
 	// 1. Save WAV to disk (if recorded server-side).
 	recordingURL := ""
 	if len(req.StereoWav) > 0 {
-		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, req.StereoWav)
+		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, campaignName, req.StereoWav)
 	}
 
 	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
@@ -197,11 +205,25 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 
 // ── WAV saving ────────────────────────────────────────────────────────────────
 
-func (s *Service) saveWAV(streamSid, userEmail string, data []byte) string {
+func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte) string {
 	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
 
 	if s.s3 != nil {
+		userDir := ""
+		if userEmail != "" {
+			userDir = sanitizeForPath(userEmail)
+		}
+		campaignDir := ""
+		if campaignName != "" {
+			campaignDir = sanitizeForPath(campaignName)
+		}
 		s3Key := "recordings/" + filename
+		if userDir != "" {
+			s3Key = "recordings/" + userDir + "/" + filename
+			if campaignDir != "" {
+				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+			}
+		}
 		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
 		if err != nil {
 			s.log.Warn("recording: S3 upload failed", zap.Error(err))
@@ -224,6 +246,11 @@ func (s *Service) saveWAV(streamSid, userEmail string, data []byte) string {
 		userDir := sanitizeForPath(userEmail)
 		baseDir = filepath.Join(baseDir, userDir)
 		urlPrefix = "/api/recordings/" + userDir + "/"
+		if campaignName != "" {
+			campaignDir := sanitizeForPath(campaignName)
+			baseDir = filepath.Join(baseDir, campaignDir)
+			urlPrefix = urlPrefix + campaignDir + "/"
+		}
 	}
 
 	if err := os.MkdirAll(baseDir, 0755); err != nil {

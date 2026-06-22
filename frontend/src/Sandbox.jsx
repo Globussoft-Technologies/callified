@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { useAuth } from './contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -47,6 +48,7 @@ const VOICE_OPTIONS = {
 };
 
 export default function Sandbox() {
+  const { currentUser } = useAuth();
   const [recording, setRecording] = useState(false);
   const [transcripts, setTranscripts] = useState([]);
   const [provider, setProvider] = useState('elevenlabs');
@@ -92,7 +94,7 @@ export default function Sandbox() {
         setRecording(true);
         ws.send(JSON.stringify({ event: 'connected' }));
         const sid = `web_sim_sandbox_${Date.now()}`;
-        ws.send(JSON.stringify({ event: 'start', start: { stream_sid: sid }, stream_sid: sid }));
+        ws.send(JSON.stringify({ event: 'start', start: { stream_sid: sid, user_email: currentUser?.email || '' }, stream_sid: sid, user_email: currentUser?.email || '' }));
 
         const source = audioContext.createMediaStreamSource(stream);
         sourceRef.current = source;
