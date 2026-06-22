@@ -7,7 +7,7 @@ import { useVoice } from './VoiceContext';
 const CallContext = createContext(null);
 
 export function CallProvider({ children }) {
-  const { apiFetch } = useAuth();
+  const { apiFetch, currentUser } = useAuth();
   const { orgProducts } = useOrg();
   const { activeVoiceProvider, activeVoiceId, activeLanguage } = useVoice();
 
@@ -91,7 +91,7 @@ export function CallProvider({ children }) {
         setWebCallActive(lead.id);
         ws.send(JSON.stringify({ event: 'connected' }));
         const sid = `web_sim_${lead.id}_${Date.now()}`;
-        ws.send(JSON.stringify({ event: 'start', start: { stream_sid: sid }, stream_sid: sid }));
+        ws.send(JSON.stringify({ event: 'start', start: { stream_sid: sid, user_email: currentUser?.email || '' }, stream_sid: sid, user_email: currentUser?.email || '' }));
 
         const source = audioContext.createMediaStreamSource(stream);
         const processor = audioContext.createScriptProcessor(2048, 1, 1);

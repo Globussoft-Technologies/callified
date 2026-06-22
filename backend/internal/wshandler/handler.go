@@ -590,6 +590,12 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			zap.Bool("start_has_snake", hasSnake),
 			zap.Bool("start_has_camel", hasCamel),
 		)
+		// Browser web-sim passes the authenticated user's email in the start
+		// event because WebSocket connections cannot send Authorization headers.
+		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
+			sess.UserEmail = email
+		}
+
 		if callSid := pickStr(startData, "callSid", "call_sid", "CallSid"); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)

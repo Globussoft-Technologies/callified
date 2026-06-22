@@ -315,9 +315,32 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac := getAuth(r)
+	userDir := ""
+	if ac.Email != "" {
+		userDir = sanitizeEmailForPath(ac.Email)
+	}
+
+	// Try to determine the campaign from the lead's latest transcript so the
+	// webm recording can be grouped under recordings/<email>/<campaign>/.
+	campaignDir := ""
+	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
+		if txs, err := s.db.GetTranscriptsByLead(leadID); err == nil && len(txs) > 0 {
+			if c, err := s.db.GetCampaignByID(txs[0].CampaignID); err == nil && c != nil {
+				campaignDir = sanitizeEmailForPath(c.Name)
+			}
+		}
+	}
+
 	var recURL string
 	if s.s3 != nil {
 		s3Key := "recordings/" + fname
+		if userDir != "" {
+			s3Key = "recordings/" + userDir + "/" + fname
+			if campaignDir != "" {
+				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + fname
+			}
+		}
 		publicURL, err := s.s3.UploadPublic(r.Context(), s3Key, data)
 		if err != nil {
 			s.logger.Sugar().Warnw("uploadRecording: S3 upload failed", "err", err)
@@ -331,11 +354,13 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	if recURL == "" {
 		baseDir := s.cfg.RecordingsDir
 		urlPrefix := "/api/recordings/"
-		ac := getAuth(r)
-		if ac.Email != "" {
-			userDir := sanitizeEmailForPath(ac.Email)
+		if userDir != "" {
 			baseDir = filepath.Join(baseDir, userDir)
 			urlPrefix = "/api/recordings/" + userDir + "/"
+			if campaignDir != "" {
+				baseDir = filepath.Join(baseDir, campaignDir)
+				urlPrefix = urlPrefix + campaignDir + "/"
+			}
 		}
 		if err := os.MkdirAll(baseDir, 0o755); err != nil {
 			s.logger.Sugar().Errorw("uploadRecording: mkdir", "err", err)

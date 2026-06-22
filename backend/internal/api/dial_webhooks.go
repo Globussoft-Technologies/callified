@@ -584,10 +584,18 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 		return fmt.Errorf("read body: %w", err)
 	}
 
-	// Try to find the initiating user's email so we can segregate the recording.
+	// Try to find the initiating user's email and campaign so we can segregate the recording.
 	userDir := ""
-	if pending, ok := s.store.GetPendingCall(context.Background(), callSid); ok && pending.UserEmail != "" {
-		userDir = sanitizeEmailForPath(pending.UserEmail)
+	campaignDir := ""
+	if pending, ok := s.store.GetPendingCall(context.Background(), callSid); ok {
+		if pending.UserEmail != "" {
+			userDir = sanitizeEmailForPath(pending.UserEmail)
+		}
+		if pending.CampaignID > 0 {
+			if c, err := s.db.GetCampaignByID(pending.CampaignID); err == nil && c != nil {
+				campaignDir = sanitizeEmailForPath(c.Name)
+			}
+		}
 	}
 
 	var localURL string
@@ -595,6 +603,9 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 		s3Key := "recordings/" + filename
 		if userDir != "" {
 			s3Key = "recordings/" + userDir + "/" + filename
+			if campaignDir != "" {
+				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+			}
 		}
 		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
 		if err != nil {
@@ -612,6 +623,10 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 		if userDir != "" {
 			baseDir = filepath.Join(baseDir, userDir)
 			urlPrefix = "/api/recordings/" + userDir + "/"
+			if campaignDir != "" {
+				baseDir = filepath.Join(baseDir, campaignDir)
+				urlPrefix = urlPrefix + campaignDir + "/"
+			}
 		}
 		destPath := filepath.Join(baseDir, filename)
 		_ = os.MkdirAll(baseDir, 0755)

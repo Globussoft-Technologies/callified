@@ -94,6 +94,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const moreActive = visibleMoreTabs.some(t => t.id === activeTab);
   const goTo = (path) => { setMoreOpen(false); navigate(path); };
 
+  // Super admins see the same navigation as admins, plus the super-admin-only tabs.
+  const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
+
   const userName = currentUser?.full_name || currentUser?.email || '';
   const userInitial = userName.charAt(0).toUpperCase();
   const orgName = currentUser?.org_name || '';
@@ -146,11 +149,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
-        {(userRole === 'Admin' || userRole === 'SuperAdmin') && PRIMARY_ADMIN_TABS
+        {isAdminLike && PRIMARY_ADMIN_TABS
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
-        {(userRole === 'Admin' || userRole === 'SuperAdmin') && (
+        {isAdminLike && (
           (() => {
             const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
             const allMoreTabs = [...visibleMoreTabs, ...superAdminTabs];

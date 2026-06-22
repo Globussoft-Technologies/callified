@@ -954,6 +954,13 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 	credsJSON, _ := json.Marshal(map[string]string{"api_key": creds.APIKey, "api_token": creds.APIToken})
 	s.store.SetRaw(r.Context(), "exotel_creds:"+callSid, string(credsJSON), 4*time.Hour)
 
+	// Remember the initiating user's email so the recording can be saved under
+	// a per-user folder regardless of whether the download is triggered from
+	// the initial poll or a later StatusCallback re-poll.
+	if ac.Email != "" {
+		s.store.SetRaw(r.Context(), "user_email:"+callSid, ac.Email, 4*time.Hour)
+	}
+
 	// Poll Exotel's Recordings API in the background — StatusCallback does not
 	// reliably include RecordingUrl for two-party calls, so we fetch directly.
 	capturedCreds := creds
@@ -1041,11 +1048,29 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 		return
 	}
 
+	// Try to place the recording in the initiating user's folder + campaign folder.
+	userDir := ""
+	campaignDir := ""
+	if raw, ok := s.store.GetRaw(ctx, "user_email:"+callSid); ok && raw != "" {
+		userDir = sanitizeEmailForPath(raw)
+	}
+	if campaignID > 0 {
+		if c, err := s.db.GetCampaignByID(campaignID); err == nil && c != nil {
+			campaignDir = sanitizeEmailForPath(c.Name)
+		}
+	}
+
 	var savedURL string
 
 	if s.s3 != nil {
 		// Upload to S3 and use the public URL.
 		s3Key := "recordings/" + filename
+		if userDir != "" {
+			s3Key = "recordings/" + userDir + "/" + filename
+			if campaignDir != "" {
+				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+			}
+		}
 		publicURL, err := s.s3.UploadPublic(ctx, s3Key, data)
 		if err != nil {
 			s.logger.Warn("downloadAndSaveHumanRecording: S3 upload failed", zap.Error(err))
@@ -1058,13 +1083,23 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 
 	if savedURL == "" {
 		// Local fallback.
-		destPath := filepath.Join(s.cfg.RecordingsDir, filename)
-		_ = os.MkdirAll(s.cfg.RecordingsDir, 0755)
+		baseDir := s.cfg.RecordingsDir
+		urlPrefix := "/api/recordings/"
+		if userDir != "" {
+			baseDir = filepath.Join(baseDir, userDir)
+			urlPrefix = "/api/recordings/" + userDir + "/"
+			if campaignDir != "" {
+				baseDir = filepath.Join(baseDir, campaignDir)
+				urlPrefix = urlPrefix + campaignDir + "/"
+			}
+		}
+		destPath := filepath.Join(baseDir, filename)
+		_ = os.MkdirAll(baseDir, 0755)
 		if err := os.WriteFile(destPath, data, 0644); err != nil {
 			s.logger.Warn("downloadAndSaveHumanRecording: write failed", zap.Error(err))
 			return
 		}
-		savedURL = fmt.Sprintf("/api/recordings/%s", filename)
+		savedURL = urlPrefix + filename
 	}
 
 	localURL := savedURL
