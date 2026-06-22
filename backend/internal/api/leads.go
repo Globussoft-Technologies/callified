@@ -44,12 +44,8 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", `attachment; filename="sample_leads.csv"`)
 	wr := csv.NewWriter(w)
+	// Only the header row — no sample data, so no default names leak into imports.
 	_ = wr.Write([]string{"first_name", "last_name", "phone", "source"})
-	// Names are intentionally left blank in the template so users only see
-	// names in imported leads when they explicitly provide them in the CSV.
-	_ = wr.Write([]string{"", "", "9876543210", "Website"})
-	_ = wr.Write([]string{"", "", "9123456789", "Referral"})
-	_ = wr.Write([]string{"", "", "9988776655", "Cold Call"})
 	wr.Flush()
 }
 
