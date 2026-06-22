@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
@@ -208,7 +208,18 @@ export default function CampaignDetail({
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
   const [scheduleError, setScheduleError] = useState('');
   const [qaStatus, setQaStatus] = useState(null);
+  const [leadSearch, setLeadSearch] = useState('');
 
+  const filteredLeads = useMemo(() => {
+    const q = leadSearch.trim().toLowerCase();
+    if (!q) return campaignLeads;
+    return campaignLeads.filter(l =>
+      (l.first_name || '').toLowerCase().includes(q) ||
+      (l.last_name || '').toLowerCase().includes(q) ||
+      (l.phone || '').toLowerCase().includes(q) ||
+      (l.source || '').toLowerCase().includes(q)
+    );
+  }, [campaignLeads, leadSearch]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -987,29 +998,42 @@ export default function CampaignDetail({
         </button>}
       </div>
 
-      {/* Tab Switcher */}
-      <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content', marginBottom: 16 }}>
-        {[
-          { id: 'leads',   label: `👥 Leads (${campaignLeads.length})`,   activeColor: T.accent },
+      {/* Search + Tab Switcher */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
+          {[
+            { id: 'leads',   label: `👥 Leads (${leadSearch.trim() ? `${filteredLeads.length}/${campaignLeads.length}` : campaignLeads.length})`,   activeColor: T.accent },
           { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
           { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
           { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
-        ].filter(tab => !tab.hidden).map(tab => (
-          <button key={tab.id}
-            onClick={() => {
-              if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
-              else setDetailTab(tab.id);
-            }}
-            style={{
-              padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
-              fontSize: 13, fontWeight: 600, fontFamily: T.font,
-              background: detailTab === tab.id ? tab.activeColor : 'transparent',
-              color: detailTab === tab.id ? '#fff' : T.muted,
-              transition: 'all 0.15s',
-            }}>
-            {tab.label}
-          </button>
-        ))}
+          ].filter(tab => !tab.hidden).map(tab => (
+            <button key={tab.id}
+              onClick={() => {
+                if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
+                else setDetailTab(tab.id);
+              }}
+              style={{
+                padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600, fontFamily: T.font,
+                background: detailTab === tab.id ? tab.activeColor : 'transparent',
+                color: detailTab === tab.id ? '#fff' : T.muted,
+                transition: 'all 0.15s',
+              }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <input
+          type="text"
+          placeholder="Search leads by name, phone or source..."
+          value={leadSearch}
+          onChange={e => setLeadSearch(e.target.value)}
+          style={{
+            padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
+            fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
+            outline: 'none', minWidth: 260,
+          }}
+        />
       </div>
 
       {/* Call Log Tab — WhatsApp notice */}
@@ -1296,9 +1320,9 @@ export default function CampaignDetail({
               </tr>
             </thead>
             <tbody>
-              {campaignLeads.length === 0 ? (
-                <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No leads in this campaign yet. Add some to start dialing!</td></tr>
-              ) : campaignLeads.map(lead => (
+              {filteredLeads.length === 0 ? (
+                <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{leadSearch.trim() ? 'No leads match your search.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
+              ) : filteredLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
                     <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>
