@@ -33,6 +33,8 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Region     string `json:"region"`
+		Subdomain  string `json:"subdomain"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -54,7 +56,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain)
 	if err != nil {
 		s.logger.Sugar().Errorw("createExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -82,6 +84,8 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Region     string `json:"region"`
+		Subdomain  string `json:"subdomain"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -103,7 +107,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType); err != nil {
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
 		s.logger.Sugar().Errorw("updateExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

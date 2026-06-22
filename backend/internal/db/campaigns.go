@@ -716,6 +716,8 @@ type ExotelCreds struct {
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 	AppType    string `json:"exotel_app_type"`
+	Region     string `json:"exotel_region"`    // Exotel region: in, us, sg, etc.
+	Subdomain  string `json:"exotel_subdomain"` // Exotel account subdomain override
 }
 
 // IsSet returns true when the minimum required fields for the provider are set.

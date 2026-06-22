@@ -54,7 +54,7 @@ func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook
 		db:     database,
 		disp:   disp,
 		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
-		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, ""),
+		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, "", cfg.ExotelRegion, cfg.ExotelSubdomain),
 		log:    log,
 	}
 }
@@ -195,7 +195,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
 			return "", fmt.Errorf("no Exotel credentials configured for this campaign")
 		}
-		exotelClient := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
+		exotelClient := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)

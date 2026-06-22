@@ -921,7 +921,7 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
+	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
 
 	// StatusCallback delivers recording URL + final status when the call ends.
 	ac := getAuth(r)
@@ -963,6 +963,7 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 	capturedOrgID := ac.OrgID
 	go s.pollHumanCallRecording(capturedCallSid, capturedCreds.APIKey, capturedCreds.APIToken,
 		capturedCreds.AccountSID, capturedCreds.CallerID, capturedCreds.AppID,
+		capturedCreds.Region, capturedCreds.Subdomain,
 		capturedLeadID, capturedCampaignID, capturedOrgID, 30*time.Second)
 
 	writeJSON(w, http.StatusOK, map[string]string{"call_sid": callSid, "status": "dialing"})
@@ -978,8 +979,8 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 //
 // This is needed because Exotel does not reliably include RecordingUrl in the
 // StatusCallback for two-party (From+To) calls.
-func (s *Server) pollHumanCallRecording(callSid, apiKey, apiToken, accountSID, callerID, appID string, leadID, campaignID, orgID int64, initialWait time.Duration) {
-	client := dial.NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, "")
+func (s *Server) pollHumanCallRecording(callSid, apiKey, apiToken, accountSID, callerID, appID, region, subdomain string, leadID, campaignID, orgID int64, initialWait time.Duration) {
+	client := dial.NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, "", region, subdomain)
 	ctx := context.Background()
 
 	time.Sleep(initialWait)

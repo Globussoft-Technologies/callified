@@ -30,6 +30,7 @@ const EMPTY_FORM = {
   name: '',
   // Exotel fields
   api_key: '', api_token: '', account_sid: '', caller_id: '', app_id: '', app_type: 'exoml',
+  region: '', subdomain: '',
   // Twilio-only
   api_secret: '',
 };
@@ -78,6 +79,8 @@ export default function ExotelAccountsPage() {
       caller_id: a.caller_id,
       app_id: a.app_id || '',
       app_type: a.app_type || 'exoml',
+      region: a.region || '',
+      subdomain: a.subdomain || '',
     });
     setEditingId(a.id);
     setError('');
@@ -258,6 +261,30 @@ export default function ExotelAccountsPage() {
                     Use AgentStream for modern Exotel Voicebot flows.
                   </div>
                 </div>
+                <div>
+                  <label style={labelStyle}>Account Region</label>
+                  <select
+                    style={inputStyle}
+                    value={form.region || ''}
+                    onChange={e => setField('region', e.target.value)}
+                  >
+                    <option value="">Global (api.exotel.com)</option>
+                    <option value="in">India (api.in.exotel.com)</option>
+                    <option value="us">US (api.us.exotel.com)</option>
+                    <option value="sg">Singapore (api.sg.exotel.com)</option>
+                  </select>
+                  <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
+                    Pick the Exotel cluster for this account.
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>Subdomain</label>
+                  <input style={inputStyle} placeholder="e.g. arysoftglobalservices1m"
+                    value={form.subdomain} onChange={e => setField('subdomain', e.target.value)} />
+                  <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
+                    Overrides region if set (subdomain.exotel.com).
+                  </div>
+                </div>
               </div>
             )}
 
@@ -367,6 +394,7 @@ export default function ExotelAccountsPage() {
                     <span>Caller: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>
                     {a.app_id && <span>App: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
                     {a.provider !== 'twilio' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
+                    {a.provider !== 'twilio' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
                     <span>Key: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.api_key.slice(0, 8)}…</span></span>
                   </div>
                 </div>

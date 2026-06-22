@@ -18,13 +18,18 @@ type ExotelClient struct {
 	callerID   string
 	appID      string
 	appType    string // "exoml" (legacy XML) or "voicebot" (AgentStream JSON)
+	region     string // e.g. in, us, sg
+	subdomain  string // account-specific subdomain override
 	client     *http.Client
 }
 
 // NewExotelClient creates an Exotel REST client.
 // appType should be "exoml" for legacy ExoML XML flows or "voicebot" for
 // modern AgentStream Voicebot flows that expect a JSON dynamic URL response.
-func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType string) *ExotelClient {
+// region and subdomain control which Exotel cluster is hit. Examples:
+//   region="in"      -> api.in.exotel.com
+//   subdomain="foo"  -> foo.exotel.com
+func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType, region, subdomain string) *ExotelClient {
 	if appType == "" {
 		appType = "exoml"
 	}
@@ -35,8 +40,32 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType stri
 		callerID:   callerID,
 		appID:      appID,
 		appType:    appType,
+		region:     region,
+		subdomain:  subdomain,
 		client:     &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// exotelAPIHost returns the API host for this account.
+func (e *ExotelClient) exotelAPIHost() string {
+	if e.subdomain != "" {
+		return e.subdomain + ".exotel.com"
+	}
+	if e.region != "" {
+		return "api." + e.region + ".exotel.com"
+	}
+	return "api.exotel.com"
+}
+
+// exotelMyHost returns the dashboard/app host used for ExoML/Voicebot app URLs.
+func (e *ExotelClient) exotelMyHost() string {
+	if e.subdomain != "" {
+		return "my." + e.subdomain + ".exotel.com"
+	}
+	if e.region != "" {
+		return "my." + e.region + ".exotel.com"
+	}
+	return "my.exotel.com"
 }
 
 // InitiateCall dials toPhone via Exotel Connect API and returns the call SID.
@@ -56,15 +85,16 @@ func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType stri
 // dashboard app's Passthru applet is never invoked and the call drops on answer.
 func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
-		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
-		e.accountSID)
+		"https://%s/v1/Accounts/%s/Calls/connect.json",
+		e.exotelAPIHost(), e.accountSID)
 
 	// Modern AgentStream Voicebot flows use /{sid}/exoml/start_voice/{flow_id}.
 	// Legacy ExoML apps use /exoml/start/{app_id}.
+	myHost := e.exotelMyHost()
 	if e.appType == "voicebot" {
-		exomlURL = fmt.Sprintf("http://my.exotel.com/%s/exoml/start_voice/%s", e.accountSID, e.appID)
+		exomlURL = fmt.Sprintf("http://%s/%s/exoml/start_voice/%s", myHost, e.accountSID, e.appID)
 	} else {
-		exomlURL = fmt.Sprintf("http://my.exotel.com/exoml/start/%s", e.appID)
+		exomlURL = fmt.Sprintf("http://%s/exoml/start/%s", myHost, e.appID)
 	}
 
 	phone := ExotelPhone(toPhone)
@@ -115,8 +145,8 @@ func (e *ExotelClient) InitiateCall(ctx context.Context, toPhone, exomlURL, call
 // is the standard Exotel two-legged call and works reliably.
 func (e *ExotelClient) InitiateHumanCall(ctx context.Context, agentPhone, customerPhone, callbackURL string) (string, error) {
 	endpoint := fmt.Sprintf(
-		"https://api.exotel.com/v1/Accounts/%s/Calls/connect.json",
-		e.accountSID)
+		"https://%s/v1/Accounts/%s/Calls/connect.json",
+		e.exotelAPIHost(), e.accountSID)
 
 	form := url.Values{}
 	form.Set("From", ExotelPhone(agentPhone))
@@ -195,8 +225,8 @@ func (e *ExotelClient) Hangup(ctx context.Context, callSid string) error {
 // NOT in the /Calls/{sid}/Recordings.json sub-resource.
 func (e *ExotelClient) FetchRecordingURL(ctx context.Context, callSid string) (string, error) {
 	endpoint := fmt.Sprintf(
-		"https://api.exotel.com/v1/Accounts/%s/Calls/%s.json",
-		e.accountSID, callSid)
+		"https://%s/v1/Accounts/%s/Calls/%s.json",
+		e.exotelAPIHost(), e.accountSID, callSid)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", err

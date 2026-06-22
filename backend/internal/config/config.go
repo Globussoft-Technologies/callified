@@ -71,6 +71,8 @@ type Config struct {
 	ExotelAccountSID string `env:"EXOTEL_ACCOUNT_SID"`
 	ExotelCallerID   string `env:"EXOTEL_CALLER_ID"`
 	ExotelAppID      string `env:"EXOTEL_APP_ID"     envDefault:"1210468"`
+	ExotelRegion     string `env:"EXOTEL_REGION"`
+	ExotelSubdomain  string `env:"EXOTEL_SUBDOMAIN"`
 	DefaultProvider  string `env:"DEFAULT_PROVIDER"  envDefault:"exotel"`
 	PublicServerURL  string `env:"PUBLIC_SERVER_URL" envDefault:"http://localhost:8001"`
 
