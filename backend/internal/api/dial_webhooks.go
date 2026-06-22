@@ -410,6 +410,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 				if creds, cerr := s.db.GetCampaignExotelCreds(cl.CampaignID); cerr == nil && creds.IsSet() {
 					go s.pollHumanCallRecording(callSid,
 						creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID,
+						creds.Region, creds.Subdomain,
 						cl.LeadID, cl.CampaignID, cl.OrgID, 30*time.Second)
 				}
 			}
