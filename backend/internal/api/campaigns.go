@@ -19,6 +19,9 @@ import (
 	"github.com/globussoft/callified-backend/internal/dial"
 )
 
+// maxCampaignLeads is the hard cap on the number of leads a single campaign can hold.
+const maxCampaignLeads = 100_000
+
 // ── GET /api/campaigns ───────────────────────────────────────────────────────
 
 // @Summary     List campaigns
@@ -578,7 +581,8 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
+	// Allow large CSVs up to ~100 MB; files bigger than memory are spilled to disk.
+	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "failed to parse form")
 		return
 	}
@@ -617,27 +621,76 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		return strings.TrimSpace(rec[i])
 	}
 
+	// Deduplicate the CSV by phone (first occurrence wins) and skip empty phones.
 	var rows []db.LeadImportRow
+	seen := make(map[string]bool)
 	for _, rec := range records[1:] {
+		phone := get(rec, iPhone)
+		if phone == "" || seen[phone] {
+			continue
+		}
+		seen[phone] = true
 		rows = append(rows, db.LeadImportRow{
 			FirstName: get(rec, iFirst), LastName: get(rec, iLast),
-			Phone: get(rec, iPhone), Source: get(rec, iSource),
+			Phone: phone, Source: get(rec, iSource),
 		})
 	}
 
-	imported, errs := s.db.BulkCreateLeads(rows, ac.OrgID)
+	// Find which phones already exist in this org and which leads are already in the campaign.
+	var phones []string
+	for _, r := range rows {
+		phones = append(phones, r.Phone)
+	}
+	existing, err := s.db.GetLeadIDsByPhones(ac.OrgID, phones)
+	if err != nil {
+		s.logger.Sugar().Errorw("importCampaignLeadsCSV: GetLeadIDsByPhones", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	campaignLeadIDs, err := s.db.GetCampaignLeadIDs(campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("importCampaignLeadsCSV: GetCampaignLeadIDs", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
-	// Fetch IDs of newly created leads to add to campaign — re-query by phone
-	var addedIDs []int64
-	for _, row := range rows {
-		lead, err := s.db.SearchLeads(row.Phone, ac.OrgID)
-		if err == nil && len(lead) > 0 {
-			addedIDs = append(addedIDs, lead[0].ID)
+	// Count how many new leads would actually be linked to the campaign.
+	var newRows []db.LeadImportRow
+	var existingToAdd int
+	for _, r := range rows {
+		if id, ok := existing[r.Phone]; ok {
+			if !campaignLeadIDs[id] {
+				existingToAdd++
+			}
+		} else {
+			newRows = append(newRows, r)
+		}
+	}
+	currentCount := int64(len(campaignLeadIDs))
+	if currentCount+int64(len(newRows)+existingToAdd) > maxCampaignLeads {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("campaign lead limit exceeded: maximum %d leads (current %d, this import would add %d new)",
+				maxCampaignLeads, currentCount, len(newRows)+existingToAdd))
+		return
+	}
+
+	// Create only the genuinely new leads. Existing leads are left untouched.
+	imported, errs := s.db.BulkCreateLeads(newRows, ac.OrgID)
+
+	// Re-resolve lead IDs after insert and add every row (new + existing) to the campaign once.
+	leadMap, err := s.db.GetLeadIDsByPhones(ac.OrgID, phones)
+	if err != nil {
+		s.logger.Sugar().Errorw("importCampaignLeadsCSV: GetLeadIDsByPhones post-create", "err", err)
+	}
+	var addIDs []int64
+	for _, r := range rows {
+		if id, ok := leadMap[r.Phone]; ok && !campaignLeadIDs[id] {
+			addIDs = append(addIDs, id)
 		}
 	}
 	var addedToCampaign int
-	if len(addedIDs) > 0 {
-		addedToCampaign, _ = s.db.AddLeadsToCampaign(campaignID, addedIDs)
+	if len(addIDs) > 0 {
+		addedToCampaign, _ = s.db.AddLeadsToCampaign(campaignID, addIDs)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

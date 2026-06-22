@@ -266,6 +266,34 @@ func (d *DB) DeleteCampaign(id int64) (bool, error) {
 	return n > 0, nil
 }
 
+// GetCampaignLeadCount returns the number of leads currently linked to a campaign.
+func (d *DB) GetCampaignLeadCount(campaignID int64) (int64, error) {
+	var n int64
+	err := d.pool.QueryRow(
+		`SELECT COUNT(*) FROM campaign_leads WHERE campaign_id=?`, campaignID,
+	).Scan(&n)
+	return n, err
+}
+
+// GetCampaignLeadIDs returns the set of lead IDs already linked to a campaign.
+func (d *DB) GetCampaignLeadIDs(campaignID int64) (map[int64]bool, error) {
+	rows, err := d.pool.Query(
+		`SELECT lead_id FROM campaign_leads WHERE campaign_id=?`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
 // AddLeadsToCampaign bulk-inserts campaign_leads (IGNORE duplicates). Returns added count.
 func (d *DB) AddLeadsToCampaign(campaignID int64, leadIDs []int64) (int, error) {
 	var added int
