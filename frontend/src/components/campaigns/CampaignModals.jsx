@@ -283,7 +283,7 @@ export default function CampaignModals({
             </p>
             <button
               onClick={() => {
-                const csv = 'first_name,last_name,phone,source\n,,9876543210,google\n';
+                const csv = 'first_name,last_name,phone,source\n';
                 const blob = new Blob([csv], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
