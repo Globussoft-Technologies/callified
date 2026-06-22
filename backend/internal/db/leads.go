@@ -128,6 +128,50 @@ func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64) (*Lead, error) {
 	return l, err
 }
 
+// GetLeadIDsByPhones returns a map phone->lead_id for all leads in the given
+// org matching the provided phone numbers. Useful for bulk CSV import so we
+// don't query once per row.
+func (d *DB) GetLeadIDsByPhones(orgID int64, phones []string) (map[string]int64, error) {
+	out := make(map[string]int64)
+	if len(phones) == 0 {
+		return out, nil
+	}
+	const chunk = 5000
+	for i := 0; i < len(phones); i += chunk {
+		end := i + chunk
+		if end > len(phones) {
+			end = len(phones)
+		}
+		args := make([]any, 0, end-i+1)
+		args = append(args, orgID)
+		placeholders := make([]string, 0, end-i)
+		for _, p := range phones[i:end] {
+			args = append(args, p)
+			placeholders = append(placeholders, "?")
+		}
+		q := `SELECT phone, id FROM leads WHERE org_id=? AND phone IN (` + strings.Join(placeholders, ",") + `)`
+		rows, err := d.pool.Query(q, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var phone string
+			var id int64
+			if err := rows.Scan(&phone, &id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[phone] = id
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // CreateLead inserts a new lead. Returns the new ID.
 func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(

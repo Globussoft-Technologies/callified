@@ -479,12 +479,16 @@ export default function CampaignsTab({
         method: 'POST', body: formData
       });
       const data = await res.json();
-      toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
-      setCsvFile(null);
-      setShowCsvImportModal(false);
-      fetchCampaignLeads(selectedCampaign.id);
-      fetchCampaigns();
-    } catch (e) { console.error(e); }
+      if (!res.ok) {
+        toast(data.error || 'Import failed', 'error');
+      } else {
+        toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+        setCsvFile(null);
+        setShowCsvImportModal(false);
+        fetchCampaignLeads(selectedCampaign.id);
+        fetchCampaigns();
+      }
+    } catch (e) { console.error(e); toast('Import failed', 'error'); }
     setLoading(false);
   };
 
