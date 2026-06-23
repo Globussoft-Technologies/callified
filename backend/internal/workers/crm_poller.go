@@ -98,13 +98,13 @@ func (p *CRMPoller) pollIntegration(ctx context.Context, integ db.CRMIntegration
 		if existing != nil {
 			continue
 		}
-		id, err := p.db.CreateLead(cl.FirstName, cl.LastName, cl.Phone, integ.Provider, cl.Interest, integ.OrgID)
+		id, err := p.db.CreateLead(cl.FirstName, cl.LastName, cl.Phone, integ.Provider, cl.Interest, 0, integ.OrgID)
 		if err != nil {
 			p.log.Warn("crm_poller: CreateLead", zap.Error(err))
 			continue
 		}
 		// Tag with external_id + crm_provider
-		_, _ = p.db.UpdateLead(id, cl.FirstName, cl.LastName, cl.Phone, integ.Provider, cl.Interest, integ.OrgID)
+		_, _ = p.db.UpdateLead(id, cl.FirstName, cl.LastName, cl.Phone, integ.Provider, cl.Interest, 0, integ.OrgID)
 		created++
 	}
 	return created, nil

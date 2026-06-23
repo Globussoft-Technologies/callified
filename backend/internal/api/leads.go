@@ -140,11 +140,12 @@ func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 // ── POST /api/leads ───────────────────────────────────────────────────────────
 
 type leadCreateRequest struct {
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Phone     string `json:"phone"`
-	Source    string `json:"source"`
-	Interest  string `json:"interest"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Phone       string `json:"phone"`
+	Source      string `json:"source"`
+	Interest    string `json:"interest"`
+	ExecutiveID int64  `json:"executive_id"`
 }
 
 // @Summary     Create lead
@@ -171,7 +172,7 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
-	id, err := s.db.CreateLead(req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)
+	id, err := s.db.CreateLead(req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, req.ExecutiveID, ac.OrgID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
 			writeFieldError(w, http.StatusConflict, "phone number already exists",
@@ -257,11 +258,12 @@ func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/leads/{id} ───────────────────────────────────────────────────────
 
 type leadUpdateRequest struct {
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Phone     string `json:"phone"`
-	Source    string `json:"source"`
-	Interest  string `json:"interest"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Phone       string `json:"phone"`
+	Source      string `json:"source"`
+	Interest    string `json:"interest"`
+	ExecutiveID int64  `json:"executive_id"`
 }
 
 // @Summary     Update lead
@@ -294,7 +296,7 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
-	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, ac.OrgID)
+	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, req.ExecutiveID, ac.OrgID)
 	if err != nil {
 		s.logger.Sugar().Errorw("updateLead", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -2,7 +2,8 @@ import React from 'react';
 
 export default function LeadModals({
   isModalOpen, setIsModalOpen, handleCreateLead, formData, setFormData, loading,
-  editModalOpen, setEditModalOpen, editingLead, handleSaveEdit, editFormData, setEditFormData
+  editModalOpen, setEditModalOpen, editingLead, handleSaveEdit, editFormData, setEditFormData,
+  executives
 }) {
   return (
     <>
@@ -27,6 +28,16 @@ export default function LeadModals({
                 <label>Source</label>
                 <input data-testid="lead-source" name="source" className="form-input" value={formData.source || ""} onChange={e => setFormData({...formData, source: e.target.value})} placeholder="Dashboard" />
               </div>
+              {executives && executives.length > 0 && (
+                <div className="form-group">
+                  <label>Executive</label>
+                  <select className="form-input" value={formData.executive_id || ''}
+                    onChange={e => setFormData({...formData, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
+                    <option value="">— Unassigned —</option>
+                    {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
                 <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setIsModalOpen(false)}>Cancel</button>
                 <button data-testid="save-lead-btn" type="submit" className="btn-primary" disabled={loading}>
@@ -59,6 +70,16 @@ export default function LeadModals({
                 <label>Source</label>
                 <input name="source" className="form-input" value={editFormData.source} onChange={e => setEditFormData({...editFormData, source: e.target.value})} />
               </div>
+              {executives && executives.length > 0 && (
+                <div className="form-group">
+                  <label>Executive</label>
+                  <select className="form-input" value={editFormData.executive_id || ''}
+                    onChange={e => setEditFormData({...editFormData, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
+                    <option value="">— Unassigned —</option>
+                    {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
                 <button type="button" className="btn-call" style={{borderColor: 'transparent', color: '#cbd5e1', background: 'transparent'}} onClick={() => setEditModalOpen(false)}>Cancel</button>
                 <button data-testid="update-lead-btn" type="submit" className="btn-primary" disabled={loading}>

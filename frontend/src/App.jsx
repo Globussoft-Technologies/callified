@@ -25,6 +25,7 @@ import CampaignsPage from './pages/CampaignsPage';
 import TeamPage from './pages/TeamPage';
 import ReceptionistPage from './pages/ReceptionistPage';
 import ExotelAccountsPage from './pages/ExotelAccountsPage';
+import ExecutivesPage from './pages/ExecutivesPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import RequireRole from './components/RequireRole';
@@ -231,6 +232,7 @@ export default function App() {
         <Route path="/team" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
+        <Route path="/executives" element={<ExecutivesPage />} />
         <Route path="/subscriptions" element={
           <RequireRole allow={['Admin', 'SuperAdmin']}>
             <SubscriptionsPage apiFetch={apiFetch} />

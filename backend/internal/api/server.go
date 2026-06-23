@@ -231,6 +231,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/leads/{lead_id}/browser-call", adminOrAgent(s.browserCall))
 	mux.HandleFunc("GET /api/campaigns/{id}/twilio-token", adminOrAgent(s.twilioToken))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
+	mux.HandleFunc("PUT /api/campaigns/{id}/executives", adminAuth(s.setCampaignExecutives))
 
 	// ── Org Exotel accounts ───────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/exotel-accounts", adminAuth(s.listExotelAccounts))
@@ -331,6 +332,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
+
+	// ── Executives ────────────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/executives", adminAuth(s.listExecutives))
+	mux.HandleFunc("POST /api/executives", adminAuth(s.createExecutive))
+	mux.HandleFunc("PUT /api/executives/{id}", adminAuth(s.updateExecutive))
+	mux.HandleFunc("DELETE /api/executives/{id}", adminAuth(s.deleteExecutive))
 
 	// Public invite endpoints — no auth. The token in the URL path is the
 	// authorization. Issue #55: invitee sets their own password.

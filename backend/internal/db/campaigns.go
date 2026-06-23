@@ -373,18 +373,31 @@ type CampaignLead struct {
 
 // GetCampaignLeads returns all leads in a campaign with call stats.
 func (d *DB) GetCampaignLeads(campaignID int64) ([]CampaignLead, error) {
-	rows, err := d.pool.Query(`
-		SELECT `+leadColsL+`,
-			(SELECT COUNT(*) FROM call_transcripts ct
-			 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.call_duration_s>5) AS transcript_count,
-			(SELECT COUNT(*) FROM call_transcripts ct
-			 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.recording_url IS NOT NULL AND ct.recording_url!='') AS recording_count,
-			(SELECT COUNT(*) FROM call_transcripts ct
-			 WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts
-		FROM leads l
-		JOIN campaign_leads cl ON l.id=cl.lead_id
-		WHERE cl.campaign_id=?
-		ORDER BY l.id DESC`, campaignID, campaignID, campaignID, campaignID)
+	return d.GetCampaignLeadsFiltered(campaignID, nil)
+}
+
+// GetCampaignLeadsFiltered returns campaign leads optionally filtered by
+// executive IDs. An empty or nil slice returns all leads.
+func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]CampaignLead, error) {
+	q := `SELECT ` + leadColsL + `,
+		(SELECT COUNT(*) FROM call_transcripts ct
+		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.call_duration_s>5) AS transcript_count,
+		(SELECT COUNT(*) FROM call_transcripts ct
+		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.recording_url IS NOT NULL AND ct.recording_url!='') AS recording_count,
+		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts
+	 FROM campaign_leads cl2
+	 JOIN leads l ON l.id = cl2.lead_id
+	 WHERE cl2.campaign_id=?`
+	args := []any{campaignID, campaignID, campaignID, campaignID}
+	if len(execIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+		q += ` AND l.executive_id IN (` + placeholders + `)`
+		for _, id := range execIDs {
+			args = append(args, id)
+		}
+	}
+	q += ` ORDER BY l.created_at DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -403,11 +416,12 @@ func (d *DB) GetCampaignLeads(campaignID int64) ([]CampaignLead, error) {
 func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error) {
 	cl := &CampaignLead{}
 	var orgIDInt sql.NullInt64
+	var executiveID sql.NullInt64
 	var followUpNote, interest, extID, crmProvider sql.NullString
 	err := row.Scan(
 		&cl.ID, &orgIDInt, &cl.FirstName, &cl.LastName, &cl.Phone,
 		&cl.Source, &cl.Status, &followUpNote, &interest, &extID, &crmProvider,
-		&cl.CreatedAt,
+		&executiveID, &cl.CreatedAt,
 		&cl.TranscriptCount, &cl.RecordingCount, &cl.DialAttempts,
 	)
 	if err != nil {
@@ -415,6 +429,9 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	}
 	if orgIDInt.Valid {
 		cl.OrgID = orgIDInt.Int64
+	}
+	if executiveID.Valid {
+		cl.ExecutiveID = executiveID.Int64
 	}
 	cl.FollowUpNote = followUpNote.String
 	cl.Interest = interest.String

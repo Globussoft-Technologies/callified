@@ -28,16 +28,17 @@ export default function CampaignsTab({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
-  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '' });
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '' });
+  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '', executive_id: 0 });
+  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
+  const [executives, setExecutives] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
-  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '' });
+  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '', executive_ids: [] });
   // ID of the campaign whose row is currently showing the inline "Delete? Yes No"
   // prompt. Null when no row is in confirm mode.
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
@@ -54,6 +55,10 @@ export default function CampaignsTab({
     fetchCampaigns();
     apiFetch(`${API_URL}/exotel-accounts`)
       .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
+      .catch(() => {});
+    apiFetch(`${API_URL}/executives`)
+      .then(r => r.json())
+      .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, []);
 
@@ -151,6 +156,14 @@ export default function CampaignsTab({
     } catch { setCallLog([]);  }
   };
 
+  const fetchCampaignDetail = async (campaignId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}`);
+      if (res.ok) return await res.json();
+    } catch { /* ignore */ }
+    return null;
+  };
+
   const fetchCampVoice = async (campaignId) => {
     try {
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/voice-settings`);
@@ -192,11 +205,12 @@ export default function CampaignsTab({
     setCampVoice({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   };
 
-  const handleViewCampaign = (campaign) => {
+  const handleViewCampaign = async (campaign) => {
     if (routeCampaignId && campaign?.id !== parseInt(routeCampaignId, 10)) {
       navigate(`/campaigns/${campaign.id}`, { replace: true });
     }
-    setSelectedCampaign(campaign);
+    const detail = await fetchCampaignDetail(campaign.id);
+    setSelectedCampaign(detail ? { ...campaign, ...detail } : campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
     fetchCallLog(campaign.id);
@@ -317,10 +331,19 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
+      if (createForm.executive_ids?.length > 0 && newCampaign?.id) {
+        try {
+          await apiFetch(`${API_URL}/campaigns/${newCampaign.id}/executives`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ executive_ids: createForm.executive_ids })
+          });
+        } catch (e) { console.error('assign executives failed', e); }
+      }
       fetchCampaigns();
     } catch (err) {
       console.error(err);
@@ -344,13 +367,16 @@ export default function CampaignsTab({
     }
   };
 
-  const handleEditCampaign = (campaign) => {
+  const handleEditCampaign = async (campaign) => {
+    const detail = await fetchCampaignDetail(campaign.id);
+    const c = detail ? { ...campaign, ...detail } : campaign;
     setEditCampaignForm({
-      id: campaign.id,
-      name: campaign.name || '',
-      product_id: campaign.product_id || '',
-      lead_source: campaign.lead_source || '',
-      channel: campaign.channel || 'voice'
+      id: c.id,
+      name: c.name || '',
+      product_id: c.product_id || '',
+      lead_source: c.lead_source || '',
+      channel: c.channel || 'voice',
+      executive_ids: (c.executive_ids || []).map(id => String(id))
     });
     setEditCampaignError('');
     setShowEditCampaignModal(true);
@@ -371,6 +397,15 @@ export default function CampaignsTab({
           channel: editCampaignForm.channel || 'voice'
         })
       });
+      try {
+        await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}/executives`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            executive_ids: (editCampaignForm.executive_ids || []).map(id => parseInt(id, 10)).filter(id => id > 0)
+          })
+        });
+      } catch (e) { console.error('assign executives failed', e); }
       setShowEditCampaignModal(false);
       fetchCampaigns();
       if (selectedCampaign?.id === editCampaignForm.id) {
@@ -414,7 +449,7 @@ export default function CampaignsTab({
 
   const handleEditLead = (lead) => {
     setEditLead(lead);
-    setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', source: lead.source || '' });
+    setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', source: lead.source || '', executive_id: lead.executive_id || 0 });
   };
 
   const handleSaveEdit = async () => {
@@ -422,7 +457,10 @@ export default function CampaignsTab({
     try {
       await apiFetch(`${API_URL}/leads/${editLead.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm)
+        body: JSON.stringify({
+          ...editForm,
+          executive_id: editForm.executive_id ? parseInt(editForm.executive_id, 10) : 0
+        })
       });
       setEditLead(null);
       fetchCampaignLeads(selectedCampaign.id);
@@ -539,6 +577,7 @@ export default function CampaignsTab({
           API_URL={API_URL}
           orgTimezone={orgTimezone}
           handleEditCampaign={handleEditCampaign}
+          executives={executives}
         />
         <CampaignModals
           showCreateModal={false}
@@ -549,6 +588,7 @@ export default function CampaignsTab({
           loading={loading}
           orgProducts={orgProducts}
           orgExotelAccounts={orgExotelAccounts}
+          executives={executives}
           selectedTemplate={selectedTemplate}
           setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
@@ -721,6 +761,7 @@ export default function CampaignsTab({
         setCreateError={setCreateError}
         orgProducts={orgProducts}
         orgExotelAccounts={orgExotelAccounts}
+        executives={executives}
         selectedTemplate={selectedTemplate}
         setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}

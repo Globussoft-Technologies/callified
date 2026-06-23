@@ -10,6 +10,7 @@ export default function CampaignModals({
   handleCreateCampaign, loading, createError, orgProducts,
   selectedTemplate, setSelectedTemplate,
   orgExotelAccounts,
+  executives,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
   availableLeads, selectedLeadIds, toggleLeadSelection,
@@ -59,7 +60,7 @@ export default function CampaignModals({
     setNameTouched(false);
     setShowCreateModal(false);
     if (setSelectedTemplate) setSelectedTemplate(null);
-    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice' });
+    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
     if (setCreateError) setCreateError('');
   };
 
@@ -211,6 +212,34 @@ export default function CampaignModals({
                         </option>
                       ))}
                     </select>
+                  </div>
+                )}
+                {executives && executives.length > 0 && (
+                  <div style={{marginBottom: '1.5rem'}}>
+                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                      Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                    </label>
+                    <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
+                      {executives.map(e => {
+                        const ids = createForm.executive_ids || [];
+                        const checked = ids.includes(e.id) || ids.includes(String(e.id));
+                        return (
+                          <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
+                            <input type="checkbox" checked={checked}
+                              onChange={() => {
+                                const val = String(e.id);
+                                setCreateForm(f => ({
+                                  ...f,
+                                  executive_ids: checked
+                                    ? (f.executive_ids || []).filter(id => String(id) !== val)
+                                    : [...(f.executive_ids || []), val]
+                                }));
+                              }} />
+                            {e.name}
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
                 {createError && (
@@ -385,6 +414,34 @@ export default function CampaignModals({
                   {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                 </select>
               </div>
+              {executives && executives.length > 0 && (
+                <div style={{marginBottom: '1.5rem'}}>
+                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                    Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
+                  </label>
+                  <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
+                    {executives.map(e => {
+                      const ids = editCampaignForm.executive_ids || [];
+                      const checked = ids.includes(e.id) || ids.includes(String(e.id));
+                      return (
+                        <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
+                          <input type="checkbox" checked={checked}
+                            onChange={() => {
+                              const val = String(e.id);
+                              setEditCampaignForm(f => ({
+                                ...f,
+                                executive_ids: checked
+                                  ? (f.executive_ids || []).filter(id => String(id) !== val)
+                                  : [...(f.executive_ids || []), val]
+                              }));
+                            }} />
+                          {e.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
                 <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
@@ -422,6 +479,16 @@ export default function CampaignModals({
               <label>Source</label>
               <input className="form-input" value={editForm.source} onChange={e => setEditForm({...editForm, source: e.target.value})} />
             </div>
+            {executives && executives.length > 0 && (
+              <div className="form-group">
+                <label>Executive</label>
+                <select className="form-input" value={editForm.executive_id || ''}
+                  onChange={e => setEditForm({...editForm, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
+                  <option value="">— Unassigned —</option>
+                  {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </div>
+            )}
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {

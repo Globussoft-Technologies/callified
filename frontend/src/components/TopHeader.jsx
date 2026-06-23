@@ -27,6 +27,7 @@ const MORE_ADMIN_TABS = [
   { id: 'scheduled',    label: 'Scheduled',       path: '/scheduled',    testid: 'tab-scheduled' },
   { id: 'billing',      label: 'Billing',         path: '/billing',      testid: 'tab-billing' },
   { id: 'dnd',          label: 'DND',             path: '/dnd',          testid: 'tab-dnd' },
+  { id: 'executives',   label: 'Executives',      path: '/executives',   testid: 'tab-executives' },
   { id: 'settings',     label: 'Settings',        path: '/settings',     testid: 'tab-settings' },
   { id: 'logs',         label: 'Live Logs',       path: '/logs',         testid: 'tab-logs' },
   { id: 'team',         label: 'Team',            path: '/team',         testid: 'tab-team' },

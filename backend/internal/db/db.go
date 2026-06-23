@@ -44,6 +44,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureCampaignsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure campaigns table: %w", err)
 	}
+	if err := d.EnsureExecutivesTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure executives table: %w", err)
+	}
 	return d, nil
 }
 
