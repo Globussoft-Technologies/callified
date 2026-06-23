@@ -283,7 +283,7 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 		if !creds.IsSet() {
 			return fmt.Errorf("no Exotel credentials configured for this campaign")
 		}
-		client := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType)
+		client := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
 		return client.Hangup(ctx, callSid)
 	}
 }
