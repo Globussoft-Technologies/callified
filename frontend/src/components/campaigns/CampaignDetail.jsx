@@ -212,9 +212,11 @@ export default function CampaignDetail({
   const [leadSearch, setLeadSearch] = useState('');
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
+  const [execSearch, setExecSearch] = useState('');
 
   useEffect(() => {
     setExecFilter([]);
+    setExecSearch('');
     setShowExecFilter(false);
   }, [selectedCampaign?.id]);
 
@@ -1059,24 +1061,43 @@ export default function CampaignDetail({
             </button>
             {showExecFilter && (
               <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 200,
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 220,
                 background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
-                maxHeight: 240, overflowY: 'auto'
+                maxHeight: 300, overflowY: 'auto'
               }}>
-                {executives.map(e => {
-                  const checked = execFilter.includes(String(e.id));
-                  return (
-                    <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer'}}>
-                      <input type="checkbox" checked={checked}
-                        onChange={() => {
-                          const val = String(e.id);
-                          setExecFilter(prev => checked ? prev.filter(id => id !== val) : [...prev, val]);
-                        }} />
-                      {e.name}
-                    </label>
-                  );
-                })}
+                <input
+                  type="text"
+                  placeholder="Search executives..."
+                  value={execSearch}
+                  onChange={e => setExecSearch(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
+                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
+                    outline: 'none'
+                  }}
+                />
+                {(() => {
+                  const q = execSearch.trim().toLowerCase();
+                  const filtered = q ? executives.filter(e => (e.name || '').toLowerCase().includes(q)) : executives;
+                  if (filtered.length === 0) {
+                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No executives found.</div>;
+                  }
+                  return filtered.map(e => {
+                    const checked = execFilter.includes(String(e.id));
+                    return (
+                      <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer'}}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => {
+                            const val = String(e.id);
+                            setExecFilter(prev => checked ? prev.filter(id => id !== val) : [...prev, val]);
+                          }} />
+                        {e.name}
+                      </label>
+                    );
+                  });
+                })()}
               </div>
             )}
           </div>
