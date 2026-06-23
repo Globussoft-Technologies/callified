@@ -22,17 +22,18 @@ type Lead struct {
 	Interest     string  `json:"interest"`
 	ExternalID   string  `json:"external_id"`
 	CRMProvider  string  `json:"crm_provider"`
+	ExecutiveID  int64   `json:"executive_id"`
 	CreatedAt    string  `json:"created_at"`
 }
 
 func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 	l := &Lead{}
 	var orgID, followUpNote, interest, extID, crmProvider sql.NullString
-	var orgIDInt sql.NullInt64
+	var orgIDInt, executiveID sql.NullInt64
 	err := row.Scan(
 		&l.ID, &orgIDInt, &l.FirstName, &l.LastName, &l.Phone,
 		&l.Source, &l.Status, &followUpNote, &interest, &extID, &crmProvider,
-		&l.CreatedAt,
+		&executiveID, &l.CreatedAt,
 	)
 	_ = orgID
 	if err != nil {
@@ -40,6 +41,9 @@ func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 	}
 	if orgIDInt.Valid {
 		l.OrgID = orgIDInt.Int64
+	}
+	if executiveID.Valid {
+		l.ExecutiveID = executiveID.Int64
 	}
 	l.FollowUpNote = followUpNote.String
 	l.Interest = interest.String
@@ -51,12 +55,14 @@ func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 const leadCols = `id, org_id, first_name, COALESCE(last_name,''), phone,
 	COALESCE(source,''), COALESCE(status,'new'), COALESCE(follow_up_note,''),
 	COALESCE(interest,''), COALESCE(external_id,''), COALESCE(crm_provider,''),
+	COALESCE(executive_id,0),
 	DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')`
 
 // leadColsL is leadCols prefixed with table alias "l" for use in JOIN queries.
 const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
 	COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.follow_up_note,''),
 	COALESCE(l.interest,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
+	COALESCE(l.executive_id,0),
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
 // GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
@@ -173,11 +179,11 @@ func (d *DB) GetLeadIDsByPhones(orgID int64, phones []string) (map[string]int64,
 }
 
 // CreateLead inserts a new lead. Returns the new ID.
-func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, orgID int64) (int64, error) {
+func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, executiveID, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO leads (org_id, first_name, last_name, phone, source, interest)
-		 VALUES (?,?,?,?,?,?)`,
-		nullInt64(orgID), firstName, lastName, phone, source, nullString(interest),
+		`INSERT INTO leads (org_id, first_name, last_name, phone, source, interest, executive_id)
+		 VALUES (?,?,?,?,?,?,?)`,
+		nullInt64(orgID), firstName, lastName, phone, source, nullString(interest), nullInt64(executiveID),
 	)
 	if err != nil {
 		return 0, err
@@ -186,11 +192,11 @@ func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, org
 }
 
 // UpdateLead updates mutable lead fields. Returns true if a row was changed.
-func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest string, orgID int64) (bool, error) {
+func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest string, executiveID, orgID int64) (bool, error) {
 	res, err := d.pool.Exec(
-		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?
+		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?, executive_id=?
 		 WHERE id=? AND (org_id=? OR org_id IS NULL)`,
-		firstName, lastName, phone, source, nullString(interest), id, orgID,
+		firstName, lastName, phone, source, nullString(interest), nullInt64(executiveID), id, orgID,
 	)
 	if err != nil {
 		return false, err
@@ -227,7 +233,7 @@ func (d *DB) BulkCreateLeads(rows []LeadImportRow, orgID int64) (int, []string) 
 	var imported int
 	var errs []string
 	for i, r := range rows {
-		_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", orgID)
+		_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", 0, orgID)
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "Duplicate") || strings.Contains(msg, "1062") {

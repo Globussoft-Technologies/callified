@@ -26,13 +26,14 @@ export default function CrmPage({
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', source: 'Manual Entry' });
+  const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', source: 'Manual Entry', executive_id: 0 });
   const [loading, setLoading] = useState(false);
+  const [executives, setExecutives] = useState([]);
 
   // Edit Lead State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
-  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', phone: '', source: '' });
+  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', phone: '', source: '', executive_id: 0 });
 
   // Note State
   const [noteLead, setNoteLead] = useState(null);
@@ -58,6 +59,10 @@ export default function CrmPage({
 
   useEffect(() => {
     fetchLeads();
+    apiFetch(`${API_URL}/executives`)
+      .then(r => r.json())
+      .then(d => setExecutives(Array.isArray(d) ? d : []))
+      .catch(() => {});
     apiFetch(`${API_URL}/dashboard/summary`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setDashSummary(d); })
@@ -97,7 +102,7 @@ export default function CrmPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
       });
-      setFormData({ first_name: '', last_name: '', phone: '', source: 'Manual Entry' });
+      setFormData({ first_name: '', last_name: '', phone: '', source: 'Manual Entry', executive_id: 0 });
       setIsModalOpen(false);
       fetchLeads();
     } catch(e) {
@@ -123,7 +128,8 @@ export default function CrmPage({
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       phone: lead.phone || '',
-      source: lead.source || 'Manual Entry'
+      source: lead.source || 'Manual Entry',
+      executive_id: lead.executive_id || 0
     });
     setEditModalOpen(true);
   };
@@ -264,6 +270,7 @@ export default function CrmPage({
         editModalOpen={editModalOpen} setEditModalOpen={setEditModalOpen}
         editingLead={editingLead} handleSaveEdit={handleSaveEdit}
         editFormData={editFormData} setEditFormData={setEditFormData}
+        executives={executives}
       />
       <DocumentVault
         activeLeadDocs={activeLeadDocs} setActiveLeadDocs={setActiveLeadDocs}

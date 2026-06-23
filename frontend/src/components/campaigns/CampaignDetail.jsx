@@ -146,7 +146,8 @@ export default function CampaignDetail({
   dialingId, webCallActive,
   setSelectedLeadIds, setShowAddLeadsModal, setShowCsvImportModal, setCsvFile,
   apiFetch, API_URL, orgTimezone,
-  handleEditCampaign
+  handleEditCampaign,
+  executives
 }) {
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
@@ -164,17 +165,28 @@ export default function CampaignDetail({
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
   const [leadSearch, setLeadSearch] = useState('');
+  const [execFilter, setExecFilter] = useState([]);
+  const [showExecFilter, setShowExecFilter] = useState(false);
+
+  useEffect(() => {
+    setExecFilter([]);
+    setShowExecFilter(false);
+  }, [selectedCampaign?.id]);
 
   const filteredLeads = useMemo(() => {
+    let list = campaignLeads;
+    if (execFilter.length > 0) {
+      list = list.filter(l => execFilter.includes(String(l.executive_id || '')) || execFilter.includes(l.executive_id));
+    }
     const q = leadSearch.trim().toLowerCase();
-    if (!q) return campaignLeads;
-    return campaignLeads.filter(l =>
+    if (!q) return list;
+    return list.filter(l =>
       (l.first_name || '').toLowerCase().includes(q) ||
       (l.last_name || '').toLowerCase().includes(q) ||
       (l.phone || '').toLowerCase().includes(q) ||
       (l.source || '').toLowerCase().includes(q)
     );
-  }, [campaignLeads, leadSearch]);
+  }, [campaignLeads, leadSearch, execFilter]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -861,7 +873,7 @@ export default function CampaignDetail({
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${leadSearch.trim() ? `${filteredLeads.length}/${campaignLeads.length}` : campaignLeads.length})`,   activeColor: T.accent },
+            { id: 'leads',   label: `👥 Leads (${(leadSearch.trim() || execFilter.length > 0) ? `${filteredLeads.length}/${campaignLeads.length}` : campaignLeads.length})`,   activeColor: T.accent },
           { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
           { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
           { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
@@ -893,6 +905,41 @@ export default function CampaignDetail({
             outline: 'none', minWidth: 260,
           }}
         />
+        {executives && executives.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowExecFilter(v => !v)}
+              style={{
+                padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
+                fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
+                cursor: 'pointer', minWidth: 160, textAlign: 'left'
+              }}>
+              {execFilter.length === 0 ? 'Filter by Executive' : `${execFilter.length} executive${execFilter.length > 1 ? 's' : ''}`} ▾
+            </button>
+            {showExecFilter && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 200,
+                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
+                maxHeight: 240, overflowY: 'auto'
+              }}>
+                {executives.map(e => {
+                  const checked = execFilter.includes(String(e.id));
+                  return (
+                    <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer'}}>
+                      <input type="checkbox" checked={checked}
+                        onChange={() => {
+                          const val = String(e.id);
+                          setExecFilter(prev => checked ? prev.filter(id => id !== val) : [...prev, val]);
+                        }} />
+                      {e.name}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Call Log Tab — WhatsApp notice */}
@@ -1173,14 +1220,14 @@ export default function CampaignDetail({
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Name','Phone','Source','Status','Action'].map(h => (
+                {['Name','Phone','Source','Executive','Status','Action'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filteredLeads.length === 0 ? (
-                <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{leadSearch.trim() ? 'No leads match your search.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
+                <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
               ) : filteredLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
@@ -1188,6 +1235,31 @@ export default function CampaignDetail({
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>
                       <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.accent, background: `${T.accent}15` }}>{lead.source || '-'}</span>
+                    </td>
+                    <td style={tdStyle}>
+                      <select className="form-input" value={lead.executive_id || ''}
+                        onChange={async e => {
+                          const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
+                          try {
+                            await apiFetch(`${API_URL}/leads/${lead.id}`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                first_name: lead.first_name || '',
+                                last_name: lead.last_name || '',
+                                phone: lead.phone || '',
+                                source: lead.source || '',
+                                interest: lead.interest || '',
+                                executive_id: execId
+                              })
+                            });
+                            fetchCampaignLeads(selectedCampaign.id);
+                          } catch (err) { toast('Failed to assign executive'); }
+                        }}
+                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
+                        <option value="">— Unassigned —</option>
+                        {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      </select>
                     </td>
                     <td style={tdStyle}>
                       <select className="form-input" value={lead.status || 'New'}
@@ -1324,7 +1396,7 @@ export default function CampaignDetail({
                   </tr>
                   {!hideAiFeatures && (lead.follow_up_note || editingNote?.leadId === lead.id || generatedNote?.leadId === lead.id) && (
                     <tr>
-                      <td colSpan="5" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
+                      <td colSpan="6" style={{ padding: '12px 24px', background: 'rgba(99,102,241,0.04)', borderLeft: `3px solid ${T.accent}`, borderBottom: `1px solid ${T.border}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                           <div style={{ fontSize: '0.8rem', color: T.muted, textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 600 }}>✨ AI Follow-Up Note</div>
                           {editingNote?.leadId !== lead.id && (

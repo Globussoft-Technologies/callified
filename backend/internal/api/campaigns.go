@@ -180,6 +180,9 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 			"tts_language": vs.TTSLanguage,
 		}
 	}
+	if execIDs, err := s.db.GetCampaignExecutiveIDs(id); err == nil {
+		resp["executive_ids"] = execIDs
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -290,7 +293,8 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	leads, err := s.db.GetCampaignLeads(id)
+	execIDs := parseExecutiveIDs(r.URL.Query().Get("executive_ids"))
+	leads, err := s.db.GetCampaignLeadsFiltered(id, execIDs)
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaignLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
