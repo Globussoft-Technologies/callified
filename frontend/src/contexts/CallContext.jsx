@@ -545,7 +545,8 @@ export function CallProvider({ children }) {
                 onChange={e => setReminderSearch(e.target.value)}
                 style={{
                   width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid rgba(148,163,184,0.2)',
-                  background: '#0b1220', color: '#e2e8f0', fontSize: '0.85rem', outline: 'none'
+                  background: '#0b1220', color: '#e2e8f0', fontSize: '0.85rem', outline: 'none',
+                  boxSizing: 'border-box'
                 }}
               />
             </div>
