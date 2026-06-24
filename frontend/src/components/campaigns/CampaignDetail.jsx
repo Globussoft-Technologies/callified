@@ -195,7 +195,7 @@ export default function CampaignDetail({
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
-  const { triggerBrowserCall, browserCallLead, browserCallDialing } = useCall();
+  const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -1873,6 +1873,7 @@ export default function CampaignDetail({
                       setScheduleStatus({ kind: '', text: '' });
                       toast('Call scheduled');
                       fetchCampaignLeads(selectedCampaign.id);
+                      refreshScheduledCalls?.();
                     }
                   } catch { setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.'  });
                   }

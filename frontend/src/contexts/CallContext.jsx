@@ -473,24 +473,25 @@ export function CallProvider({ children }) {
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
   // Poll for due manual scheduled calls and show a global reminder popup.
+  const fetchDueManualCalls = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
+      if (!res.ok) return;
+      const calls = await res.json();
+      setDueManualCalls(calls || []);
+      const visible = (calls || []).filter(c => !dismissedIds.has(c.id));
+      if (visible.length > 0) setShowReminder(true);
+    } catch (e) {
+      console.error('[scheduled-calls] poll failed', e);
+    }
+  }, [apiFetch, dismissedIds]);
+
   useEffect(() => {
     if (!authToken) return;
-    const fetchDue = async () => {
-      try {
-        const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
-        if (!res.ok) return;
-        const calls = await res.json();
-        setDueManualCalls(calls || []);
-        const visible = (calls || []).filter(c => !dismissedIds.has(c.id));
-        if (visible.length > 0) setShowReminder(true);
-      } catch (e) {
-        console.error('[scheduled-calls] poll failed', e);
-      }
-    };
-    fetchDue();
-    const id = setInterval(fetchDue, 15000);
+    fetchDueManualCalls();
+    const id = setInterval(fetchDueManualCalls, 5000);
     return () => clearInterval(id);
-  }, [apiFetch, authToken]);
+  }, [authToken, fetchDueManualCalls]);
 
   const reminderFilteredCalls = dueManualCalls.filter(c => {
     if (dismissedIds.has(c.id)) return false;
@@ -515,7 +516,8 @@ export function CallProvider({ children }) {
       handleDial, handleWebCall,
       handleCampaignDial, handleCampaignWebCall,
       browserCallLead, browserCallDialing,
-      triggerBrowserCall, closeBrowserCall
+      triggerBrowserCall, closeBrowserCall,
+      refreshScheduledCalls: fetchDueManualCalls
     }}>
       {children}
       {browserCallLead && (
@@ -527,7 +529,7 @@ export function CallProvider({ children }) {
           onEnded={handleBrowserCallEnded}
         />
       )}
-      {showReminder && dueManualCalls.length > 0 && (
+      {showReminder && reminderFilteredCalls.length > 0 && (
         <div onClick={() => setShowReminder(false)} style={{
           position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
           backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
