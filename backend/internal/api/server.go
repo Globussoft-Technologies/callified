@@ -186,6 +186,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/leads/{id}", auth(s.updateLead))
 	mux.HandleFunc("DELETE /api/leads/{id}", auth(s.deleteLead))
 	mux.HandleFunc("PUT /api/leads/{id}/status", auth(s.updateLeadStatus))
+	mux.HandleFunc("PUT /api/leads/{id}/executive", auth(s.updateLeadExecutive))
+	mux.HandleFunc("PUT /api/leads/{id}/source", auth(s.updateLeadSource))
 	mux.HandleFunc("POST /api/leads/{id}/notes", auth(s.updateLeadNote))
 	mux.HandleFunc("POST /api/leads/{id}/documents", auth(s.uploadLeadDocument))
 	mux.HandleFunc("GET /api/leads/{id}/documents", auth(s.getLeadDocuments))

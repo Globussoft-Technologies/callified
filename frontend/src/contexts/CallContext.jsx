@@ -269,7 +269,7 @@ export function CallProvider({ children }) {
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
-  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId) => {
+  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded) => {
     if (!lead || !campaignId) return;
     browserCallEndedCbRef.current = onEnded || null;
     setBrowserCallLead(lead);
@@ -277,11 +277,7 @@ export function CallProvider({ children }) {
     setBrowserCallSid(null);
     setBrowserCallDialing(true);
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exotel_account_id: exotelAccountId || 0 }),
-      });
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
       setBrowserCallSid(data.call_sid || data.sid);

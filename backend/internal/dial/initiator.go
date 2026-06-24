@@ -32,9 +32,6 @@ type CallData struct {
 	// UserEmail identifies the agent who clicked the call button. Used to honour
 	// per-user feature flags such as hide_ai_features → unlimited manual calls.
 	UserEmail string
-	// ExotelAccountID overrides the campaign's default provider account. Used for
-	// per-machine/browser provider selection so multiple accounts can dial in parallel.
-	ExotelAccountID int64
 }
 
 // Initiator orchestrates the full dial sequence:
@@ -159,21 +156,14 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		TTSVoiceID:  data.TTSVoiceID,
 		TTSLanguage: data.TTSLanguage,
 		IsBridge:    data.IsBridge,
-		SkipCredits:     skipCredits,
-		UserEmail:       data.UserEmail,
-		ExotelAccountID: data.ExotelAccountID,
+		SkipCredits: skipCredits,
+		UserEmail:   data.UserEmail,
 	}
 
-	// 4. Resolve provider credentials.
-	// A per-call account override (from the browser/machine) takes precedence;
-	// otherwise fall back to the campaign's linked account.
+	// 4. Resolve per-campaign provider credentials.
+	// Provider is determined by the account linked to the campaign, not by global config.
 	var creds db.ExotelCreds
-	if data.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID); cerr == nil && c.IsSet() {
-			creds = c
-		}
-	}
-	if !creds.IsSet() && data.CampaignID > 0 {
+	if data.CampaignID > 0 {
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
@@ -261,22 +251,16 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	return callSid, nil
 }
 
-// Hangup ends an in-progress carrier call. It resolves the provider credentials
-// (preferring the per-call account override, then the campaign default, then
-// global config) and issues a provider-side hang-up so the remote party's line
-// is released when the agent clicks Hang Up.
-func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID, orgID, exotelAccountID int64) error {
+// Hangup ends an in-progress carrier call. It resolves the campaign's provider
+// credentials (falling back to global config) and issues a provider-side hang-up
+// so the remote party's line is released when the agent clicks Hang Up.
+func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64) error {
 	if callSid == "" {
 		return fmt.Errorf("missing call sid")
 	}
 
 	var creds db.ExotelCreds
-	if exotelAccountID > 0 && orgID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(exotelAccountID, orgID); cerr == nil && c.IsSet() {
-			creds = c
-		}
-	}
-	if !creds.IsSet() && campaignID > 0 {
+	if campaignID > 0 {
 		creds, _ = i.db.GetCampaignExotelCreds(campaignID)
 	}
 

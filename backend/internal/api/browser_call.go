@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -56,12 +55,6 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
 
-	// Optional per-machine provider-account override.
-	var body struct {
-		ExotelAccountID int64 `json:"exotel_account_id"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-
 	data := dial.CallData{
 		LeadID:      lead.ID,
 		LeadName:    leadName,
@@ -72,9 +65,8 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		TTSProvider: provider,
 		TTSVoiceID:  voiceID,
 		TTSLanguage: lang,
-		IsBridge:        true,
-		UserEmail:       ac.Email,
-		ExotelAccountID: body.ExotelAccountID,
+		IsBridge:    true,
+		UserEmail:   ac.Email,
 	}
 
 	callSid, err := s.initiator.Initiate(r.Context(), data)

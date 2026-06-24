@@ -222,6 +222,18 @@ func (d *DB) UpdateLeadStatus(id int64, status string) error {
 	return err
 }
 
+// UpdateLeadSource sets only the source column, scoped to org.
+func (d *DB) UpdateLeadSource(id int64, source string, orgID int64) (bool, error) {
+	res, err := d.pool.Exec(
+		`UPDATE leads SET source=? WHERE id=? AND (org_id=? OR org_id IS NULL)`,
+		nullString(source), id, orgID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // UpdateLeadNote sets the follow_up_note column.
 func (d *DB) UpdateLeadNote(id int64, note string) error {
 	_, err := d.pool.Exec(`UPDATE leads SET follow_up_note=? WHERE id=?`, note, id)

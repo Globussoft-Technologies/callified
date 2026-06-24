@@ -379,6 +379,91 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
 
+// ── PUT /api/leads/{id}/executive ─────────────────────────────────────────────
+
+// @Summary     Update lead executive
+// @Description Assigns or unassigns an executive for a lead without re-validating name/phone.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                       true  "Lead ID"
+// @Param       body  body      object{executive_id=int64}  true  "Executive ID (0 to unassign)"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     404   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/executive [put]
+func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		ExecutiveID int64 `json:"executive_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.db.UpdateLeadExecutive(id, ac.OrgID, body.ExecutiveID); err != nil {
+		s.logger.Sugar().Errorw("updateLeadExecutive", "err", err)
+		if err.Error() == "lead not found" {
+			writeError(w, http.StatusNotFound, "lead not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+// ── PUT /api/leads/{id}/source ────────────────────────────────────────────────
+
+// @Summary     Update lead source
+// @Description Updates the source of a lead without re-validating name/phone.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path      int64                       true  "Lead ID"
+// @Param       body  body      object{source=string}       true  "Source value"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     404   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/source [put]
+func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Source string `json:"source"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	updated, err := s.db.UpdateLeadSource(id, body.Source, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateLeadSource", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
 // ── POST /api/leads/{id}/notes ────────────────────────────────────────────────
 
 // @Summary     Add lead note
