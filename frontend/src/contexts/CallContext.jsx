@@ -32,10 +32,21 @@ export function CallProvider({ children }) {
   const [browserCallDialing, setBrowserCallDialing] = useState(false);
 
   // Manual scheduled-call reminder popup
+  const DISMISSED_SCHEDULED_KEY = 'callified_dismissed_scheduled_calls';
   const [dueManualCalls, setDueManualCalls] = useState([]);
   const [showReminder, setShowReminder] = useState(false);
   const [reminderSearch, setReminderSearch] = useState('');
-  const [dismissedIds, setDismissedIds] = useState(() => new Set());
+  const [dismissedIds, setDismissedIds] = useState(() => {
+    try {
+      const raw = localStorage.getItem(DISMISSED_SCHEDULED_KEY);
+      return new Set(raw ? JSON.parse(raw) : []);
+    } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(DISMISSED_SCHEDULED_KEY, JSON.stringify(Array.from(dismissedIds)));
+    } catch { /* ignore */ }
+  }, [dismissedIds]);
   const browserCallEndedCbRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
