@@ -35,7 +35,7 @@ export function CallProvider({ children }) {
   const [dueManualCalls, setDueManualCalls] = useState([]);
   const [showReminder, setShowReminder] = useState(false);
   const [reminderSearch, setReminderSearch] = useState('');
-  const dismissedIdsRef = useRef(new Set());
+  const [dismissedIds, setDismissedIds] = useState(() => new Set());
   const browserCallEndedCbRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
@@ -466,7 +466,7 @@ export function CallProvider({ children }) {
         if (!res.ok) return;
         const calls = await res.json();
         setDueManualCalls(calls || []);
-        const visible = (calls || []).filter(c => !dismissedIdsRef.current.has(c.id));
+        const visible = (calls || []).filter(c => !dismissedIds.has(c.id));
         if (visible.length > 0) setShowReminder(true);
       } catch (e) {
         console.error('[scheduled-calls] poll failed', e);
@@ -478,6 +478,7 @@ export function CallProvider({ children }) {
   }, [apiFetch, authToken]);
 
   const reminderFilteredCalls = dueManualCalls.filter(c => {
+    if (dismissedIds.has(c.id)) return false;
     if (!reminderSearch.trim()) return true;
     const term = reminderSearch.trim().toLowerCase();
     const exec = String(c.executive_name || '').toLowerCase();
@@ -485,6 +486,12 @@ export function CallProvider({ children }) {
     const phone = String(c.phone || '').toLowerCase();
     return exec.includes(term) || name.includes(term) || phone.includes(term);
   });
+
+  useEffect(() => {
+    if (showReminder && reminderFilteredCalls.length === 0) {
+      setShowReminder(false);
+    }
+  }, [showReminder, reminderFilteredCalls.length]);
 
   return (
     <CallContext.Provider value={{
@@ -562,7 +569,7 @@ export function CallProvider({ children }) {
                   <button
                     onClick={() => {
                       triggerBrowserCall({ id: call.lead_id, first_name: call.first_name || '', last_name: '', phone: call.phone || '' }, call.campaign_id);
-                      dismissedIdsRef.current.add(call.id);
+                      setDismissedIds(prev => new Set(prev).add(call.id));
                       setShowReminder(false);
                     }}
                     disabled={browserCallDialing}
@@ -574,8 +581,7 @@ export function CallProvider({ children }) {
                   >Call Now</button>
                   <button
                     onClick={() => {
-                      dismissedIdsRef.current.add(call.id);
-                      setDueManualCalls(prev => prev.filter(c => c.id !== call.id));
+                      setDismissedIds(prev => new Set(prev).add(call.id));
                     }}
                     style={{
                       padding: '6px 10px', borderRadius: '6px', cursor: 'pointer',
