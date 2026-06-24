@@ -89,6 +89,48 @@ func (d *DB) CreateScheduledCall(orgID, leadID, campaignID, executiveID int64, s
 	return res.LastInsertId()
 }
 
+// GetPendingScheduledCallByLead returns the newest pending scheduled call for a lead, if any.
+func (d *DB) GetPendingScheduledCallByLead(leadID int64) (*ScheduledCall, error) {
+	row := d.pool.QueryRow(`
+		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		COALESCE(sc.status,'pending'), COALESCE(sc.mode,'ai'), COALESCE(sc.notes,''),
+		COALESCE(sc.executive_id,0), COALESCE(e.name,''),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		COALESCE(l.first_name,''), COALESCE(l.phone,'')
+		FROM scheduled_calls sc
+		LEFT JOIN leads l ON sc.lead_id=l.id
+		LEFT JOIN executives e ON sc.executive_id=e.id
+		WHERE sc.lead_id=? AND sc.status='pending'
+		ORDER BY sc.scheduled_at DESC, sc.id DESC
+		LIMIT 1`, leadID)
+	var sc ScheduledCall
+	if err := row.Scan(&sc.ID, &sc.OrgID, &sc.LeadID, &sc.CampaignID,
+		&sc.ScheduledAt, &sc.Status, &sc.Mode, &sc.Notes,
+		&sc.ExecutiveID, &sc.ExecutiveName,
+		&sc.CreatedAt,
+		&sc.FirstName, &sc.Phone); err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &sc, nil
+}
+
+// UpdateScheduledCall updates the scheduled time, notes, mode and executive of an existing call.
+func (d *DB) UpdateScheduledCall(id int64, scheduledAt time.Time, notes, mode string, executiveID int64) error {
+	if mode == "" {
+		mode = "ai"
+	}
+	_, err := d.pool.Exec(`
+		UPDATE scheduled_calls
+		SET scheduled_at=?, notes=?, mode=?, executive_id=?
+		WHERE id=?`,
+		scheduledAt, nullString(notes), mode, nullInt64(executiveID), id)
+	return err
+}
+
 // GetScheduledCallsByOrg returns all scheduled calls for an org ordered by scheduled_at ASC.
 // Joins leads so the UI can show Lead Name + Phone on each row (matches Python
 // get_scheduled_calls_by_org which also joins leads).

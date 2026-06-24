@@ -127,6 +127,25 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		executiveID = lead.ExecutiveID
 	}
 
+	// If the lead already has a pending scheduled call, update it instead of
+	// creating a second row. This makes the UI "reschedule" behaviour predictable
+	// (the badge and reminder popup reflect the latest time).
+	existing, err := s.db.GetPendingScheduledCallByLead(body.LeadID)
+	if err != nil {
+		s.logger.Sugar().Errorw("createScheduledCall", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if existing != nil {
+		if updateErr := s.db.UpdateScheduledCall(existing.ID, scheduledAt, body.Notes, mode, executiveID); updateErr != nil {
+			s.logger.Sugar().Errorw("createScheduledCall", "err", updateErr)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int64{"id": existing.ID})
+		return
+	}
+
 	id, err := s.db.CreateScheduledCall(ac.OrgID, body.LeadID, body.CampaignID, executiveID, scheduledAt, body.Notes, mode)
 	if err != nil {
 		s.logger.Sugar().Errorw("createScheduledCall", "err", err)

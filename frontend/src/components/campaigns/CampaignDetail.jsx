@@ -1885,6 +1885,8 @@ export default function CampaignDetail({
                     } else {
                       setScheduleLead(null);
                       setScheduleStatus({ kind: '', text: '' });
+                      toast('Call scheduled');
+                      fetchCampaignLeads(selectedCampaign.id);
                     }
                   } catch { setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.'  });
                   }
