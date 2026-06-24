@@ -269,7 +269,18 @@ export function CallProvider({ children }) {
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
-  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded) => {
+  const getBrowserAccountId = useCallback((campaignId) => {
+    if (!campaignId) return 0;
+    try {
+      const raw = localStorage.getItem(`callified_browser_account_campaign_${campaignId}`);
+      const id = raw ? parseInt(raw, 10) : 0;
+      return isNaN(id) ? 0 : id;
+    } catch {
+      return 0;
+    }
+  }, []);
+
+  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId) => {
     if (!lead || !campaignId) return;
     browserCallEndedCbRef.current = onEnded || null;
     setBrowserCallLead(lead);
@@ -277,7 +288,12 @@ export function CallProvider({ children }) {
     setBrowserCallSid(null);
     setBrowserCallDialing(true);
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, { method: 'POST' });
+      const accountId = exotelAccountId && !isNaN(exotelAccountId) ? parseInt(exotelAccountId, 10) : getBrowserAccountId(campaignId);
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exotel_account_id: accountId || 0 }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
       setBrowserCallSid(data.call_sid || data.sid);
@@ -290,7 +306,7 @@ export function CallProvider({ children }) {
     } finally {
       setBrowserCallDialing(false);
     }
-  }, [apiFetch, toast]);
+  }, [apiFetch, toast, getBrowserAccountId]);
 
   const closeBrowserCall = useCallback(() => {
     browserCallEndedCbRef.current = null;

@@ -222,6 +222,12 @@ export default function CampaignDetail({
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
 
+  // Per-machine browser-call account: stored in localStorage so different systems
+  // can dial from different Exotel voicebot accounts in parallel without changing
+  // the campaign default used by AI/server calls.
+  const [browserAccountId, setBrowserAccountId] = useState('');
+  const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
+
   useEffect(() => {
     setExecFilter([]);
     setExecSearch('');
@@ -439,8 +445,8 @@ export default function CampaignDetail({
       return;
     }
     setAutoDialActiveId(nextId);
-    setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial), 800);
-  }, [toast, selectedCampaign.id, triggerBrowserCall]);
+    setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial, browserAccountId), 800);
+  }, [toast, selectedCampaign.id, triggerBrowserCall, browserAccountId]);
 
   const startBrowserCallWithAutoDial = (lead) => {
     if (autoDialEnabled) {
@@ -453,7 +459,7 @@ export default function CampaignDetail({
         setAutoDialQueue([lead.id]);
       }
     }
-    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined);
+    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
   };
 
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
@@ -657,8 +663,13 @@ export default function CampaignDetail({
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
       .catch(() => {});
+    // Restore per-machine browser-call account from localStorage
+    try {
+      const saved = localStorage.getItem(browserAccountKey(selectedCampaign.id));
+      if (saved != null) setBrowserAccountId(saved);
+    } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCampaign.id]);
+  }, [selectedCampaign.id, browserAccountKey]);
 
   const handleSaveExotelAccount = async () => {
     setExotelAccountSaveStatus('saving');
@@ -857,46 +868,41 @@ export default function CampaignDetail({
         </div>
       )}
 
-      {/* Exotel Account — hidden for WhatsApp campaigns */}
+      {/* Browser Call Account (per-machine) — hidden for WhatsApp campaigns */}
       {selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            📞 Provider Account
+            🖥️ Browser Call Account (this machine)
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
               className="form-input"
-              value={selectedExotelAccountId}
-              onChange={e => setSelectedExotelAccountId(e.target.value)}
+              value={browserAccountId}
+              onChange={e => {
+                const v = e.target.value;
+                setBrowserAccountId(v);
+                try {
+                  localStorage.setItem(browserAccountKey(selectedCampaign.id), v);
+                } catch { /* ignore */ }
+              }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
-              <option value="">-- Use platform default --</option>
-              {orgExotelAccounts.map(a => (
+              <option value="">Use campaign default</option>
+              {orgExotelAccounts.filter(a => a.app_type === 'voicebot').map(a => (
                 <option key={a.id} value={String(a.id)}>
                   {'[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
                 </option>
               ))}
             </select>
-            <button
-              style={{
-                background: exotelAccountSaveStatus === 'saved' ? T.green : exotelAccountSaveStatus === 'error' ? T.red : T.accent,
-                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
-                cursor: exotelAccountSaveStatus === 'saving' ? 'wait' : 'pointer',
-                opacity: exotelAccountSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
-              }}
-              disabled={exotelAccountSaveStatus === 'saving'}
-              onClick={handleSaveExotelAccount}>
-              {exotelAccountSaveStatus === 'saving' ? 'Saving…' : exotelAccountSaveStatus === 'saved' ? '✓ Saved' : exotelAccountSaveStatus === 'error' ? '✗ Failed' : 'Save'}
-            </button>
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
-            {selectedExotelAccountId
+            {browserAccountId
               ? (() => {
-                  const a = orgExotelAccounts.find(x => String(x.id) === selectedExotelAccountId);
-                  return a ? `Using: ${a.name} · Account: ${a.account_sid} · Caller: ${a.caller_id}` : 'Account selected';
+                  const a = orgExotelAccounts.find(x => String(x.id) === browserAccountId);
+                  return a ? `Dialing from: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
                 })()
               : orgExotelAccounts.length === 0
-                ? 'No saved accounts — go to More → Provider Accounts to add one'
-                : 'No account selected — calls will not go through'}
+                ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
+                : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
           </div>
         </div>
       )}

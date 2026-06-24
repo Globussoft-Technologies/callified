@@ -32,6 +32,9 @@ type CallData struct {
 	// UserEmail identifies the agent who clicked the call button. Used to honour
 	// per-user feature flags such as hide_ai_features → unlimited manual calls.
 	UserEmail string
+	// ExotelAccountID overrides the campaign's default provider account for this
+	// specific call. 0 means use the campaign default (used by AI/server calls).
+	ExotelAccountID int64
 }
 
 // Initiator orchestrates the full dial sequence:
@@ -160,10 +163,24 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		UserEmail:   data.UserEmail,
 	}
 
-	// 4. Resolve per-campaign provider credentials.
-	// Provider is determined by the account linked to the campaign, not by global config.
+	// 4. Resolve provider credentials.
+	// Browser calls may override the campaign default with a per-machine/org
+	// account so multiple systems can dial in parallel. The override is scoped
+	// to the org and validated to be a voicebot account for bridge calls.
 	var creds db.ExotelCreds
-	if data.CampaignID > 0 {
+	if data.ExotelAccountID > 0 {
+		if c, cerr := i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID); cerr == nil && c.IsSet() {
+			creds = c
+		} else if cerr != nil {
+			return "", fmt.Errorf("lookup provider account: %w", cerr)
+		} else {
+			return "", fmt.Errorf("provider account not found or incomplete")
+		}
+		if data.IsBridge && creds.AppType != "voicebot" {
+			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
+		}
+	}
+	if !creds.IsSet() && data.CampaignID > 0 {
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
@@ -172,9 +189,10 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	if provider == "" {
 		provider = i.cfg.DefaultProvider
 	}
-	// Carry the Exotel app/flow type through to the webhook so it can return
-	// the correct response format (XML for legacy ExoML, JSON for AgentStream).
+	// Carry the Exotel app/flow type and account choice through to the webhook
+	// and hangup path so they use the same credentials used to place the call.
 	pending.AppType = creds.AppType
+	pending.ExotelAccountID = data.ExotelAccountID
 	var callSid string
 
 	switch provider {
@@ -251,16 +269,24 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	return callSid, nil
 }
 
-// Hangup ends an in-progress carrier call. It resolves the campaign's provider
-// credentials (falling back to global config) and issues a provider-side hang-up
-// so the remote party's line is released when the agent clicks Hang Up.
+// Hangup ends an in-progress carrier call. It first tries to use the same
+// provider account that placed the call (stored in Redis under the call SID),
+// then falls back to the campaign-linked account. This keeps per-machine
+// browser-call overrides consistent for the whole call lifecycle.
 func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64) error {
 	if callSid == "" {
 		return fmt.Errorf("missing call sid")
 	}
 
 	var creds db.ExotelCreds
-	if campaignID > 0 {
+	// 1. Per-call override from the Redis pending entry.
+	if pending, ok := i.store.GetPendingCall(ctx, callSid); ok && pending.ExotelAccountID > 0 {
+		if c, cerr := i.db.GetOrgExotelAccountCreds(pending.ExotelAccountID, pending.OrgID); cerr == nil && c.IsSet() {
+			creds = c
+		}
+	}
+	// 2. Campaign default.
+	if !creds.IsSet() && campaignID > 0 {
 		creds, _ = i.db.GetCampaignExotelCreds(campaignID)
 	}
 

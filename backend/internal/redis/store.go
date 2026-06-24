@@ -54,6 +54,10 @@ type PendingCallInfo struct {
 	// UserEmail is the agent/admin who initiated the call. Used to segregate
 	// recordings into per-user folders.
 	UserEmail string `json:"user_email,omitempty"`
+	// ExotelAccountID is the org_exotel_accounts row used to place this specific
+	// call. It lets browser calls from different machines use different provider
+	// accounts while the campaign default remains unchanged for AI calls.
+	ExotelAccountID int64 `json:"exotel_account_id,omitempty"`
 }
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).
