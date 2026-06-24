@@ -36,6 +36,7 @@ export function CallProvider({ children }) {
   const [showReminder, setShowReminder] = useState(false);
   const [reminderSearch, setReminderSearch] = useState('');
   const dismissedIdsRef = useRef(new Set());
+  const browserCallEndedCbRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
     setDialingId(lead.id);
@@ -251,6 +252,7 @@ export function CallProvider({ children }) {
 
   const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded) => {
     if (!lead || !campaignId) return;
+    browserCallEndedCbRef.current = onEnded || null;
     setBrowserCallLead(lead);
     setBrowserCallCampaignId(campaignId);
     setBrowserCallSid(null);
@@ -265,22 +267,23 @@ export function CallProvider({ children }) {
       setBrowserCallLead(null);
       setBrowserCallCampaignId(null);
       setBrowserCallSid(null);
-      if (onEnded) onEnded('error', e?.message);
+      browserCallEndedCbRef.current = null;
     } finally {
       setBrowserCallDialing(false);
     }
   }, [apiFetch, toast]);
 
   const closeBrowserCall = useCallback(() => {
+    browserCallEndedCbRef.current = null;
     setBrowserCallLead(null);
     setBrowserCallCampaignId(null);
     setBrowserCallSid(null);
   }, []);
 
   const handleBrowserCallEnded = useCallback((status, errorMsg) => {
-    setBrowserCallLead(null);
-    setBrowserCallCampaignId(null);
-    setBrowserCallSid(null);
+    const cb = browserCallEndedCbRef.current;
+    browserCallEndedCbRef.current = null;
+    if (cb) cb(status, errorMsg);
   }, []);
 
   const handleCampaignWebCall = useCallback(async (lead, campaignId) => {

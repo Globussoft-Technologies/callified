@@ -396,6 +396,50 @@ export default function CampaignDetail({
     }
   };
 
+  // Refs keep auto-dial state fresh inside the ended-callback without
+  // recreating the callback on every render.
+  const autoDialEnabledRef = useRef(autoDialEnabled);
+  const autoDialActiveIdRef = useRef(autoDialActiveId);
+  const autoDialQueueRef = useRef(autoDialQueue);
+  const campaignLeadsRef = useRef(campaignLeads);
+  const filteredLeadsRef = useRef(filteredLeads);
+  useEffect(() => { autoDialEnabledRef.current = autoDialEnabled; }, [autoDialEnabled]);
+  useEffect(() => { autoDialActiveIdRef.current = autoDialActiveId; }, [autoDialActiveId]);
+  useEffect(() => { autoDialQueueRef.current = autoDialQueue; }, [autoDialQueue]);
+  useEffect(() => { campaignLeadsRef.current = campaignLeads; }, [campaignLeads]);
+  useEffect(() => { filteredLeadsRef.current = filteredLeads; }, [filteredLeads]);
+
+  const advanceAutoDial = useCallback((status, errorMsg) => {
+    if (status === 'error') {
+      toast('Auto dial stopped: browser call failed');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+    if (!autoDialEnabledRef.current || !autoDialActiveIdRef.current) return;
+    const idx = autoDialQueueRef.current.indexOf(autoDialActiveIdRef.current);
+    const nextIdx = idx >= 0 ? idx + 1 : 0;
+    const nextId = autoDialQueueRef.current[nextIdx];
+    if (!nextId) {
+      toast('Auto dial complete');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+    const nextLead = campaignLeadsRef.current.find(l => l.id === nextId) || filteredLeadsRef.current.find(l => l.id === nextId);
+    if (!nextLead) {
+      toast('Auto dial stopped: next lead not found');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+    setAutoDialActiveId(nextId);
+    setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial), 800);
+  }, [toast, selectedCampaign.id, triggerBrowserCall]);
+
   const startBrowserCallWithAutoDial = (lead) => {
     if (autoDialEnabled) {
       setAutoDialActiveId(lead.id);
@@ -407,36 +451,8 @@ export default function CampaignDetail({
         setAutoDialQueue([lead.id]);
       }
     }
-    triggerBrowserCall(lead, selectedCampaign.id);
+    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined);
   };
-
-  // Auto-advance the browser-call dialer when the global call modal closes.
-  const prevBrowserCallLeadRef = useRef(browserCallLead);
-  useEffect(() => {
-    if (prevBrowserCallLeadRef.current && !browserCallLead && autoDialEnabled && autoDialActiveId) {
-      const idx = autoDialQueue.indexOf(autoDialActiveId);
-      const nextIdx = idx >= 0 ? idx + 1 : 0;
-      const nextId = autoDialQueue[nextIdx];
-      if (!nextId) {
-        toast('Auto dial complete');
-        setAutoDialEnabled(false);
-        setAutoDialActiveId(null);
-        setAutoDialQueue([]);
-      } else {
-        const nextLead = campaignLeads.find(l => l.id === nextId) || filteredLeads.find(l => l.id === nextId);
-        if (!nextLead) {
-          toast('Auto dial stopped: next lead not found');
-          setAutoDialEnabled(false);
-          setAutoDialActiveId(null);
-          setAutoDialQueue([]);
-        } else {
-          setAutoDialActiveId(nextId);
-          setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id), 800);
-        }
-      }
-    }
-    prevBrowserCallLeadRef.current = browserCallLead;
-  }, [browserCallLead, autoDialEnabled, autoDialActiveId, autoDialQueue, campaignLeads, filteredLeads, selectedCampaign.id, toast, triggerBrowserCall]);
 
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }
