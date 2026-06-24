@@ -3,6 +3,34 @@ import { API_URL } from '../constants/api';
 
 const AuthContext = createContext(null);
 
+// Clear everything the app may have stored in the browser so a logout leaves
+// no cached credentials, preferences, or stale data behind.
+function clearBrowserData() {
+  try { localStorage.clear(); } catch { /* ignore */ }
+  try { sessionStorage.clear(); } catch { /* ignore */ }
+  try {
+    if (typeof document !== 'undefined' && document.cookie) {
+      const hostname = window.location.hostname;
+      document.cookie.split(';').forEach(c => {
+        const name = c.split('=')[0].trim();
+        // Best-effort deletion for current path and root, with and without domain.
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${hostname};`;
+      });
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof caches !== 'undefined') {
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(() => {});
+    }
+  } catch { /* ignore */ }
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister())).catch(() => {});
+    }
+  } catch { /* ignore */ }
+}
+
 // Safely parse a cached user blob from localStorage.
 function loadCachedUser() {
   try {
@@ -29,8 +57,7 @@ export function AuthProvider({ children }) {
     setAuthToken(null);
     setCurrentUser(null);
     setAuthReady(true);
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('currentUser');
+    clearBrowserData();
   }, []);
 
   const apiFetch = useCallback(async (url, options = {}) => {
@@ -123,7 +150,12 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const logout = clearSession;
+  const logout = useCallback(() => {
+    clearSession();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/';
+    }
+  }, [clearSession]);
 
   // loginWithToken finishes an SSO handshake. The backend already minted our
   // own JWT and bounced the browser to /sso/return?token=…; this helper

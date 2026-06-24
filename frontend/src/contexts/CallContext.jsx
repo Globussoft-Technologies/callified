@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from 'react';
 import { API_URL } from '../constants/api';
+import BrowserCallModal from '../components/campaigns/BrowserCallModal';
+import { useToast } from './UIContext';
 import { useAuth } from './AuthContext';
 import { useOrg } from './OrgContext';
 import { useVoice } from './VoiceContext';
@@ -7,9 +9,10 @@ import { useVoice } from './VoiceContext';
 const CallContext = createContext(null);
 
 export function CallProvider({ children }) {
-  const { apiFetch, currentUser } = useAuth();
+  const { apiFetch, currentUser, authToken } = useAuth();
   const { orgProducts } = useOrg();
   const { activeVoiceProvider, activeVoiceId, activeLanguage } = useVoice();
+  const toast = useToast();
 
   const [dialingId, setDialingId] = useState(null);
   const [webCallActive, setWebCallActive] = useState(null);
@@ -20,6 +23,19 @@ export function CallProvider({ children }) {
   const [rechargePrompt, setRechargePrompt] = useState(null);
   const webCallWsRef = useRef(null);
   const webCallAudioCtxRef = useRef(null);
+
+  // Global Browser Call state (moved out of CampaignDetail so scheduled-call
+  // reminders and auto-dialer can trigger calls from anywhere).
+  const [browserCallLead, setBrowserCallLead] = useState(null);
+  const [browserCallCampaignId, setBrowserCallCampaignId] = useState(null);
+  const [browserCallSid, setBrowserCallSid] = useState(null);
+  const [browserCallDialing, setBrowserCallDialing] = useState(false);
+
+  // Manual scheduled-call reminder popup
+  const [dueManualCalls, setDueManualCalls] = useState([]);
+  const [showReminder, setShowReminder] = useState(false);
+  const [reminderSearch, setReminderSearch] = useState('');
+  const dismissedIdsRef = useRef(new Set());
 
   const handleDial = useCallback(async (lead) => {
     setDialingId(lead.id);
@@ -233,6 +249,40 @@ export function CallProvider({ children }) {
     setTimeout(() => setDialingId(null), 10000);
   }, [apiFetch]);
 
+  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded) => {
+    if (!lead || !campaignId) return;
+    setBrowserCallLead(lead);
+    setBrowserCallCampaignId(campaignId);
+    setBrowserCallSid(null);
+    setBrowserCallDialing(true);
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
+      setBrowserCallSid(data.call_sid || data.sid);
+    } catch (e) {
+      toast({ message: e?.message || 'Browser call failed', kind: 'error' });
+      setBrowserCallLead(null);
+      setBrowserCallCampaignId(null);
+      setBrowserCallSid(null);
+      if (onEnded) onEnded('error', e?.message);
+    } finally {
+      setBrowserCallDialing(false);
+    }
+  }, [apiFetch, toast]);
+
+  const closeBrowserCall = useCallback(() => {
+    setBrowserCallLead(null);
+    setBrowserCallCampaignId(null);
+    setBrowserCallSid(null);
+  }, []);
+
+  const handleBrowserCallEnded = useCallback((status, errorMsg) => {
+    setBrowserCallLead(null);
+    setBrowserCallCampaignId(null);
+    setBrowserCallSid(null);
+  }, []);
+
   const handleCampaignWebCall = useCallback(async (lead, campaignId) => {
     if (webCallActive === lead.id) {
       if (webCallWsRef.current) webCallWsRef.current.close();
@@ -404,14 +454,138 @@ export function CallProvider({ children }) {
     }
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
+  // Poll for due manual scheduled calls and show a global reminder popup.
+  useEffect(() => {
+    if (!authToken) return;
+    const fetchDue = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
+        if (!res.ok) return;
+        const calls = await res.json();
+        setDueManualCalls(calls || []);
+        const visible = (calls || []).filter(c => !dismissedIdsRef.current.has(c.id));
+        if (visible.length > 0) setShowReminder(true);
+      } catch (e) {
+        console.error('[scheduled-calls] poll failed', e);
+      }
+    };
+    fetchDue();
+    const id = setInterval(fetchDue, 15000);
+    return () => clearInterval(id);
+  }, [apiFetch, authToken]);
+
+  const reminderFilteredCalls = dueManualCalls.filter(c => {
+    if (!reminderSearch.trim()) return true;
+    const term = reminderSearch.trim().toLowerCase();
+    const exec = String(c.executive_name || '').toLowerCase();
+    const name = String(c.first_name || '').toLowerCase();
+    const phone = String(c.phone || '').toLowerCase();
+    return exec.includes(term) || name.includes(term) || phone.includes(term);
+  });
+
   return (
     <CallContext.Provider value={{
       dialingId, setDialingId,
       webCallActive, setWebCallActive,
       handleDial, handleWebCall,
-      handleCampaignDial, handleCampaignWebCall
+      handleCampaignDial, handleCampaignWebCall,
+      browserCallLead, browserCallDialing,
+      triggerBrowserCall, closeBrowserCall
     }}>
       {children}
+      {browserCallLead && (
+        <BrowserCallModal
+          lead={browserCallLead}
+          callSid={browserCallSid}
+          wsBaseUrl={(window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host}
+          onClose={closeBrowserCall}
+          onEnded={handleBrowserCallEnded}
+        />
+      )}
+      {showReminder && dueManualCalls.length > 0 && (
+        <div onClick={() => setShowReminder(false)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
+          backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 10001, padding: '1rem'
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            maxWidth: '520px', width: '100%', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
+            background: '#0f172a',
+            border: '1px solid rgba(148,163,184,0.2)',
+            borderRadius: '12px',
+            boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04) inset',
+            color: '#e2e8f0',
+          }}>
+            <div style={{ padding: '1.25rem 1.25rem 0.75rem', borderBottom: '1px solid rgba(148,163,184,0.12)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>📅 Scheduled calls due</h3>
+                <button onClick={() => setShowReminder(false)} style={{
+                  background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.1rem'
+                }}>✕</button>
+              </div>
+              <p style={{ margin: '6px 0 0', fontSize: '0.8rem', color: '#94a3b8' }}>
+                These manual calls are ready to dial now.
+              </p>
+            </div>
+            <div style={{ padding: '0.75rem 1.25rem' }}>
+              <input
+                type="text"
+                placeholder="Search by executive, name or phone..."
+                value={reminderSearch}
+                onChange={e => setReminderSearch(e.target.value)}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid rgba(148,163,184,0.2)',
+                  background: '#0b1220', color: '#e2e8f0', fontSize: '0.85rem', outline: 'none'
+                }}
+              />
+            </div>
+            <div style={{ overflowY: 'auto', padding: '0 1.25rem 1rem', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {reminderFilteredCalls.length === 0 && (
+                <div style={{ textAlign: 'center', color: '#94a3b8', fontSize: '0.85rem', padding: '1rem 0' }}>
+                  No calls match your search.
+                </div>
+              )}
+              {reminderFilteredCalls.map(call => (
+                <div key={call.id} style={{
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  padding: '10px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px'
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{call.first_name || 'Unnamed'}</div>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginTop: '2px' }}>
+                      {call.phone || 'No phone'} • {call.executive_name || 'Unassigned'} • {call.scheduled_time ? new Date(call.scheduled_time).toLocaleString() : ''}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      triggerBrowserCall({ id: call.lead_id, first_name: call.first_name || '', last_name: '', phone: call.phone || '' }, call.campaign_id);
+                      dismissedIdsRef.current.add(call.id);
+                      setShowReminder(false);
+                    }}
+                    disabled={browserCallDialing}
+                    style={{
+                      padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', border: 'none',
+                      background: 'linear-gradient(135deg, #16a34a, #22c55e)', color: '#fff', fontWeight: 600,
+                      fontSize: '0.8rem', opacity: browserCallDialing ? 0.6 : 1
+                    }}
+                  >Call Now</button>
+                  <button
+                    onClick={() => {
+                      dismissedIdsRef.current.add(call.id);
+                      setDueManualCalls(prev => prev.filter(c => c.id !== call.id));
+                    }}
+                    style={{
+                      padding: '6px 10px', borderRadius: '6px', cursor: 'pointer',
+                      background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(148,163,184,0.2)', color: '#94a3b8',
+                      fontSize: '0.8rem'
+                    }}
+                  >Dismiss</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {rechargePrompt && (
         <div onClick={() => setRechargePrompt(null)} style={{
           position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',

@@ -366,9 +366,11 @@ func (d *DB) RemoveLeadFromCampaign(campaignID, leadID int64) (bool, error) {
 // CampaignLead is a Lead with per-campaign call stats.
 type CampaignLead struct {
 	Lead
-	TranscriptCount int64 `json:"transcript_count"`
-	RecordingCount  int64 `json:"recording_count"`
-	DialAttempts    int64 `json:"dial_attempts"`
+	TranscriptCount         int64  `json:"transcript_count"`
+	RecordingCount          int64  `json:"recording_count"`
+	DialAttempts            int64  `json:"dial_attempts"`
+	NextScheduledAt         string `json:"next_scheduled_at,omitempty"`
+	HasPendingScheduledCall bool   `json:"has_pending_scheduled_call"`
 }
 
 // GetCampaignLeads returns all leads in a campaign with call stats.
@@ -384,11 +386,17 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.call_duration_s>5) AS transcript_count,
 		(SELECT COUNT(*) FROM call_transcripts ct
 		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.recording_url IS NOT NULL AND ct.recording_url!='') AS recording_count,
-		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts
+		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts,
+		(SELECT MIN(sc.scheduled_at)
+		 FROM scheduled_calls sc
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > NOW()) AS next_scheduled_at,
+		(SELECT COUNT(*) > 0
+		 FROM scheduled_calls sc
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > NOW()) AS has_pending_scheduled_call
 	 FROM campaign_leads cl2
 	 JOIN leads l ON l.id = cl2.lead_id
 	 WHERE cl2.campaign_id=?`
-	args := []any{campaignID, campaignID, campaignID, campaignID}
+	args := []any{campaignID, campaignID, campaignID, campaignID, campaignID, campaignID}
 	if len(execIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
 		q += ` AND l.executive_id IN (` + placeholders + `)`
@@ -418,11 +426,14 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	var orgIDInt sql.NullInt64
 	var executiveID sql.NullInt64
 	var followUpNote, interest, extID, crmProvider sql.NullString
+	var nextScheduled sql.NullString
+	var hasPending sql.NullBool
 	err := row.Scan(
 		&cl.ID, &orgIDInt, &cl.FirstName, &cl.LastName, &cl.Phone,
 		&cl.Source, &cl.Status, &followUpNote, &interest, &extID, &crmProvider,
 		&executiveID, &cl.CreatedAt,
 		&cl.TranscriptCount, &cl.RecordingCount, &cl.DialAttempts,
+		&nextScheduled, &hasPending,
 	)
 	if err != nil {
 		return nil, err
@@ -437,6 +448,12 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	cl.Interest = interest.String
 	cl.ExternalID = extID.String
 	cl.CRMProvider = crmProvider.String
+	if nextScheduled.Valid {
+		cl.NextScheduledAt = nextScheduled.String
+	}
+	if hasPending.Valid {
+		cl.HasPendingScheduledCall = hasPending.Bool
+	}
 	return cl, nil
 }
 

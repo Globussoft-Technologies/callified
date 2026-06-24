@@ -22,6 +22,14 @@ import (
 // maxCampaignLeads is the hard cap on the number of leads a single campaign can hold.
 const maxCampaignLeads = 100_000
 
+// ImportRejection describes one CSV row that could not be imported.
+type ImportRejection struct {
+	Row       int    `json:"row"`
+	FirstName string `json:"first_name"`
+	Phone     string `json:"phone"`
+	Reason    string `json:"reason"`
+}
+
 // ── GET /api/campaigns ───────────────────────────────────────────────────────
 
 // @Summary     List campaigns
@@ -584,7 +592,7 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 // @Security    BearerAuth
 // @Param       id    path      int64  true  "Campaign ID"
 // @Param       file  formData  file   true  "CSV file (columns: first_name, last_name, phone, source)"
-// @Success     200   {object}  object{imported=int,added_to_campaign=int,errors=[]string}
+// @Success     200   {object}  object{imported=int,added_to_campaign=int,rejected=[]ImportRejection,errors=[]string}
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
 // @Failure     403   {object}  ErrorResponse
@@ -637,25 +645,47 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		return strings.TrimSpace(rec[i])
 	}
 
-	// Deduplicate the CSV by phone (first occurrence wins) and skip empty phones.
+	var rejected []ImportRejection
 	var rows []db.LeadImportRow
-	seen := make(map[string]bool)
-	for _, rec := range records[1:] {
+	seen := make(map[string]int) // phone -> first CSV row number where it appeared
+	for rowIdx, rec := range records[1:] {
+		rowNum := rowIdx + 2 // CSV rows are 1-based; header is row 1
 		phone := get(rec, iPhone)
-		if phone == "" || seen[phone] {
+		firstName := get(rec, iFirst)
+
+		if phone == "" {
+			rejected = append(rejected, ImportRejection{
+				Row: rowNum, FirstName: firstName, Phone: phone, Reason: "empty phone",
+			})
 			continue
 		}
-		seen[phone] = true
+		if !isValidPhone(phone) {
+			rejected = append(rejected, ImportRejection{
+				Row: rowNum, FirstName: firstName, Phone: phone, Reason: "invalid phone (must be exactly 10 digits)",
+			})
+			continue
+		}
+		if prevRow, ok := seen[phone]; ok {
+			rejected = append(rejected, ImportRejection{
+				Row: rowNum, FirstName: firstName, Phone: phone,
+				Reason: fmt.Sprintf("duplicate phone in CSV (first seen at row %d)", prevRow),
+			})
+			continue
+		}
+		seen[phone] = rowNum
 		rows = append(rows, db.LeadImportRow{
-			FirstName: get(rec, iFirst), LastName: get(rec, iLast),
-			Phone: phone, Source: get(rec, iSource),
+			Row:       rowNum,
+			FirstName: firstName,
+			LastName:  get(rec, iLast),
+			Phone:     phone,
+			Source:    get(rec, iSource),
 		})
 	}
 
 	// Find which phones already exist in this org and which leads are already in the campaign.
-	var phones []string
-	for _, r := range rows {
-		phones = append(phones, r.Phone)
+	phones := make([]string, len(rows))
+	for i, r := range rows {
+		phones[i] = r.Phone
 	}
 	existing, err := s.db.GetLeadIDsByPhones(ac.OrgID, phones)
 	if err != nil {
@@ -670,18 +700,23 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Count how many new leads would actually be linked to the campaign.
+	// Split valid rows into genuinely new leads and existing leads that still need to be linked.
 	var newRows []db.LeadImportRow
 	var existingToAdd int
 	for _, r := range rows {
 		if id, ok := existing[r.Phone]; ok {
-			if !campaignLeadIDs[id] {
+			if campaignLeadIDs[id] {
+				rejected = append(rejected, ImportRejection{
+					Row: r.Row, FirstName: r.FirstName, Phone: r.Phone, Reason: "already in campaign",
+				})
+			} else {
 				existingToAdd++
 			}
 		} else {
 			newRows = append(newRows, r)
 		}
 	}
+
 	currentCount := int64(len(campaignLeadIDs))
 	if currentCount+int64(len(newRows)+existingToAdd) > maxCampaignLeads {
 		writeError(w, http.StatusBadRequest,
@@ -692,6 +727,33 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 
 	// Create only the genuinely new leads. Existing leads are left untouched.
 	imported, errs := s.db.BulkCreateLeads(newRows, ac.OrgID)
+
+	// Convert DB-level errors into structured rejections.
+	var remainingErrors []string
+	for _, e := range errs {
+		var rowNum int
+		prefix := "Row "
+		if strings.HasPrefix(e, prefix) {
+			if _, scanErr := fmt.Sscanf(e, "Row %d: ", &rowNum); scanErr == nil {
+				reason := strings.TrimPrefix(e, fmt.Sprintf("Row %d: ", rowNum))
+				found := false
+				for _, nr := range newRows {
+					if nr.Row == rowNum {
+						rejected = append(rejected, ImportRejection{
+							Row: nr.Row, FirstName: nr.FirstName, Phone: nr.Phone, Reason: reason,
+						})
+						found = true
+						break
+					}
+				}
+				if !found {
+					remainingErrors = append(remainingErrors, e)
+				}
+				continue
+			}
+		}
+		remainingErrors = append(remainingErrors, e)
+	}
 
 	// Re-resolve lead IDs after insert and add every row (new + existing) to the campaign once.
 	leadMap, err := s.db.GetLeadIDsByPhones(ac.OrgID, phones)
@@ -712,7 +774,8 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported":          imported,
 		"added_to_campaign": addedToCampaign,
-		"errors":            errs,
+		"rejected":          rejected,
+		"errors":            remainingErrors,
 	})
 }
 

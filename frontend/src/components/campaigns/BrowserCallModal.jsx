@@ -69,7 +69,7 @@ function base64ToPcmFloat32(b64) {
 }
 
 // ── BrowserCallModal ──────────────────────────────────────────────────────────
-export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) {
+export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, onEnded }) {
   const [status, setStatus] = useState('connecting'); // connecting | waiting | connected | ended | error
   const [errorMsg, setErrorMsg] = useState('');
   const [muted, setMuted] = useState(false);
@@ -83,6 +83,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) 
   const streamRef = useRef(null);
   const mutedRef = useRef(false);
   const connectedRef = useRef(false); // true only after server sends status:connected
+  const endedNotifiedRef = useRef(false);
 
   // Sync muted state to ref for use inside audio callbacks.
   useEffect(() => { mutedRef.current = muted; }, [muted]);
@@ -247,6 +248,15 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose }) 
     return () => { cancelled = true; stopAll(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Notify the parent once the call reaches a terminal state.
+  // This lets a campaign auto-dialer advance to the next lead automatically.
+  useEffect(() => {
+    if ((status === 'ended' || status === 'error') && onEnded && !endedNotifiedRef.current) {
+      endedNotifiedRef.current = true;
+      onEnded(status, errorMsg);
+    }
+  }, [status, onEnded, errorMsg]);
 
   const handleHangup = () => {
     // Tell the backend to hang up the carrier leg so the customer's phone

@@ -18,6 +18,7 @@ export default function CampaignModals({
   // CSV Import Modal
   showCsvImportModal, setShowCsvImportModal,
   csvFile, setCsvFile, handleCsvImport,
+  csvImportResult, setCsvImportResult, closeCsvImportModal,
   // Edit Lead Modal
   editLead, setEditLead,
   editForm, setEditForm, handleSaveEdit,
@@ -37,6 +38,7 @@ export default function CampaignModals({
   const showNameInvalidError = showNameError && !nameError.includes('required');
 
   const [editNameTouched, setEditNameTouched] = useState(false);
+  const [showAllRejected, setShowAllRejected] = useState(false);
   const editNameError = validateCampaignName(editCampaignForm?.name);
   const showEditNameError = editNameTouched && !!editNameError;
 
@@ -303,9 +305,9 @@ export default function CampaignModals({
 
       {/* CSV Import Modal */}
       {showCsvImportModal && (
-        <div className="modal-overlay" onClick={() => setShowCsvImportModal(false)}>
+        <div className="modal-overlay" onClick={closeCsvImportModal}>
           <div className="glass-panel" onClick={e => e.stopPropagation()}
-            style={{maxWidth: '450px', width: '90%'}}>
+            style={{maxWidth: '520px', width: '90%', maxHeight: '85vh', overflowY: 'auto'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem'}}>
               Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
@@ -330,10 +332,87 @@ export default function CampaignModals({
               }}>
               Download Template
             </button>
-            <input type="file" accept=".csv" onChange={e => setCsvFile(e.target.files[0])}
+
+            {csvImportResult && (
+              <div style={{marginBottom: '1rem'}}>
+                {csvImportResult.error ? (
+                  <div style={{padding: '12px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#f87171', fontSize: '0.9rem'}}>
+                    {csvImportResult.error}
+                  </div>
+                ) : (
+                  <>
+                    {(() => {
+                      const imported = csvImportResult.imported || 0;
+                      const added = csvImportResult.added_to_campaign || 0;
+                      const rejectedCount = Array.isArray(csvImportResult.rejected) ? csvImportResult.rejected.length : 0;
+                      const success = imported > 0 || added > 0;
+                      return (
+                        <div style={{padding: '12px 14px', borderRadius: 8, marginBottom: '0.75rem', fontSize: '0.9rem',
+                          background: success ? 'rgba(16,185,129,0.1)' : 'rgba(148,163,184,0.1)',
+                          border: `1px solid ${success ? 'rgba(16,185,129,0.3)' : 'rgba(148,163,184,0.3)'}`,
+                          color: success ? '#34d399' : '#94a3b8'}}>
+                          Imported {imported} new lead{imported !== 1 ? 's' : ''}, {added} added to campaign.
+                          {rejectedCount > 0 ? ` ${rejectedCount} rejected.` : ''}
+                        </div>
+                      );
+                    })()}
+                    {(() => {
+                      const rejected = Array.isArray(csvImportResult.rejected) ? csvImportResult.rejected : [];
+                      const errors = Array.isArray(csvImportResult.errors) ? csvImportResult.errors : [];
+                      if (rejected.length === 0 && errors.length === 0) return null;
+                      const visible = showAllRejected ? rejected : rejected.slice(0, 5);
+                      return (
+                        <div style={{border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, overflow: 'hidden'}}>
+                          <div style={{padding: '10px 12px', background: 'rgba(239,68,68,0.08)', color: '#f87171', fontSize: '0.85rem', fontWeight: 600}}>
+                            Rejected rows {rejected.length > 0 ? `(${rejected.length})` : ''}
+                          </div>
+                          <div style={{maxHeight: 240, overflowY: 'auto'}}>
+                            <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem'}}>
+                              <thead>
+                                <tr style={{background: 'rgba(255,255,255,0.03)'}}>
+                                  <th style={{textAlign: 'left', padding: '8px 10px', color: '#94a3b8', fontWeight: 600}}>Row</th>
+                                  <th style={{textAlign: 'left', padding: '8px 10px', color: '#94a3b8', fontWeight: 600}}>Name</th>
+                                  <th style={{textAlign: 'left', padding: '8px 10px', color: '#94a3b8', fontWeight: 600}}>Phone</th>
+                                  <th style={{textAlign: 'left', padding: '8px 10px', color: '#94a3b8', fontWeight: 600}}>Reason</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {visible.map((r, i) => (
+                                  <tr key={i} style={{borderTop: '1px solid rgba(255,255,255,0.05)'}}>
+                                    <td style={{padding: '7px 10px', color: '#e2e8f0'}}>{r.row}</td>
+                                    <td style={{padding: '7px 10px', color: '#e2e8f0'}}>{r.first_name || '-'}</td>
+                                    <td style={{padding: '7px 10px', color: '#e2e8f0', fontFamily: 'monospace'}}>{r.phone || '-'}</td>
+                                    <td style={{padding: '7px 10px', color: '#fca5a5'}}>{r.reason}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {rejected.length > 5 && (
+                              <button
+                                onClick={() => setShowAllRejected(v => !v)}
+                                style={{width: '100%', background: 'rgba(255,255,255,0.03)', border: 'none', borderTop: '1px solid rgba(255,255,255,0.05)', color: '#94a3b8', padding: '8px', fontSize: '0.78rem', cursor: 'pointer'}}>
+                                {showAllRejected ? 'Show less' : `Show ${rejected.length - 5} more`}
+                              </button>
+                            )}
+                            {errors.length > 0 && (
+                              <div style={{padding: '10px 12px', color: '#fca5a5', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.05)'}}>
+                                {errors.map((e, i) => <div key={i}>{e}</div>)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </div>
+            )}
+
+            <input type="file" accept=".csv" key={csvFile ? csvFile.name : 'empty'}
+              onChange={e => { setCsvFile(e.target.files[0]); if (setCsvImportResult) setCsvImportResult(null); }}
               style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
-              <button onClick={() => setShowCsvImportModal(false)}
+              <button onClick={closeCsvImportModal}
                 style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
                 Cancel
               </button>

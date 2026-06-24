@@ -229,17 +229,23 @@ func (d *DB) UpdateLeadNote(id int64, note string) error {
 }
 
 // BulkCreateLeads inserts multiple leads, skipping duplicates. Returns (imported, errors).
+// Errors use the Row field from each LeadImportRow, so callers can map them back to the
+// original CSV line number.
 func (d *DB) BulkCreateLeads(rows []LeadImportRow, orgID int64) (int, []string) {
 	var imported int
 	var errs []string
-	for i, r := range rows {
+	for _, r := range rows {
 		_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", 0, orgID)
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "Duplicate") || strings.Contains(msg, "1062") {
 				msg = "duplicate phone"
 			}
-			errs = append(errs, fmt.Sprintf("Row %d: %s", i+2, msg[:min(len(msg), 50)]))
+			rowNum := r.Row
+			if rowNum <= 0 {
+				rowNum = 1
+			}
+			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg[:min(len(msg), 50)]))
 		} else {
 			imported++
 		}
@@ -249,6 +255,7 @@ func (d *DB) BulkCreateLeads(rows []LeadImportRow, orgID int64) (int, []string) 
 
 // LeadImportRow holds one CSV row for bulk import.
 type LeadImportRow struct {
+	Row       int // original 1-based CSV row number (header is row 1)
 	FirstName string
 	LastName  string
 	Phone     string

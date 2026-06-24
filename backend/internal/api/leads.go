@@ -503,6 +503,7 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		rows = append(rows, db.LeadImportRow{
+			Row:       rowIdx + 2,
 			FirstName: get(rec, iFirst),
 			LastName:  get(rec, iLast),
 			Phone:     phone,

@@ -4,7 +4,7 @@ import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
-import BrowserCallModal from './BrowserCallModal';
+import { useCall } from '../../contexts/CallContext';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -195,6 +195,7 @@ export default function CampaignDetail({
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
+  const { triggerBrowserCall, browserCallLead, browserCallDialing } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -213,11 +214,23 @@ export default function CampaignDetail({
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
+  const [scheduleFrom, setScheduleFrom] = useState('');
+  const [scheduleTo, setScheduleTo] = useState('');
+
+  // ── Auto-dialer state (Browser Call only) ───────────────────────────────────
+  const [autoDialEnabled, setAutoDialEnabled] = useState(false);
+  const [autoDialQueue, setAutoDialQueue] = useState([]);
+  const [autoDialActiveId, setAutoDialActiveId] = useState(null);
 
   useEffect(() => {
     setExecFilter([]);
     setExecSearch('');
     setShowExecFilter(false);
+    setAutoDialEnabled(false);
+    setAutoDialQueue([]);
+    setAutoDialActiveId(null);
+    setScheduleFrom('');
+    setScheduleTo('');
   }, [selectedCampaign?.id]);
 
   const filteredLeads = useMemo(() => {
@@ -226,14 +239,40 @@ export default function CampaignDetail({
       list = list.filter(l => execFilter.includes(String(l.executive_id || '')) || execFilter.includes(l.executive_id));
     }
     const q = leadSearch.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(l =>
-      (l.first_name || '').toLowerCase().includes(q) ||
-      (l.last_name || '').toLowerCase().includes(q) ||
-      (l.phone || '').toLowerCase().includes(q) ||
-      (l.source || '').toLowerCase().includes(q)
-    );
-  }, [campaignLeads, leadSearch, execFilter]);
+    if (q) {
+      list = list.filter(l =>
+        (l.first_name || '').toLowerCase().includes(q) ||
+        (l.last_name || '').toLowerCase().includes(q) ||
+        (l.phone || '').toLowerCase().includes(q) ||
+        (l.source || '').toLowerCase().includes(q)
+      );
+    }
+    if (scheduleFrom || scheduleTo) {
+      const fromISO = scheduleFrom ? new Date(scheduleFrom).toISOString() : null;
+      const toISO = scheduleTo ? new Date(scheduleTo).toISOString() : null;
+      list = list.filter(l => {
+        if (!l.next_scheduled_at) return false;
+        const leadISO = l.next_scheduled_at.replace(' ', 'T') + 'Z';
+        if (fromISO && leadISO < fromISO) return false;
+        if (toISO && leadISO > toISO) return false;
+        return true;
+      });
+    }
+    return list;
+  }, [campaignLeads, leadSearch, execFilter, scheduleFrom, scheduleTo]);
+
+  // Keep the auto-dial queue in sync with the current filtered list.
+  useEffect(() => {
+    if (!autoDialEnabled) return;
+    const ids = filteredLeads.map(l => l.id);
+    setAutoDialQueue(prev => {
+      if (autoDialActiveId && ids.includes(autoDialActiveId)) {
+        const idx = ids.indexOf(autoDialActiveId);
+        return [autoDialActiveId, ...ids.slice(idx + 1), ...ids.slice(0, idx)];
+      }
+      return ids;
+    });
+  }, [filteredLeads, autoDialEnabled, autoDialActiveId]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -357,26 +396,47 @@ export default function CampaignDetail({
     }
   };
 
-  const handleBrowserCallStart = async (lead) => {
-    // Exotel only: server dials the customer, then we relay audio over WebSocket.
-    setBrowserCallLead(lead);
-    setBrowserCallSid(null);
-    setBrowserCallDialing(true);
-    try {
-      const res = await apiFetch(
-        `${API_URL}/campaigns/${selectedCampaign.id}/leads/${lead.id}/browser-call`,
-        { method: 'POST' }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setBrowserCallSid(data.call_sid);
-    } catch (e) {
-      setBrowserCallLead(null);
-      alert('Browser call failed: ' + (e.message || 'Unknown error'));
-    } finally {
-      setBrowserCallDialing(false);
+  const startBrowserCallWithAutoDial = (lead) => {
+    if (autoDialEnabled) {
+      setAutoDialActiveId(lead.id);
+      const ids = filteredLeads.map(l => l.id);
+      const idx = ids.indexOf(lead.id);
+      if (idx >= 0) {
+        setAutoDialQueue([lead.id, ...ids.slice(idx + 1), ...ids.slice(0, idx)]);
+      } else {
+        setAutoDialQueue([lead.id]);
+      }
     }
+    triggerBrowserCall(lead, selectedCampaign.id);
   };
+
+  // Auto-advance the browser-call dialer when the global call modal closes.
+  const prevBrowserCallLeadRef = useRef(browserCallLead);
+  useEffect(() => {
+    if (prevBrowserCallLeadRef.current && !browserCallLead && autoDialEnabled && autoDialActiveId) {
+      const idx = autoDialQueue.indexOf(autoDialActiveId);
+      const nextIdx = idx >= 0 ? idx + 1 : 0;
+      const nextId = autoDialQueue[nextIdx];
+      if (!nextId) {
+        toast('Auto dial complete');
+        setAutoDialEnabled(false);
+        setAutoDialActiveId(null);
+        setAutoDialQueue([]);
+      } else {
+        const nextLead = campaignLeads.find(l => l.id === nextId) || filteredLeads.find(l => l.id === nextId);
+        if (!nextLead) {
+          toast('Auto dial stopped: next lead not found');
+          setAutoDialEnabled(false);
+          setAutoDialActiveId(null);
+          setAutoDialQueue([]);
+        } else {
+          setAutoDialActiveId(nextId);
+          setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id), 800);
+        }
+      }
+    }
+    prevBrowserCallLeadRef.current = browserCallLead;
+  }, [browserCallLead, autoDialEnabled, autoDialActiveId, autoDialQueue, campaignLeads, filteredLeads, selectedCampaign.id, toast, triggerBrowserCall]);
 
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }
@@ -421,15 +481,16 @@ export default function CampaignDetail({
       const res = await apiFetch(`${API_URL}/scheduled-calls`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lead_id: scheduleLead.id, campaign_id: selectedCampaign.id, scheduled_time: utcTime })
+        body: JSON.stringify({ lead_id: scheduleLead.id, campaign_id: selectedCampaign.id, scheduled_at: utcTime, notes: scheduleNotes })
       });
       if (res.ok) {
         setScheduleLead(null);
         setScheduleAt('');
         setScheduleNotes('');
+        fetchCampaignLeads(selectedCampaign.id);
       } else {
         const d = await res.json().catch(() => ({}));
-        setScheduleError(d.detail || `Error ${res.status}`);
+        setScheduleError(d.detail || d.error || `Error ${res.status}`);
       }
     } catch(e) { setScheduleError('Network error — please try again.'); }
     setScheduleSaving(false);
@@ -541,9 +602,6 @@ export default function CampaignDetail({
   const [humanCallStatus, setHumanCallStatus] = useState('idle'); // idle | dialing | done | error
   const [humanCallError, setHumanCallError] = useState('');
 
-  const [browserCallLead, setBrowserCallLead] = useState(null); // lead for browser-to-phone call (Exotel)
-  const [browserCallSid, setBrowserCallSid] = useState(null);   // call_sid returned by API (Exotel)
-  const [browserCallDialing, setBrowserCallDialing] = useState(false);
   // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
 
   const hideAiFeatures = useHideAiFeatures();
@@ -1010,6 +1068,29 @@ export default function CampaignDetail({
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>}
+        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+          <button
+            style={{
+              ...btnPrimary,
+              background: autoDialEnabled ? '#f59e0b' : '#475569',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+            onClick={() => {
+              const next = !autoDialEnabled;
+              setAutoDialEnabled(next);
+              if (next) {
+                setAutoDialQueue(filteredLeads.map(l => l.id));
+                toast('Auto dial enabled. Start a browser call to begin.');
+              } else {
+                setAutoDialActiveId(null);
+                setAutoDialQueue([]);
+                toast('Auto dial disabled');
+              }
+            }}
+            title="After a browser call ends, automatically dial the next filtered lead">
+            {autoDialEnabled ? '⏸ Auto Dial On' : '▶ Auto Dial'}
+          </button>
+        )}
       </div>
 
       {/* Search + Tab Switcher */}
@@ -1102,6 +1183,38 @@ export default function CampaignDetail({
             )}
           </div>
         )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            type="datetime-local"
+            value={scheduleFrom}
+            onChange={e => setScheduleFrom(e.target.value)}
+            style={{
+              padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
+              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
+            }}
+          />
+          <span style={{ color: T.muted, fontSize: 12, fontWeight: 600 }}>to</span>
+          <input
+            type="datetime-local"
+            value={scheduleTo}
+            onChange={e => setScheduleTo(e.target.value)}
+            style={{
+              padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
+              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
+            }}
+          />
+          <button
+            onClick={() => { setScheduleFrom(''); setScheduleTo(''); }}
+            disabled={!scheduleFrom && !scheduleTo}
+            style={{
+              padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
+              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff',
+              cursor: (!scheduleFrom && !scheduleTo) ? 'not-allowed' : 'pointer',
+              opacity: (!scheduleFrom && !scheduleTo) ? 0.5 : 1,
+            }}>
+            Clear
+          </button>
+        </div>
       </div>
 
       {/* Call Log Tab — WhatsApp notice */}
@@ -1484,17 +1597,18 @@ export default function CampaignDetail({
                         )} */}
                         {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
                           <button
-                            onClick={() => handleBrowserCallStart(lead)}
-                            disabled={browserCallDialing}
-                            title="Call from browser mic — 1x cost"
+                            onClick={() => startBrowserCallWithAutoDial(lead)}
+                            disabled={browserCallDialing || browserCallLead != null}
+                            title={autoDialEnabled ? 'Auto-dial is enabled' : 'Call from browser mic — 1x cost'}
                             style={{
                               fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
-                              cursor: browserCallDialing ? 'not-allowed' : 'pointer',
-                              opacity: browserCallDialing ? 0.6 : 1,
-                              background: 'rgba(99,102,241,0.08)', color: '#3730a3',
-                              border: '1px solid rgba(99,102,241,0.3)', borderRadius: 6,
+                              cursor: (browserCallDialing || browserCallLead != null) ? 'not-allowed' : 'pointer',
+                              opacity: (browserCallDialing || browserCallLead != null) ? 0.6 : 1,
+                              background: autoDialEnabled ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.08)',
+                              color: autoDialEnabled ? '#b45309' : '#3730a3',
+                              border: `1px solid ${autoDialEnabled ? 'rgba(245,158,11,0.35)' : 'rgba(99,102,241,0.3)'}`, borderRadius: 6,
                             }}>
-                            🎙 Browser Call
+                            {autoDialEnabled ? '⏩ Browser Call' : '🎙 Browser Call'}
                           </button>
                         )}
                         {selectedCampaign.channel === 'whatsapp' && (
@@ -1571,6 +1685,16 @@ export default function CampaignDetail({
                             color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           Remove
                         </button>
+                        {lead.has_pending_scheduled_call && lead.next_scheduled_at && (
+                          <span style={{
+                            fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                            background: 'rgba(59,130,246,0.12)', color: '#1e40af',
+                            border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
+                            fontFamily: T.font, whiteSpace: 'nowrap'
+                          }}>
+                            📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}
+                          </span>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1734,6 +1858,8 @@ export default function CampaignDetail({
                         campaign_id: selectedCampaign.id,
                         scheduled_at: serverTime,
                         notes: scheduleNotes,
+                        mode: 'manual',
+                        executive_id: scheduleLead.executive_id || null,
                       }),
                     });
                     if (!res.ok) {
@@ -1756,16 +1882,6 @@ export default function CampaignDetail({
       )}
 
       {/* Human Call Modal */}
-      {/* Browser Call Modal — Exotel streaming relay */}
-      {browserCallLead && browserCallSid && (
-        <BrowserCallModal
-          lead={browserCallLead}
-          callSid={browserCallSid}
-          wsBaseUrl={(window.location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + window.location.host}
-          onClose={() => { setBrowserCallLead(null); setBrowserCallSid(null); }}
-        />
-      )}
-
       {/* Browser Call Modal — Twilio WebRTC (zero delay) [disabled] */}
       {/* {twilioBrowserLead && (
         <TwilioBrowserCallModal
@@ -1831,83 +1947,6 @@ export default function CampaignDetail({
         </div>
       )}
 
-      {/* Schedule Call Modal */}
-      {scheduleLead && (
-        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}>
-          <div className="glass-panel modal-content" style={{maxWidth: '440px', padding: '1.5rem'}}>
-            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem'}}>
-              <h3 style={{margin: 0, color: '#e2e8f0'}}>📅 Schedule Call</h3>
-              <button onClick={() => setScheduleLead(null)}
-                style={{background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '1.2rem', cursor: 'pointer'}}>✕</button>
-            </div>
-            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem'}}>
-              {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
-            </p>
-            {scheduleError && (
-              <div style={{background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5',
-                borderRadius: '8px', padding: '8px 12px', marginBottom: '1rem', fontSize: '0.82rem'}}>
-                ⚠️ {scheduleError}
-              </div>
-            )}
-            <div style={{display: 'flex', flexDirection: 'column', gap: '0.75rem'}}>
-              {/* Date + Time split so each picker closes on selection and "Now" replaces the broken "Today" */}
-              <div>
-                <div style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600, marginBottom: '6px'}}>
-                  Date &amp; Time
-                </div>
-                <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
-                  <input
-                    type="date"
-                    className="form-input"
-                    value={scheduleAt.split('T')[0] || ''}
-                    min={(() => { const d = new Date(); const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; })()}
-                    onChange={e => {
-                      const t = scheduleAt.split('T')[1] || '00:00';
-                      setScheduleAt(`${e.target.value}T${t}`);
-                      setScheduleError('');
-                    }}
-                    style={{flex: 1, colorScheme: 'dark'}}
-                  />
-                  <input
-                    type="time"
-                    className="form-input"
-                    value={scheduleAt.split('T')[1] || ''}
-                    onChange={e => {
-                      const date = scheduleAt.split('T')[0];
-                      if (!date) return; // date must be selected first
-                      setScheduleAt(`${date}T${e.target.value}`);
-                      setScheduleError('');
-                    }}
-                    style={{width: '150px', colorScheme: 'dark'}}
-                  />
-                </div>
-              </div>
-              <label style={{fontSize: '0.8rem', color: '#cbd5e1', fontWeight: 600}}>
-                Notes (optional)
-                <textarea
-                  className="form-input"
-                  value={scheduleNotes}
-                  onChange={e => setScheduleNotes(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. follow-up on pricing discussion"
-                  style={{width: '100%', marginTop: '6px', resize: 'vertical'}}
-                />
-              </label>
-            </div>
-            <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '1.25rem'}}>
-              <button onClick={() => setScheduleLead(null)}
-                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
-                Cancel
-              </button>
-              <button className="btn-primary" onClick={handleScheduleCall}
-                disabled={scheduleSaving || !scheduleAt}
-                style={{opacity: (scheduleSaving || !scheduleAt) ? 0.5 : 1, cursor: (scheduleSaving || !scheduleAt) ? 'not-allowed' : 'pointer'}}>
-                {scheduleSaving ? 'Scheduling…' : 'Schedule Call'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

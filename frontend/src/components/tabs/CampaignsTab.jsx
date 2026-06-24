@@ -36,6 +36,7 @@ export default function CampaignsTab({
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
+  const [csvImportResult, setCsvImportResult] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '', executive_ids: [] });
@@ -510,6 +511,7 @@ export default function CampaignsTab({
   const handleCsvImport = async () => {
     if (!csvFile || !selectedCampaign) return;
     setLoading(true);
+    setCsvImportResult(null);
     try {
       const formData = new FormData();
       formData.append('file', csvFile);
@@ -518,16 +520,30 @@ export default function CampaignsTab({
       });
       const data = await res.json();
       if (!res.ok) {
+        setCsvImportResult({ error: data.error || 'Import failed' });
         toast(data.error || 'Import failed', 'error');
       } else {
-        toast(`Imported ${data.imported} leads, ${data.added_to_campaign} added to campaign.${data.errors?.length ? '\nErrors: ' + data.errors.join(', ') : ''}`);
+        const rejectedCount = Array.isArray(data.rejected) ? data.rejected.length : 0;
+        const errCount = Array.isArray(data.errors) ? data.errors.length : 0;
+        const hasIssues = rejectedCount > 0 || errCount > 0;
+        setCsvImportResult(data);
+        toast(`Imported ${data.imported || 0} leads, ${data.added_to_campaign || 0} added to campaign.${hasIssues ? ` ${rejectedCount} rejected.` : ''}`);
         setCsvFile(null);
-        setShowCsvImportModal(false);
         fetchCampaignLeads(selectedCampaign.id);
         fetchCampaigns();
+        if (!hasIssues) {
+          setShowCsvImportModal(false);
+          setCsvImportResult(null);
+        }
       }
-    } catch (e) { console.error(e); toast('Import failed', 'error'); }
+    } catch (e) { console.error(e); setCsvImportResult({ error: 'Import failed' }); toast('Import failed', 'error'); }
     setLoading(false);
+  };
+
+  const closeCsvImportModal = () => {
+    setShowCsvImportModal(false);
+    setCsvImportResult(null);
+    setCsvFile(null);
   };
 
   // Available leads = org leads not already in this campaign
@@ -602,6 +618,9 @@ export default function CampaignsTab({
           csvFile={csvFile}
           setCsvFile={setCsvFile}
           handleCsvImport={handleCsvImport}
+          csvImportResult={csvImportResult}
+          setCsvImportResult={setCsvImportResult}
+          closeCsvImportModal={closeCsvImportModal}
           editLead={editLead}
           setEditLead={setEditLead}
           editForm={editForm}
@@ -775,6 +794,9 @@ export default function CampaignsTab({
         csvFile={csvFile}
         setCsvFile={setCsvFile}
         handleCsvImport={handleCsvImport}
+        csvImportResult={csvImportResult}
+        setCsvImportResult={setCsvImportResult}
+        closeCsvImportModal={closeCsvImportModal}
         editLead={null}
         setEditLead={setEditLead}
         editForm={editForm}
