@@ -525,7 +525,7 @@ export function CallProvider({ children }) {
       clearDismissedScheduledCall
     }}>
       {children}
-      {browserCallLead && (
+      {browserCallLead && browserCallSid && (
         <BrowserCallModal
           lead={browserCallLead}
           callSid={browserCallSid}
