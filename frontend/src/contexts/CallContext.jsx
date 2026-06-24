@@ -47,6 +47,14 @@ export function CallProvider({ children }) {
       localStorage.setItem(DISMISSED_SCHEDULED_KEY, JSON.stringify(Array.from(dismissedIds)));
     } catch { /* ignore */ }
   }, [dismissedIds]);
+  const clearDismissedScheduledCall = useCallback((id) => {
+    setDismissedIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const browserCallEndedCbRef = useRef(null);
 
   const handleDial = useCallback(async (lead) => {
@@ -517,7 +525,8 @@ export function CallProvider({ children }) {
       handleCampaignDial, handleCampaignWebCall,
       browserCallLead, browserCallDialing,
       triggerBrowserCall, closeBrowserCall,
-      refreshScheduledCalls: fetchDueManualCalls
+      refreshScheduledCalls: fetchDueManualCalls,
+      clearDismissedScheduledCall
     }}>
       {children}
       {browserCallLead && (

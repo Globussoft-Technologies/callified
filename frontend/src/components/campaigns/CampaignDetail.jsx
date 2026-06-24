@@ -195,7 +195,7 @@ export default function CampaignDetail({
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
-  const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls } = useCall();
+  const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -1869,11 +1869,13 @@ export default function CampaignDetail({
                       setScheduleStatus({ kind: 'error',
                         text: 'Failed to schedule: ' + (data.error || data.detail || res.status) });
                     } else {
+                      const data = await res.json().catch(() => ({}));
                       setScheduleLead(null);
                       setScheduleStatus({ kind: '', text: '' });
                       toast('Call scheduled');
                       fetchCampaignLeads(selectedCampaign.id);
                       refreshScheduledCalls?.();
+                      if (data.id) clearDismissedScheduledCall?.(data.id);
                     }
                   } catch { setScheduleStatus({ kind: 'error', text: 'Network error while scheduling.'  });
                   }
