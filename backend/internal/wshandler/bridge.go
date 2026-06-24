@@ -93,7 +93,11 @@ func (h *Handler) hangupBridgeCall(ctx context.Context, callSid string, sess *Ca
 	sess.RequestHangup()
 
 	if h.initiator != nil && sess.CampaignID > 0 {
-		if err := h.initiator.Hangup(ctx, callSid, sess.CampaignID); err != nil {
+		exotelAccountID := int64(0)
+		if info, ok := h.store.GetPendingCall(ctx, callSid); ok {
+			exotelAccountID = info.ExotelAccountID
+		}
+		if err := h.initiator.Hangup(ctx, callSid, sess.CampaignID, sess.OrgID, exotelAccountID); err != nil {
 			h.log.Warn("bridge: telephony hangup failed",
 				zap.String("call_sid", callSid),
 				zap.Int64("campaign_id", sess.CampaignID),

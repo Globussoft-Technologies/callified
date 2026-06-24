@@ -451,7 +451,7 @@ export default function CampaignDetail({
         setAutoDialQueue([lead.id]);
       }
     }
-    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined);
+    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, parseInt(selectedExotelAccountId) || 0);
   };
 
   const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
@@ -608,10 +608,12 @@ export default function CampaignDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Exotel account selector state ─────────────────────────────────────────
+  // ── Exotel account selector state (per-browser, not synced to the server) ──
+  const exotelStorageKey = `callified_exotel_account_${selectedCampaign.id}`;
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
-  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
-  const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState(() => {
+    try { return localStorage.getItem(exotelStorageKey) || ''; } catch { return ''; }
+  });
 
   const [humanCallLead, setHumanCallLead] = useState(null); // lead being human-called
   const [humanCallPhone, setHumanCallPhone] = useState(() => localStorage.getItem('humanCallAgentPhone') || '');
@@ -645,31 +647,17 @@ export default function CampaignDetail({
 
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
-    // Fetch all org accounts
+    // Restore the per-machine selection for this campaign.
+    try {
+      setSelectedExotelAccountId(localStorage.getItem(exotelStorageKey) || '');
+    } catch { /* ignore */ }
+    // Fetch all org accounts for the dropdown.
     apiFetch(`${API_URL}/exotel-accounts`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setOrgExotelAccounts(Array.isArray(data) ? data : []))
       .catch(() => {});
-    // Fetch which account is linked to this campaign
-    apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`)
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
-      .catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaign.id]);
-
-  const handleSaveExotelAccount = async () => {
-    setExotelAccountSaveStatus('saving');
-    try {
-      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exotel_account_id: selectedExotelAccountId ? parseInt(selectedExotelAccountId) : 0 }),
-      });
-      setExotelAccountSaveStatus(res.ok ? 'saved' : 'error');
-    } catch { setExotelAccountSaveStatus('error'); }
-    setTimeout(() => setExotelAccountSaveStatus('idle'), 2000);
-  };
 
   const scoreColor = (s) => {
     if (s >= 4) return T.green;
@@ -865,7 +853,14 @@ export default function CampaignDetail({
             <select
               className="form-input"
               value={selectedExotelAccountId}
-              onChange={e => setSelectedExotelAccountId(e.target.value)}
+              onChange={e => {
+                const id = e.target.value;
+                setSelectedExotelAccountId(id);
+                try {
+                  if (id) localStorage.setItem(exotelStorageKey, id);
+                  else localStorage.removeItem(exotelStorageKey);
+                } catch { /* ignore */ }
+              }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
               <option value="">-- Use platform default --</option>
               {orgExotelAccounts.map(a => (
@@ -874,17 +869,6 @@ export default function CampaignDetail({
                 </option>
               ))}
             </select>
-            <button
-              style={{
-                background: exotelAccountSaveStatus === 'saved' ? T.green : exotelAccountSaveStatus === 'error' ? T.red : T.accent,
-                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
-                cursor: exotelAccountSaveStatus === 'saving' ? 'wait' : 'pointer',
-                opacity: exotelAccountSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
-              }}
-              disabled={exotelAccountSaveStatus === 'saving'}
-              onClick={handleSaveExotelAccount}>
-              {exotelAccountSaveStatus === 'saving' ? 'Saving…' : exotelAccountSaveStatus === 'saved' ? '✓ Saved' : exotelAccountSaveStatus === 'error' ? '✗ Failed' : 'Save'}
-            </button>
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
             {selectedExotelAccountId
