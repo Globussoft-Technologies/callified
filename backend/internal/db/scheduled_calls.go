@@ -93,10 +93,10 @@ func (d *DB) CreateScheduledCall(orgID, leadID, campaignID, executiveID int64, s
 func (d *DB) GetPendingScheduledCallByLead(leadID int64) (*ScheduledCall, error) {
 	row := d.pool.QueryRow(`
 		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
-		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(sc.status,'pending'), COALESCE(sc.mode,'ai'), COALESCE(sc.notes,''),
 		COALESCE(sc.executive_id,0), COALESCE(e.name,''),
-		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(l.first_name,''), COALESCE(l.phone,'')
 		FROM scheduled_calls sc
 		LEFT JOIN leads l ON sc.lead_id=l.id
@@ -137,10 +137,10 @@ func (d *DB) UpdateScheduledCall(id int64, scheduledAt time.Time, notes, mode st
 func (d *DB) GetScheduledCallsByOrg(orgID int64) ([]ScheduledCall, error) {
 	rows, err := d.pool.Query(`
 		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
-		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(sc.status,'pending'), COALESCE(sc.mode,'ai'), COALESCE(sc.notes,''),
 		COALESCE(sc.executive_id,0), COALESCE(e.name,''),
-		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(l.first_name,''), COALESCE(l.phone,'')
 		FROM scheduled_calls sc
 		LEFT JOIN leads l ON sc.lead_id=l.id
@@ -162,14 +162,14 @@ func (d *DB) GetPendingScheduledCalls(leadTimeSeconds int) ([]ScheduledCall, err
 	}
 	rows, err := d.pool.Query(`
 		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
-		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(sc.status,'pending'), COALESCE(sc.mode,'ai'), COALESCE(sc.notes,''),
 		COALESCE(sc.executive_id,0), '',
-		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%dT%H:%i:%sZ'),
 		'', ''
 		FROM scheduled_calls sc
 		WHERE sc.status='pending' AND sc.mode='ai'
-		  AND sc.scheduled_at <= DATE_ADD(NOW(), INTERVAL ? SECOND)
+		  AND sc.scheduled_at <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND)
 		ORDER BY sc.scheduled_at ASC`, leadTimeSeconds)
 	if err != nil {
 		return nil, err
@@ -186,16 +186,16 @@ func (d *DB) GetDueManualScheduledCalls(orgID int64, leadTimeSeconds int) ([]Sch
 	}
 	rows, err := d.pool.Query(`
 		SELECT sc.id, sc.org_id, sc.lead_id, COALESCE(sc.campaign_id,0),
-		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.scheduled_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(sc.status,'pending'), COALESCE(sc.mode,'manual'), COALESCE(sc.notes,''),
 		COALESCE(sc.executive_id,0), COALESCE(e.name,''),
-		DATE_FORMAT(sc.created_at,'%Y-%m-%d %H:%i:%s'),
+		DATE_FORMAT(sc.created_at,'%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(l.first_name,''), COALESCE(l.phone,'')
 		FROM scheduled_calls sc
 		LEFT JOIN leads l ON sc.lead_id=l.id
 		LEFT JOIN executives e ON sc.executive_id=e.id
 		WHERE sc.org_id=? AND sc.status='pending' AND sc.mode='manual'
-		  AND sc.scheduled_at <= DATE_ADD(NOW(), INTERVAL ? SECOND)
+		  AND sc.scheduled_at <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? SECOND)
 		ORDER BY sc.scheduled_at ASC`, orgID, leadTimeSeconds)
 	if err != nil {
 		return nil, err

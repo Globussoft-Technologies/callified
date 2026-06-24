@@ -252,7 +252,9 @@ export default function CampaignDetail({
       const toISO = scheduleTo ? new Date(scheduleTo).toISOString() : null;
       list = list.filter(l => {
         if (!l.next_scheduled_at) return false;
-        const leadISO = l.next_scheduled_at.replace(' ', 'T') + 'Z';
+        const leadISO = l.next_scheduled_at.endsWith('Z')
+          ? l.next_scheduled_at
+          : l.next_scheduled_at.replace(' ', 'T') + 'Z';
         if (fromISO && leadISO < fromISO) return false;
         if (toISO && leadISO > toISO) return false;
         return true;

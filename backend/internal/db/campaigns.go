@@ -387,12 +387,12 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 		(SELECT COUNT(*) FROM call_transcripts ct
 		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.recording_url IS NOT NULL AND ct.recording_url!='') AS recording_count,
 		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts,
-		(SELECT MIN(sc.scheduled_at)
+		(SELECT DATE_FORMAT(MIN(sc.scheduled_at),'%Y-%m-%dT%H:%i:%sZ')
 		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > NOW()) AS next_scheduled_at,
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > UTC_TIMESTAMP()) AS next_scheduled_at,
 		(SELECT COUNT(*) > 0
 		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > NOW()) AS has_pending_scheduled_call
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > UTC_TIMESTAMP()) AS has_pending_scheduled_call
 	 FROM campaign_leads cl2
 	 JOIN leads l ON l.id = cl2.lead_id
 	 WHERE cl2.campaign_id=?`
