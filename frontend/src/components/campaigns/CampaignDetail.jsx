@@ -184,7 +184,7 @@ export default function CampaignDetail({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead,
-  handleViewTranscripts, handleNote,
+  handleViewTranscripts,
   onCampaignDial, onCampaignWebCall,
   dialingId, webCallActive,
   setSelectedLeadIds, setShowAddLeadsModal, setShowCsvImportModal, setCsvFile,
@@ -289,6 +289,12 @@ export default function CampaignDetail({
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteGenerating, setNoteGenerating] = useState(false);
 
+  // Quick-note modal state (moved here from CampaignsPage so we can refresh
+  // campaign leads immediately after saving and show the note label at once).
+  const [noteModalLead, setNoteModalLead] = useState(null);
+  const [noteModalText, setNoteModalText] = useState('');
+  const [noteModalSaving, setNoteModalSaving] = useState(false);
+
   const handleGenerateNote = async (lead) => {
     setNoteGenerating(true);
     setGeneratedNote(null);
@@ -328,6 +334,37 @@ export default function CampaignDetail({
       toast('Failed to save note: ' + (e?.message || 'network error'));
     } finally {
       setNoteSaving(false);
+    }
+  };
+
+  const openNoteModal = (lead) => {
+    setNoteModalLead(lead);
+    setNoteModalText(lead.follow_up_note || '');
+  };
+
+  const handleSaveNoteModal = async () => {
+    if (!noteModalLead) return;
+    const trimmed = noteModalText.trim();
+    if (!trimmed) { toast('Note cannot be empty'); return; }
+    setNoteModalSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${noteModalLead.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: trimmed }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || data.detail || `Failed to save note (HTTP ${res.status})`);
+        return;
+      }
+      setNoteModalLead(null);
+      setNoteModalText('');
+      fetchCampaignLeads(selectedCampaign.id);
+    } catch (e) {
+      toast('Failed to save note: ' + (e?.message || 'network error'));
+    } finally {
+      setNoteModalSaving(false);
     }
   };
 
@@ -1701,7 +1738,7 @@ export default function CampaignDetail({
                           {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
                         </button>
                         <button
-                          onClick={() => handleNote(lead)}
+                          onClick={() => openNoteModal(lead)}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📝 Note
                         </button>
@@ -2006,6 +2043,33 @@ export default function CampaignDetail({
                 onClick={handleHumanCallDial}
                 style={{ ...btnPrimary, opacity: (humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()) ? 0.6 : 1 }}>
                 {humanCallStatus === 'dialing' ? '📞 Dialing…' : '📞 Call Me'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Note Modal */}
+      {noteModalLead && (
+        <div className="modal-overlay" onClick={() => setNoteModalLead(null)}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}}>
+            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
+            <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
+              {noteModalLead.first_name} {noteModalLead.last_name} — {noteModalLead.phone}
+            </p>
+            <textarea className="form-input" rows={5} value={noteModalText}
+              onChange={e => setNoteModalText(e.target.value)}
+              placeholder="Type your follow-up note here..."
+              style={{width: '100%', minHeight: '120px', resize: 'vertical', fontSize: '0.9rem', lineHeight: 1.5}} />
+            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
+              <button onClick={() => setNoteModalLead(null)}
+                style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleSaveNoteModal}
+                disabled={noteModalSaving || !noteModalText.trim()}
+                style={{opacity: (noteModalSaving || !noteModalText.trim()) ? 0.5 : 1, cursor: (noteModalSaving || !noteModalText.trim()) ? 'not-allowed' : 'pointer'}}>
+                {noteModalSaving ? 'Saving…' : 'Save Note'}
               </button>
             </div>
           </div>

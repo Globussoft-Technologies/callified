@@ -10,7 +10,7 @@ export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts, leads,
   apiFetch, API_URL,
   onCampaignDial, onCampaignWebCall,
-  handleViewTranscripts, handleNote,
+  handleViewTranscripts,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
