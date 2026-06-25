@@ -72,6 +72,7 @@ export default function CampaignsPage({
       }
       setNoteLead(null);
       setNoteText('');
+      fetchLeads();
     } catch(e) {
       toast('Failed to save note: ' + (e?.message || 'network error'));
     } finally {

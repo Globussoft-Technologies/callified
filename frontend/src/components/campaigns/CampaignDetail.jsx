@@ -323,6 +323,7 @@ export default function CampaignDetail({
       lead.follow_up_note = trimmed;
       setEditingNote(null);
       setGeneratedNote(null);
+      fetchCampaignLeads(selectedCampaign.id);
     } catch (e) {
       toast('Failed to save note: ' + (e?.message || 'network error'));
     } finally {
