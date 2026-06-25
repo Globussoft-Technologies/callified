@@ -371,6 +371,7 @@ type CampaignLead struct {
 	DialAttempts            int64  `json:"dial_attempts"`
 	NextScheduledAt         string `json:"next_scheduled_at,omitempty"`
 	HasPendingScheduledCall bool   `json:"has_pending_scheduled_call"`
+	ScheduledCallID         int64  `json:"scheduled_call_id"`
 }
 
 // GetCampaignLeads returns all leads in a campaign with call stats.
@@ -389,14 +390,18 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts,
 		(SELECT DATE_FORMAT(MIN(sc.scheduled_at),'%Y-%m-%dT%H:%i:%sZ')
 		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > UTC_TIMESTAMP()) AS next_scheduled_at,
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending') AS next_scheduled_at,
 		(SELECT COUNT(*) > 0
 		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending' AND sc.scheduled_at > UTC_TIMESTAMP()) AS has_pending_scheduled_call
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending') AS has_pending_scheduled_call,
+		(SELECT sc.id
+		 FROM scheduled_calls sc
+		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending'
+		 ORDER BY sc.scheduled_at ASC LIMIT 1) AS scheduled_call_id
 	 FROM campaign_leads cl2
 	 JOIN leads l ON l.id = cl2.lead_id
 	 WHERE cl2.campaign_id=?`
-	args := []any{campaignID, campaignID, campaignID, campaignID, campaignID, campaignID}
+	args := []any{campaignID, campaignID, campaignID, campaignID, campaignID, campaignID, campaignID}
 	if len(execIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
 		q += ` AND l.executive_id IN (` + placeholders + `)`
@@ -428,12 +433,13 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	var followUpNote, interest, extID, crmProvider sql.NullString
 	var nextScheduled sql.NullString
 	var hasPending sql.NullBool
+	var scheduledCallID sql.NullInt64
 	err := row.Scan(
 		&cl.ID, &orgIDInt, &cl.FirstName, &cl.LastName, &cl.Phone,
 		&cl.Source, &cl.Status, &followUpNote, &interest, &extID, &crmProvider,
 		&executiveID, &cl.CreatedAt,
 		&cl.TranscriptCount, &cl.RecordingCount, &cl.DialAttempts,
-		&nextScheduled, &hasPending,
+		&nextScheduled, &hasPending, &scheduledCallID,
 	)
 	if err != nil {
 		return nil, err
@@ -453,6 +459,9 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	}
 	if hasPending.Valid {
 		cl.HasPendingScheduledCall = hasPending.Bool
+	}
+	if scheduledCallID.Valid {
+		cl.ScheduledCallID = scheduledCallID.Int64
 	}
 	return cl, nil
 }

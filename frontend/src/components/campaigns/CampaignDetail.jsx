@@ -1726,9 +1726,32 @@ export default function CampaignDetail({
                             fontSize: 11, padding: '4px 10px', borderRadius: 6,
                             background: 'rgba(59,130,246,0.12)', color: '#1e40af',
                             border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
-                            fontFamily: T.font, whiteSpace: 'nowrap'
+                            fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6
                           }}>
                             📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}
+                            {lead.scheduled_call_id > 0 && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    const res = await apiFetch(`${API_URL}/scheduled-calls/${lead.scheduled_call_id}`, { method: 'DELETE' });
+                                    if (!res.ok) throw new Error('Failed to dismiss scheduled call');
+                                    toast('Scheduled call dismissed');
+                                    fetchCampaignLeads(selectedCampaign.id);
+                                    refreshScheduledCalls?.();
+                                  } catch (err) {
+                                    toast(err?.message || 'Dismiss failed');
+                                  }
+                                }}
+                                title="Dismiss scheduled call"
+                                style={{
+                                  background: 'rgba(59,130,246,0.2)', border: 'none', borderRadius: 4,
+                                  color: '#1e40af', cursor: 'pointer', fontSize: 10, lineHeight: 1,
+                                  padding: '2px 4px', fontWeight: 700
+                                }}>
+                                ✕
+                              </button>
+                            )}
                           </span>
                         )}
                       </div>
