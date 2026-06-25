@@ -270,13 +270,15 @@ export default function CampaignDetail({
   }, [campaignLeads, leadSearch, execFilter, scheduleFrom, scheduleTo]);
 
   // Keep the auto-dial queue in sync with the current filtered list.
+  // The queue only moves forward; it never wraps around to leads before the
+  // starting lead so auto-dial stops cleanly at the end of the list.
   useEffect(() => {
     if (!autoDialEnabled) return;
     const ids = filteredLeads.map(l => l.id);
     setAutoDialQueue(prev => {
       if (autoDialActiveId && ids.includes(autoDialActiveId)) {
         const idx = ids.indexOf(autoDialActiveId);
-        return [autoDialActiveId, ...ids.slice(idx + 1), ...ids.slice(0, idx)];
+        return [autoDialActiveId, ...ids.slice(idx + 1)];
       }
       return ids;
     });
@@ -427,7 +429,7 @@ export default function CampaignDetail({
     }
     if (!autoDialEnabledRef.current || !autoDialActiveIdRef.current) return;
     const idx = autoDialQueueRef.current.indexOf(autoDialActiveIdRef.current);
-    const nextIdx = idx >= 0 ? idx + 1 : 0;
+    const nextIdx = idx >= 0 ? idx + 1 : autoDialQueueRef.current.length;
     const nextId = autoDialQueueRef.current[nextIdx];
     if (!nextId) {
       toast('Auto dial complete');
@@ -454,7 +456,7 @@ export default function CampaignDetail({
       const ids = filteredLeads.map(l => l.id);
       const idx = ids.indexOf(lead.id);
       if (idx >= 0) {
-        setAutoDialQueue([lead.id, ...ids.slice(idx + 1), ...ids.slice(0, idx)]);
+        setAutoDialQueue([lead.id, ...ids.slice(idx + 1)]);
       } else {
         setAutoDialQueue([lead.id]);
       }
@@ -1108,11 +1110,11 @@ export default function CampaignDetail({
               } else {
                 setAutoDialActiveId(null);
                 setAutoDialQueue([]);
-                toast('Auto dial disabled');
+                toast('Auto dial stopped');
               }
             }}
-            title="After a browser call ends, automatically dial the next filtered lead">
-            {autoDialEnabled ? '⏸ Auto Dial On' : '▶ Auto Dial'}
+            title={autoDialActiveId ? 'Stop auto-dialing' : 'After a browser call ends, automatically dial the next filtered lead'}>
+            {autoDialActiveId ? '⏹ Stop Auto Dial' : autoDialEnabled ? '⏸ Auto Dial On' : '▶ Auto Dial'}
           </button>
         )}
       </div>
