@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
+import { useCall } from '../contexts/CallContext';
+import { formatDateTime } from '../utils/dateFormat';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
@@ -53,6 +55,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
   const notifRef = useRef(null);
+
+  const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls } = useCall();
+  const notifCount = dueScheduledCalls.length;
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -256,11 +261,18 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
             </svg>
-            <span style={{
-              position: 'absolute', top: -2, right: -2,
-              width: 7, height: 7, borderRadius: '50%',
-              background: '#ef4444', border: '1.5px solid #fff',
-            }} />
+            {notifCount > 0 && (
+              <span style={{
+                position: 'absolute', top: -5, right: -6,
+                minWidth: 16, height: 16, borderRadius: '50%',
+                background: '#ef4444', border: '1.5px solid #fff',
+                color: '#fff', fontSize: 10, fontWeight: 700,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: font, padding: '0 4px', boxSizing: 'border-box'
+              }}>
+                {notifCount > 9 ? '9+' : notifCount}
+              </span>
+            )}
           </div>
           {notifOpen && (
             <div style={{
@@ -275,9 +287,65 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
               }}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: font }}>Notifications</span>
               </div>
-              <div style={{ padding: '20px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13, fontFamily: font }}>
-                No new notifications
-              </div>
+              {notifCount === 0 ? (
+                <div style={{ padding: '20px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13, fontFamily: font }}>
+                  No new notifications
+                </div>
+              ) : (
+                <div style={{ maxHeight: '60vh', overflowY: 'auto', padding: '8px 0' }}>
+                  {dueScheduledCalls.map(call => (
+                    <div key={call.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '10px 16px', borderBottom: '1px solid #f3f4f6'
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#111827', fontFamily: font }}>
+                          {call.first_name || 'Unnamed'}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#6b7280', fontFamily: font, marginTop: 2 }}>
+                          {call.phone || 'No phone'} • {call.executive_name || 'Unassigned'}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#4b5563', fontFamily: font, marginTop: 2 }}>
+                          📅 {call.scheduled_time ? formatDateTime(call.scheduled_time) : ''}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        <button
+                          onClick={() => {
+                            triggerBrowserCall(
+                              { id: call.lead_id, first_name: call.first_name || '', last_name: '', phone: call.phone || '' },
+                              call.campaign_id
+                            );
+                            dismissScheduledCall(call.id);
+                            refreshScheduledCalls?.();
+                            setNotifOpen(false);
+                          }}
+                          disabled={browserCallDialing}
+                          style={{
+                            padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                            background: 'linear-gradient(135deg, #16a34a, #22c55e)', color: '#fff',
+                            fontSize: 11, fontWeight: 600, fontFamily: font,
+                            opacity: browserCallDialing ? 0.6 : 1
+                          }}>
+                          Call Now
+                        </button>
+                        <button
+                          onClick={() => {
+                            dismissScheduledCall(call.id);
+                            refreshScheduledCalls?.();
+                          }}
+                          style={{
+                            padding: '5px 10px', borderRadius: 6, cursor: 'pointer',
+                            background: 'rgba(148,163,184,0.12)', border: '1px solid rgba(148,163,184,0.3)',
+                            color: '#475569', fontSize: 11, fontWeight: 600, fontFamily: font
+                          }}>
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
