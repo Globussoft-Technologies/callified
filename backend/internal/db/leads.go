@@ -216,6 +216,15 @@ func (d *DB) DeleteLead(id, orgID int64) (bool, error) {
 	return n > 0, nil
 }
 
+// UpdateLeadName updates only the first/last name of a lead.
+// Used by CSV import to refresh names for leads matched by phone number.
+func (d *DB) UpdateLeadName(id int64, firstName, lastName string) error {
+	_, err := d.pool.Exec(
+		`UPDATE leads SET first_name=?, last_name=? WHERE id=?`,
+		firstName, lastName, id)
+	return err
+}
+
 // UpdateLeadStatus sets the status column.
 func (d *DB) UpdateLeadStatus(id int64, status string) error {
 	_, err := d.pool.Exec(`UPDATE leads SET status=? WHERE id=?`, status, id)

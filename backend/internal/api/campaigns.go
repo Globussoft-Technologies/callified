@@ -700,15 +700,20 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Split valid rows into genuinely new leads and existing leads that still need to be linked.
+	// Split valid rows into genuinely new leads and existing leads that should be updated.
 	var newRows []db.LeadImportRow
 	var existingToAdd int
+	var updatedNames int
 	for _, r := range rows {
 		if id, ok := existing[r.Phone]; ok {
+			// Phone already exists: update the lead's name from the CSV (phone stays unique).
+			if updErr := s.db.UpdateLeadName(id, r.FirstName, r.LastName); updErr != nil {
+				s.logger.Sugar().Errorw("importCampaignLeadsCSV: UpdateLeadName failed", "lead_id", id, "err", updErr)
+			} else {
+				updatedNames++
+			}
 			if campaignLeadIDs[id] {
-				rejected = append(rejected, ImportRejection{
-					Row: r.Row, FirstName: r.FirstName, Phone: r.Phone, Reason: "already in campaign",
-				})
+				// Already in campaign; name was refreshed above.
 			} else {
 				existingToAdd++
 			}
@@ -774,6 +779,7 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported":          imported,
 		"added_to_campaign": addedToCampaign,
+		"updated":           updatedNames,
 		"rejected":          rejected,
 		"errors":            remainingErrors,
 	})
