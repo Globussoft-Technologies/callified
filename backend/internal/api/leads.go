@@ -137,6 +137,47 @@ func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(leads))
 }
 
+// ── GET /api/leads/search-campaigns?q=... ─────────────────────────────────────
+
+// @Summary     Search leads with campaign info
+// @Description Searches leads by name/phone within the org and returns one row
+// @Description per campaign the lead belongs to. Accepts an optional comma-separated
+// @Description status filter.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       q       query  string  true   "Search query"
+// @Param       status  query  string  false  "Comma-separated statuses"
+// @Success     200     {array}  db.LeadWithCampaign
+// @Failure     400     {object} ErrorResponse
+// @Failure     401     {object} ErrorResponse
+// @Failure     500     {object} ErrorResponse
+// @Router      /api/leads/search-campaigns [get]
+func (s *Server) searchLeadsWithCampaigns(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeError(w, http.StatusBadRequest, "q query param required")
+		return
+	}
+	var statuses []string
+	if s := r.URL.Query().Get("status"); s != "" {
+		for _, p := range strings.Split(s, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				statuses = append(statuses, p)
+			}
+		}
+	}
+	leads, err := s.db.SearchLeadsWithCampaigns(q, ac.OrgID, statuses)
+	if err != nil {
+		s.logger.Sugar().Errorw("searchLeadsWithCampaigns", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(leads))
+}
+
 // ── POST /api/leads ───────────────────────────────────────────────────────────
 
 type leadCreateRequest struct {
@@ -204,15 +245,16 @@ func validateLeadFields(firstName, phone string) map[string]string {
 	return fields
 }
 
-// nameHasLettersOnly accepts names made of ASCII letters plus common
-// punctuation (space, apostrophe, hyphen, dot). Rejects any digit and
-// requires at least one letter — mirrors the frontend rule in CampaignDetail.
+// nameHasLettersOnly accepts names made of ASCII letters, digits, and common
+// punctuation (space, apostrophe, hyphen, dot). Requires at least one letter.
 func nameHasLettersOnly(s string) bool {
 	hasLetter := false
 	for _, r := range s {
 		switch {
 		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z':
 			hasLetter = true
+		case r >= '0' && r <= '9':
+			// allowed
 		case r == ' ', r == '\'', r == '-', r == '.':
 			// allowed
 		default:
@@ -298,6 +340,11 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, req.ExecutiveID, ac.OrgID)
 	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
+			writeFieldError(w, http.StatusConflict, "phone number already exists",
+				map[string]string{"phone": "Phone number already exists for another lead"})
+			return
+		}
 		s.logger.Sugar().Errorw("updateLead", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

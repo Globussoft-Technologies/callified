@@ -90,6 +90,66 @@ func (d *DB) SearchLeads(query string, orgID int64) ([]Lead, error) {
 	return queryLeads(d.pool, q, args...)
 }
 
+// LeadWithCampaign mirrors a lead row plus the campaign it belongs to.
+type LeadWithCampaign struct {
+	ID           int64  `json:"id"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
+	Phone        string `json:"phone"`
+	Source       string `json:"source"`
+	Status       string `json:"status"`
+	ExecutiveID  int64  `json:"executive_id"`
+	CampaignID   int64  `json:"campaignId"`
+	CampaignName string `json:"campaignName"`
+}
+
+// SearchLeadsWithCampaigns searches leads by name/phone in the org and returns
+// one row per campaign membership. If statuses is provided, only leads whose
+// status matches one of the values are returned.
+func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string) ([]LeadWithCampaign, error) {
+	like := "%" + query + "%"
+	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.source,''), COALESCE(l.status,'new'), l.executive_id, c.id, c.name
+		FROM leads l
+		LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
+		LEFT JOIN campaigns c ON c.id = cl.campaign_id
+		WHERE l.org_id = ? AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ?)`
+	args := []any{orgID, like, like, like}
+	if len(statuses) > 0 {
+		placeholders := make([]string, len(statuses))
+		for i := range statuses {
+			placeholders[i] = "?"
+			args = append(args, statuses[i])
+		}
+		q += ` AND l.status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	q += ` ORDER BY l.created_at DESC LIMIT 100`
+
+	rows, err := d.pool.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []LeadWithCampaign
+	for rows.Next() {
+		var r LeadWithCampaign
+		var campaignID sql.NullInt64
+		var campaignName sql.NullString
+		err := rows.Scan(&r.ID, &r.FirstName, &r.LastName, &r.Phone, &r.Source, &r.Status, &r.ExecutiveID, &campaignID, &campaignName)
+		if err != nil {
+			return nil, err
+		}
+		if campaignID.Valid {
+			r.CampaignID = campaignID.Int64
+		}
+		if campaignName.Valid {
+			r.CampaignName = campaignName.String
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // GetLeadByID fetches one lead. Returns nil when not found.
 func (d *DB) GetLeadByID(id int64) (*Lead, error) {
 	row := d.pool.QueryRow(`SELECT `+leadCols+` FROM leads WHERE id = ?`, id)

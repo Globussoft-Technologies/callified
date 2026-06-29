@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/callguard"
+	"github.com/globussoft/callified-backend/internal/db"
 )
 
 // Pronunciation guide values are concatenated into the LLM system prompt and
@@ -332,16 +334,29 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var recURL string
-	if s.s3 != nil {
-		s3Key := "recordings/" + fname
-		if userDir != "" {
-			s3Key = "recordings/" + userDir + "/" + fname
-			if campaignDir != "" {
-				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + fname
-			}
+	objectKey := "recordings/" + fname
+	if userDir != "" {
+		objectKey = "recordings/" + userDir + "/" + fname
+		if campaignDir != "" {
+			objectKey = "recordings/" + userDir + "/" + campaignDir + "/" + fname
 		}
-		publicURL, err := s.s3.UploadPublic(r.Context(), s3Key, data)
+	}
+
+	var recURL string
+	// OCI takes precedence when configured.
+	if s.oci != nil {
+		publicURL, err := s.oci.UploadPublic(r.Context(), objectKey, data)
+		if err != nil {
+			s.logger.Sugar().Warnw("uploadRecording: OCI upload failed", "err", err)
+			// Fall through to S3 or local save.
+		} else {
+			recURL = publicURL
+			s.logger.Sugar().Infow("uploadRecording: uploaded to OCI", "url", publicURL, "lead_id", leadIDStr)
+		}
+	}
+
+	if recURL == "" && s.s3 != nil {
+		publicURL, err := s.s3.UploadPublic(r.Context(), objectKey, data)
 		if err != nil {
 			s.logger.Sugar().Warnw("uploadRecording: S3 upload failed", "err", err)
 			// Fall through to local save.
@@ -732,4 +747,141 @@ func (s *Server) recordingSvcName() string {
 		return "no-dir"
 	}
 	return "wired"
+}
+
+// ── Public trial signup ───────────────────────────────────────────────────────
+//
+// POST /api/public/trial-signup creates a fully functional trial account from
+// the marketing website form. It provisions an org, an admin user, a 7-day
+// admin subscription, and 50 minutes of prepaid calling credit.
+
+const (
+	trialMinutes     = 50
+	trialExpiryDays  = 7
+	trialPasswordLen = 10
+)
+
+var emailRegex = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+func generateRandomPassword(length int) (string, error) {
+	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	for i := range b {
+		b[i] = chars[int(b[i])%len(chars)]
+	}
+	return string(b), nil
+}
+
+func setTrialCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+type trialSignupRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+	Phone     string `json:"phone"`
+}
+
+func (s *Server) trialSignup(w http.ResponseWriter, r *http.Request) {
+	setTrialCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	var req trialSignupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	req.FirstName = strings.TrimSpace(req.FirstName)
+	req.LastName = strings.TrimSpace(req.LastName)
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Phone = strings.TrimSpace(req.Phone)
+
+	if req.FirstName == "" || req.Email == "" || req.Phone == "" {
+		writeError(w, http.StatusBadRequest, "first name, email and phone are required")
+		return
+	}
+	if !emailRegex.MatchString(req.Email) {
+		writeError(w, http.StatusBadRequest, "invalid email address")
+		return
+	}
+
+	// Prevent duplicate signups.
+	existing, err := s.db.GetUserByEmail(req.Email)
+	if err != nil {
+		s.logger.Sugar().Errorw("trialSignup: GetUserByEmail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if existing != nil {
+		writeError(w, http.StatusConflict, "email already registered")
+		return
+	}
+
+	password, err := generateRandomPassword(trialPasswordLen)
+	if err != nil {
+		s.logger.Sugar().Errorw("trialSignup: generate password", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	orgName := fmt.Sprintf("%s's Organization", req.FirstName)
+	orgID, err := s.db.CreateOrganization(orgName)
+	if err != nil {
+		s.logger.Sugar().Errorw("trialSignup: CreateOrganization", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	hash, err := db.HashPassword(password)
+	if err != nil {
+		s.logger.Sugar().Errorw("trialSignup: HashPassword", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	fullName := strings.TrimSpace(req.FirstName + " " + req.LastName)
+	_, err = s.db.CreateUser(req.Email, hash, fullName, "Admin", orgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("trialSignup: CreateUser", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	expiresAt := time.Now().UTC().AddDate(0, 0, trialExpiryDays)
+	if _, err := s.db.CreateAdminSubscription(req.Email, expiresAt, "trial"); err != nil {
+		s.logger.Sugar().Errorw("trialSignup: CreateAdminSubscription", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	deltaPaise := int64(trialMinutes) * int64(db.DefaultRatePerMinPaise)
+	if _, err := s.db.AddCredits(orgID, deltaPaise, "trial_bonus", "trial-signup", fmt.Sprintf("%d free trial minutes", trialMinutes)); err != nil {
+		s.logger.Sugar().Errorw("trialSignup: AddCredits", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Keep a record in the demo-requests table for sales follow-up.
+	if _, err := s.db.CreateDemoRequest(fullName, req.Email, req.Phone, "", "Trial signup"); err != nil {
+		s.logger.Sugar().Warnw("trialSignup: CreateDemoRequest", "err", err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"provisioned": true,
+		"credentials": map[string]any{
+			"username": req.Email,
+			"password": password,
+			"login_url": "https://app.callified.ai",
+		},
+	})
 }

@@ -81,29 +81,37 @@ export default function CrmTab({
   const [modalSearch, setModalSearch] = useState('');
   const [modalLeads, setModalLeads] = useState([]);
   const [modalLeadsLoading, setModalLeadsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
 
-  const closeModal = () => { setActiveModal(null); setModalSearch(''); setModalLeads([]); };
+  const closeModal = () => { setActiveModal(null); setModalSearch(''); setModalLeads([]); setHasSearched(false); };
+
+  const statusParams = {
+    leads: '',
+    called: 'Contacted,Connected,Interested,Not Interested,Qualified,Appointment Set,Converted,Lost,Junk',
+    qualified: 'Qualified,Appointment Set,Converted',
+    appointments: 'Appointment Set,Converted',
+  };
+
+  const fetchModalLeads = async (query) => {
+    const q = query.trim();
+    if (!q || q.length < 2) return;
+    setModalLeadsLoading(true);
+    setHasSearched(true);
+    try {
+      const status = statusParams[activeModal] || '';
+      const url = `${API_URL}/leads/search-campaigns?q=${encodeURIComponent(q)}${status ? `&status=${encodeURIComponent(status)}` : ''}`;
+      const res = await apiFetch(url);
+      const data = await res.json();
+      setModalLeads(Array.isArray(data) ? data : []);
+    } catch { setModalLeads([]); }
+    setModalLeadsLoading(false);
+  };
 
   useEffect(() => {
-     
-    if (!activeModal || activeModal === 'campaigns') { setModalLeads([]); return; }
-    const fetch = async () => {
-      setModalLeadsLoading(true);
-      try {
-        const results = await Promise.all(
-          campaigns.map(async c => {
-            const res = await apiFetch(`${API_URL}/campaigns/${c.id}/leads`);
-            const data = await res.json();
-            const leads = Array.isArray(data) ? data : (data?.leads || []);
-            return leads.map(l => ({ ...l, campaignName: c.name, campaignId: c.id }));
-          })
-        );
-        setModalLeads(results.flat());
-      } catch { setModalLeads([]);  }
-      setModalLeadsLoading(false);
-    };
-    fetch();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!activeModal || activeModal === 'campaigns') {
+      setModalLeads([]);
+      setHasSearched(false);
+    }
   }, [activeModal]);
 
   const callPct = totalLeads > 0 ? Math.round((totalCalled / totalLeads) * 100) : 0;
@@ -231,11 +239,28 @@ export default function CrmTab({
                 <button onClick={closeModal} style={{ background: 'none', border: 'none', fontSize: 20, color: T.muted, cursor: 'pointer', padding: '2px 6px', lineHeight: 1 }}>×</button>
               </div>
               <div style={{ padding: '12px 24px', borderBottom: `1px solid ${T.border}` }}>
-                <input autoFocus type="text"
-                  placeholder={isCampaignModal ? 'Search campaigns...' : 'Search leads...'}
-                  value={modalSearch} onChange={e => setModalSearch(e.target.value)}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '9px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 13, fontFamily: T.font, outline: 'none' }}
-                />
+                {isCampaignModal ? (
+                  <input autoFocus type="text"
+                    placeholder="Search campaigns..."
+                    value={modalSearch} onChange={e => setModalSearch(e.target.value)}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '9px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 13, fontFamily: T.font, outline: 'none' }}
+                  />
+                ) : (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input autoFocus type="text"
+                      placeholder="Type a name or phone and press Enter..."
+                      value={modalSearch}
+                      onChange={e => { setModalSearch(e.target.value); if (!e.target.value.trim()) setHasSearched(false); }}
+                      onKeyDown={e => { if (e.key === 'Enter') fetchModalLeads(modalSearch); }}
+                      style={{ flex: 1, boxSizing: 'border-box', padding: '9px 14px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.bg, color: T.text, fontSize: 13, fontFamily: T.font, outline: 'none' }}
+                    />
+                    <button
+                      onClick={() => fetchModalLeads(modalSearch)}
+                      style={{ padding: '9px 16px', borderRadius: 8, border: 'none', background: T.accent, color: '#fff', fontWeight: 600, cursor: 'pointer', fontSize: 13 }}>
+                      Search
+                    </button>
+                  </div>
+                )}
               </div>
               <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
                 {isCampaignModal ? (
@@ -266,6 +291,8 @@ export default function CrmTab({
                       </div>
                     );
                   })
+                ) : !hasSearched ? (
+                  <div style={{ textAlign: 'center', color: T.muted, padding: '2rem', fontSize: 13 }}>Type at least 2 characters and press Enter to search leads.</div>
                 ) : modalLeadsLoading ? (
                   <div style={{ textAlign: 'center', color: T.muted, padding: '2rem', fontSize: 13 }}>Loading leads...</div>
                 ) : filteredLeads.length === 0 ? (

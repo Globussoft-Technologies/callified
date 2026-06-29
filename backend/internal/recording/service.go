@@ -42,9 +42,9 @@ type SaveRequest struct {
 }
 
 // Service handles post-call analysis.
-// s3Uploader is a minimal interface so the recording package doesn't need to
+// uploader is a minimal interface so the recording package doesn't need to
 // import the storage package directly (avoids any future cycle).
-type s3Uploader interface {
+type uploader interface {
 	UploadPublic(ctx context.Context, key string, data []byte) (string, error)
 }
 
@@ -54,7 +54,8 @@ type Service struct {
 	dispatcher *webhook.Dispatcher
 	cfg        *config.Config
 	log        *zap.Logger
-	s3         s3Uploader // nil when S3 is not configured
+	s3         uploader // nil when S3 is not configured
+	oci        uploader // nil when OCI is not configured; takes precedence over S3
 }
 
 // New creates a Service.
@@ -69,7 +70,11 @@ func New(database *db.DB, llmProvider *llm.Provider, dispatcher *webhook.Dispatc
 }
 
 // SetS3Uploader wires in an S3 client after construction.
-func (s *Service) SetS3Uploader(u s3Uploader) { s.s3 = u }
+func (s *Service) SetS3Uploader(u uploader) { s.s3 = u }
+
+// SetOCIUploader wires in an OCI Object Storage client after construction.
+// When set, OCI takes precedence over S3 for recording uploads.
+func (s *Service) SetOCIUploader(u uploader) { s.oci = u }
 
 // SaveAndAnalyze runs the full post-call pipeline asynchronously.
 // It is fire-and-forget from the WebSocket handler's perspective — call it in a goroutine.
@@ -208,23 +213,37 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte) string {
 	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
 
+	// Build the object key once; OCI and S3 use the same key layout.
+	userDir := ""
+	if userEmail != "" {
+		userDir = sanitizeForPath(userEmail)
+	}
+	campaignDir := ""
+	if campaignName != "" {
+		campaignDir = sanitizeForPath(campaignName)
+	}
+	objectKey := "recordings/" + filename
+	if userDir != "" {
+		objectKey = "recordings/" + userDir + "/" + filename
+		if campaignDir != "" {
+			objectKey = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+		}
+	}
+
+	// OCI takes precedence when configured.
+	if s.oci != nil {
+		publicURL, err := s.oci.UploadPublic(context.Background(), objectKey, data)
+		if err != nil {
+			s.log.Warn("recording: OCI upload failed", zap.Error(err))
+			// Fall through to S3 or local save.
+		} else {
+			s.log.Info("recording: uploaded to OCI", zap.String("url", publicURL))
+			return publicURL
+		}
+	}
+
 	if s.s3 != nil {
-		userDir := ""
-		if userEmail != "" {
-			userDir = sanitizeForPath(userEmail)
-		}
-		campaignDir := ""
-		if campaignName != "" {
-			campaignDir = sanitizeForPath(campaignName)
-		}
-		s3Key := "recordings/" + filename
-		if userDir != "" {
-			s3Key = "recordings/" + userDir + "/" + filename
-			if campaignDir != "" {
-				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
-			}
-		}
-		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
+		publicURL, err := s.s3.UploadPublic(context.Background(), objectKey, data)
 		if err != nil {
 			s.log.Warn("recording: S3 upload failed", zap.Error(err))
 			// Fall through to local save.

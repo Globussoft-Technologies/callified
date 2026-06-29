@@ -22,6 +22,7 @@ export default function CampaignModals({
   // Edit Lead Modal
   editLead, setEditLead,
   editForm, setEditForm, handleSaveEdit,
+  editErrors, setEditErrors,
   // Edit Campaign Modal
   showEditCampaignModal, setShowEditCampaignModal,
   editCampaignForm, setEditCampaignForm,
@@ -542,17 +543,23 @@ export default function CampaignModals({
             <h2 style={{marginTop: 0, marginBottom: '1.5rem'}}>Edit Lead</h2>
             <div className="form-group">
               <label>First Name</label>
-              <input className="form-input" value={editForm.first_name} onChange={e => setEditForm({...editForm, first_name: e.target.value})} />
+              <input className="form-input" value={editForm.first_name}
+                onChange={e => { setEditForm({...editForm, first_name: e.target.value}); setEditErrors(prev => ({...prev, first_name: ''})); }}
+                style={editErrors.first_name ? {borderColor: '#ef4444'} : {}} />
+              {editErrors.first_name && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.first_name}</span>}
             </div>
             <div className="form-group">
               <label>Last Name</label>
-              <input className="form-input" value={editForm.last_name} onChange={e => setEditForm({...editForm, last_name: e.target.value})} />
+              <input className="form-input" value={editForm.last_name}
+                onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
             </div>
             <div className="form-group">
               <label>Phone (10 digits)</label>
               <input className="form-input" value={editForm.phone}
                 inputMode="numeric" maxLength={10} pattern="\d{10}"
-                onChange={e => setEditForm({...editForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10)})} />
+                onChange={e => { setEditForm({...editForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10)}); setEditErrors(prev => ({...prev, phone: ''})); }}
+                style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
+              {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
             </div>
             <div className="form-group">
               <label>Source</label>

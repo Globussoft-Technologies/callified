@@ -217,6 +217,11 @@ export default function CampaignDetail({
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
 
+  // ── Lead-table pagination ───────────────────────────────────────────────────
+  const PAGE_SIZE = 100;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [jumpPage, setJumpPage] = useState('');
+
   // ── Auto-dialer state (Browser Call only) ───────────────────────────────────
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialQueue, setAutoDialQueue] = useState([]);
@@ -237,6 +242,7 @@ export default function CampaignDetail({
     setAutoDialActiveId(null);
     setScheduleFrom('');
     setScheduleTo('');
+    setCurrentPage(1);
   }, [selectedCampaign?.id]);
 
   const filteredLeads = useMemo(() => {
@@ -268,6 +274,32 @@ export default function CampaignDetail({
     }
     return list;
   }, [campaignLeads, leadSearch, execFilter, scheduleFrom, scheduleTo]);
+
+  // Reset to page 1 whenever filters/search change so the user doesn't land on
+  // an empty page after narrowing the list.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [leadSearch, execFilter, scheduleFrom, scheduleTo]);
+
+  const totalPages = Math.ceil(filteredLeads.length / PAGE_SIZE);
+  const safePage = Math.max(1, Math.min(currentPage, totalPages || 1));
+
+  const handleJump = () => {
+    const n = parseInt(jumpPage, 10);
+    if (!isNaN(n)) {
+      setCurrentPage(Math.max(1, Math.min(totalPages, n)));
+    }
+    setJumpPage('');
+  };
+
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const paginatedLeads = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredLeads.slice(start, start + PAGE_SIZE);
+  }, [filteredLeads, safePage, PAGE_SIZE]);
 
   // Keep the auto-dial queue in sync with the current filtered list.
   // The queue only moves forward; it never wraps around to leads before the
@@ -502,7 +534,6 @@ export default function CampaignDetail({
     triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
   };
 
-  const [confirmRemoveLeadId, setConfirmRemoveLeadId] = useState(null);
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }
 
   // Refresh call log after sim web call ends — poll multiple times to catch
@@ -1006,7 +1037,7 @@ export default function CampaignDetail({
               setQaName(v);
               const t = v.trim();
               if (!t) setQaNameErr('');
-              else if (/\d/.test(t) || !/[A-Za-z]/.test(t)) setQaNameErr('Name must contain only letters');
+              else if (!/[A-Za-z]/.test(t)) setQaNameErr('Name must contain at least one letter');
               else setQaNameErr('');
             }}
             style={{ ...inputStyle, width: 130, height: 32, border: qaNameErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
@@ -1034,7 +1065,7 @@ export default function CampaignDetail({
             const phone = qaPhone.trim();
             const nameErr = !name
               ? 'Name is required'
-              : (!/[A-Za-z]/.test(name) || /\d/.test(name) ? 'Name must contain only letters' : '');
+              : (!/[A-Za-z]/.test(name) ? 'Name must contain at least one letter' : '');
             const phoneErr = !phone
               ? 'Phone is required'
               : (!/^\d{10}$/.test(phone) ? 'Indian numbers must be exactly 10 digits' : '');
@@ -1567,7 +1598,7 @@ export default function CampaignDetail({
             <tbody>
               {filteredLeads.length === 0 ? (
                 <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
-              ) : filteredLeads.map(lead => (
+              ) : paginatedLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
                     <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>
@@ -1753,7 +1784,17 @@ export default function CampaignDetail({
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📅 Schedule
                         </button>
-                        <button onClick={() => handleRemoveLead(lead.id)}
+                        <button onClick={async () => {
+                            const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
+                            const ok = await confirm({
+                              title: 'Remove Lead',
+                              message: `Remove "${fullName}" from this campaign? This action cannot be undone.`,
+                              danger: true,
+                              okText: 'Remove',
+                              cancelText: 'Cancel',
+                            });
+                            if (ok) handleRemoveLead(lead.id);
+                          }}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
                             background: '#fee2e2', border: '1px solid #fca5a5',
                             color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
@@ -1875,6 +1916,66 @@ export default function CampaignDetail({
               ))}
             </tbody>
           </table>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: `1px solid ${T.border}`, fontFamily: T.font, fontSize: '0.85rem', color: T.sub }}>
+              <span>Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredLeads.length)} of {filteredLeads.length}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  style={{ minWidth: 32, height: 32, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff', color: T.sub, cursor: safePage === 1 ? 'not-allowed' : 'pointer', opacity: safePage === 1 ? 0.5 : 1, fontFamily: T.font, fontSize: '0.8rem', fontWeight: 600 }}>
+                  Prev
+                </button>
+                {(() => {
+                  const pages = [];
+                  if (totalPages <= 7) {
+                    for (let i = 1; i <= totalPages; i++) pages.push(i);
+                  } else {
+                    pages.push(1);
+                    if (safePage > 3) pages.push('...');
+                    for (let i = Math.max(2, safePage - 1); i <= Math.min(totalPages - 1, safePage + 1); i++) pages.push(i);
+                    if (safePage < totalPages - 2) pages.push('...');
+                    pages.push(totalPages);
+                  }
+                  return pages.map((p, idx) =>
+                    p === '...' ? (
+                      <span key={`gap-${idx}`} style={{ padding: '0 4px', color: T.muted }}>...</span>
+                    ) : (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        style={{ minWidth: 32, height: 32, padding: '0 8px', border: `1px solid ${p === safePage ? T.accent : T.border}`, borderRadius: 6, background: p === safePage ? T.accent : '#fff', color: p === safePage ? '#fff' : T.sub, cursor: 'pointer', fontFamily: T.font, fontSize: '0.8rem', fontWeight: 600 }}>
+                        {p}
+                      </button>
+                    )
+                  );
+                })()}
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  style={{ minWidth: 32, height: 32, padding: '0 10px', border: `1px solid ${T.border}`, borderRadius: 6, background: '#fff', color: T.sub, cursor: safePage === totalPages ? 'not-allowed' : 'pointer', opacity: safePage === totalPages ? 0.5 : 1, fontFamily: T.font, fontSize: '0.8rem', fontWeight: 600 }}>
+                  Next
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 10, paddingLeft: 10, borderLeft: `1px solid ${T.border}` }}>
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={jumpPage}
+                    placeholder="Page #"
+                    onChange={e => setJumpPage(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleJump(); }}
+                    style={{ width: 70, height: 30, padding: '0 8px', border: `1px solid ${T.border}`, borderRadius: 6, fontFamily: T.font, fontSize: '0.8rem' }}
+                  />
+                  <button
+                    onClick={handleJump}
+                    style={{ height: 32, padding: '0 12px', border: `1px solid ${T.accent}`, borderRadius: 6, background: T.accent, color: '#fff', cursor: 'pointer', fontFamily: T.font, fontSize: '0.8rem', fontWeight: 600 }}>
+                    Go
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

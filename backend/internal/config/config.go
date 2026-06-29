@@ -55,6 +55,13 @@ type Config struct {
 	AWSAccessKeyID    string `env:"AWS_ACCESS_KEY_ID"`
 	AWSSecretAccessKey string `env:"AWS_SECRET_ACCESS_KEY"`
 
+	// OCI Object Storage for recordings (optional — if set, takes precedence over S3)
+	OCIRegion          string `env:"OCI_REGION"`
+	OCINamespace       string `env:"OCI_NAMESPACE"`
+	OCIBucket          string `env:"OCI_BUCKET"`
+	OCIAccessKeyID     string `env:"OCI_ACCESS_KEY_ID"`
+	OCISecretAccessKey string `env:"OCI_SECRET_ACCESS_KEY"`
+
 	// Knowledge-base uploads (PDFs/TXT/DOCX). Files are kept on disk so
 	// users can preview/download what was indexed; the FAISS embeddings
 	// live separately in the RAG service. Default sits under recordings/

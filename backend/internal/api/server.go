@@ -42,6 +42,7 @@ type Server struct {
 	wsHandler    activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
 	recordingSvc callAnalyzer     // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
 	s3           *storage.S3Client // nil when S3 is not configured
+	oci          *storage.OCIClient // nil when OCI is not configured
 }
 
 // callAnalyzer is the slice of recording.Service the API needs for on-demand
@@ -88,7 +89,10 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 		llmProvider: llmProvider,
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
-	if cfg.S3Bucket != "" && cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
+	if cfg.OCINamespace != "" && cfg.OCIBucket != "" && cfg.OCIAccessKeyID != "" && cfg.OCISecretAccessKey != "" {
+		srv.oci = storage.NewOCIClient(cfg.OCIRegion, cfg.OCINamespace, cfg.OCIBucket, cfg.OCIAccessKeyID, cfg.OCISecretAccessKey)
+		logger.Sugar().Infow("OCI storage enabled", "bucket", cfg.OCIBucket, "namespace", cfg.OCINamespace, "region", cfg.OCIRegion)
+	} else if cfg.S3Bucket != "" && cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
 		srv.s3 = storage.NewS3Client(cfg.S3Region, cfg.S3Bucket, cfg.AWSAccessKeyID, cfg.AWSSecretAccessKey)
 		logger.Sugar().Infow("S3 storage enabled", "bucket", cfg.S3Bucket, "region", cfg.S3Region)
 	}
@@ -103,6 +107,10 @@ func (s *Server) SetWAAgent(agent *wa.Agent) {
 // S3 returns the S3 client (nil when not configured). Used by main.go to wire
 // the same client into the recording service.
 func (s *Server) S3() *storage.S3Client { return s.s3 }
+
+// OCI returns the OCI Object Storage client (nil when not configured). Used by
+// main.go to wire the same client into the recording service.
+func (s *Server) OCI() *storage.OCIClient { return s.oci }
 
 // SetRecordingService wires the post-call analyzer after construction.
 // Used by the on-demand "regenerate conclusion" endpoint. Nil-safe — the
@@ -179,6 +187,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/leads/export", auth(s.exportLeads))
 	mux.HandleFunc("GET /api/leads/sample-csv", auth(s.sampleCSV))
 	mux.HandleFunc("GET /api/leads/search", auth(s.searchLeads))
+	mux.HandleFunc("GET /api/leads/search-campaigns", auth(s.searchLeadsWithCampaigns))
 	mux.HandleFunc("POST /api/leads/import-csv", auth(s.importLeadsCSV))
 	mux.HandleFunc("GET /api/leads", auth(s.listLeads))
 	mux.HandleFunc("POST /api/leads", auth(s.createLead))
@@ -365,6 +374,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Demo requests ─────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/demo-requests", auth(s.listDemoRequests))
 	mux.HandleFunc("POST /api/demo-requests", s.createDemoRequest) // no auth — public form
+
+	// ── Public trial signup (marketing website) ───────────────────────────────
+	mux.HandleFunc("POST /api/public/trial-signup", s.trialSignup)
+	mux.HandleFunc("OPTIONS /api/public/trial-signup", s.trialSignup)
 
 	// ── WhatsApp legacy logs ──────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/whatsapp", adminAuth(s.listWhatsappLogs))

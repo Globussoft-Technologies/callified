@@ -39,40 +39,6 @@ export default function CampaignsPage({
     } catch { setTranscripts([]);  }
   };
 
-  const handleNote = (lead) => {
-    setNoteLead(lead);
-    setNoteText(lead.follow_up_note || '');
-    setNoteError('');
-  };
-
-  const handleSaveNote = async () => {
-    if (!noteLead) return;
-    const trimmed = noteText.trim();
-    if (!trimmed) { toast('Note cannot be empty'); return; }
-    setNoteSaving(true);
-    try {
-      const res = await apiFetch(`${API_URL}/leads/${noteLead.id}/notes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: trimmed })
-      });
-      if (!res.ok) {
-        let msg = `Failed to save note (HTTP ${res.status})`;
-        try { const data = await res.json(); if (data?.error || data?.detail) msg = data.error || data.detail; } catch { /* ignore */ }
-        toast(msg);
-        return;
-      }
-      setNoteLead(null);
-      setNoteText('');
-      fetchLeads();
-    } catch(e) {
-      toast('Failed to save note: ' + (e?.message || 'network error'));
-    } finally {
-      setNoteSaving(false);
-    }
-    setNoteSaving(false);
-  };
-
   return (
     <>
       <CampaignsTab

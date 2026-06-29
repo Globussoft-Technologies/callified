@@ -54,13 +54,13 @@
         <p style="color:#22c55e;font-weight:600;margin-bottom:12px;">Your account is ready!</p>
         <div style="background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:16px;text-align:left;margin-bottom:16px;">
           <p style="margin:0 0 8px;color:#aaa;font-size:14px;">Login URL</p>
-          <p style="margin:0 0 12px;"><a href="https://test.callified.ai" target="_blank" style="color:#818cf8;">https://test.callified.ai</a></p>
+          <p style="margin:0 0 12px;"><a href="https://app.callified.ai" target="_blank" style="color:#818cf8;">https://app.callified.ai</a></p>
           <p style="margin:0 0 8px;color:#aaa;font-size:14px;">Username</p>
           <p style="margin:0 0 12px;color:#fff;" id="credUsername"></p>
           <p style="margin:0 0 8px;color:#aaa;font-size:14px;">Password</p>
           <p style="margin:0;color:#fff;font-family:monospace;font-size:16px;letter-spacing:1px;" id="credPassword"></p>
         </div>
-        <p style="color:#f59e0b;font-size:14px;">Your 7-day free trial has started. Save your password — you won't see it again.</p>
+        <p style="color:#f59e0b;font-size:14px;">Your 50 free minutes are active for 7 days. Save your password — you won't see it again.</p>
       </div>
       <a href="index.html" class="form-back">&larr; Back to Callified AI</a>
     </div>
@@ -68,7 +68,7 @@
 </section>
 
 <script>
-const API_BASE = 'https://test.callified.ai';
+const API_BASE = 'https://app.callified.ai';
 async function submitForm(e) {
   e.preventDefault();
   const btn = document.getElementById('submitBtn');
@@ -80,15 +80,17 @@ async function submitForm(e) {
     last_name: form.last_name.value.trim(),
     phone: form.phone.value.trim(),
     email: form.email.value.trim(),
-    request_type: 'trial',
   };
   try {
-    const res = await fetch(API_BASE + '/api/public/demo-request', {
+    const res = await fetch(API_BASE + '/api/public/trial-signup', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(data),
     });
-    if (!res.ok) throw new Error('Failed');
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Failed');
+    }
     const result = await res.json();
     form.style.display = 'none';
     document.getElementById('formSuccess').style.display = '';
@@ -102,7 +104,7 @@ async function submitForm(e) {
   } catch (err) {
     btn.disabled = false;
     btn.textContent = 'Start Free Trial';
-    alert('Something went wrong. Please try again or email us at hello@callified.ai');
+    alert(err.message || 'Something went wrong. Please try again or email us at hello@callified.ai');
   }
 }
 </script>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { useToast } from '../../contexts/UIContext';
+import { useToast, useConfirm } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
@@ -16,6 +16,7 @@ export default function CampaignsTab({
 }) {
   const { fetchSseTicket } = useAuth();
   const toast = useToast();
+  const confirm = useConfirm();
   const location = useLocation();
   const navigate = useNavigate();
   const { campaignId: routeCampaignId } = useParams();
@@ -29,6 +30,7 @@ export default function CampaignsTab({
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '', executive_id: 0 });
+  const [editErrors, setEditErrors] = useState({});
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
@@ -40,9 +42,6 @@ export default function CampaignsTab({
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
   const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '', executive_ids: [] });
-  // ID of the campaign whose row is currently showing the inline "Delete? Yes No"
-  // prompt. Null when no row is in confirm mode.
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
@@ -354,12 +353,16 @@ export default function CampaignsTab({
     }
   };
 
-  const confirmDeleteCampaign = async (campaignId) => {
+  const confirmDeleteCampaign = async (campaignId, campaignName) => {
     if (deleting) return;
+    const ok = await confirm({
+      message: `Delete "${campaignName || 'this campaign'}"? This will permanently remove the campaign and its associations. This action cannot be undone.`,
+      danger: true,
+    });
+    if (!ok) return;
     setDeleting(true);
     try {
       await apiFetch(`${API_URL}/campaigns/${campaignId}`, { method: 'DELETE' });
-      setDeleteConfirmId(null);
       fetchCampaigns();
     } catch (e) {
       console.error(e);
@@ -451,21 +454,66 @@ export default function CampaignsTab({
   const handleEditLead = (lead) => {
     setEditLead(lead);
     setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', source: lead.source || '', executive_id: lead.executive_id || 0 });
+    setEditErrors({});
   };
 
   const handleSaveEdit = async () => {
     if (!editLead) return;
+    const payload = {
+      first_name: editForm.first_name,
+      last_name: editForm.last_name,
+      phone: editForm.phone,
+      source: editForm.source,
+      interest: '',
+      executive_id: editForm.executive_id ? parseInt(editForm.executive_id, 10) : 0
+    };
     try {
-      await apiFetch(`${API_URL}/leads/${editLead.id}`, {
+      const res = await apiFetch(`${API_URL}/leads/${editLead.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...editForm,
-          executive_id: editForm.executive_id ? parseInt(editForm.executive_id, 10) : 0
-        })
+        body: JSON.stringify(payload)
       });
-      setEditLead(null);
-      fetchCampaignLeads(selectedCampaign.id);
-    } catch { toast('Save failed');  }
+      if (res.ok) {
+        setEditLead(null);
+        fetchCampaignLeads(selectedCampaign.id);
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const errMsg = data.error || data.message || '';
+      if (data.fields) {
+        setEditErrors(data.fields);
+        toast(errMsg || 'validation failed');
+        return;
+      }
+      const isDuplicate = res.status === 409 || errMsg.includes('already exists') || (data.fields && data.fields.phone);
+      if (isDuplicate) {
+        const searchRes = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(editForm.phone)}`);
+        const found = await searchRes.json();
+        const existing = Array.isArray(found) ? found.find(l => l.phone === editForm.phone) : null;
+        if (!existing) {
+          toast('A lead with this phone already exists but could not be located.');
+          return;
+        }
+        if (existing.id === editLead.id) {
+          setEditLead(null);
+          fetchCampaignLeads(selectedCampaign.id);
+          return;
+        }
+        await apiFetch(`${API_URL}/leads/${existing.id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_ids: [existing.id] })
+        });
+        await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/leads/${editLead.id}`, { method: 'DELETE' });
+        setEditLead(null);
+        fetchCampaignLeads(selectedCampaign.id);
+        toast('Merged with existing lead.');
+        return;
+      }
+      toast(errMsg || 'Save failed');
+    } catch { toast('Save failed'); }
   };
 
   const handleLeadStatusChange = async (leadId, newStatus) => {
@@ -580,7 +628,6 @@ export default function CampaignsTab({
           handleEditLead={handleEditLead}
           handleRemoveLead={handleRemoveLead}
           handleViewTranscripts={handleViewTranscripts}
-          handleNote={handleNote}
           onCampaignDial={onCampaignDial}
           onCampaignWebCall={onCampaignWebCall}
           dialingId={dialingId}
@@ -626,6 +673,8 @@ export default function CampaignsTab({
           editForm={editForm}
           setEditForm={setEditForm}
           handleSaveEdit={handleSaveEdit}
+          editErrors={editErrors}
+          setEditErrors={setEditErrors}
           showEditCampaignModal={showEditCampaignModal}
           setShowEditCampaignModal={setShowEditCampaignModal}
           editCampaignForm={editCampaignForm}
@@ -690,32 +739,15 @@ export default function CampaignsTab({
                     {campaign.name}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    {deleteConfirmId === campaign.id ? (
-                      <>
-                        <span style={{ color: '#ef4444', fontSize: 12, alignSelf: 'center', fontWeight: 600 }}>Delete?</span>
-                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id); }}
-                          disabled={deleting}
-                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
-                          {deleting ? '…' : 'Yes'}
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(null); }}
-                          disabled={deleting}
-                          style={smallBtn('#fff', '#6b7280', '#e5e7eb')}>
-                          No
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                          style={smallBtn('#fff', '#374151', '#e5e7eb')}>
-                          Edit
-                        </button>
-                        <button onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(campaign.id); }}
-                          style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
-                          Delete
-                        </button>
-                      </>
-                    )}
+                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                      style={smallBtn('#fff', '#374151', '#e5e7eb')}>
+                      Edit
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
+                      disabled={deleting}
+                      style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
+                      {deleting ? '…' : 'Delete'}
+                    </button>
                   </div>
                 </div>
 
