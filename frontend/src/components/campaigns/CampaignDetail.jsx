@@ -23,6 +23,18 @@ const card = {
   borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
 };
 
+const btnPrimary = {
+  background: T.accent, border: 'none', color: '#fff',
+  borderRadius: 8, padding: '8px 18px', cursor: 'pointer',
+  fontSize: 13, fontWeight: 600, fontFamily: T.font,
+};
+
+const btnGhost = {
+  background: '#fff', border: `1px solid ${T.border}`, color: T.sub,
+  borderRadius: 8, padding: '6px 14px', cursor: 'pointer',
+  fontSize: 12, fontWeight: 600, fontFamily: T.font,
+};
+
 function withDate(label, tsMs) {
   label = String(label || '');
   const d = new Date(tsMs || Date.now());
@@ -720,13 +732,18 @@ export default function CampaignDetail({
       return;
     }
 
-    // Advance to the next lead.
-    setAutoDialActiveId(dispositionNextLead.id);
-    setTimeout(() => triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, browserAccountId), 400);
+    // Advance to the next lead only after the browser can place the call.
+    setTimeout(async () => {
+      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+      if (started) {
+        setAutoDialActiveId(dispositionNextLead.id);
+      }
+    }, 400);
   }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, browserAccountId, toast]);
 
-  const startBrowserCallWithAutoDial = (lead) => {
-    if (autoDialEnabled) {
+  const startBrowserCallWithAutoDial = async (lead) => {
+    const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
+    if (started && autoDialEnabled) {
       setAutoDialActiveId(lead.id);
       const ids = paginatedLeads.map(l => l.id);
       const idx = ids.indexOf(lead.id);
@@ -736,7 +753,6 @@ export default function CampaignDetail({
         setAutoDialQueue([lead.id]);
       }
     }
-    triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
   };
 
   const [confirmDialAction, setConfirmDialAction] = useState(null); // { type: 'new'|'all'|'redial', label, count }

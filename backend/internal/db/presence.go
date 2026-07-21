@@ -128,12 +128,12 @@ func (d *DB) MarkAgentsOffline(cutoff time.Time) error {
 // GetAgentPresence returns a single user's presence row, or nil if not present.
 func (d *DB) GetAgentPresence(userID int64) (*AgentPresenceRow, error) {
 	row := d.pool.QueryRow(`
-		SELECT u.id, u.email, COALESCE(u.full_name,''), COALESCE(u.role,'Agent'), u.manager_id,
+			SELECT u.id, u.email, COALESCE(u.full_name,''), COALESCE(u.role,'Agent'), u.manager_id,
 			COALESCE(p.status,'offline'),
-			DATE_FORMAT(p.last_seen_at,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.on_call_since,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.break_since,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.idle_since,'%Y-%m-%dT%H:%i:%sZ'),
+			COALESCE(DATE_FORMAT(p.last_seen_at,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.on_call_since,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.break_since,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.idle_since,'%Y-%m-%dT%H:%i:%sZ'),''),
 			COALESCE(p.total_talk_time_s,0),
 			COALESCE(p.total_idle_time_s,0)
 		FROM users u
@@ -159,12 +159,12 @@ func (d *DB) GetAgentPresence(userID int64) (*AgentPresenceRow, error) {
 // GetAgentPresenceByOrg returns live presence rows for every user in the org.
 func (d *DB) GetAgentPresenceByOrg(orgID int64) ([]AgentPresenceRow, error) {
 	rows, err := d.pool.Query(`
-		SELECT u.id, u.email, COALESCE(u.full_name,''), COALESCE(u.role,'Agent'), u.manager_id,
+			SELECT u.id, u.email, COALESCE(u.full_name,''), COALESCE(u.role,'Agent'), u.manager_id,
 			COALESCE(p.status,'offline'),
-			DATE_FORMAT(p.last_seen_at,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.on_call_since,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.break_since,'%Y-%m-%dT%H:%i:%sZ'),
-			DATE_FORMAT(p.idle_since,'%Y-%m-%dT%H:%i:%sZ'),
+			COALESCE(DATE_FORMAT(p.last_seen_at,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.on_call_since,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.break_since,'%Y-%m-%dT%H:%i:%sZ'),''),
+			COALESCE(DATE_FORMAT(p.idle_since,'%Y-%m-%dT%H:%i:%sZ'),''),
 			COALESCE(p.total_talk_time_s,0),
 			COALESCE(p.total_idle_time_s,0)
 		FROM users u

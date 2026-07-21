@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/go-sql-driver/mysql"
 )
 
 // stripPhoneDigits removes all non-digit characters from a phone number.
@@ -309,7 +311,7 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 	phone := normalizePhone(req.Phone)
 	id, err := s.db.CreateLead(req.FirstName, req.LastName, phone, req.Source, req.Interest, req.Company, req.ExecutiveID, ac.OrgID)
 	if err != nil {
-		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
+		if isDuplicateEntryError(err) {
 			writeFieldError(w, http.StatusConflict, "phone number already exists",
 				map[string]string{"phone": "Phone number already exists"})
 			return
@@ -328,8 +330,8 @@ func validateLeadFields(firstName, phone string) map[string]string {
 	name := strings.TrimSpace(firstName)
 	if name == "" {
 		fields["first_name"] = "Name is required"
-	} else if !nameHasLettersOnly(name) {
-		fields["first_name"] = "Name must contain only letters"
+	} else if !nameHasAllowedChars(name) {
+		fields["first_name"] = "Name must contain at least one letter"
 	}
 	if strings.TrimSpace(phone) == "" {
 		fields["phone"] = "Phone is required"
@@ -339,9 +341,9 @@ func validateLeadFields(firstName, phone string) map[string]string {
 	return fields
 }
 
-// nameHasLettersOnly accepts names made of ASCII letters, digits, and common
+// nameHasAllowedChars accepts names made of ASCII letters, digits, and common
 // punctuation (space, apostrophe, hyphen, dot). Requires at least one letter.
-func nameHasLettersOnly(s string) bool {
+func nameHasAllowedChars(s string) bool {
 	hasLetter := false
 	for _, r := range s {
 		switch {
@@ -356,6 +358,18 @@ func nameHasLettersOnly(s string) bool {
 		}
 	}
 	return hasLetter
+}
+
+func isDuplicateEntryError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate") ||
+		strings.Contains(msg, "unique constraint") ||
+		strings.Contains(msg, "constraint failed") ||
+		strings.Contains(msg, "1062")
 }
 
 // ── GET /api/leads/{id} ───────────────────────────────────────────────────────
@@ -1247,8 +1261,8 @@ Return ONLY the note text, no labels or headers.`, name, lead.Phone, lead.Intere
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"note":              strings.TrimSpace(note),
-		"recording_url":     transcriptRecordingURL,
+		"note":               strings.TrimSpace(note),
+		"recording_url":      transcriptRecordingURL,
 		"recording_filename": recordingFilename,
 	})
 }

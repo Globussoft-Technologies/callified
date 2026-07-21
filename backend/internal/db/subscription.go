@@ -153,8 +153,41 @@ func (d *DB) ValidateAdminSubscription(email string) (*AdminSubscriptionStatus, 
 	if err != nil {
 		return nil, err
 	}
-	if sub == nil {
+	return statusFromAdminSubscription(sub), nil
+}
+
+// ValidateOrgAdminSubscription checks for an active admin subscription owned by
+// any Admin user in the same organization.
+func (d *DB) ValidateOrgAdminSubscription(orgID int64) (*AdminSubscriptionStatus, error) {
+	if orgID <= 0 {
 		return &AdminSubscriptionStatus{Found: false}, nil
+	}
+	row := d.pool.QueryRow(`
+		SELECT s.expires_at, COALESCE(s.plan,'standard'), s.is_active
+		FROM users u
+		JOIN admin_subscriptions s ON LOWER(s.admin_email) = LOWER(u.email)
+		WHERE u.org_id = ? AND u.role = 'Admin'
+		ORDER BY (s.is_active = 1 AND s.expires_at > UTC_TIMESTAMP()) DESC, s.expires_at DESC
+		LIMIT 1
+	`, orgID)
+	sub := &AdminSubscription{}
+	var expiresAt sql.NullTime
+	err := row.Scan(&expiresAt, &sub.Plan, &sub.IsActive)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &AdminSubscriptionStatus{Found: false}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if expiresAt.Valid {
+		sub.ExpiresAt = expiresAt.Time
+	}
+	return statusFromAdminSubscription(sub), nil
+}
+
+func statusFromAdminSubscription(sub *AdminSubscription) *AdminSubscriptionStatus {
+	if sub == nil {
+		return &AdminSubscriptionStatus{Found: false}
 	}
 	now := time.Now().UTC()
 	expired := sub.ExpiresAt.Before(now) || sub.ExpiresAt.Equal(now)
@@ -164,5 +197,5 @@ func (d *DB) ValidateAdminSubscription(email string) (*AdminSubscriptionStatus, 
 		Expired:   expired,
 		ExpiresAt: sub.ExpiresAt,
 		Plan:      sub.Plan,
-	}, nil
+	}
 }

@@ -163,11 +163,19 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 	// Block login for non-super-admins if subscription is missing/expired/inactive.
 	if !s.isSuperAdmin(user.Email) {
-		if subErr, err := s.checkSubscription(user.Email); err != nil {
+		var subErr *subscriptionError
+		var err error
+		if user.OrgID > 0 {
+			subErr, err = s.checkOrgSubscription(user.OrgID)
+		} else {
+			subErr, err = s.checkSubscription(user.Email)
+		}
+		if err != nil {
 			s.logger.Sugar().Errorw("login: checkSubscription", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
-		} else if subErr != nil {
+		}
+		if subErr != nil {
 			s.writeSubscriptionError(w, subErr)
 			return
 		}
@@ -232,20 +240,20 @@ func userResponse(s *Server, user *db.User) map[string]any {
 		}
 	}
 	return map[string]any{
-		"id":              user.ID,
-		"email":           user.Email,
-		"full_name":       user.FullName,
-		"role":            user.Role,
-		"org_id":          user.OrgID,
-		"org_name":        orgName,
-		"is_super_admin":  s.isSuperAdmin(user.Email),
+		"id":               user.ID,
+		"email":            user.Email,
+		"full_name":        user.FullName,
+		"role":             user.Role,
+		"org_id":           user.OrgID,
+		"org_name":         orgName,
+		"is_super_admin":   s.isSuperAdmin(user.Email),
 		"hide_ai_features": s.db.ShouldHideAiFeatures(user.Email),
 	}
 }
 
 // ── JWT helpers ───────────────────────────────────────────────────────────────
 
-const tokenTTL = 30 * 24 * time.Hour // 30 days — matches Python ACCESS_TOKEN_EXPIRE_MINUTES
+const tokenTTL = 30 * 24 * time.Hour  // 30 days — matches Python ACCESS_TOKEN_EXPIRE_MINUTES
 const sseTicketTTL = 60 * time.Second // short window — minted just before EventSource connect
 
 func (s *Server) mintToken(email string, orgID int64, role string) (string, error) {

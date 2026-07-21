@@ -2,23 +2,14 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"unicode"
-	"time"
 
 	"github.com/globussoft/callified-backend/internal/db"
 )
-
-// inviteTokenTTL is how long a team invite link stays valid. 72h gives
-// real humans a couple of business days to act, while still expiring
-// abandoned links quickly enough that they don't accumulate as latent
-// account-creation primitives.
-const inviteTokenTTL = 72 * time.Hour
 
 // ── GET /api/dashboard/summary ────────────────────────────────────────────────
 // Open to any authenticated role (Admin / Agent / Viewer) so the CRM
@@ -76,9 +67,7 @@ func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
 
 // ── POST /api/team/invite ─────────────────────────────────────────────────────
 //
-// Issue #55 (security): the inviter no longer sets the invitee's password.
-// We persist a short-lived invite token, email the invitee a one-time link,
-// and the invitee chooses their own password via the public accept endpoint.
+// Creates a team member directly with an admin-supplied password.
 
 // @Summary     Invite team member
 // @Description Sends an email invite to a new team member. Requires Admin role.
@@ -100,6 +89,7 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		FullName string `json:"full_name"`
 		Role     string `json:"role"`
+		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -114,6 +104,15 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 	if body.Role == "" {
 		body.Role = "Agent"
 	}
+	if body.Password == "" {
+		writeFieldError(w, http.StatusBadRequest, "Password is required.", map[string]string{"password": "Password is required"})
+		return
+	}
+	role := normalizeRole(body.Role)
+	if role == "" {
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		return
+	}
 
 	// Refuse if a user with that email already exists in this (or any) org —
 	// the unique constraint on users.email would also catch it at accept time,
@@ -127,74 +126,29 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Refuse a duplicate pending invite — repeated form submits would otherwise
-	// queue multiple live tokens for the same address.
-	if pending, err := s.db.HasPendingInviteForEmail(ac.OrgID, body.Email); err != nil {
-		s.logger.Sugar().Errorw("inviteTeamMember: pending lookup", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	} else if pending {
-		writeError(w, http.StatusConflict, "An invite for this email is already pending.")
-		return
-	}
-
-	// Resolve inviter so the email can sign off with a real name.
-	caller, err := s.db.GetUserByEmail(ac.Email)
-	if err != nil || caller == nil {
-		writeError(w, http.StatusInternalServerError, "could not resolve caller")
-		return
-	}
-
-	rb := make([]byte, 32)
-	if _, err := rand.Read(rb); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	token := base64.RawURLEncoding.EncodeToString(rb)
-	expiresAt := time.Now().Add(inviteTokenTTL)
-
-	id, err := s.db.CreateTeamInvite(ac.OrgID, body.Email, body.FullName, body.Role, token, caller.ID, expiresAt)
+	hash, err := db.HashPassword(body.Password)
 	if err != nil {
-		s.logger.Sugar().Errorw("inviteTeamMember: create invite", "err", err)
-		writeError(w, http.StatusInternalServerError, "Could not create invite. Please try again.")
+		s.logger.Sugar().Errorw("inviteTeamMember: hash", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	// Best-effort email — if SMTP is misconfigured we still want the invite
-	// row to exist so the admin can copy the link from logs / a future
-	// resend endpoint. Never leak the token in the API response itself —
-	// that would defeat the email-only delivery model.
-	link := fmt.Sprintf("%s/accept-invite?token=%s", s.cfg.AppURL, token)
-	if s.emailSvc != nil {
-		orgName, _ := s.db.GetOrgName(ac.OrgID)
-		if orgName == "" {
-			orgName = "Callified"
+	id, err := s.db.CreateUserWithRole(body.Email, hash, body.FullName, role, ac.OrgID)
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "1062") || strings.Contains(errMsg, "Duplicate") {
+			writeError(w, http.StatusConflict, "A user with this email already exists.")
+			return
 		}
-		inviterName := caller.FullName
-		if inviterName == "" {
-			inviterName = caller.Email
-		}
-		// When SMTP isn't actually configured, emailSvc.Send short-circuits to
-		// nil — so the admin would never see the link. Log it here at INFO so
-		// it shows up in `docker logs callified-go-audio` for local dev.
-		// Production envs (SMTP_USER + SMTP_PASSWORD set) keep the link out
-		// of stdout — the invitee gets it via email, never via logs.
-		if s.cfg.SMTPUser == "" || s.cfg.SMTPPassword == "" {
-			s.logger.Sugar().Infow("[INVITE] SMTP not configured — copy this link manually",
-				"email", body.Email, "invite_link", link)
-		}
-		if err := s.emailSvc.SendTeamInvite(body.Email, body.FullName, inviterName, orgName, link, int(inviteTokenTTL/time.Hour)); err != nil {
-			s.logger.Sugar().Warnw("inviteTeamMember: email send failed", "err", err, "email", body.Email)
-		}
-	} else {
-		s.logger.Sugar().Warnw("inviteTeamMember: email service unavailable — invite created but link not delivered",
-			"email", body.Email)
+		s.logger.Sugar().Errorw("inviteTeamMember: create user", "err", err)
+		writeError(w, http.StatusInternalServerError, "Could not create user. Please try again.")
+		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":      id,
 		"email":   body.Email,
-		"message": fmt.Sprintf("Invite email sent to %s.", body.Email),
+		"message": fmt.Sprintf("Team member %s created.", body.Email),
 	})
 }
 

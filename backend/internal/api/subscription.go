@@ -222,6 +222,18 @@ func (s *Server) checkSubscription(email string) (*subscriptionError, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.subscriptionErrorFromStatus(status), nil
+}
+
+func (s *Server) checkOrgSubscription(orgID int64) (*subscriptionError, error) {
+	status, err := s.db.ValidateOrgAdminSubscription(orgID)
+	if err != nil {
+		return nil, err
+	}
+	return s.subscriptionErrorFromStatus(status), nil
+}
+
+func (s *Server) subscriptionErrorFromStatus(status *db.AdminSubscriptionStatus) *subscriptionError {
 	support := s.cfg.SupportEmail
 	if support == "" {
 		support = "support@callified.ai"
@@ -231,7 +243,7 @@ func (s *Server) checkSubscription(email string) (*subscriptionError, error) {
 			Code:         "SUBSCRIPTION_NOT_FOUND",
 			Message:      "No active subscription found for this account. Please contact support to activate your subscription.",
 			SupportEmail: support,
-		}, nil
+		}
 	}
 	if status.Expired {
 		return &subscriptionError{
@@ -240,7 +252,7 @@ func (s *Server) checkSubscription(email string) (*subscriptionError, error) {
 			ExpiresAt:    status.ExpiresAt.UTC().Format(time.RFC3339),
 			Plan:         status.Plan,
 			SupportEmail: support,
-		}, nil
+		}
 	}
 	if !status.Active {
 		return &subscriptionError{
@@ -248,9 +260,9 @@ func (s *Server) checkSubscription(email string) (*subscriptionError, error) {
 			Message:      "Your subscription is currently inactive. Please contact support.",
 			Plan:         status.Plan,
 			SupportEmail: support,
-		}, nil
+		}
 	}
-	return nil, nil
+	return nil
 }
 
 // writeSubscriptionError sends a 403 response with subscription error details.

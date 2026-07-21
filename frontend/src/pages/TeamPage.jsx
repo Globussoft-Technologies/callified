@@ -41,7 +41,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showInvite, setShowInvite] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: '', full_name: '', role: 'Agent' });
+  const [inviteForm, setInviteForm] = useState({ email: '', full_name: '', password: '', role: 'Agent' });
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
@@ -173,7 +173,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
   const closeInvite = () => {
     setShowInvite(false);
-    setInviteForm({ email: '', full_name: '', role: 'Agent' });
+    setInviteForm({ email: '', full_name: '', password: '', role: 'Agent' });
     setInviteError('');
     setInviteSuccess('');
   };
@@ -191,8 +191,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setInviteSuccess(data.message || `Invite email sent to ${inviteForm.email}.`);
-        setInviteForm({ email: '', full_name: '', role: 'Agent' });
+        setInviteSuccess(data.message || `Team member ${inviteForm.email} created.`);
+        setInviteForm({ email: '', full_name: '', password: '', role: 'Agent' });
         fetchTeam();
       } else {
         setInviteError(data.error || data.detail || 'Failed to send invite');
@@ -311,7 +311,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
             borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
             fontWeight: 700, fontSize: 13, fontFamily: T.font,
           }}>
-          + Invite Member
+          + Add Member
         </button>
       </div>
 
@@ -322,9 +322,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
         }} onClick={closeInvite} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
           <div style={{ ...cardStyle, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Invite Team Member</h3>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Add Team Member</h3>
             <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
-              They'll get an email with a link to set their own password — no password is set here.
+              Set a password now so the member can sign in immediately.
             </p>
             <form onSubmit={handleInvite}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -336,6 +336,11 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <input
                   placeholder="Email" type="email" required value={inviteForm.email}
                   onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
+                  style={inputStyle}
+                />
+                <input
+                  placeholder="Password" type="password" required value={inviteForm.password}
+                  onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
                   style={inputStyle}
                 />
                 <select
@@ -368,7 +373,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       borderRadius: 8, color: '#fff', padding: '8px 20px', cursor: inviteLoading ? 'not-allowed' : 'pointer',
                       fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: inviteLoading ? 0.7 : 1,
                     }}>
-                    {inviteLoading ? 'Sending...' : 'Send Invite'}
+                    {inviteLoading ? 'Creating...' : 'Create Member'}
                   </button>
                 </div>
               </div>

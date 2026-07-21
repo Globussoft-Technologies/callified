@@ -295,8 +295,35 @@ export function CallProvider({ children }) {
     }
   }, []);
 
+  const ensureMicrophoneAvailable = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Microphone is not available in this browser');
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (e) {
+      const name = e?.name || '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        throw new Error('Microphone access denied. Please allow microphone access before calling.');
+      }
+      if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+        throw new Error('No microphone found. Connect or enable a microphone before calling.');
+      }
+      throw new Error(`Microphone check failed: ${e?.message || 'unknown error'}`);
+    } finally {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+    }
+  }, []);
+
   const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId) => {
-    if (!lead || !campaignId) return;
+    if (!lead || !campaignId) return false;
+    try {
+      await ensureMicrophoneAvailable();
+    } catch (e) {
+      toast({ message: e?.message || 'Microphone is required before calling', kind: 'error' });
+      return false;
+    }
     browserCallEndedCbRef.current = onEnded || null;
     setBrowserCallLead(lead);
     setBrowserCallCampaignId(campaignId);
@@ -312,16 +339,18 @@ export function CallProvider({ children }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
       setBrowserCallSid(data.call_sid || data.sid);
+      return true;
     } catch (e) {
       toast({ message: e?.message || 'Browser call failed', kind: 'error' });
       setBrowserCallLead(null);
       setBrowserCallCampaignId(null);
       setBrowserCallSid(null);
       browserCallEndedCbRef.current = null;
+      return false;
     } finally {
       setBrowserCallDialing(false);
     }
-  }, [apiFetch, toast, getBrowserAccountId]);
+  }, [apiFetch, toast, getBrowserAccountId, ensureMicrophoneAvailable]);
 
   const closeBrowserCall = useCallback(() => {
     browserCallEndedCbRef.current = null;
