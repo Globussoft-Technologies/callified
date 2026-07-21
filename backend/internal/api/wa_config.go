@@ -203,12 +203,13 @@ func (s *Server) listWAConversations(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/wa/conversations/{id}/history [get]
 func (s *Server) getWAHistory(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	convID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	history, err := s.db.GetWAChatHistory(convID, 100)
+	history, err := s.db.GetWAChatHistory(ac.OrgID, convID, 100)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -424,7 +425,7 @@ func (s *Server) getWAMessagesByPhone(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
-	history, err := s.db.GetWAChatHistory(convID, 200)
+	history, err := s.db.GetWAChatHistory(ac.OrgID, convID, 200)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

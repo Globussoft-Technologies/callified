@@ -1,10 +1,13 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { useCall } from '../../contexts/CallContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
+import { LEAD_STATUSES } from '../../constants/leadStatuses';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -42,6 +45,149 @@ function linkify(text) {
           style={{ color: '#6366f1', textDecoration: 'underline', wordBreak: 'break-all' }}
           onClick={e => e.stopPropagation()}>{p}</a>
       : p
+  );
+}
+
+async function downloadCSV({ apiFetch, url, filename, toast }) {
+  try {
+    const res = await apiFetch(url);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `Export failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(objectUrl);
+    if (toast) toast('Export downloaded');
+  } catch (e) {
+    if (toast) toast(`Export failed: ${e.message}`);
+    throw e;
+  }
+}
+
+// Mask a phone number for the auto-dial panel: keep the first 5 digits and
+// replace the rest with X so agents see a list but not full numbers.
+function maskPhone(phone) {
+  if (!phone) return '-';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length <= 5) return digits;
+  return digits.slice(0, 5) + 'X'.repeat(digits.length - 5);
+}
+
+// ── Auto Dial Panel ───────────────────────────────────────────────────────────
+// Shown while browser auto-dial is active. Hides the full lead table and only
+// displays the current/next call with masked phone numbers.
+function AutoDialPanel({
+  autoDialEnabled,
+  autoDialQueue,
+  autoDialActiveId,
+  paginatedLeads,
+  browserCallLead,
+  browserCallDialing,
+  onStart,
+  onStop,
+  campaignName,
+}) {
+  if (!autoDialEnabled) return null;
+
+  const queueLeads = autoDialQueue
+    .map(id => paginatedLeads.find(l => l.id === id))
+    .filter(Boolean);
+
+  const activeLead = browserCallLead
+    || queueLeads.find(l => l.id === autoDialActiveId)
+    || queueLeads[0];
+
+  const activeIdx = activeLead ? queueLeads.findIndex(l => l.id === activeLead.id) : -1;
+  const nextLead = queueLeads[activeIdx + 1];
+  const total = queueLeads.length;
+  const completed = Math.max(0, activeIdx);
+
+  return (
+    <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <div>
+          <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>▶ Auto Dial Active</h3>
+          <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>{campaignName}</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: '0.85rem', color: T.sub, fontWeight: 600 }}>
+            {completed} / {total} completed
+          </span>
+          <button onClick={onStop} style={{ ...btnGhost, color: T.red, borderColor: 'rgba(239,68,68,0.3)' }}>
+            ⏹ Stop
+          </button>
+        </div>
+      </div>
+
+      {browserCallLead || browserCallDialing ? (
+        <div style={{
+          background: 'rgba(99,102,241,0.06)', border: `1px solid ${T.border}`, borderRadius: 12,
+          padding: '1rem', marginBottom: '1rem'
+        }}>
+          <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Now calling
+          </div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 700, color: T.text }}>
+            {activeLead?.first_name} {activeLead?.last_name}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: '0.9rem', color: T.sub, marginTop: 4 }}>
+            {maskPhone(activeLead?.phone)}
+          </div>
+        </div>
+      ) : activeLead ? (
+        <div style={{
+          background: 'rgba(16,185,129,0.06)', border: `1px solid ${T.border}`, borderRadius: 12,
+          padding: '1rem', marginBottom: '1rem'
+        }}>
+          <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Next call
+          </div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 700, color: T.text }}>
+            {activeLead.first_name} {activeLead.last_name}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: '0.9rem', color: T.sub, marginTop: 4 }}>
+            {maskPhone(activeLead.phone)}
+          </div>
+        </div>
+      ) : (
+        <div style={{ color: T.muted, fontSize: '0.9rem', marginBottom: '1rem' }}>
+          No leads in the current view to auto-dial.
+        </div>
+      )}
+
+      {nextLead && (
+        <div style={{
+          background: '#f8fafc', border: `1px solid ${T.border}`, borderRadius: 12,
+          padding: '1rem', marginBottom: '1rem', opacity: 0.9
+        }}>
+          <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            Up next
+          </div>
+          <div style={{ fontSize: '1rem', fontWeight: 600, color: T.text }}>
+            {nextLead.first_name} {nextLead.last_name}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: '0.85rem', color: T.sub, marginTop: 4 }}>
+            {maskPhone(nextLead.phone)}
+          </div>
+        </div>
+      )}
+
+      {!browserCallLead && !browserCallDialing && activeLead && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => onStart(activeLead)}
+            disabled={browserCallDialing}
+            style={{ ...btnPrimary, opacity: browserCallDialing ? 0.6 : 1 }}>
+            {browserCallDialing ? 'Starting…' : 'Start Dialing'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -184,6 +330,7 @@ export default function CampaignDetail({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead,
+  campaignLeadsTotal,
   handleViewTranscripts,
   onCampaignDial, onCampaignWebCall,
   dialingId, webCallActive,
@@ -195,9 +342,11 @@ export default function CampaignDetail({
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
+  const { currentUser } = useAuth();
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
+  const [callOutcomeStats, setCallOutcomeStats] = useState({ total: 0, connected: 0, completed: 0, unanswered: 0, busy: 0, failed: 0 });
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
   const [billingUsage, setBillingUsage] = useState(null);
@@ -206,6 +355,7 @@ export default function CampaignDetail({
   const [scheduleLead, setScheduleLead] = useState(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduleNotes, setScheduleNotes] = useState('');
+  const [scheduleMode, setScheduleMode] = useState('manual');
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
   const [scheduleError, setScheduleError] = useState('');
@@ -227,6 +377,15 @@ export default function CampaignDetail({
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
 
+  // ── Disposition modal state (post-call before next auto-dial) ───────────────
+  const [showDispositionModal, setShowDispositionModal] = useState(false);
+  const [dispositionLead, setDispositionLead] = useState(null);
+  const [dispositionStatus, setDispositionStatus] = useState('');
+  const [dispositionRemarks, setDispositionRemarks] = useState('');
+  const [dispositionFollowUpAt, setDispositionFollowUpAt] = useState('');
+  const [dispositionSaving, setDispositionSaving] = useState(false);
+  const [dispositionNextLead, setDispositionNextLead] = useState(null);
+
   // Per-machine browser-call account: stored in localStorage so different systems
   // can dial from different Exotel voicebot accounts in parallel without changing
   // the campaign default used by AI/server calls.
@@ -240,40 +399,30 @@ export default function CampaignDetail({
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
+    setShowDispositionModal(false);
+    setDispositionLead(null);
+    setDispositionNextLead(null);
     setScheduleFrom('');
     setScheduleTo('');
     setCurrentPage(1);
   }, [selectedCampaign?.id]);
 
-  const filteredLeads = useMemo(() => {
-    let list = campaignLeads;
-    if (execFilter.length > 0) {
-      list = list.filter(l => execFilter.includes(String(l.executive_id || '')) || execFilter.includes(l.executive_id));
-    }
-    const q = leadSearch.trim().toLowerCase();
-    if (q) {
-      list = list.filter(l =>
-        (l.first_name || '').toLowerCase().includes(q) ||
-        (l.last_name || '').toLowerCase().includes(q) ||
-        (l.phone || '').toLowerCase().includes(q) ||
-        (l.source || '').toLowerCase().includes(q)
-      );
-    }
-    if (scheduleFrom || scheduleTo) {
-      const fromISO = scheduleFrom ? new Date(scheduleFrom).toISOString() : null;
-      const toISO = scheduleTo ? new Date(scheduleTo).toISOString() : null;
-      list = list.filter(l => {
-        if (!l.next_scheduled_at) return false;
-        const leadISO = l.next_scheduled_at.endsWith('Z')
-          ? l.next_scheduled_at
-          : l.next_scheduled_at.replace(' ', 'T') + 'Z';
-        if (fromISO && leadISO < fromISO) return false;
-        if (toISO && leadISO > toISO) return false;
-        return true;
-      });
-    }
-    return list;
-  }, [campaignLeads, leadSearch, execFilter, scheduleFrom, scheduleTo]);
+  // Server-side pagination: fetch the current page with active filters.
+  const loadCampaignLeads = useCallback(() => {
+    if (!selectedCampaign?.id) return;
+    fetchCampaignLeads(selectedCampaign.id, {
+      page: currentPage,
+      limit: PAGE_SIZE,
+      search: leadSearch.trim(),
+      executiveIds: execFilter,
+      scheduledFrom: scheduleFrom,
+      scheduledTo: scheduleTo,
+    });
+  }, [selectedCampaign?.id, currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo, fetchCampaignLeads]);
+
+  useEffect(() => {
+    loadCampaignLeads();
+  }, [loadCampaignLeads]);
 
   // Reset to page 1 whenever filters/search change so the user doesn't land on
   // an empty page after narrowing the list.
@@ -281,7 +430,7 @@ export default function CampaignDetail({
     setCurrentPage(1);
   }, [leadSearch, execFilter, scheduleFrom, scheduleTo]);
 
-  const totalPages = Math.ceil(filteredLeads.length / PAGE_SIZE);
+  const totalPages = Math.ceil(campaignLeadsTotal / PAGE_SIZE);
   const safePage = Math.max(1, Math.min(currentPage, totalPages || 1));
 
   const handleJump = () => {
@@ -296,17 +445,12 @@ export default function CampaignDetail({
     if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
 
-  const paginatedLeads = useMemo(() => {
-    const start = (safePage - 1) * PAGE_SIZE;
-    return filteredLeads.slice(start, start + PAGE_SIZE);
-  }, [filteredLeads, safePage, PAGE_SIZE]);
+  const paginatedLeads = campaignLeads;
 
-  // Keep the auto-dial queue in sync with the current filtered list.
-  // The queue only moves forward; it never wraps around to leads before the
-  // starting lead so auto-dial stops cleanly at the end of the list.
+  // Keep the auto-dial queue in sync with the current page of leads.
   useEffect(() => {
     if (!autoDialEnabled) return;
-    const ids = filteredLeads.map(l => l.id);
+    const ids = paginatedLeads.map(l => l.id);
     setAutoDialQueue(prev => {
       if (autoDialActiveId && ids.includes(autoDialActiveId)) {
         const idx = ids.indexOf(autoDialActiveId);
@@ -314,7 +458,7 @@ export default function CampaignDetail({
       }
       return ids;
     });
-  }, [filteredLeads, autoDialEnabled, autoDialActiveId]);
+  }, [paginatedLeads, autoDialEnabled, autoDialActiveId]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -482,12 +626,12 @@ export default function CampaignDetail({
   const autoDialActiveIdRef = useRef(autoDialActiveId);
   const autoDialQueueRef = useRef(autoDialQueue);
   const campaignLeadsRef = useRef(campaignLeads);
-  const filteredLeadsRef = useRef(filteredLeads);
+  const paginatedLeadsRef = useRef(paginatedLeads);
   useEffect(() => { autoDialEnabledRef.current = autoDialEnabled; }, [autoDialEnabled]);
   useEffect(() => { autoDialActiveIdRef.current = autoDialActiveId; }, [autoDialActiveId]);
   useEffect(() => { autoDialQueueRef.current = autoDialQueue; }, [autoDialQueue]);
   useEffect(() => { campaignLeadsRef.current = campaignLeads; }, [campaignLeads]);
-  useEffect(() => { filteredLeadsRef.current = filteredLeads; }, [filteredLeads]);
+  useEffect(() => { paginatedLeadsRef.current = paginatedLeads; }, [paginatedLeads]);
 
   const advanceAutoDial = useCallback((status, errorMsg) => {
     if (status === 'error') {
@@ -498,32 +642,93 @@ export default function CampaignDetail({
       return;
     }
     if (!autoDialEnabledRef.current || !autoDialActiveIdRef.current) return;
-    const idx = autoDialQueueRef.current.indexOf(autoDialActiveIdRef.current);
+
+    // Find the lead that just finished so the agent can disposition it.
+    const finishedId = autoDialActiveIdRef.current;
+    const finishedLead = campaignLeadsRef.current.find(l => l.id === finishedId) || paginatedLeadsRef.current.find(l => l.id === finishedId);
+
+    // Determine the next lead in the queue (if any).
+    const idx = autoDialQueueRef.current.indexOf(finishedId);
     const nextIdx = idx >= 0 ? idx + 1 : autoDialQueueRef.current.length;
     const nextId = autoDialQueueRef.current[nextIdx];
+    const nextLead = nextId ? (campaignLeadsRef.current.find(l => l.id === nextId) || paginatedLeadsRef.current.find(l => l.id === nextId)) : null;
+
+    if (!finishedLead) {
+      toast('Auto dial stopped: lead not found');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+
     if (!nextId) {
-      toast('Auto dial complete');
+      // Last lead in the queue: still show disposition, then mark complete after save.
+      setDispositionNextLead(null);
+    } else {
+      setDispositionNextLead(nextLead);
+    }
+
+    // Pause auto-dial and show the disposition modal.
+    setDispositionLead(finishedLead);
+    setDispositionStatus(finishedLead.status || 'Connected');
+    setDispositionRemarks(finishedLead.follow_up_note || '');
+    setDispositionFollowUpAt(finishedLead.follow_up_at ? finishedLead.follow_up_at.slice(0, 16) : '');
+    setShowDispositionModal(true);
+  }, [toast]);
+
+  const saveDispositionAndAdvance = useCallback(async (stopAfterSave) => {
+    if (!dispositionLead) return;
+    if (!dispositionStatus.trim()) {
+      toast('Please select a call status');
+      return;
+    }
+    setDispositionSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${dispositionLead.id}/disposition`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: dispositionStatus.trim(),
+          note: dispositionRemarks.trim(),
+          follow_up_at: dispositionFollowUpAt || ''
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Save failed (HTTP ${res.status})`);
+      }
+      toast('Disposition saved');
+      fetchCampaignLeads(selectedCampaign.id);
+    } catch (e) {
+      toast(`Failed to save disposition: ${e.message}`);
+      setDispositionSaving(false);
+      return;
+    }
+    setDispositionSaving(false);
+    setShowDispositionModal(false);
+    setDispositionLead(null);
+
+    if (stopAfterSave || !dispositionNextLead) {
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
       setAutoDialQueue([]);
+      if (dispositionNextLead) {
+        toast('Auto dial stopped');
+      } else {
+        toast('Auto dial complete');
+      }
       return;
     }
-    const nextLead = campaignLeadsRef.current.find(l => l.id === nextId) || filteredLeadsRef.current.find(l => l.id === nextId);
-    if (!nextLead) {
-      toast('Auto dial stopped: next lead not found');
-      setAutoDialEnabled(false);
-      setAutoDialActiveId(null);
-      setAutoDialQueue([]);
-      return;
-    }
-    setAutoDialActiveId(nextId);
-    setTimeout(() => triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial, browserAccountId), 800);
-  }, [toast, selectedCampaign.id, triggerBrowserCall, browserAccountId]);
+
+    // Advance to the next lead.
+    setAutoDialActiveId(dispositionNextLead.id);
+    setTimeout(() => triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, browserAccountId), 400);
+  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, browserAccountId, toast]);
 
   const startBrowserCallWithAutoDial = (lead) => {
     if (autoDialEnabled) {
       setAutoDialActiveId(lead.id);
-      const ids = filteredLeads.map(l => l.id);
+      const ids = paginatedLeads.map(l => l.id);
       const idx = ids.indexOf(lead.id);
       if (idx >= 0) {
         setAutoDialQueue([lead.id, ...ids.slice(idx + 1)]);
@@ -558,6 +763,7 @@ export default function CampaignDetail({
     setScheduleAt(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`);
     setScheduleNotes('');
     setScheduleError('');
+    setScheduleMode('manual');
   }, [scheduleLead]);
 
   const handleScheduleCall = async () => {
@@ -674,6 +880,18 @@ export default function CampaignDetail({
     if (detailTab === 'retries') fetchRetries();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailTab, selectedCampaign.id]);
+
+  // Load call outcome stats whenever the campaign detail is opened.
+  useEffect(() => {
+    if (!selectedCampaign?.id) return;
+    const load = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-outcome-stats`);
+        if (res.ok) setCallOutcomeStats(await res.json());
+      } catch (e) { console.error('Failed to load call outcome stats', e); }
+    };
+    load();
+  }, [selectedCampaign.id, apiFetch, API_URL]);
 
   useEffect(() => {
     const fetchBilling = async () => {
@@ -847,6 +1065,7 @@ export default function CampaignDetail({
         {[
           { label: 'Total Leads', val: stats.total, color: T.accent },
           { label: 'Called', val: stats.called, color: T.sub },
+          { label: 'Remaining', val: stats.remaining, color: T.amber },
           { label: 'Qualified', val: stats.qualified, color: T.pink },
           { label: 'Appointments', val: stats.booked, color: T.green },
         ].map(s => (
@@ -855,6 +1074,25 @@ export default function CampaignDetail({
             <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
           </div>
         ))}
+      </div>
+
+      {/* Call outcome stats */}
+      <div style={{ ...card, padding: '16px 20px', marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Call Outcomes</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12 }}>
+          {[
+            { label: 'Total Calls', val: callOutcomeStats.total, color: T.accent },
+            { label: 'Connected', val: callOutcomeStats.connected, color: T.green },
+            { label: 'Completed', val: callOutcomeStats.completed, color: '#0891b2' },
+            { label: 'Unanswered', val: callOutcomeStats.unanswered, color: T.amber },
+            { label: 'Busy / Failed', val: callOutcomeStats.busy + callOutcomeStats.failed, color: T.red },
+          ].map(s => (
+            <div key={s.label} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
+              <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
@@ -1044,19 +1282,18 @@ export default function CampaignDetail({
           {qaNameErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaNameErr}</span>}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <input className="form-input" placeholder="Phone (10 digits)" value={qaPhone}
-            inputMode="numeric" maxLength={10} pattern="\d{10}"
+          <input className="form-input" placeholder="Phone (e.g. 9876543210)" value={qaPhone}
+            inputMode="tel"
             onChange={e => {
-              const raw = e.target.value;
-              const v = raw.replace(/\D/g, '').slice(0, 10);
+              const v = e.target.value;
               setQaPhone(v);
-              if (/\D/.test(raw)) {
-                setQaPhoneErr('Only digits are accepted');
-              } else if (qaPhoneErr) {
+              if (v.trim() && !isValidPhone(v)) {
+                setQaPhoneErr(PHONE_VALIDATION_MESSAGE);
+              } else {
                 setQaPhoneErr('');
               }
             }}
-            style={{ ...inputStyle, width: 160, height: 32, border: qaPhoneErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
+            style={{ ...inputStyle, width: 180, height: 32, border: qaPhoneErr ? `1px solid ${T.red}` : `1px solid ${T.border}` }} />
           {qaPhoneErr && <span style={{ color: T.red, fontSize: '0.7rem', marginTop: 4 }}>{qaPhoneErr}</span>}
         </div>
         <button style={{ ...btnPrimary, height: 32, padding: '4px 14px' }}
@@ -1068,7 +1305,7 @@ export default function CampaignDetail({
               : (!/[A-Za-z]/.test(name) ? 'Name must contain at least one letter' : '');
             const phoneErr = !phone
               ? 'Phone is required'
-              : (!/^\d{10}$/.test(phone) ? 'Indian numbers must be exactly 10 digits' : '');
+              : (!isValidPhone(phone) ? PHONE_VALIDATION_MESSAGE : '');
             setQaNameErr(nameErr);
             setQaPhoneErr(phoneErr);
             setQaApiErr('');
@@ -1076,7 +1313,7 @@ export default function CampaignDetail({
             try {
               const res = await apiFetch(`${API_URL}/leads`, {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ first_name: name, phone, source: 'Manual' })
+                body: JSON.stringify({ first_name: name, phone: normalizePhone(phone), source: 'Manual' })
               });
               const data = await res.json();
               let leadId = data.id;
@@ -1121,23 +1358,19 @@ export default function CampaignDetail({
         <button
           style={{ ...btnPrimary, background: T.green }}
           onClick={() => {
-            apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
-              .then(res => res.blob())
-              .then(blob => {
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `recordings_${(selectedCampaign.name || selectedCampaign.id).toString().replace(/\s+/g,'_')}.csv`;
-                a.click();
-                URL.revokeObjectURL(url);
-              });
+            downloadCSV({
+              apiFetch,
+              url: `${API_URL}/campaigns/${selectedCampaign.id}/export-leads`,
+              filename: `leads_${(selectedCampaign.name || selectedCampaign.id).toString().replace(/\s+/g,'_')}.csv`,
+              toast,
+            });
           }}>
           ⬇ Export
         </button>
         {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
-              const newCount = campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length;
+              const newCount = (campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length;
               if (!await confirm({ message: `Dial ALL ${newCount} new leads? (30s gap between calls)` })) return;
               try {
                 const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
@@ -1147,7 +1380,7 @@ export default function CampaignDetail({
                 setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
               } catch { toast('Dial failed');  }
             }}>
-            📞 Dial All New ({campaignLeads.filter(l => (l.status || '').toLowerCase() === 'new').length})
+            📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
         {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
@@ -1174,7 +1407,7 @@ export default function CampaignDetail({
               const next = !autoDialEnabled;
               setAutoDialEnabled(next);
               if (next) {
-                setAutoDialQueue(filteredLeads.map(l => l.id));
+                setAutoDialQueue(paginatedLeads.map(l => l.id));
                 toast('Auto dial enabled. Start a browser call to begin.');
               } else {
                 setAutoDialActiveId(null);
@@ -1188,11 +1421,32 @@ export default function CampaignDetail({
         )}
       </div>
 
+      {/* Auto Dial Panel — replaces tables/lists so no phone numbers are shown */}
+      {autoDialEnabled && (
+        <AutoDialPanel
+          autoDialEnabled={autoDialEnabled}
+          autoDialQueue={autoDialQueue}
+          autoDialActiveId={autoDialActiveId}
+          paginatedLeads={paginatedLeads}
+          browserCallLead={browserCallLead}
+          browserCallDialing={browserCallDialing}
+          onStart={startBrowserCallWithAutoDial}
+          onStop={() => {
+            setAutoDialEnabled(false);
+            setAutoDialActiveId(null);
+            setAutoDialQueue([]);
+            toast('Auto dial stopped');
+          }}
+          campaignName={selectedCampaign.name}
+        />
+      )}
+
       {/* Search + Tab Switcher */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
+      {!autoDialEnabled && (<>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${(leadSearch.trim() || execFilter.length > 0) ? `${filteredLeads.length}/${campaignLeads.length}` : campaignLeads.length})`,   activeColor: T.accent },
+            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent },
           { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
           { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
           { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
@@ -1215,7 +1469,7 @@ export default function CampaignDetail({
         </div>
         <input
           type="text"
-          placeholder="Search leads by name, phone or source..."
+          placeholder="Search leads by name, phone, company or source..."
           value={leadSearch}
           onChange={e => setLeadSearch(e.target.value)}
           style={{
@@ -1256,7 +1510,7 @@ export default function CampaignDetail({
                 />
                 {(() => {
                   const q = execSearch.trim().toLowerCase();
-                  const filtered = q ? executives.filter(e => (e.name || '').toLowerCase().includes(q)) : executives;
+                  const filtered = q ? (executives || []).filter(e => (e.name || '').toLowerCase().includes(q)) : (executives || []);
                   if (filtered.length === 0) {
                     return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No executives found.</div>;
                   }
@@ -1328,16 +1582,12 @@ export default function CampaignDetail({
               download
               onClick={e => {
                 e.preventDefault();
-                apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`)
-                  .then(res => res.blob())
-                  .then(blob => {
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  });
+                downloadCSV({
+                  apiFetch,
+                  url: `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`,
+                  filename: `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`,
+                  toast,
+                });
               }}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -1590,14 +1840,14 @@ export default function CampaignDetail({
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Name','Phone','Source','Executive','Status','Action'].map(h => (
+                {['Name','Phone','Company','Source','Executive','Status','Action'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.length === 0 ? (
-                <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
+              {campaignLeadsTotal === 0 ? (
+                <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
               ) : paginatedLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
@@ -1621,6 +1871,7 @@ export default function CampaignDetail({
                       </div>
                     </td>
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
+                    <td style={tdStyle}>{lead.company || '-'}</td>
                     <td style={tdStyle}>
                       <select className="form-input" value={lead.source || ''}
                         onChange={async e => {
@@ -1663,7 +1914,7 @@ export default function CampaignDetail({
                       <select className="form-input" value={lead.status || 'New'}
                         onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
-                        {['New','Contacted','Connected','Interested','Not Interested','Qualified','Appointment Set','Converted','Lost','Junk'].map(s => <option key={s} value={s}>{s}</option>)}
+                        {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </td>
                     <td style={tdStyle}>
@@ -1896,6 +2147,9 @@ export default function CampaignDetail({
                                 }}
                                 onMouseEnter={e => { e.currentTarget.style.border = `1px solid ${T.border}`; e.currentTarget.style.background = '#fff'; }}
                                 onMouseLeave={e => { e.currentTarget.style.border = '1px solid transparent'; e.currentTarget.style.background = 'transparent'; }}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                               >{linkify(noteText)}</div>
                               {noteData?.recordingUrl && (
                                 <div style={{ marginTop: 8, fontSize: '0.75rem' }}>
@@ -1918,7 +2172,7 @@ export default function CampaignDetail({
           </table>
           {totalPages > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: `1px solid ${T.border}`, fontFamily: T.font, fontSize: '0.85rem', color: T.sub }}>
-              <span>Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredLeads.length)} of {filteredLeads.length}</span>
+              <span>Showing {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, campaignLeadsTotal)} of {campaignLeadsTotal}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -1978,12 +2232,16 @@ export default function CampaignDetail({
           )}
         </div>
       )}
+      </>)}
 
       {/* Schedule Call Modal */}
       {scheduleLead && (
         <div
           className="modal-overlay"
           onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -2009,6 +2267,18 @@ export default function CampaignDetail({
                   })()}
                   style={{ ...inputStyle, width: '100%', marginTop: 6 }}
                 />
+              </label>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Callback mode
+                <select
+                  className="form-input"
+                  value={scheduleMode}
+                  onChange={e => setScheduleMode(e.target.value)}
+                  style={{ ...inputStyle, width: '100%', marginTop: 6, height: 38 }}
+                >
+                  <option value="manual">Manual / Browser Callback (auto-connect for you)</option>
+                  <option value="ai">AI Dial</option>
+                </select>
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Notes (optional)
@@ -2056,8 +2326,9 @@ export default function CampaignDetail({
                         campaign_id: selectedCampaign.id,
                         scheduled_at: serverTime,
                         notes: scheduleNotes,
-                        mode: 'manual',
+                        mode: scheduleMode,
                         executive_id: scheduleLead.executive_id || null,
+                        scheduled_by_user_id: currentUser?.id || null,
                       }),
                     });
                     if (!res.ok) {
@@ -2099,6 +2370,9 @@ export default function CampaignDetail({
         <div
           className="modal-overlay"
           onClick={e => { if (e.target === e.currentTarget) { setHumanCallLead(null); setHumanCallStatus('idle'); } }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -2152,8 +2426,8 @@ export default function CampaignDetail({
 
       {/* Quick Note Modal */}
       {noteModalLead && (
-        <div className="modal-overlay" onClick={() => setNoteModalLead(null)}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}}>
+        <div className="modal-overlay" onClick={() => setNoteModalLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
               {noteModalLead.first_name} {noteModalLead.last_name} — {noteModalLead.phone}
@@ -2171,6 +2445,80 @@ export default function CampaignDetail({
                 disabled={noteModalSaving || !noteModalText.trim()}
                 style={{opacity: (noteModalSaving || !noteModalText.trim()) ? 0.5 : 1, cursor: (noteModalSaving || !noteModalText.trim()) ? 'not-allowed' : 'pointer'}}>
                 {noteModalSaving ? 'Saving…' : 'Save Note'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Disposition Modal (post-call, gates browser auto-dial) */}
+      {showDispositionModal && dispositionLead && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) e.stopPropagation(); }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); } }}
+        >
+          <div style={{
+            background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 480, width: '100%',
+            padding: '1.5rem', fontFamily: T.font,
+          }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📝 Call Disposition</h3>
+            </div>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              {dispositionLead.first_name} {dispositionLead.last_name} — {maskPhone(dispositionLead.phone)}
+            </p>
+
+            <label style={{ display: 'block', fontSize: '0.8rem', color: T.sub, fontWeight: 600, marginBottom: '0.75rem' }}>
+              Status
+              <select
+                className="form-input"
+                value={dispositionStatus}
+                onChange={e => setDispositionStatus(e.target.value)}
+                style={{ ...inputStyle, width: '100%', marginTop: 6, height: 38 }}
+              >
+                {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+
+            <label style={{ display: 'block', fontSize: '0.8rem', color: T.sub, fontWeight: 600, marginBottom: '0.75rem' }}>
+              Remarks / Follow-up note
+              <textarea
+                className="form-input"
+                rows={4}
+                value={dispositionRemarks}
+                onChange={e => setDispositionRemarks(e.target.value)}
+                placeholder="Add remarks..."
+                style={{ ...inputStyle, width: '100%', marginTop: 6, minHeight: 90, resize: 'vertical', fontSize: '0.9rem', lineHeight: 1.5 }}
+              />
+            </label>
+
+            <label style={{ display: 'block', fontSize: '0.8rem', color: T.sub, fontWeight: 600, marginBottom: '1.25rem' }}>
+              Follow-up date & time (optional)
+              <input
+                type="datetime-local"
+                className="form-input"
+                value={dispositionFollowUpAt}
+                onChange={e => setDispositionFollowUpAt(e.target.value)}
+                style={{ ...inputStyle, width: '100%', marginTop: 6, height: 38 }}
+              />
+            </label>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => saveDispositionAndAdvance(true)}
+                disabled={dispositionSaving}
+                style={{ ...btnGhost, opacity: dispositionSaving ? 0.6 : 1 }}>
+                {dispositionSaving ? 'Saving…' : 'Save & Stop'}
+              </button>
+              <button
+                onClick={() => saveDispositionAndAdvance(false)}
+                disabled={dispositionSaving || !dispositionStatus.trim()}
+                style={{ ...btnPrimary, opacity: (dispositionSaving || !dispositionStatus.trim()) ? 0.6 : 1 }}>
+                {dispositionSaving ? 'Saving…' : (dispositionNextLead ? 'Save & Next' : 'Save & Finish')}
               </button>
             </div>
           </div>

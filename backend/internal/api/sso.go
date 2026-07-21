@@ -126,12 +126,10 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Find existing user. If missing, JIT-create — but only when the
-	//    issuer told us which org the user belongs to. We never guess: a
-	//    stranger arriving without an org_id claim is rejected so a typo'd
-	//    JWT can't drop someone into the first org we find.
-	// Normalize the claim values once so JIT-create and existing-user-sync
-	// see the same canonical role / org_id.
+	// 3. Find existing user. If missing, JIT-create.
+	//    For new users we accept either an explicit org_id claim OR fall back
+	//    to resolving/creating an org from the email domain. Existing users
+	//    are never moved between orgs via SSO.
 	claimRole := s.normalizeRole(claims.Role)
 	claimOrg := s.remapOrgID(claims.OrgID)
 
@@ -142,18 +140,24 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil {
-		if claimOrg <= 0 {
+		resolvedOrg, err := s.resolveSSOOrg(claimOrg, email)
+		if err != nil {
+			s.logger.Sugar().Errorw("ssoJWT: resolveSSOOrg failed", "err", err, "email", email)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if resolvedOrg <= 0 {
 			s.ssoFail(w, r, next, "org_required_for_jit_create", http.StatusForbidden)
 			return
 		}
-		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), claimRole, claimOrg)
+		uid, err := s.db.CreateUser(email, "", strings.TrimSpace(claims.Name), claimRole, resolvedOrg)
 		if err != nil {
 			s.logger.Sugar().Errorw("ssoJWT: CreateUser failed", "err", err, "email", email)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		s.logger.Sugar().Infow("ssoJWT: JIT-created user",
-			"id", uid, "email", email, "role", claimRole, "org", claimOrg,
+			"id", uid, "email", email, "role", claimRole, "org", resolvedOrg,
 			"raw_role", claims.Role, "raw_org", claims.OrgID)
 		user, err = s.db.GetUserByEmail(email)
 		if err != nil || user == nil {
@@ -162,23 +166,18 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Existing user: re-sync role / org_id from the JWT each login.
-		if claimRole != "" && (claimRole != user.Role || (claimOrg > 0 && claimOrg != user.OrgID)) {
-			newRole := claimRole
-			newOrg := user.OrgID
-			if claimOrg > 0 {
-				newOrg = claimOrg
-			}
-			if err := s.db.UpdateUserRoleAndOrg(user.ID, newRole, newOrg); err != nil {
-				s.logger.Sugar().Warnw("ssoJWT: UpdateUserRoleAndOrg failed",
+		// Existing user: re-sync role from the JWT each login. Never move an
+		// existing user to a different org via SSO — a misissued JWT with the
+		// wrong org_id would otherwise expose another tenant's campaigns/leads.
+		if claimRole != "" && claimRole != user.Role {
+			if err := s.db.UpdateUserRole(user.ID, claimRole); err != nil {
+				s.logger.Sugar().Warnw("ssoJWT: UpdateUserRole failed",
 					"err", err, "user_id", user.ID, "email", email)
 			} else {
-				s.logger.Sugar().Infow("ssoJWT: synced role/org from JWT",
+				s.logger.Sugar().Infow("ssoJWT: synced role from JWT",
 					"user_id", user.ID, "email", email,
-					"from_role", user.Role, "to_role", newRole,
-					"from_org", user.OrgID, "to_org", newOrg)
-				user.Role = newRole
-				user.OrgID = newOrg
+					"from_role", user.Role, "to_role", claimRole)
+				user.Role = claimRole
 			}
 		}
 	}
@@ -364,6 +363,45 @@ func (s *Server) remapOrgID(in int64) int64 {
 		}
 	}
 	return in
+}
+
+// resolveSSOOrg picks the org for a new SSO user. Explicit org_id claim wins,
+// but the org must exist — a misissued JWT cannot auto-provision into an
+// arbitrary tenant.
+func (s *Server) resolveSSOOrg(claimOrg int64, email string) (int64, error) {
+	if claimOrg > 0 {
+		org, err := s.db.GetOrganizationByID(claimOrg)
+		if err != nil {
+			return 0, err
+		}
+		if org == nil {
+			return 0, nil
+		}
+		return claimOrg, nil
+	}
+	domain := emailDomain(email)
+	if domain == "" {
+		return 0, nil
+	}
+	org, err := s.db.GetOrganizationByDomain(domain)
+	if err != nil {
+		return 0, err
+	}
+	if org != nil {
+		return org.ID, nil
+	}
+	// No org with this domain yet — create one so the tenant is isolated.
+	orgName := strings.Title(strings.Split(domain, ".")[0]) + " Organization"
+	return s.db.CreateOrganizationWithDomain(orgName, domain)
+}
+
+// emailDomain returns the domain part of an email address, lowercased.
+func emailDomain(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(email[at+1:]))
 }
 
 // audienceContains returns true if want appears anywhere in aud. JWT's "aud"

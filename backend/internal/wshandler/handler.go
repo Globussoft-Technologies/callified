@@ -147,6 +147,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.sessions.Store(sess.StreamSid, sess)
 	defer func() {
+		// Accumulate talk time and log the call activity for the agent who initiated it.
+		if sess.UserEmail != "" && !sess.CallStart.IsZero() {
+			if u, err := h.db.GetUserByEmail(sess.UserEmail); err == nil && u != nil {
+				dur := int64(time.Since(sess.CallStart).Seconds())
+				if dur > 0 {
+					_ = h.db.AddAgentTalkTime(u.ID, dur)
+				}
+				outcome := "no_answer"
+				if dur > 30 {
+					outcome = "completed"
+				} else if dur > 5 {
+					outcome = "connected"
+				}
+				_ = h.db.LogAgentActivity(u.ID, u.OrgID, sess.CampaignID, sess.LeadID, db.ActivityCall, map[string]any{
+					"duration_s": dur,
+					"outcome":    outcome,
+					"call_sid":   sess.CallSid,
+				})
+			}
+		}
 		h.sessions.Delete(sess.StreamSid)
 		if sess.CallSid != "" {
 			h.sessionsByCallSid.Delete(sess.CallSid)

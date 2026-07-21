@@ -320,8 +320,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }} onClick={closeInvite}>
-          <div style={{ ...cardStyle, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()}>
+        }} onClick={closeInvite} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 440, maxWidth: '90vw' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Invite Team Member</h3>
             <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
               They'll get an email with a link to set their own password — no password is set here.
@@ -382,8 +382,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }} onClick={() => setNewKey(null)}>
-          <div style={{ ...cardStyle, width: 520, maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
+        }} onClick={() => setNewKey(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 520, maxWidth: '92vw' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>
               API key for {newKey.email}
             </h3>

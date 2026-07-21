@@ -2,8 +2,11 @@ package db
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 )
 
@@ -117,6 +120,58 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
 		WHERE c.org_id=?
 		ORDER BY c.created_at DESC`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Campaign
+	for rows.Next() {
+		c := Campaign{}
+		stats := CampaignStats{}
+		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
+			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
+			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
+		); err != nil {
+			return nil, err
+		}
+		c.Stats = &stats
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+// GetCampaignsByIDs returns campaigns for a specific set of IDs, ordered
+// newest first. Used by RBAC-scoped campaign listing for Agents/Team Leaders.
+func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
+	if len(ids) == 0 {
+		return []Campaign{}, nil
+	}
+	const statsSub = `
+		SELECT
+			cl.campaign_id,
+			COUNT(*) AS total,
+			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
+			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		GROUP BY cl.campaign_id`
+
+	placeholders := strings.Repeat("?,", len(ids)-1) + "?"
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := d.pool.Query(
+		`SELECT `+campaignCols+`,
+			COALESCE(s.total,0), COALESCE(s.called,0),
+			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
+		FROM campaigns c
+		LEFT JOIN products p ON c.product_id = p.id
+		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		WHERE c.id IN (`+placeholders+`)
+		ORDER BY c.created_at DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -339,12 +394,26 @@ func (d *DB) GetCampaignLeadIDs(campaignID int64) (map[int64]bool, error) {
 
 // AddLeadsToCampaign bulk-inserts campaign_leads (IGNORE duplicates). Returns added count.
 func (d *DB) AddLeadsToCampaign(campaignID int64, leadIDs []int64) (int, error) {
+	if len(leadIDs) == 0 {
+		return 0, nil
+	}
+	const batchSize = 1000
 	var added int
-	for _, lid := range leadIDs {
-		res, err := d.pool.Exec(
-			`INSERT IGNORE INTO campaign_leads (campaign_id, lead_id) VALUES (?,?)`, campaignID, lid)
+	for i := 0; i < len(leadIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(leadIDs) {
+			end = len(leadIDs)
+		}
+		batch := leadIDs[i:end]
+		placeholders := strings.Repeat("(?,?),", len(batch)-1) + "(?,?)"
+		q := `INSERT IGNORE INTO campaign_leads (campaign_id, lead_id) VALUES ` + placeholders
+		args := make([]any, 0, len(batch)*2)
+		for _, lid := range batch {
+			args = append(args, campaignID, lid)
+		}
+		res, err := d.pool.Exec(q, args...)
 		if err != nil {
-			continue
+			return added, err
 		}
 		n, _ := res.RowsAffected()
 		added += int(n)
@@ -381,35 +450,68 @@ func (d *DB) GetCampaignLeads(campaignID int64) ([]CampaignLead, error) {
 
 // GetCampaignLeadsFiltered returns campaign leads optionally filtered by
 // executive IDs. An empty or nil slice returns all leads.
+// Deprecated: use GetCampaignLeadsPaginated for large campaigns.
 func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]CampaignLead, error) {
+	return d.GetCampaignLeadsPaginated(CampaignLeadsFilter{CampaignID: campaignID, ExecIDs: execIDs}, 0, 0)
+}
+
+// CampaignLeadsFilter holds optional filters for campaign lead listings.
+type CampaignLeadsFilter struct {
+	CampaignID     int64
+	ExecIDs        []int64
+	Search         string
+	ScheduledFrom  string // ISO datetime or empty
+	ScheduledTo    string // ISO datetime or empty
+}
+
+// GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
+// Use limit=0 to return all matching leads (backward compatibility).
+func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset int64) ([]CampaignLead, error) {
+	search := "%" + filter.Search + "%"
 	q := `SELECT ` + leadColsL + `,
-		(SELECT COUNT(*) FROM call_transcripts ct
-		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.call_duration_s>5) AS transcript_count,
-		(SELECT COUNT(*) FROM call_transcripts ct
-		 WHERE ct.lead_id=l.id AND ct.campaign_id=? AND ct.recording_url IS NOT NULL AND ct.recording_url!='') AS recording_count,
-		(SELECT COUNT(*) FROM call_transcripts ct WHERE ct.lead_id=l.id AND ct.campaign_id=?) AS dial_attempts,
-		(SELECT DATE_FORMAT(MIN(sc.scheduled_at),'%Y-%m-%dT%H:%i:%sZ')
-		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending') AS next_scheduled_at,
-		(SELECT COUNT(*) > 0
-		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending') AS has_pending_scheduled_call,
-		(SELECT sc.id
-		 FROM scheduled_calls sc
-		 WHERE sc.lead_id=l.id AND sc.campaign_id=? AND sc.status='pending'
-		 ORDER BY sc.scheduled_at ASC LIMIT 1) AS scheduled_call_id
+		COALESCE(ct.transcript_count, 0) AS transcript_count,
+		COALESCE(ct.recording_count, 0) AS recording_count,
+		COALESCE(ct.dial_attempts, 0) AS dial_attempts,
+		DATE_FORMAT(pc.scheduled_at, '%Y-%m-%dT%H:%i:%sZ') AS next_scheduled_at,
+		pc.scheduled_at IS NOT NULL AS has_pending_scheduled_call,
+		NULL AS scheduled_call_id
 	 FROM campaign_leads cl2
 	 JOIN leads l ON l.id = cl2.lead_id
-	 WHERE cl2.campaign_id=?`
-	args := []any{campaignID, campaignID, campaignID, campaignID, campaignID, campaignID, campaignID}
-	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND l.executive_id IN (` + placeholders + `)`
-		for _, id := range execIDs {
+	 LEFT JOIN (
+		SELECT lead_id,
+			COUNT(*) AS dial_attempts,
+			SUM(CASE WHEN call_duration_s > 5 THEN 1 ELSE 0 END) AS transcript_count,
+			SUM(CASE WHEN recording_url IS NOT NULL AND recording_url != '' THEN 1 ELSE 0 END) AS recording_count
+		FROM call_transcripts
+		WHERE campaign_id = ?
+		GROUP BY lead_id
+	 ) ct ON ct.lead_id = l.id
+	 LEFT JOIN (
+		SELECT lead_id, MIN(scheduled_at) AS scheduled_at
+		FROM scheduled_calls
+		WHERE campaign_id = ? AND status = 'pending'
+		  AND scheduled_at >= COALESCE(NULLIF(?, ''), scheduled_at)
+		  AND scheduled_at <= COALESCE(NULLIF(?, ''), scheduled_at)
+		GROUP BY lead_id
+	 ) pc ON pc.lead_id = l.id
+	 WHERE cl2.campaign_id = ?
+	   AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)`
+	args := []any{filter.CampaignID, filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
+	if len(filter.ExecIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
+		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range filter.ExecIDs {
 			args = append(args, id)
 		}
 	}
-	q += ` ORDER BY l.created_at DESC`
+	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
+		q += ` AND pc.scheduled_at IS NOT NULL`
+	}
+	q += ` ORDER BY l.created_at DESC, l.id DESC`
+	if limit > 0 {
+		q += ` LIMIT ? OFFSET ?`
+		args = append(args, limit, offset)
+	}
 	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -426,17 +528,49 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 	return list, rows.Err()
 }
 
+// CountCampaignLeads returns the total number of leads in a campaign matching
+// the provided filter.
+func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
+	search := "%" + filter.Search + "%"
+	q := `SELECT COUNT(*) FROM campaign_leads cl
+	 JOIN leads l ON l.id = cl.lead_id
+	 LEFT JOIN (
+		SELECT lead_id, MIN(scheduled_at) AS scheduled_at
+		FROM scheduled_calls
+		WHERE campaign_id = ? AND status = 'pending'
+		  AND scheduled_at >= COALESCE(NULLIF(?, ''), scheduled_at)
+		  AND scheduled_at <= COALESCE(NULLIF(?, ''), scheduled_at)
+		GROUP BY lead_id
+	 ) pc ON pc.lead_id = l.id
+	 WHERE cl.campaign_id = ?
+	   AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)`
+	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
+	if len(filter.ExecIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
+		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range filter.ExecIDs {
+			args = append(args, id)
+		}
+	}
+	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
+		q += ` AND pc.scheduled_at IS NOT NULL`
+	}
+	var n int64
+	err := d.pool.QueryRow(q, args...).Scan(&n)
+	return n, err
+}
+
 func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error) {
 	cl := &CampaignLead{}
 	var orgIDInt sql.NullInt64
 	var executiveID sql.NullInt64
-	var followUpNote, interest, extID, crmProvider sql.NullString
+	var followUpNote, followUpAt, interest, company, extID, crmProvider sql.NullString
 	var nextScheduled sql.NullString
 	var hasPending sql.NullBool
 	var scheduledCallID sql.NullInt64
 	err := row.Scan(
 		&cl.ID, &orgIDInt, &cl.FirstName, &cl.LastName, &cl.Phone,
-		&cl.Source, &cl.Status, &followUpNote, &interest, &extID, &crmProvider,
+		&cl.Source, &cl.Status, &followUpNote, &followUpAt, &interest, &company, &extID, &crmProvider,
 		&executiveID, &cl.CreatedAt,
 		&cl.TranscriptCount, &cl.RecordingCount, &cl.DialAttempts,
 		&nextScheduled, &hasPending, &scheduledCallID,
@@ -451,7 +585,9 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 		cl.ExecutiveID = executiveID.Int64
 	}
 	cl.FollowUpNote = followUpNote.String
+	cl.FollowUpAt = followUpAt.String
 	cl.Interest = interest.String
+	cl.Company = company.String
 	cl.ExternalID = extID.String
 	cl.CRMProvider = crmProvider.String
 	if nextScheduled.Valid {
@@ -472,6 +608,67 @@ type CampaignStats struct {
 	Called       int64 `json:"called"`
 	Qualified    int64 `json:"qualified"`
 	Appointments int64 `json:"appointments"`
+}
+
+// CallOutcomeStats breaks down call results for a campaign.
+type CallOutcomeStats struct {
+	Total      int64 `json:"total"`
+	Connected  int64 `json:"connected"`
+	Completed  int64 `json:"completed"`
+	Unanswered int64 `json:"unanswered"`
+	Busy       int64 `json:"busy"`
+	Failed     int64 `json:"failed"`
+}
+
+// GetCampaignCallOutcomeStats returns the count of calls by outcome for a campaign.
+// When applyExecFilter is true, only calls whose lead's executive_id is in execIDs are counted.
+func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, applyExecFilter bool) (CallOutcomeStats, error) {
+	var s CallOutcomeStats
+	q := `
+		SELECT
+			CASE
+				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'completed'
+				WHEN ct.call_duration_s>5 THEN 'connected'
+				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'busy'
+				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'failed'
+				ELSE 'unanswered'
+			END AS outcome,
+			COUNT(*)
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.campaign_id=?`
+	args := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` GROUP BY outcome`
+	rows, err := d.pool.Query(q, args...)
+	if err != nil {
+		return s, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var outcome string
+		var count int64
+		if err := rows.Scan(&outcome, &count); err != nil {
+			return s, err
+		}
+		s.Total += count
+		switch outcome {
+		case "completed":
+			s.Completed += count
+		case "connected":
+			s.Connected += count
+		case "busy":
+			s.Busy += count
+		case "failed":
+			s.Failed += count
+		default:
+			s.Unanswered += count
+		}
+	}
+	return s, rows.Err()
 }
 
 // OrgDashboardSummary is the org-wide top-of-page card row for /crm. Visible
@@ -533,29 +730,34 @@ func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
 }
 
 // GetCampaignStats returns 4 aggregate metrics for a campaign.
-func (d *DB) GetCampaignStats(campaignID int64) (CampaignStats, error) {
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are counted.
+func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter bool) (CampaignStats, error) {
 	var s CampaignStats
-	if err := d.pool.QueryRow(
-		`SELECT COUNT(*) FROM campaign_leads WHERE campaign_id=?`, campaignID,
-	).Scan(&s.Total); err != nil {
+
+	totalQ := `SELECT COUNT(*) FROM campaign_leads cl JOIN leads l ON l.id=cl.lead_id WHERE cl.campaign_id=?`
+	totalArgs := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		totalQ += ` AND ` + c
+		totalArgs = append(totalArgs, a...)
+	}
+	if err := d.pool.QueryRow(totalQ, totalArgs...).Scan(&s.Total); err != nil {
 		return s, err
 	}
-	if err := d.pool.QueryRow(`
-		SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id
-		WHERE cl.campaign_id=? AND l.status NOT IN ('new')`, campaignID,
-	).Scan(&s.Called); err != nil {
+
+	statusQ := `SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id WHERE cl.campaign_id=?`
+	statusArgs := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		statusQ += ` AND ` + c
+		statusArgs = append(statusArgs, a...)
+	}
+
+	if err := d.pool.QueryRow(statusQ+` AND l.status NOT IN ('new')`, statusArgs...).Scan(&s.Called); err != nil {
 		return s, err
 	}
-	if err := d.pool.QueryRow(`
-		SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id
-		WHERE cl.campaign_id=? AND l.status IN ('Warm','Summarized','Closed')`, campaignID,
-	).Scan(&s.Qualified); err != nil {
+	if err := d.pool.QueryRow(statusQ+` AND l.status IN ('Warm','Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Qualified); err != nil {
 		return s, err
 	}
-	err := d.pool.QueryRow(`
-		SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id
-		WHERE cl.campaign_id=? AND l.status IN ('Summarized','Closed')`, campaignID,
-	).Scan(&s.Appointments)
+	err := d.pool.QueryRow(statusQ+` AND l.status IN ('Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Appointments)
 	return s, err
 }
 
@@ -586,8 +788,11 @@ type CallLogEntry struct {
 // produce transcripts with lead_id=NULL (no enrolled lead row), and the
 // previous INNER JOIN silently dropped them — exact symptom in issue #72.
 // Empty first_name/phone fallback keeps the response shape unchanged.
-func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
-	rows, err := d.pool.Query(`
+// GetCampaignCallLog returns the full call history for leads in a campaign.
+// If execIDs is non-empty, only calls whose lead has one of the given
+// executive_id values (or is unassigned if 0 is included) are returned.
+func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEntry, error) {
+	q := `
 		SELECT
 			ct.id,
 			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
@@ -604,8 +809,17 @@ func (d *DB) GetCampaignCallLog(campaignID int64) ([]CallLogEntry, error) {
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id=l.id
-		WHERE ct.campaign_id=?
-		ORDER BY ct.created_at DESC`, campaignID)
+		WHERE ct.campaign_id=?`
+	args := []any{campaignID}
+	if len(execIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range execIDs {
+			args = append(args, id)
+		}
+	}
+	q += ` ORDER BY ct.created_at DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -636,11 +850,12 @@ type RecordingExportRow struct {
 	RecordingURL      string
 }
 
-// GetCampaignRecordingsExport returns all call transcript rows that have a
+// GetCampaignRecordingsExport returns call transcript rows that have a
 // recording URL, enriched with lead name, phone, follow-up note, and a
-// derived call type (AI Dial / Manual).
-func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow, error) {
-	rows, err := d.pool.Query(`
+// derived call type (AI Dial / Manual). If execIDs is non-empty, only
+// recordings for leads with one of the given executive_id values are returned.
+func (d *DB) GetCampaignRecordingsExport(campaignID int64, execIDs []int64) ([]RecordingExportRow, error) {
+	q := `
 		SELECT
 			TRIM(CONCAT(COALESCE(l.first_name,''), ' ', COALESCE(l.last_name,''))) AS name,
 			COALESCE(l.phone,''),
@@ -660,8 +875,17 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64) ([]RecordingExportRow
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id = l.id
-		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
-		ORDER BY ct.created_at DESC`, campaignID)
+		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''`
+	args := []any{campaignID}
+	if len(execIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range execIDs {
+			args = append(args, id)
+		}
+	}
+	q += ` ORDER BY ct.created_at DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -810,4 +1034,104 @@ func (d *DB) SaveCampaignExotelCreds(campaignID int64, creds ExotelCreds) error 
 		nullString(creds.AccountSID), nullString(creds.CallerID),
 		nullString(creds.AppID), campaignID)
 	return err
+}
+
+// ExportCampaignLeads writes leads in the campaign as CSV to w.
+// Rows are streamed from the database so memory stays flat even for 100k+ leads.
+// If execIDs is non-empty, only leads with one of the given executive_id
+// values (or unassigned if 0 is included) are exported.
+func (d *DB) ExportCampaignLeads(campaignID int64, execIDs []int64, w io.Writer) error {
+	wr := csv.NewWriter(w)
+	header := []string{
+		"Lead ID", "First Name", "Last Name", "Phone", "Source",
+		"Status", "Follow-up Note", "Dial Attempts", "Recordings", "Next Scheduled At",
+	}
+	if err := wr.Write(header); err != nil {
+		return err
+	}
+	wr.Flush()
+	if err := wr.Error(); err != nil {
+		return err
+	}
+
+	q := `
+		SELECT
+			l.id,
+			COALESCE(l.first_name, ''),
+			COALESCE(l.last_name, ''),
+			l.phone,
+			COALESCE(l.source, ''),
+			COALESCE(l.status, 'new'),
+			COALESCE(l.follow_up_note, ''),
+			COALESCE(ct.dial_attempts, 0),
+			COALESCE(ct.recording_count, 0),
+			COALESCE(DATE_FORMAT(pc.scheduled_at, '%Y-%m-%d %H:%i:%s'), '')
+		FROM campaign_leads cl2
+		JOIN leads l ON l.id = cl2.lead_id
+		LEFT JOIN (
+			SELECT lead_id,
+				COUNT(*) AS dial_attempts,
+				SUM(CASE WHEN recording_url IS NOT NULL AND recording_url != '' THEN 1 ELSE 0 END) AS recording_count
+			FROM call_transcripts
+			WHERE campaign_id = ?
+			GROUP BY lead_id
+		) ct ON ct.lead_id = l.id
+		LEFT JOIN (
+			SELECT lead_id, MIN(scheduled_at) AS scheduled_at
+			FROM scheduled_calls
+			WHERE campaign_id = ? AND status = 'pending'
+			GROUP BY lead_id
+		) pc ON pc.lead_id = l.id
+		WHERE cl2.campaign_id = ?`
+	args := []any{campaignID, campaignID, campaignID}
+	if len(execIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range execIDs {
+			args = append(args, id)
+		}
+	}
+	q += ` ORDER BY l.created_at DESC, l.id DESC`
+	rows, err := d.pool.Query(q, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	const flushEvery = 100
+	rowCount := 0
+	for rows.Next() {
+		var id, dialAttempts, recordingCount int64
+		var firstName, lastName, phone, source, status, followUp, scheduledAt string
+		if err := rows.Scan(&id, &firstName, &lastName, &phone, &source, &status, &followUp,
+			&dialAttempts, &recordingCount, &scheduledAt); err != nil {
+			return err
+		}
+		if err := wr.Write([]string{
+			strconv.FormatInt(id, 10),
+			firstName,
+			lastName,
+			phone,
+			source,
+			status,
+			followUp,
+			strconv.FormatInt(dialAttempts, 10),
+			strconv.FormatInt(recordingCount, 10),
+			scheduledAt,
+		}); err != nil {
+			return err
+		}
+		rowCount++
+		if rowCount%flushEvery == 0 {
+			wr.Flush()
+			if err := wr.Error(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	wr.Flush()
+	return wr.Error()
 }

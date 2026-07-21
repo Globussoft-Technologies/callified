@@ -389,7 +389,10 @@ export default function ProductsTab({
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                                 {p.image_urls.map((url, i) => (
                                   <div key={i} style={{ position: 'relative', cursor: 'pointer' }}
-                                    onClick={() => window.open(url, '_blank')}>
+                                    onClick={() => window.open(url, '_blank')}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}>
                                     <img src={url} alt={`img-${i+1}`}
                                       style={{ width: 100, height: 70, objectFit: 'cover', borderRadius: 6,
                                         border: `1px solid ${T.border}`, background: T.bg }}
@@ -422,7 +425,10 @@ export default function ProductsTab({
                                   <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 4, width: 110 }}>
                                     {/* Image thumbnail */}
                                     <div style={{ position: 'relative', cursor: 'pointer' }}
-                                      onClick={() => window.open(img.url, '_blank')}>
+                                      onClick={() => window.open(img.url, '_blank')}
+                                      role="button"
+                                      tabIndex={0}
+                                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}>
                                       <img src={img.url} alt={img.label}
                                         style={{ width: 110, height: 75, objectFit: 'cover', borderRadius: 6,
                                           border: `2px solid #8b5cf6`, background: T.bg, display: 'block' }}

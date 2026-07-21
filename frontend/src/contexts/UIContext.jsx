@@ -168,7 +168,7 @@ function ConfirmDialog({ opts, onCancel, onOK }) {
     if (e.key === 'Enter')  { e.preventDefault(); onOK(); }
   };
   return (
-    <div className="uip-modal-overlay" onClick={onCancel}>
+    <div className="uip-modal-overlay" onClick={onCancel} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
       <div className="uip-modal" onClick={(e) => e.stopPropagation()} onKeyDown={onKey}
         tabIndex={-1} ref={(el) => el && el.focus()} role="dialog" aria-modal="true">
         <h3 className="uip-modal-title">{title}</h3>
@@ -192,8 +192,8 @@ function PromptDialog({ opts, onCancel, onSubmit }) {
     if (e.key === 'Enter')  { e.preventDefault(); onSubmit(value); }
   };
   return (
-    <div className="uip-modal-overlay" onClick={onCancel}>
-      <div className="uip-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+    <div className="uip-modal-overlay" onClick={onCancel} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+      <div className="uip-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
         <h3 className="uip-modal-title">{title}</h3>
         {message && <p className="uip-modal-msg">{message}</p>}
         <input className="uip-modal-input" type={type} value={value} placeholder={placeholder}

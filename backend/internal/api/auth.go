@@ -74,10 +74,10 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := req.Role
-	if role == "" {
-		role = "Admin"
-	}
+	// Self-service signups are always org admins; a client-supplied role must
+	// not be trusted. This prevents someone from registering as SuperAdmin or
+	// creating a privileged account by tampering with the signup payload.
+	role := "Admin"
 
 	userID, err := s.db.CreateUser(req.Email, hash, req.FullName, role, orgID)
 	if err != nil {
@@ -154,6 +154,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if user == nil || !db.CheckPassword(req.Password, user.PasswordHash) {
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if !user.IsActive {
+		writeError(w, http.StatusUnauthorized, "account disabled")
 		return
 	}
 

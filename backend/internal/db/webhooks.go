@@ -66,12 +66,14 @@ func (d *DB) DeleteWebhook(orgID, id int64) (bool, error) {
 	return n > 0, nil
 }
 
-// GetWebhookLogs returns recent delivery logs for one webhook.
-func (d *DB) GetWebhookLogs(webhookID int64, limit int) ([]WebhookLog, error) {
+// GetWebhookLogs returns recent delivery logs for one webhook, scoped to org.
+func (d *DB) GetWebhookLogs(orgID, webhookID int64, limit int) ([]WebhookLog, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, webhook_id, event, COALESCE(status_code,0), COALESCE(response,''),
-		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM webhook_logs WHERE webhook_id=? ORDER BY id DESC LIMIT ?`, webhookID, limit)
+		SELECT wl.id, wl.webhook_id, wl.event, COALESCE(wl.status_code,0), COALESCE(wl.response,''),
+		DATE_FORMAT(wl.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM webhook_logs wl
+		JOIN webhooks w ON w.id = wl.webhook_id
+		WHERE wl.webhook_id=? AND w.org_id=? ORDER BY wl.id DESC LIMIT ?`, webhookID, orgID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -19,8 +19,34 @@ type VoiceSettings struct {
 type Organization struct {
 	ID        int64  `json:"id"`
 	Name      string `json:"name"`
+	Domain    string `json:"domain,omitempty"`
 	Timezone  string `json:"timezone"`
 	CreatedAt string `json:"created_at"`
+}
+
+// EnsureOrganizationsTable makes sure the organizations table exists and adds
+// the optional domain column for SSO email-domain matching.
+func (d *DB) EnsureOrganizationsTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS organizations (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+			custom_system_prompt TEXT DEFAULT NULL,
+			tts_provider VARCHAR(50) DEFAULT 'elevenlabs',
+			tts_voice_id VARCHAR(100) DEFAULT NULL,
+			tts_language VARCHAR(10) DEFAULT 'hi',
+			timezone VARCHAR(100) DEFAULT 'Asia/Kolkata',
+			onboarding_completed TINYINT(1) DEFAULT 0
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+	if err != nil {
+		return err
+	}
+	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN domain VARCHAR(255) DEFAULT NULL UNIQUE`)
+	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") && !strings.Contains(err.Error(), "1061") {
+		return err
+	}
+	return nil
 }
 
 // GetAllOrganizations returns all orgs ordered by id DESC.
@@ -46,14 +72,40 @@ func (d *DB) GetAllOrganizations() ([]Organization, error) {
 // GetOrganizationByID returns one org by its primary key. Returns nil when not found.
 func (d *DB) GetOrganizationByID(id int64) (*Organization, error) {
 	row := d.pool.QueryRow(
-		`SELECT id, name, COALESCE(timezone,'Asia/Kolkata'), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		`SELECT id, name, COALESCE(domain,''), COALESCE(timezone,'Asia/Kolkata'), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM organizations WHERE id=? LIMIT 1`, id)
 	var o Organization
-	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.CreatedAt)
+	err := row.Scan(&o.ID, &o.Name, &o.Domain, &o.Timezone, &o.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return &o, err
+}
+
+// GetOrganizationByDomain looks up an org by its verified email domain.
+// Returns nil when no org has that domain.
+func (d *DB) GetOrganizationByDomain(domain string) (*Organization, error) {
+	row := d.pool.QueryRow(
+		`SELECT id, name, COALESCE(domain,''), COALESCE(timezone,'Asia/Kolkata'), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM organizations WHERE domain = ? LIMIT 1`, strings.ToLower(domain))
+	var o Organization
+	err := row.Scan(&o.ID, &o.Name, &o.Domain, &o.Timezone, &o.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &o, err
+}
+
+// CreateOrganizationWithDomain inserts a new org with an optional verified domain.
+func (d *DB) CreateOrganizationWithDomain(name, domain string) (int64, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	res, err := d.pool.Exec(
+		`INSERT INTO organizations (name, domain) VALUES (?, NULLIF(?, ''))`,
+		name, domain)
+	if err != nil {
+		return 0, fmt.Errorf("CreateOrganizationWithDomain: %w", err)
+	}
+	return res.LastInsertId()
 }
 
 // DeleteOrganization deletes an org (cascades to campaigns, leads, users).
@@ -456,10 +508,22 @@ func (d *DB) GetAllTasks(orgID int64) ([]Task, error) {
 	return list, rows.Err()
 }
 
-// CompleteTask sets task status to 'Complete'.
-func (d *DB) CompleteTask(id int64) error {
-	_, err := d.pool.Exec(`UPDATE tasks SET status='Complete' WHERE id=?`, id)
-	return err
+// CompleteTask sets task status to 'Complete', scoped to the org via the
+// task's linked lead so one tenant cannot complete another tenant's task.
+func (d *DB) CompleteTask(id, orgID int64) error {
+	res, err := d.pool.Exec(`
+		UPDATE tasks t
+		JOIN leads l ON l.id = t.lead_id
+		SET t.status='Complete'
+		WHERE t.id=? AND l.org_id=?`, id, orgID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // Pronunciation mirrors the pronunciation_guide table.

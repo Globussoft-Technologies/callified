@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 )
+
+// waSessionIDRe restricts the session id used in upstream WaSender URLs to
+// alphanumeric, dash, and underscore. This blocks path-traversal values such
+// as "../../qrcode" that would otherwise be forwarded to the upstream API.
+var waSessionIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // WaSender session-management endpoints. These proxy to wasenderapi.com
 // using the org's stored Personal Access Token (saved as the api_key on
@@ -117,8 +123,8 @@ func (s *Server) waConnectSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "session id required")
+	if id == "" || !waSessionIDRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid session id")
 		return
 	}
 	s.proxyToWaSender(w, r, http.MethodPost,
@@ -144,8 +150,8 @@ func (s *Server) waSessionQR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "session id required")
+	if id == "" || !waSessionIDRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid session id")
 		return
 	}
 	s.proxyToWaSender(w, r, http.MethodGet,
@@ -171,8 +177,8 @@ func (s *Server) waDisconnectSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "session id required")
+	if id == "" || !waSessionIDRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, "invalid session id")
 		return
 	}
 	s.proxyToWaSender(w, r, http.MethodPost,

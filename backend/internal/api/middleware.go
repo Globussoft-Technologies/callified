@@ -56,6 +56,23 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// SSE tickets are short-lived query-string tokens; they must never be
+		// accepted as session Bearer tokens. Rejecting them here prevents a
+		// leaked ?ticket=... from being replayed against the REST API.
+		if claims.Kind == "sse" {
+			writeError(w, http.StatusUnauthorized, "invalid or expired token")
+			return
+		}
+
+		// Re-validate the user record: disabled/deleted accounts must lose API
+		// access immediately, not when their 30-day JWT expires.
+		if s.db != nil && claims.Subject != "" {
+			if u, err := s.db.GetUserByEmail(claims.Subject); err != nil || u == nil || !u.IsActive {
+				writeError(w, http.StatusUnauthorized, "account disabled")
+				return
+			}
+		}
+
 		ac := AuthClaims{
 			Email: claims.Subject, // Python sets sub = email
 			OrgID: claims.OrgID,
@@ -81,6 +98,9 @@ func getAuth(r *http.Request) AuthClaims {
 // Role field; in that case we fall back to a single DB lookup so a long-lived
 // token doesn't accidentally bypass authorization. Subsequent re-logins
 // embed the role and skip the lookup.
+//
+// Role model: Admin | TeamLeader | Agent | Viewer. Admin sees everything;
+// TeamLeader sees self + managed Agents; Agent sees only self.
 func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {

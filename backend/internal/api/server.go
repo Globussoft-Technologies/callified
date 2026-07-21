@@ -152,10 +152,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// these tabs for non-Admins, but without a server-side check a low-privileged
 	// user could call the API directly (OWASP A01: broken access control).
 	adminAuth := s.requireRole("Admin")
+	// teamLeaderAuth allows Team Leaders to manage their own Agents.
+	teamLeaderAuth := s.requireRole("TeamLeader")
 	// adminOrAgent allows Admin and Agent but excludes Viewer. Used for
 	// campaign read endpoints — Agents need to see + dial campaign leads,
-	// Viewers should only have CRM.
-	adminOrAgent := s.requireRole("Admin", "Agent")
+	// Viewers should only have CRM. TeamLeader is also included now.
+	adminOrAgent := s.requireRole("Admin", "TeamLeader", "Agent")
 	// superAdmin gates the subscription management endpoints.
 	superAdmin := s.requireSuperAdmin
 
@@ -198,29 +200,28 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/leads/{id}/executive", auth(s.updateLeadExecutive))
 	mux.HandleFunc("PUT /api/leads/{id}/source", auth(s.updateLeadSource))
 	mux.HandleFunc("POST /api/leads/{id}/notes", auth(s.updateLeadNote))
+	mux.HandleFunc("PUT /api/leads/{id}/disposition", auth(s.updateLeadDisposition))
 	mux.HandleFunc("POST /api/leads/{id}/documents", auth(s.uploadLeadDocument))
 	mux.HandleFunc("GET /api/leads/{id}/documents", auth(s.getLeadDocuments))
 	mux.HandleFunc("GET /api/leads/{id}/transcripts", auth(s.getLeadTranscripts))
+	mux.HandleFunc("GET /api/leads/{id}/interactions", auth(s.getLeadInteractions))
 	// Convenience lookup by phone — returns audio + interaction transcripts
 	// in one fetch. Org-scoped at the DB layer so cross-tenant leakage is
 	// impossible. Useful for external integrations that only have the phone.
 	mux.HandleFunc("GET /api/leads/by-phone/{phone}/calls", auth(s.getLeadCallsByPhone))
 
+	// ── Agent Presence ────────────────────────────────────────────────────────
+	mux.HandleFunc("POST /api/presence/heartbeat", auth(s.presenceHeartbeat))
+	mux.HandleFunc("POST /api/presence/break", auth(s.presenceBreak))
+	mux.HandleFunc("POST /api/presence/idle", auth(s.presenceIdle))
+	mux.HandleFunc("GET /api/presence", adminAuth(s.listPresence))
+
 	// ── Campaigns ─────────────────────────────────────────────────────────────
-	// Admin-only across the board. The React route guard already redirects
-	// non-Admins away from /campaigns, /logs and /analytics, but the API was
-	// previously open to any authenticated user — Agent JWTs could read
-	// /api/campaigns, per-campaign /leads, /stats, and /call-log directly.
-	// Closing the read side here makes the page-level guard real (issue #51).
-	// App.jsx fetches /api/campaigns at startup for everyone; non-Admin will
-	// now get 403 there and the existing graceful "expected array" handler
-	// falls back to []. LogsTab also fetches it for the campaign filter,
-	// which only Admins can reach today anyway.
-	// Read endpoints are open to Admin + Agent so Agents can see campaigns +
-	// dial leads. Viewers are locked out — their only tab is CRM. Write
-	// endpoints (create/edit/delete/import, remove-lead, voice-settings save)
-	// stay Admin-only — Agents shouldn't be able to mutate shared campaign
-	// config.
+	// Read endpoints are open to Admin + TeamLeader + Agent so Agents can see
+	// campaigns + dial leads. Viewers are locked out — their only tab is CRM.
+	// Write endpoints (create/edit/delete/import, remove-lead, voice-settings
+	// save) stay Admin-only — Agents/TeamLeaders shouldn't mutate shared
+	// campaign config.
 	mux.HandleFunc("GET /api/campaigns", adminOrAgent(s.listCampaigns))
 	mux.HandleFunc("POST /api/campaigns", adminAuth(s.createCampaign))
 	mux.HandleFunc("GET /api/campaigns/{id}", adminOrAgent(s.getCampaign))
@@ -230,8 +231,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/leads", adminAuth(s.addCampaignLeads))
 	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
 	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminOrAgent(s.getCampaignStats))
+	mux.HandleFunc("GET /api/campaigns/{id}/call-outcome-stats", adminOrAgent(s.getCampaignCallOutcomeStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminOrAgent(s.getCampaignCallLog))
 	mux.HandleFunc("GET /api/campaigns/{id}/export-recordings", adminOrAgent(s.exportRecordings))
+	mux.HandleFunc("GET /api/campaigns/{id}/export-leads", adminOrAgent(s.exportCampaignLeads))
 	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminOrAgent(s.getCampaignVoiceSettings))
 	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
 	mux.HandleFunc("GET /api/campaigns/{id}/exotel-creds", adminAuth(s.getCampaignExotelCreds))
@@ -243,6 +246,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/campaigns/{id}/twilio-token", adminOrAgent(s.twilioToken))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 	mux.HandleFunc("PUT /api/campaigns/{id}/executives", adminAuth(s.setCampaignExecutives))
+	mux.HandleFunc("POST /api/campaigns/{id}/assign-users", adminAuth(s.assignCampaignUsers))
+	mux.HandleFunc("GET /api/campaigns/{id}/assigned-users", adminOrAgent(s.getCampaignAssignedUsers))
 
 	// ── Org Exotel accounts ───────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/exotel-accounts", adminAuth(s.listExotelAccounts))
@@ -324,9 +329,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/webhooks/{id}/logs", adminAuth(s.getWebhookLogs))
 
 	// ── Scheduled calls ───────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/scheduled-calls", adminAuth(s.listScheduledCalls))
-	mux.HandleFunc("POST /api/scheduled-calls", adminAuth(s.createScheduledCall))
-	mux.HandleFunc("DELETE /api/scheduled-calls/{id}", adminAuth(s.cancelScheduledCall))
+	mux.HandleFunc("GET /api/scheduled-calls", adminOrAgent(s.listScheduledCalls))
+	mux.HandleFunc("POST /api/scheduled-calls", adminOrAgent(s.createScheduledCall))
+	mux.HandleFunc("DELETE /api/scheduled-calls/{id}", adminOrAgent(s.cancelScheduledCall))
 
 	// ── Dashboard summary ────────────────────────────────────────────────────
 	// 5 aggregate numbers for the CRM landing dashboard. Open to any
@@ -343,6 +348,17 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
+
+	// ── User Management (RBAC) ────────────────────────────────────────────────
+	// Admin-only direct user creation with password + Team Leader self-service.
+	mux.HandleFunc("GET /api/users", adminAuth(s.listUsers))
+	mux.HandleFunc("POST /api/users", adminAuth(s.createUser))
+	mux.HandleFunc("PUT /api/users/{id}", adminAuth(s.updateUser))
+	mux.HandleFunc("DELETE /api/users/{id}", adminAuth(s.deleteUser))
+	mux.HandleFunc("POST /api/users/{id}/toggle-active", adminAuth(s.toggleUserActive))
+	mux.HandleFunc("GET /api/users/my-agents", teamLeaderAuth(s.listMyAgents))
+	mux.HandleFunc("POST /api/users/agent", teamLeaderAuth(s.createAgentUnderManager))
+	mux.HandleFunc("PUT /api/users/{id}/agent", teamLeaderAuth(s.updateManagedAgent))
 
 	// ── Executives ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/executives", adminAuth(s.listExecutives))
@@ -413,7 +429,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", adminOrAgent(s.campaignDialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
-	mux.HandleFunc("POST /api/manual-call", adminAuth(s.manualCall))
+	mux.HandleFunc("POST /api/manual-call", adminOrAgent(s.manualCall))
 
 	// ── AI Receptionist (embedded — no separate process) ────────────────────
 	// /api/receptionist/* is served by the in-process receptionist handler.
@@ -441,6 +457,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/analytics/export", adminAuth(s.analyticsExportCSV))
 	mux.HandleFunc("GET /api/analytics/report", adminAuth(s.analyticsExportReport))
 	mux.HandleFunc("GET /api/analytics/scored-leads", adminAuth(s.scoredLeads))
+	mux.HandleFunc("GET /api/analytics/agent-report", adminAuth(s.agentReportXLSX))
 
 	// ── Billing (Phase 3B) ────────────────────────────────────────────────────
 	// Subscribe/cancel/create-order/verify-payment all carry financial impact
@@ -523,16 +540,24 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/knowledge/{id}/download", adminAuth(s.downloadKnowledge))
 	mux.HandleFunc("DELETE /api/knowledge/{id}", adminAuth(s.deleteKnowledge))
 
+	// ── Notifications ─────────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/notifications", auth(s.listNotifications))
+	mux.HandleFunc("GET /api/notifications/unread-count", auth(s.unreadNotificationCount))
+	mux.HandleFunc("PUT /api/notifications/{id}/read", auth(s.markNotificationRead))
+	mux.HandleFunc("PUT /api/notifications/read-all", auth(s.markAllNotificationsRead))
+
 	// ── SSE (Phase 3C) ────────────────────────────────────────────────────────
 	// Live log + campaign-event streams contain real lead PII (names + phone
 	// numbers) for the entire org. SSE endpoints authenticate via a
 	// short-lived ?ticket=… (kind="sse") minted by /api/sse/ticket — the
 	// long-lived auth JWT must never appear in URLs. (issue #80)
-	mux.HandleFunc("GET /api/sse/ticket", adminAuth(s.sseTicket))
+	mux.HandleFunc("GET /api/sse/ticket", auth(s.sseTicket))
 	mux.HandleFunc("GET /api/sse/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
 	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
+	mux.HandleFunc("GET /api/sse/notifications", s.requireSSETicket(s.notificationEvents))
+	mux.HandleFunc("GET /api/sse/presence", s.requireSSETicket(s.presenceSSE))
 
 	// ── Active calls (debug / ops) ────────────────────────────────────────────
 	// Lists every currently-active WS call session with its stream_sid +
@@ -590,6 +615,23 @@ func writeFieldError(w http.ResponseWriter, code int, msg string, fields map[str
 // parseID reads a path parameter as int64.
 func parseID(r *http.Request, name string) (int64, error) {
 	return strconv.ParseInt(r.PathValue(name), 10, 64)
+}
+
+// parsePagination reads ?page and ?limit query params and clamps them.
+// Defaults: page=1, limit=defaultLimit, maxLimit=hard cap.
+func parsePagination(r *http.Request, defaultLimit, maxLimit int64) (page, limit int64) {
+	page = 1
+	if p, err := strconv.ParseInt(r.URL.Query().Get("page"), 10, 64); err == nil && p > 0 {
+		page = p
+	}
+	limit = defaultLimit
+	if l, err := strconv.ParseInt(r.URL.Query().Get("limit"), 10, 64); err == nil && l > 0 {
+		if l > maxLimit {
+			l = maxLimit
+		}
+		limit = l
+	}
+	return
 }
 
 // emptyJSON returns [] for nil slices so the API never returns null.

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { API_URL } from '../constants/api';
 import BrowserCallModal from '../components/campaigns/BrowserCallModal';
+import ScheduledCallbackPreview from '../components/ScheduledCallbackPreview';
 import { useToast } from './UIContext';
 import { useAuth } from './AuthContext';
 import { useOrg } from './OrgContext';
@@ -30,6 +31,18 @@ export function CallProvider({ children }) {
   const [browserCallCampaignId, setBrowserCallCampaignId] = useState(null);
   const [browserCallSid, setBrowserCallSid] = useState(null);
   const [browserCallDialing, setBrowserCallDialing] = useState(false);
+
+  // Agent presence: manual override (idle/break). On-call is detected from
+  // active browser / sim-web call state automatically.
+  const [manualPresenceStatus, setManualPresenceStatus] = useState('idle');
+
+  // Track scheduled callbacks that have already been auto-triggered so we
+  // don't repeatedly dial the same lead while the scheduled row is still pending.
+  const triggeredScheduledRef = useRef(new Set());
+
+  // When a manual callback becomes due, show a preview with customer details,
+  // previous remarks, and call history before connecting.
+  const [scheduledCallbackPreview, setScheduledCallbackPreview] = useState(null);
 
   // Manual scheduled-call reminder notifications
   const DISMISSED_SCHEDULED_KEY = 'callified_dismissed_scheduled_calls';
@@ -317,10 +330,37 @@ export function CallProvider({ children }) {
     setBrowserCallSid(null);
   }, []);
 
+  const startScheduledCallback = useCallback(() => {
+    const call = scheduledCallbackPreview;
+    if (!call) return;
+    setScheduledCallbackPreview(null);
+    const lead = {
+      id: call.lead_id,
+      first_name: call.first_name || 'Customer',
+      phone: call.phone || '',
+    };
+    triggerBrowserCall(lead, call.campaign_id);
+  }, [scheduledCallbackPreview, triggerBrowserCall]);
+
+  const dismissScheduledCallbackPreview = useCallback(() => {
+    const call = scheduledCallbackPreview;
+    if (call) {
+      dismissScheduledCall(call.id);
+    }
+    setScheduledCallbackPreview(null);
+  }, [scheduledCallbackPreview, dismissScheduledCall]);
+
   const handleBrowserCallEnded = useCallback((status, errorMsg) => {
     const cb = browserCallEndedCbRef.current;
     browserCallEndedCbRef.current = null;
-    if (cb) cb(status, errorMsg);
+    if (cb) {
+      cb(status, errorMsg);
+      // When an ended-callback is registered (browser auto-dial), close the
+      // call modal automatically so the disposition screen is visible.
+      setBrowserCallLead(null);
+      setBrowserCallCampaignId(null);
+      setBrowserCallSid(null);
+    }
   }, []);
 
   const handleCampaignWebCall = useCallback(async (lead, campaignId) => {
@@ -494,17 +534,32 @@ export function CallProvider({ children }) {
     }
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
-  // Poll for due manual scheduled calls.
+  // Poll for due manual scheduled calls. Calls scheduled by the current user
+  // open a preview modal with customer details, remarks, and call history;
+  // the agent must click Start Call to connect. Everyone else just sees a reminder.
   const fetchDueManualCalls = useCallback(async () => {
     try {
       const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
       if (!res.ok) return;
       const calls = await res.json();
       setDueManualCalls(calls || []);
+
+      const myUserId = currentUser?.id;
+      if (!myUserId) return;
+      // Only show one preview at a time and don't interrupt an active call.
+      if (scheduledCallbackPreview || browserCallLead || browserCallDialing) return;
+      for (const call of calls) {
+        if (call.scheduled_by_user_id !== myUserId) continue;
+        if (triggeredScheduledRef.current.has(call.id)) continue;
+        if (!call.campaign_id || !call.lead_id) continue;
+        triggeredScheduledRef.current.add(call.id);
+        setScheduledCallbackPreview(call);
+        break;
+      }
     } catch (e) {
       console.error('[scheduled-calls] poll failed', e);
     }
-  }, [apiFetch]);
+  }, [apiFetch, currentUser?.id, scheduledCallbackPreview, browserCallLead, browserCallDialing]);
 
   useEffect(() => {
     if (!authToken) return;
@@ -513,7 +568,25 @@ export function CallProvider({ children }) {
     return () => clearInterval(id);
   }, [authToken, fetchDueManualCalls]);
 
-
+  // Agent presence heartbeat: on_call when in a browser/sim call, otherwise
+  // respect the manual status (break/idle).
+  useEffect(() => {
+    if (!authToken || !currentUser?.id) return;
+    const sendHeartbeat = () => {
+      let status = manualPresenceStatus;
+      if (browserCallLead || webCallActive) {
+        status = 'on_call';
+      }
+      apiFetch(`${API_URL}/presence/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      }).catch(() => {});
+    };
+    sendHeartbeat();
+    const id = setInterval(sendHeartbeat, 15000);
+    return () => clearInterval(id);
+  }, [authToken, currentUser?.id, manualPresenceStatus, browserCallLead, webCallActive, apiFetch]);
 
   return (
     <CallContext.Provider value={{
@@ -526,7 +599,9 @@ export function CallProvider({ children }) {
       refreshScheduledCalls: fetchDueManualCalls,
       clearDismissedScheduledCall,
       dismissScheduledCall,
-      dueScheduledCalls
+      dueScheduledCalls,
+      manualPresenceStatus,
+      setManualPresenceStatus,
     }}>
       {children}
       {browserCallLead && browserCallSid && (
@@ -539,13 +614,23 @@ export function CallProvider({ children }) {
         />
       )}
 
+      {scheduledCallbackPreview && (
+        <ScheduledCallbackPreview
+          call={scheduledCallbackPreview}
+          onStart={startScheduledCallback}
+          onDismiss={dismissScheduledCallbackPreview}
+          apiFetch={apiFetch}
+          API_URL={API_URL}
+        />
+      )}
+
       {rechargePrompt && (
-        <div onClick={() => setRechargePrompt(null)} style={{
+        <div onClick={() => setRechargePrompt(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
           position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.75)',
           backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
           justifyContent: 'center', zIndex: 10000, padding: '1rem'
         }}>
-          <div onClick={e => e.stopPropagation()} style={{
+          <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
             maxWidth: '440px', width: '100%', padding: '1.75rem',
             background: '#0f172a',
             border: '1px solid rgba(239,68,68,0.3)',

@@ -49,7 +49,7 @@ func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
 		campaigns, err = s.db.GetAllCampaigns()
 	} else {
-		campaigns, err = s.db.GetCampaignsByOrg(ac.OrgID)
+		campaigns, err = s.listCampaignsForUser(ac)
 	}
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaigns", "err", err)
@@ -57,6 +57,42 @@ func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(campaigns))
+}
+
+// listCampaignsForUser returns campaigns visible to the authenticated user
+// based on their resolved dashboard role.
+func (s *Server) listCampaignsForUser(ac AuthClaims) ([]db.Campaign, error) {
+	user, err := s.db.GetUserByEmail(ac.Email)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return []db.Campaign{}, nil
+	}
+
+	role := user.Role
+	if s.isSuperAdmin(ac.Email) {
+		role = db.RoleAdmin
+	}
+
+	switch role {
+	case db.RoleAdmin:
+		return s.db.GetCampaignsByOrg(ac.OrgID)
+	case db.RoleTeamLeader:
+		ids, err := s.db.GetCampaignsForManager(user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return s.db.GetCampaignsByIDs(ids)
+	case db.RoleAgent:
+		ids, err := s.db.GetCampaignsForUser(user.ID)
+		if err != nil {
+			return nil, err
+		}
+		return s.db.GetCampaignsByIDs(ids)
+	default:
+		return []db.Campaign{}, nil
+	}
 }
 
 // ── POST /api/campaigns ──────────────────────────────────────────────────────
@@ -154,6 +190,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id} [get]
 func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -165,13 +202,18 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if c == nil {
+	if c == nil || c.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if !s.canViewCampaign(ac, c.ID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 	// Attach fresh stats — best-effort; we don't fail the whole response if
-	// the stats query breaks.
-	if stats, err := s.db.GetCampaignStats(id); err == nil {
+	// the stats query breaks. Stats are filtered by lead access for non-Admins.
+	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	if stats, err := s.db.GetCampaignStats(id, execIDs, apply); err == nil {
 		c.Stats = &stats
 	} else {
 		s.logger.Sugar().Warnw("getCampaign: stats lookup failed", "id", id, "err", err)
@@ -231,9 +273,20 @@ type campaignUpdateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id} [put]
 func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	campaign, err := s.db.GetCampaignByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateCampaign", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil || campaign.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 	var req campaignUpdateRequest
@@ -275,9 +328,20 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id} [delete]
 func (s *Server) deleteCampaign(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	campaign, err := s.db.GetCampaignByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("deleteCampaign", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil || campaign.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 	deleted, err := s.db.DeleteCampaign(id)
@@ -295,32 +359,77 @@ func (s *Server) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/campaigns/{id}/leads ────────────────────────────────────────────
 
+// PaginatedCampaignLeadsResponse is the shape returned by listCampaignLeads.
+type PaginatedCampaignLeadsResponse struct {
+	Leads []db.CampaignLead `json:"leads"`
+	Total int64             `json:"total"`
+	Page  int64             `json:"page"`
+	Limit int64             `json:"limit"`
+}
+
 // @Summary     List campaign leads
-// @Description Returns all leads enrolled in a campaign.
+// @Description Returns a paginated list of leads enrolled in a campaign.
 // @Tags        campaigns
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id  path      int64  true  "Campaign ID"
-// @Success     200  {array}   db.CampaignLead
+// @Param       id              path   int64  true   "Campaign ID"
+// @Param       page            query  int    false  "Page number (1-based)"  default(1)
+// @Param       limit           query  int    false  "Page size"              default(100)
+// @Param       search          query  string false  "Search by name/phone/source"
+// @Param       executive_ids   query  string false  "Comma-separated executive IDs"
+// @Param       scheduled_from  query  string false  "Scheduled from (ISO datetime)"
+// @Param       scheduled_to    query  string false  "Scheduled to (ISO datetime)"
+// @Success     200  {object}  PaginatedCampaignLeadsResponse
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads [get]
 func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	execIDs := parseExecutiveIDs(r.URL.Query().Get("executive_ids"))
-	leads, err := s.db.GetCampaignLeadsFiltered(id, execIDs)
+	ac := getAuth(r)
+	q := r.URL.Query()
+	filter := db.CampaignLeadsFilter{
+		CampaignID:    campaign.ID,
+		ExecIDs:       parseExecutiveIDs(q.Get("executive_ids")),
+		Search:        q.Get("search"),
+		ScheduledFrom: q.Get("scheduled_from"),
+		ScheduledTo:   q.Get("scheduled_to"),
+	}
+	// Enforce per-lead isolation for Agents and Team Leaders.
+	allowed, apply, err := s.leadAccessExecIDs(ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaignLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, emptyJSON(leads))
+	if apply {
+		filter.ExecIDs = allowed
+	}
+	page, limit := parsePagination(r, 100, 500)
+	offset := (page - 1) * limit
+
+	leads, err := s.db.GetCampaignLeadsPaginated(filter, limit, offset)
+	if err != nil {
+		s.logger.Sugar().Errorw("listCampaignLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	total, err := s.db.CountCampaignLeads(filter)
+	if err != nil {
+		s.logger.Sugar().Errorw("listCampaignLeads count", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, PaginatedCampaignLeadsResponse{
+		Leads: emptyJSON(leads),
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	})
 }
 
 // ── POST /api/campaigns/{id}/leads ───────────────────────────────────────────
@@ -340,9 +449,9 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads [post]
 func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	ac := getAuth(r)
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
 	var body struct {
@@ -352,7 +461,18 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lead_ids required")
 		return
 	}
-	added, err := s.db.AddLeadsToCampaign(id, body.LeadIDs)
+	// Reject any lead IDs that do not belong to the caller's org.
+	matchCount, err := s.db.CountLeadsByOrgAndIDs(ac.OrgID, body.LeadIDs)
+	if err != nil {
+		s.logger.Sugar().Errorw("addCampaignLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if int(matchCount) != len(body.LeadIDs) {
+		writeError(w, http.StatusBadRequest, "one or more leads do not belong to this org")
+		return
+	}
+	added, err := s.db.AddLeadsToCampaign(campaign.ID, body.LeadIDs)
 	if err != nil {
 		s.logger.Sugar().Errorw("addCampaignLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -378,11 +498,11 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads/{lead_id} [delete]
 func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid lead_id")
@@ -416,14 +536,45 @@ func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/stats [get]
 func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	ac := getAuth(r)
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	stats, err := s.db.GetCampaignStats(id)
+	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	stats, err := s.db.GetCampaignStats(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignStats", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ── GET /api/campaigns/{id}/call-outcome-stats ───────────────────────────────
+
+// @Summary     Get campaign call outcome stats
+// @Description Returns the number of total, connected, completed, unanswered, busy, and failed calls for a campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Campaign ID"
+// @Success     200  {object}  db.CallOutcomeStats
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/call-outcome-stats [get]
+func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	stats, err := s.db.GetCampaignCallOutcomeStats(campaign.ID, execIDs, apply)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallOutcomeStats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -445,12 +596,21 @@ func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-log [get]
 func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	log, err := s.db.GetCampaignCallLog(id)
+	ac := getAuth(r)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !apply {
+		execIDs = nil
+	}
+	log, err := s.db.GetCampaignCallLog(campaign.ID, execIDs)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -462,17 +622,21 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 // ── GET /api/campaigns/{id}/export-recordings ────────────────────────────────
 // Downloads a CSV of all calls in the campaign that have a recording URL.
 func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	ac := getAuth(r)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+		s.logger.Sugar().Errorw("exportRecordings", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	campaign, err := s.db.GetCampaignByID(id)
-	if err != nil || campaign == nil {
-		writeError(w, http.StatusNotFound, "campaign not found")
-		return
+	if !apply {
+		execIDs = nil
 	}
-	entries, err := s.db.GetCampaignRecordingsExport(id)
+	entries, err := s.db.GetCampaignRecordingsExport(campaign.ID, execIDs)
 	if err != nil {
 		s.logger.Sugar().Errorw("exportRecordings", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -496,6 +660,32 @@ func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
 	wr.Flush()
 }
 
+// exportCampaignLeads streams all leads in a campaign as a CSV download.
+// Unlike exportRecordings, this exports the lead list (not call recordings)
+// and is designed to handle 100k+ rows without loading them into memory.
+func (s *Server) exportCampaignLeads(w http.ResponseWriter, r *http.Request) {
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	ac := getAuth(r)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("exportCampaignLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !apply {
+		execIDs = nil
+	}
+	fname := fmt.Sprintf("leads_%s.csv", strings.ReplaceAll(campaign.Name, " ", "_"))
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fname))
+	if err := s.db.ExportCampaignLeads(campaign.ID, execIDs, w); err != nil {
+		s.logger.Sugar().Errorw("exportCampaignLeads", "campaign_id", campaign.ID, "err", err)
+	}
+}
+
 // ── GET /api/campaigns/{id}/voice-settings ───────────────────────────────────
 
 // @Summary     Get campaign voice settings
@@ -511,12 +701,11 @@ func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/voice-settings [get]
 func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	vs, err := s.db.GetCampaignVoiceSettings(id)
+	vs, err := s.db.GetCampaignVoiceSettings(campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignVoiceSettings", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -542,11 +731,11 @@ func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/voice-settings [put]
 func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	id := campaign.ID
 	var vs db.VoiceSettings
 	if err := json.NewDecoder(r.Body).Decode(&vs); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -591,7 +780,7 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id    path      int64  true  "Campaign ID"
-// @Param       file  formData  file   true  "CSV file (columns: first_name, last_name, phone, source)"
+// @Param       file  formData  file   true  "CSV file (columns: first_name, last_name, phone, company, source)"
 // @Success     200   {object}  object{imported=int,added_to_campaign=int,rejected=[]ImportRejection,errors=[]string}
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
@@ -600,11 +789,11 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 // @Router      /api/campaigns/{id}/import-csv [post]
 func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	// Allow large CSVs up to ~100 MB; files bigger than memory are spilled to disk.
 	if err := r.ParseMultipartForm(100 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "failed to parse form")
@@ -632,7 +821,7 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		}
 		return -1
 	}
-	iFirst, iLast, iPhone, iSource := idx("first_name"), idx("last_name"), idx("phone"), idx("source")
+	iFirst, iLast, iPhone, iCompany, iSource := idx("first_name"), idx("last_name"), idx("phone"), idx("company"), idx("source")
 	if iFirst < 0 || iPhone < 0 {
 		writeError(w, http.StatusBadRequest, "CSV must have first_name and phone columns")
 		return
@@ -650,18 +839,12 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 	seen := make(map[string]int) // phone -> first CSV row number where it appeared
 	for rowIdx, rec := range records[1:] {
 		rowNum := rowIdx + 2 // CSV rows are 1-based; header is row 1
-		phone := get(rec, iPhone)
+		phone := normalizePhone(get(rec, iPhone))
 		firstName := get(rec, iFirst)
 
 		if phone == "" {
 			rejected = append(rejected, ImportRejection{
-				Row: rowNum, FirstName: firstName, Phone: phone, Reason: "empty phone",
-			})
-			continue
-		}
-		if !isValidPhone(phone) {
-			rejected = append(rejected, ImportRejection{
-				Row: rowNum, FirstName: firstName, Phone: phone, Reason: "invalid phone (must be exactly 10 digits)",
+				Row: rowNum, FirstName: firstName, Phone: get(rec, iPhone), Reason: "invalid or empty phone",
 			})
 			continue
 		}
@@ -678,6 +861,7 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 			FirstName: firstName,
 			LastName:  get(rec, iLast),
 			Phone:     phone,
+			Company:   get(rec, iCompany),
 			Source:    get(rec, iSource),
 		})
 	}
@@ -800,12 +984,11 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/exotel-creds [get]
 func (s *Server) getCampaignExotelCreds(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	creds, err := s.db.GetCampaignExotelCreds(id)
+	creds, err := s.db.GetCampaignExotelCreds(campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignExotelCreds", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -831,9 +1014,8 @@ func (s *Server) getCampaignExotelCreds(w http.ResponseWriter, r *http.Request) 
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/exotel-creds [put]
 func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
 	var creds db.ExotelCreds
@@ -841,7 +1023,7 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.SaveCampaignExotelCreds(id, creds); err != nil {
+	if err := s.db.SaveCampaignExotelCreds(campaign.ID, creds); err != nil {
 		s.logger.Sugar().Errorw("saveCampaignExotelCreds", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -864,12 +1046,11 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-reviews [get]
 func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	reviews, err := s.db.GetCallReviewsByCampaign(id)
+	reviews, err := s.db.GetCallReviewsByCampaign(campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallReviews", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -896,12 +1077,11 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/retries [get]
 func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	retries, err := s.db.GetRetriesByCampaignWithLead(id)
+	retries, err := s.db.GetRetriesByCampaignWithLead(campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -929,12 +1109,11 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-insights [get]
 func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	insights, err := s.db.GetCampaignCallInsights(id)
+	insights, err := s.db.GetCampaignCallInsights(campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -963,11 +1142,12 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/human-call/{lead_id} [post]
 func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	ac := getAuth(r)
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid lead id")
@@ -987,6 +1167,10 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
+	if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
 
 	creds, err := s.db.GetCampaignExotelCreds(campaignID)
 	if err != nil || !creds.IsSet() {
@@ -997,7 +1181,6 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
 
 	// StatusCallback delivers recording URL + final status when the call ends.
-	ac := getAuth(r)
 	statusCallback := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 		s.cfg.PublicServerURL, leadID, campaignID)
 
@@ -1189,4 +1372,317 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 
 	s.logger.Info("downloadAndSaveHumanRecording: saved",
 		zap.String("call_sid", callSid), zap.String("file", filename))
+}
+
+// ── RBAC helpers ─────────────────────────────────────────────────────────────
+
+// canViewCampaign decides whether the authenticated user may see a campaign.
+// Admins see every org campaign; Team Leaders see campaigns assigned to
+// themselves or their managed Agents; Agents see only their own assignments.
+func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
+	campaign, err := s.db.GetCampaignByID(campaignID)
+	if err != nil || campaign == nil {
+		return false
+	}
+	if campaign.OrgID != ac.OrgID {
+		return false
+	}
+	user, err := s.db.GetUserByEmail(ac.Email)
+	if err != nil || user == nil {
+		return false
+	}
+	if s.isSuperAdmin(ac.Email) || user.Role == db.RoleAdmin {
+		return true
+	}
+	if user.Role == db.RoleTeamLeader {
+		ok, err := s.db.IsCampaignAssignedToManager(campaignID, user.ID)
+		return err == nil && ok
+	}
+	if user.Role == db.RoleAgent {
+		ok, err := s.db.IsCampaignAssignedToUser(campaignID, user.ID)
+		return err == nil && ok
+	}
+	return false
+}
+
+// requireCampaignView parses the campaign ID from the URL, verifies the
+// campaign exists in the user's org, and enforces RBAC visibility. It returns
+// the campaign on success; on failure it writes an HTTP error and returns nil.
+func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db.Campaign {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return nil
+	}
+	c, err := s.db.GetCampaignByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("requireCampaignView", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil
+	}
+	if c == nil || c.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return nil
+	}
+	if !s.canViewCampaign(ac, c.ID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return nil
+	}
+	return c
+}
+
+// leadAccessExecIDs returns the executive_id values a user may access inside a
+// campaign. Admins see all leads (apply=false). Agents see unassigned leads
+// (executive_id 0/NULL) plus leads assigned to them. Team Leaders see
+// unassigned leads plus leads assigned to themselves or their managed Agents.
+func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
+	if s.isSuperAdmin(ac.Email) {
+		return nil, false, nil
+	}
+	user, err := s.db.GetUserByEmail(ac.Email)
+	if err != nil {
+		return nil, false, err
+	}
+	if user == nil || user.Role == db.RoleAdmin {
+		return nil, false, nil
+	}
+
+	ids := []int64{0}
+	switch user.Role {
+	case db.RoleTeamLeader:
+		managed, err := s.db.GetManagedUserIDs(user.ID)
+		if err != nil {
+			return nil, true, err
+		}
+		ids = append(ids, user.ID)
+		ids = append(ids, managed...)
+	case db.RoleAgent:
+		ids = append(ids, user.ID)
+	}
+	return ids, true, nil
+}
+
+// canAccessLead checks whether the authenticated user may view/dial a specific
+// lead. It verifies org ownership and executive_id assignment.
+func (s *Server) canAccessLead(ac AuthClaims, leadID int64) bool {
+	lead, err := s.db.GetLeadByID(leadID)
+	if err != nil || lead == nil {
+		return false
+	}
+	if lead.OrgID != ac.OrgID {
+		return false
+	}
+	allowed, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil || !apply {
+		return !apply
+	}
+	for _, id := range allowed {
+		if id == lead.ExecutiveID {
+			return true
+		}
+	}
+	return false
+}
+
+// requireLeadAccess fetches a lead and verifies the user can access it (org +
+// executive_id). It returns the lead on success, or writes a 404 and returns nil.
+func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadID int64) *db.Lead {
+	ac := getAuth(r)
+	lead, err := s.db.GetLeadByID(leadID)
+	if err != nil {
+		s.logger.Sugar().Errorw("requireLeadAccess", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil
+	}
+	if lead == nil || lead.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return nil
+	}
+	allowed, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("requireLeadAccess", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil
+	}
+	if apply {
+		found := false
+		for _, id := range allowed {
+			if id == lead.ExecutiveID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return nil
+		}
+	}
+	return lead
+}
+
+// requireTranscriptAccess fetches a transcript and verifies the caller may access
+// it. It uses lead-level isolation when the transcript has a lead_id, otherwise
+// falls back to org ownership. Returns the transcript on success, or writes a
+// 404 and returns nil.
+func (s *Server) requireTranscriptAccess(w http.ResponseWriter, r *http.Request, transcriptID int64) *db.Transcript {
+	ac := getAuth(r)
+	t, err := s.db.GetTranscriptByID(transcriptID)
+	if err != nil {
+		s.logger.Sugar().Errorw("requireTranscriptAccess", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil
+	}
+	if t == nil {
+		writeError(w, http.StatusNotFound, "transcript not found")
+		return nil
+	}
+	if t.LeadID > 0 {
+		if !s.canAccessLead(ac, t.LeadID) {
+			writeError(w, http.StatusNotFound, "transcript not found")
+			return nil
+		}
+	} else if t.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "transcript not found")
+		return nil
+	}
+	return t
+}
+
+// ── POST /api/campaigns/{id}/assign-users ────────────────────────────────────
+
+// @Summary     Assign users to campaign
+// @Description Replaces the set of dashboard users assigned to a campaign. Admin only.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                  true  "Campaign ID"
+// @Param       body  body  object{user_ids=[]int64}  true  "User IDs to assign"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/assign-users [post]
+func (s *Server) assignCampaignUsers(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	campaignID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	campaign, err := s.db.GetCampaignByID(campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("assignCampaignUsers", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil || campaign.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
+	var body struct {
+		UserIDs []int64 `json:"user_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	// Reject any user IDs that do not belong to the caller's org.
+	if len(body.UserIDs) > 0 {
+		seen := make(map[int64]bool, len(body.UserIDs))
+		uniqueIDs := make([]int64, 0, len(body.UserIDs))
+		for _, uid := range body.UserIDs {
+			if uid <= 0 || seen[uid] {
+				continue
+			}
+			seen[uid] = true
+			uniqueIDs = append(uniqueIDs, uid)
+		}
+		body.UserIDs = uniqueIDs
+
+		matchCount, err := s.db.CountUsersByOrgAndIDs(ac.OrgID, body.UserIDs)
+		if err != nil {
+			s.logger.Sugar().Errorw("assignCampaignUsers", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if int(matchCount) != len(body.UserIDs) {
+			writeError(w, http.StatusBadRequest, "one or more users do not belong to this org")
+			return
+		}
+	}
+
+	caller, err := s.db.GetUserByEmail(ac.Email)
+	if err != nil || caller == nil {
+		writeError(w, http.StatusInternalServerError, "could not resolve caller")
+		return
+	}
+
+	// Persist the assignment replacement.
+	if err := s.db.AssignCampaignToUsers(campaignID, body.UserIDs, caller.ID); err != nil {
+		s.logger.Sugar().Errorw("assignCampaignUsers", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Notify newly assigned users in real time.
+	for _, uid := range body.UserIDs {
+		if uid <= 0 {
+			continue
+		}
+		title := "Campaign assigned"
+		bodyText := fmt.Sprintf("You have been assigned to %s", campaign.Name)
+		payload := fmt.Sprintf(`{"campaign_id":%d,"campaign_name":%q}`, campaignID, campaign.Name)
+		if nid, err := s.db.CreateNotification(uid, "campaign_assigned", title, bodyText, payload); err == nil {
+			if s.store != nil {
+				n := db.Notification{
+					ID:        nid,
+					UserID:    uid,
+					Type:      "campaign_assigned",
+					Title:     title,
+					Body:      bodyText,
+					Payload:   payload,
+					IsRead:    false,
+					CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+				}
+				if b, jerr := json.Marshal(n); jerr == nil {
+					s.store.Publish(r.Context(), fmt.Sprintf("user-notifications:%d", uid), string(b))
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+// ── GET /api/campaigns/{id}/assigned-users ───────────────────────────────────
+
+// @Summary     List assigned users
+// @Description Returns the user IDs currently assigned to a campaign. Visible to any user who can view the campaign.
+// @Tags        campaigns
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Campaign ID"
+// @Success     200  {object}  object{user_ids=[]int64}
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     403   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/assigned-users [get]
+func (s *Server) getCampaignAssignedUsers(w http.ResponseWriter, r *http.Request) {
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	ids, err := s.db.GetAssignedUserIDsForCampaign(campaign.ID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignAssignedUsers", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user_ids": ids})
 }

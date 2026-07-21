@@ -23,14 +23,6 @@ proto:
 		--go-grpc_out=. --go-grpc_opt=module=github.com/globussoft/callified-audio \
 		$(PROTO_DIR)/audio_pipeline.proto
 
-## Generate Python gRPC stubs (run from repo root)
-proto-python:
-	python3 -m grpc_tools.protoc \
-		-I proto \
-		--python_out=.. \
-		--grpc_python_out=.. \
-		$(PROTO_DIR)/audio_pipeline.proto
-
 ## Build the audiod binary
 build:
 	mkdir -p bin
@@ -58,7 +50,7 @@ run:
 	@if [ -f ../.env ]; then \
 		set -a && . ../.env && set +a; \
 	fi; \
-	GO_AUDIO_PORT=8001 GRPC_ADDR=localhost:50051 ./$(BINARY)
+	GO_AUDIO_PORT=8001 ./$(BINARY)
 
 ## Clean build artifacts
 clean:

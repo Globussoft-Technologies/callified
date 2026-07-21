@@ -140,7 +140,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
         <div>
           <h3 style={{ margin: '0 0 0.5rem', color: '#e2e8f0' }}>Upload your first leads</h3>
           <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-            Upload a CSV file with your leads to get started. The CSV should have columns: first_name, phone (required), last_name, source (optional).
+            Upload a CSV file with your leads to get started. The CSV should have columns: first_name, phone (required), last_name, company, source (optional).
           </p>
 
           {stepStatus.leads ? (

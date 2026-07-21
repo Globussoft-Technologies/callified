@@ -29,6 +29,9 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("db.New: ping: %w", err)
 	}
 	d := &DB{pool: pool}
+	if err := d.EnsureOrganizationsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure organizations table: %w", err)
+	}
 	if err := d.EnsureAdminSubscriptionsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure admin subscriptions table: %w", err)
 	}
@@ -49,6 +52,15 @@ func New(dsn string) (*DB, error) {
 	}
 	if err := d.EnsureScheduledCallsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure scheduled calls table: %w", err)
+	}
+	if err := d.EnsureRBACTables(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure RBAC tables: %w", err)
+	}
+	if err := d.EnsureAgentPresenceTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure agent presence table: %w", err)
+	}
+	if err := d.EnsureAgentActivitiesTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure agent activities table: %w", err)
 	}
 	return d, nil
 }

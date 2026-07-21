@@ -59,6 +59,14 @@ import (
 func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 
+	// This endpoint is an org-wide PII firehose. Restrict it to Admin JWTs or
+	// org-scoped API keys; other dashboard roles must not bulk-export.
+	isAPIKey := strings.HasPrefix(ac.Email, "apikey:")
+	if !isAPIKey && !s.isAdminLike(ac.Email) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
 	// Optional ?campaign_id=N filter. Invalid values are ignored rather than
 	// 400'd so the partner doesn't have to special-case "give me everything".
 	var filterCampaignID int64
@@ -81,7 +89,7 @@ func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 
-		stats, _ := s.db.GetCampaignStats(c.ID)
+		stats, _ := s.db.GetCampaignStats(c.ID, nil, false)
 		leads, err := s.db.GetCampaignLeads(c.ID)
 		if err != nil {
 			s.logger.Sugar().Warnw("getExternalTranscripts: leads lookup", "err", err, "campaign_id", c.ID)

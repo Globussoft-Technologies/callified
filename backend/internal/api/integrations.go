@@ -18,22 +18,14 @@ import (
 // @Router      /api/integrations [get]
 func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	// Return only integrations for this org
-	all, err := s.db.GetActiveCRMIntegrations()
+	// Scoped to the org at the DB layer so other tenants' credentials are never
+	// loaded into memory.
+	integrations, err := s.db.GetActiveCRMIntegrationsByOrg(ac.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	var result []any
-	for _, integ := range all {
-		if integ.OrgID == ac.OrgID {
-			result = append(result, integ)
-		}
-	}
-	if result == nil {
-		result = []any{}
-	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, emptyJSON(integrations))
 }
 
 // POST /api/integrations

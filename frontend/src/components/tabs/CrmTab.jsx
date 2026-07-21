@@ -67,7 +67,7 @@ export default function CrmTab({
   apiFetch,
   campaigns, dashSummary, onCampaignClick
 }) {
-  const activeCampaigns   = campaigns.filter(c => c.status === 'active');
+  const activeCampaigns   = (campaigns || []).filter(c => c.status === 'active');
   const campaignsCount    = dashSummary?.campaigns     ?? activeCampaigns.length;
   const totalLeads        = dashSummary?.total_leads   ?? campaigns.reduce((s, c) => s + (c.stats?.total        || 0), 0);
   const totalCalled       = dashSummary?.called        ?? campaigns.reduce((s, c) => s + (c.stats?.called       || 0), 0);
@@ -166,6 +166,9 @@ export default function CrmTab({
         {statCards.map(s => (
           <div key={s.label}
             onClick={() => setActiveModal(s.modal)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
             style={{ ...card, padding: '16px 18px', cursor: 'pointer', transition: 'box-shadow 0.15s, transform 0.15s' }}
             onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 4px 16px ${s.color}26`; e.currentTarget.style.transform = 'translateY(-1px)'; }}
             onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; }}
@@ -206,10 +209,11 @@ export default function CrmTab({
         };
 
         const q = modalSearch.toLowerCase();
-        const filteredCampaigns = campaigns.filter(c => c.name?.toLowerCase().includes(q));
+        const filteredCampaigns = (campaigns || []).filter(c => c.name?.toLowerCase().includes(q));
+        const statusFilterFn = statusFilter[activeModal] || (() => true);
         const filteredLeads = modalLeads
-          .filter(statusFilter[activeModal] || (() => true))
-          .filter(l => `${l.first_name} ${l.last_name}`.toLowerCase().includes(q) || (l.phone || '').includes(q) || (l.campaignName || '').toLowerCase().includes(q));
+          .filter(l => statusFilterFn(l))
+          .filter(l => `${l.first_name} ${l.last_name}`.toLowerCase().includes(q) || (l.phone || '').includes(q) || (l.company || '').toLowerCase().includes(q) || (l.campaignName || '').toLowerCase().includes(q));
 
         const statusColors = {
           'New':             { bg: 'rgba(148,163,184,0.12)', color: T.muted },
@@ -217,6 +221,8 @@ export default function CrmTab({
           'Connected':       { bg: 'rgba(99,102,241,0.1)',   color: T.accent },
           'Interested':      { bg: 'rgba(16,185,129,0.1)',   color: T.green },
           'Not Interested':  { bg: 'rgba(239,68,68,0.1)',    color: T.red },
+          'Follow-up':       { bg: 'rgba(245,158,11,0.1)',   color: T.amber },
+          'Closed':          { bg: 'rgba(100,116,139,0.12)', color: '#475569' },
           'Qualified':       { bg: 'rgba(16,185,129,0.1)',   color: T.green },
           'Appointment Set': { bg: 'rgba(245,158,11,0.1)',   color: T.amber },
           'Converted':       { bg: 'rgba(16,185,129,0.15)',  color: T.green },
@@ -225,8 +231,8 @@ export default function CrmTab({
         };
 
         return (
-          <div onClick={closeModal} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div onClick={e => e.stopPropagation()} style={{
+          <div onClick={closeModal} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
               background: T.card, borderRadius: 16, width: 560, maxWidth: '90vw',
               maxHeight: '80vh', display: 'flex', flexDirection: 'column',
               boxShadow: '0 20px 60px rgba(0,0,0,0.18)', border: `1px solid ${T.border}`,
@@ -248,7 +254,7 @@ export default function CrmTab({
                 ) : (
                   <div style={{ display: 'flex', gap: 8 }}>
                     <input autoFocus type="text"
-                      placeholder="Type a name or phone and press Enter..."
+                      placeholder="Type a name, phone or company and press Enter..."
                       value={modalSearch}
                       onChange={e => { setModalSearch(e.target.value); if (!e.target.value.trim()) setHasSearched(false); }}
                       onKeyDown={e => { if (e.key === 'Enter') fetchModalLeads(modalSearch); }}
@@ -273,6 +279,9 @@ export default function CrmTab({
                     const isActive = c.status === 'active';
                     return (
                       <div key={c.id} onClick={() => { closeModal(); onCampaignClick(c); }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                         style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 24px', cursor: 'pointer', borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', transition: 'background 0.1s' }}
                         onMouseEnter={e => e.currentTarget.style.background = T.bg}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -303,6 +312,9 @@ export default function CrmTab({
                   return (
                     <div key={`${lead.id}-${i}`}
                       onClick={() => { if (campaign) { closeModal(); onCampaignClick(campaign); } }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                       style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 24px', borderBottom: i < arr.length - 1 ? `1px solid ${T.border}` : 'none', cursor: campaign ? 'pointer' : 'default', transition: 'background 0.1s' }}
                       onMouseEnter={e => { if (campaign) e.currentTarget.style.background = T.bg; }}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -317,7 +329,7 @@ export default function CrmTab({
                           {lead.first_name} {lead.last_name}
                         </div>
                         <div style={{ fontSize: 11, color: T.muted }}>
-                          {lead.phone} · {lead.campaignName}
+                          {lead.phone}{lead.company ? ` · ${lead.company}` : ''} · {lead.campaignName}
                         </div>
                       </div>
                       <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 20, flexShrink: 0, background: sc.bg, color: sc.color }}>
@@ -400,6 +412,9 @@ export default function CrmTab({
               const pct    = total > 0 ? Math.round((called / total) * 100) : 0;
               return (
                 <div key={c.id} onClick={() => onCampaignClick(c)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                   style={{
                     padding: '10px 0',
                     borderBottom: i < activeCampaigns.length - 1 ? `1px solid ${T.border}` : 'none',

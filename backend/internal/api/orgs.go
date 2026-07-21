@@ -156,6 +156,9 @@ func (s *Server) deleteOrg(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.authorizeOrg(w, r, id) {
+		return
+	}
 	if err := s.db.DeleteOrganization(id); err != nil {
 		s.logger.Sugar().Errorw("deleteOrg", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -184,6 +187,9 @@ func (s *Server) updateOrgTimezone(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.authorizeOrg(w, r, id) {
 		return
 	}
 	var body struct {
@@ -220,6 +226,9 @@ func (s *Server) getOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.authorizeOrg(w, r, id) {
+		return
+	}
 	vs, err := s.db.GetOrganizationVoiceSettings(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getOrgVoiceSettings", "err", err)
@@ -249,6 +258,9 @@ func (s *Server) saveOrgVoiceSettings(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.authorizeOrg(w, r, id) {
 		return
 	}
 	var vs db.VoiceSettings
@@ -288,6 +300,9 @@ func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if !s.authorizeOrg(w, r, id) {
+		return
+	}
 	custom, err := s.db.GetOrgSystemPrompt(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getOrgSystemPrompt", "err", err)
@@ -323,6 +338,9 @@ func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.authorizeOrg(w, r, id) {
 		return
 	}
 	var body struct {
@@ -1037,14 +1055,8 @@ func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	product, err := s.db.GetProductByID(id)
-	if err != nil {
-		s.logger.Sugar().Errorw("scrapeProduct: GetProductByID", "err", err, "id", id)
-		writeError(w, http.StatusInternalServerError, "database error")
-		return
-	}
-	if product == nil {
-		writeError(w, http.StatusNotFound, "product not found")
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
 		return
 	}
 	if product.WebsiteURL == "" {
@@ -1126,9 +1138,8 @@ func (s *Server) generateProductPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	product, err := s.db.GetProductByID(id)
-	if err != nil || product == nil {
-		writeError(w, http.StatusNotFound, "product not found")
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -1182,9 +1193,8 @@ func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	product, err := s.db.GetProductByID(id)
-	if err != nil || product == nil {
-		writeError(w, http.StatusNotFound, "product not found")
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
 		return
 	}
 
@@ -1245,6 +1255,9 @@ func (s *Server) generateOrgPrompt(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if !s.authorizeOrg(w, r, id) {
 		return
 	}
 	org, err := s.db.GetOrganizationByID(id)

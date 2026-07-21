@@ -15,13 +15,15 @@ Multi-tenant core table tracking different organizational branches or distinct c
 - `tts_language` (VARCHAR)
 
 ### 2. `users`
-Portal admins and agents attached to Organizations.
+Portal users attached to Organizations. Supports RBAC with Admin, TeamLeader and Agent roles.
 - `id` (INT PK)
 - `org_id` (INT FK)
 - `email` (VARCHAR UNIQUE)
 - `password_hash` (VARCHAR)
 - `full_name` (VARCHAR)
-- `role` (VARCHAR) - Usually 'Admin' or 'Agent'.
+- `role` (VARCHAR) - 'Admin', 'TeamLeader' or 'Agent'.
+- `manager_id` (INT FK → users.id) - Team Leader for an Agent. NULL for Admin/Team Leader.
+- `is_active` (BOOLEAN) - Disabled users cannot log in.
 
 ### 3. `leads`
 The core customer data target for the AI dialer.
@@ -30,11 +32,16 @@ The core customer data target for the AI dialer.
 - `first_name` (VARCHAR)
 - `last_name` (VARCHAR)
 - `phone` (VARCHAR UNIQUE)
+- `company` (VARCHAR) - Customer company name (optional).
 - `source` (VARCHAR)
-- `status` (VARCHAR) - Example: 'new', 'Calling...', 'Warm', 'Closed'.
-- `follow_up_note` (TEXT) - Generated automatically by Gemini 2.5 after AI analyzes transcript.
+- `status` (VARCHAR) - Example: 'New', 'Contacted', 'Interested', 'Not Interested', 'Closed'.
+- `follow_up_note` (TEXT) - Agent remarks / AI-generated follow-up note.
+- `follow_up_at` (DATETIME) - Scheduled follow-up datetime.
+- `interest` (VARCHAR)
 - `external_id` (VARCHAR) - Foreign mapping to Hubspot/Salesforce.
 - `crm_provider` (VARCHAR) - Tag identifying original CRM source.
+- `executive_id` (INT FK → users.id) - Assigned executive/agent.
+- `dial_attempts` (INT) - Number of dial attempts.
 
 ### 4. `calls` & `call_transcripts`
 Tracks telecom states and Deepgram dialogue arrays.
@@ -82,3 +89,32 @@ Holds dynamically encrypted 3rd-party CRM tokens (Hubspot, Salesforce, Zoho).
 Global phonetic mappings injected into Gemini 2.5 logic to force specific pronunciations for regional Indian words.
 - `word` (VARCHAR UNIQUE)
 - `phonetic` (VARCHAR)
+
+### 11. `campaign_user_assignments`
+Links campaigns to the users (Agents/Team Leaders) who should see them.
+- `campaign_id` (INT FK → campaigns.id)
+- `user_id` (INT FK → users.id)
+- `assigned_by` (INT FK → users.id)
+- `assigned_at` (TIMESTAMP)
+
+### 12. `notifications`
+In-app notifications delivered to users, e.g. when a campaign is assigned.
+- `id` (BIGINT PK)
+- `user_id` (INT FK → users.id)
+- `type` (VARCHAR)
+- `title` (VARCHAR)
+- `body` (TEXT)
+- `payload` (JSON)
+- `is_read` (BOOLEAN)
+- `created_at` (TIMESTAMP)
+
+### 13. `scheduled_calls`
+Callbacks scheduled by agents for a lead.
+- `id` (BIGINT PK)
+- `lead_id` (INT FK → leads.id)
+- `campaign_id` (INT FK → campaigns.id)
+- `user_id` (INT FK → users.id) - User who scheduled the callback.
+- `scheduled_at` (DATETIME)
+- `status` (VARCHAR) - e.g. 'pending', 'completed', 'cancelled'.
+- `mode` (VARCHAR) - 'ai' or 'manual'.
+- `notes` (TEXT)

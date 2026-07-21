@@ -23,9 +23,15 @@ import DndPage from './pages/DndPage';
 import ScheduledCallsPage from './pages/ScheduledCallsPage';
 import CampaignsPage from './pages/CampaignsPage';
 import TeamPage from './pages/TeamPage';
+import UserManagementPage from './pages/UserManagementPage';
 import ReceptionistPage from './pages/ReceptionistPage';
 import ExotelAccountsPage from './pages/ExotelAccountsPage';
 import ExecutivesPage from './pages/ExecutivesPage';
+import ManualDialPage from './pages/ManualDialPage';
+import InteractionHistoryPage from './pages/InteractionHistoryPage';
+import AgentPresencePage from './pages/AgentPresencePage';
+import AgentReportPage from './pages/AgentReportPage';
+import CampaignProgressPage from './pages/CampaignProgressPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import RequireRole from './components/RequireRole';
@@ -74,12 +80,10 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
-    // Viewer can't read /api/campaigns (403) — skip the fetch so the
-    // dashboard doesn't surface a misleading "expected array" warning.
-    // For Admin + Agent re-fetch whenever the role changes (e.g. Admin
-    // promoted/demoted this user mid-session) so a freshly-allowed user
-    // doesn't see an empty campaigns list left over from a Viewer phase.
-    if (userRole === 'Admin' || userRole === 'SuperAdmin' || userRole === 'Agent') {
+    // Campaign list is now scoped by role on the backend. Skip only viewers
+    // and unknown roles; Admin, TeamLeader, and Agent all fetch their visible
+    // campaigns.
+    if (userRole === 'Admin' || userRole === 'SuperAdmin' || userRole === 'TeamLeader' || userRole === 'Agent') {
       fetchCampaigns();
     } else {
       setCampaigns([]);
@@ -137,6 +141,7 @@ export default function App() {
       <TopHeader
         userRole={userRole} currentUser={currentUser}
         handleLogout={logout}
+        apiFetch={apiFetch}
       />
 
       <main className="main-content">
@@ -159,7 +164,7 @@ export default function App() {
           />
         } />
         <Route path="/campaigns" element={
-          <AdminOnly userRole={userRole}>
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader', 'Agent']}>
             <CampaignsPage
               key={location.pathname}
               apiFetch={apiFetch} API_URL={API_URL}
@@ -171,10 +176,10 @@ export default function App() {
               INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
               campaigns={campaigns} fetchCampaigns={fetchCampaigns}
             />
-          </AdminOnly>
+          </RequireRole>
         } />
         <Route path="/campaigns/:campaignId" element={
-          <AdminOnly userRole={userRole}>
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader', 'Agent']}>
             <CampaignsPage
               key={location.pathname}
               apiFetch={apiFetch} API_URL={API_URL}
@@ -186,37 +191,28 @@ export default function App() {
               INDIAN_VOICES={INDIAN_VOICES} INDIAN_LANGUAGES={INDIAN_LANGUAGES}
               campaigns={campaigns} fetchCampaigns={fetchCampaigns}
             />
-          </AdminOnly>
+          </RequireRole>
         } />
-        <Route path="/ops" element={<AdminOnly userRole={userRole}><OpsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/analytics" element={<AdminOnly userRole={userRole}><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/whatsapp" element={<AdminOnly userRole={userRole}><WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} /></AdminOnly>} />
-        <Route path="/integrations" element={<AdminOnly userRole={userRole}><IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} /></AdminOnly>} />
-        <Route path="/monitor" element={<AdminOnly userRole={userRole}><MonitorPage API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/knowledge" element={<AdminOnly userRole={userRole}><KnowledgePage API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/sandbox" element={<AdminOnly userRole={userRole}><SandboxPage API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/manual-dial" element={
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader', 'Agent']}>
+            <ManualDialPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} />
+          </RequireRole>
+        } />
+        <Route path="/ops" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <OpsPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/analytics" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/whatsapp" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />}</AdminOnly>} />
+        <Route path="/integrations" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />}</AdminOnly>} />
+        <Route path="/monitor" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/knowledge" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <KnowledgePage API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/sandbox" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />}</AdminOnly>} />
         <Route path="/products" element={
           <AdminOnly userRole={userRole}>
-            <ProductsPage
+            {hideAiFeatures ? <Navigate to="/crm" replace /> : <ProductsPage
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgs={orgs}
               orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
-            />
+            />}
           </AdminOnly>
-        } />
-        <Route path="/ops" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <OpsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/analytics" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/whatsapp" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />} />
-        <Route path="/integrations" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/monitor" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} />} />
-        <Route path="/knowledge" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <KnowledgePage API_URL={API_URL} />} />
-        <Route path="/sandbox" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />} />
-        <Route path="/products" element={
-          <ProductsPage
-            apiFetch={apiFetch} API_URL={API_URL}
-            selectedOrg={selectedOrg} orgs={orgs}
-            orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
-          />
         } />
         <Route path="/settings" element={
           <SettingsPage
@@ -227,9 +223,22 @@ export default function App() {
         <Route path="/logs" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <LogsPage API_URL={API_URL} authToken={authToken} apiFetch={apiFetch} />} />
         <Route path="/checkin" element={<CheckInPage apiFetch={apiFetch} API_URL={API_URL} />} />
         <Route path="/billing" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <BillingPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/dnd" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <DndPage apiFetch={apiFetch} API_URL={API_URL} />} />
-        <Route path="/scheduled" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
-        <Route path="/team" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <TeamPage apiFetch={apiFetch} API_URL={API_URL} />} />
+        <Route path="/dnd" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <DndPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/scheduled" element={
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader', 'Agent']}>
+            {hideAiFeatures ? <Navigate to="/crm" replace /> : <ScheduledCallsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />}
+          </RequireRole>
+        } />
+        <Route path="/interaction-history" element={<InteractionHistoryPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />} />
+        <Route path="/agent-presence" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <AgentPresencePage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/agent-report" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <AgentReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} />}</AdminOnly>} />
+        <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/team" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <TeamPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/user-management" element={
+          <RequireRole allow={['Admin', 'SuperAdmin']}>
+            <UserManagementPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} />
+          </RequireRole>
+        } />
         <Route path="/receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
         <Route path="/executives" element={<ExecutivesPage />} />

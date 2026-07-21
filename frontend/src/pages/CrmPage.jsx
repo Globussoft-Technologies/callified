@@ -6,6 +6,7 @@ import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
 import TranscriptModal from '../components/modals/TranscriptModal';
 import EmailDraftModal from '../components/modals/EmailDraftModal';
+import { normalizePhone } from '../utils/phone';
 
 export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
@@ -26,14 +27,14 @@ export default function CrmPage({
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', source: 'Manual Entry', executive_id: 0 });
+  const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', company: '', source: 'Manual Entry', executive_id: 0 });
   const [loading, setLoading] = useState(false);
   const [executives, setExecutives] = useState([]);
 
   // Edit Lead State
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState(null);
-  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', phone: '', source: '', executive_id: 0 });
+  const [editFormData, setEditFormData] = useState({ first_name: '', last_name: '', phone: '', company: '', source: '', executive_id: 0 });
 
   // Note State
   const [noteLead, setNoteLead] = useState(null);
@@ -71,13 +72,13 @@ export default function CrmPage({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchLeads = async () => {
+  const fetchLeads = async (page = 1, limit = 100) => {
     try {
-      const res = await apiFetch(`${API_URL}/leads`);
+      const res = await apiFetch(`${API_URL}/leads?page=${page}&limit=${limit}`);
       const data = await res.json();
-      setLeads(data);
+      setLeads(data.leads || []);
     } catch (e) {
-      console.error("Make sure FastAPI is running with CORS enabled!", e);
+      console.error("Failed to fetch leads", e);
     }
   };
 
@@ -98,12 +99,13 @@ export default function CrmPage({
     e.preventDefault();
     setLoading(true);
     try {
+      const payload = { ...formData, phone: normalizePhone(formData.phone) };
       await apiFetch(`${API_URL}/leads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
-      setFormData({ first_name: '', last_name: '', phone: '', source: 'Manual Entry', executive_id: 0 });
+      setFormData({ first_name: '', last_name: '', phone: '', company: '', source: 'Manual Entry', executive_id: 0 });
       setIsModalOpen(false);
       fetchLeads();
     } catch(e) {
@@ -129,6 +131,7 @@ export default function CrmPage({
       first_name: lead.first_name || '',
       last_name: lead.last_name || '',
       phone: lead.phone || '',
+      company: lead.company || '',
       source: lead.source || 'Manual Entry',
       executive_id: lead.executive_id || 0
     });
@@ -139,10 +142,11 @@ export default function CrmPage({
     e.preventDefault();
     setLoading(true);
     try {
+      const payload = { ...editFormData, phone: normalizePhone(editFormData.phone) };
       const res = await apiFetch(`${API_URL}/leads/${editingLead.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editFormData)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok || data.status === 'error') {
@@ -292,8 +296,8 @@ export default function CrmPage({
 
       {/* Note Modal */}
       {noteLead && (
-        <div className="modal-overlay" onClick={() => setNoteLead(null)}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}}>
+        <div className="modal-overlay" onClick={() => setNoteLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
               {noteLead.first_name} {noteLead.last_name} — {noteLead.phone}

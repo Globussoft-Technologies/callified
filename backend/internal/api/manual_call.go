@@ -88,6 +88,10 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 	// wshandler resolves org-level defaults on stream connect.
 	var vs any
 	if body.CampaignID > 0 {
+		if !s.canViewCampaign(ac, body.CampaignID) {
+			writeError(w, http.StatusNotFound, "campaign not found")
+			return
+		}
 		vs, _ = s.db.GetCampaignVoiceSettings(body.CampaignID)
 	}
 	provider, voiceID, lang := extractVoice(vs)

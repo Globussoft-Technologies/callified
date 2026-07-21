@@ -1,4 +1,29 @@
+basePath: /
 definitions:
+  api.AdminSubscriptionRequest:
+    properties:
+      admin_email:
+        type: string
+      expires_at:
+        type: string
+      is_active:
+        type: boolean
+      plan:
+        type: string
+    type: object
+  api.AdminSubscriptionResponse:
+    properties:
+      admin_email:
+        type: string
+      expires_at:
+        type: string
+      is_active:
+        type: boolean
+      plan:
+        type: string
+      status:
+        type: string
+    type: object
   api.BoolResponse:
     properties:
       ok:
@@ -19,10 +44,47 @@ definitions:
       id:
         type: integer
     type: object
+  api.ImportRejection:
+    properties:
+      first_name:
+        type: string
+      phone:
+        type: string
+      reason:
+        type: string
+      row:
+        type: integer
+    type: object
   api.MessageResponse:
     properties:
       message:
         type: string
+    type: object
+  api.PaginatedCampaignLeadsResponse:
+    properties:
+      leads:
+        items:
+          $ref: '#/definitions/db.CampaignLead'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.PaginatedLeadsResponse:
+    properties:
+      leads:
+        items:
+          $ref: '#/definitions/db.Lead'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
     type: object
   api.SSETicketResponse:
     properties:
@@ -39,6 +101,20 @@ definitions:
         type: string
       user:
         $ref: '#/definitions/api.UserResponse'
+    type: object
+  api.UserFeatureFlagRequest:
+    properties:
+      email:
+        type: string
+      hide_ai_features:
+        type: boolean
+    type: object
+  api.UserFeatureFlagResponse:
+    properties:
+      email:
+        type: string
+      hide_ai_features:
+        type: boolean
     type: object
   api.UserResponse:
     properties:
@@ -59,6 +135,8 @@ definitions:
     properties:
       channel:
         type: string
+      exotel_account_id:
+        type: integer
       lead_source:
         type: string
       name:
@@ -81,6 +159,10 @@ definitions:
     type: object
   api.leadCreateRequest:
     properties:
+      company:
+        type: string
+      executive_id:
+        type: integer
       first_name:
         type: string
       interest:
@@ -92,8 +174,21 @@ definitions:
       source:
         type: string
     type: object
+  api.leadDispositionRequest:
+    properties:
+      follow_up_at:
+        type: string
+      note:
+        type: string
+      status:
+        type: string
+    type: object
   api.leadUpdateRequest:
     properties:
+      company:
+        type: string
+      executive_id:
+        type: integer
       first_name:
         type: string
       interest:
@@ -165,12 +260,41 @@ definitions:
         type: string
       id:
         type: integer
+      is_active:
+        type: boolean
       key_prefix:
-        description: first 8 chars of the raw key for display
+        description: first 10 chars of the raw key for display
         type: string
       name:
         type: string
       org_id:
+        type: integer
+    type: object
+  db.AgentPresenceRow:
+    properties:
+      break_since:
+        type: string
+      email:
+        type: string
+      full_name:
+        type: string
+      idle_since:
+        type: string
+      last_seen_at:
+        type: string
+      manager_id:
+        type: integer
+      on_call_since:
+        type: string
+      role:
+        type: string
+      status:
+        type: string
+      total_idle_time_s:
+        type: integer
+      total_talk_time_s:
+        type: integer
+      user_id:
         type: integer
     type: object
   db.BillingPayment:
@@ -256,33 +380,20 @@ definitions:
       source:
         type: string
     type: object
-  db.CallReview:
+  db.CallOutcomeStats:
     properties:
-      appointment_booked:
-        type: boolean
-      failure_reason:
-        type: string
-      insights:
-        type: string
-      org_id:
-        format: int64
+      busy:
         type: integer
-      prompt_improvement_suggestion:
-        type: string
-      quality_score:
-        format: double
-        type: number
-      sentiment:
-        type: string
-      summary:
-        type: string
-      transcript_id:
-        format: int64
+      completed:
         type: integer
-      what_went_well:
-        type: string
-      what_went_wrong:
-        type: string
+      connected:
+        type: integer
+      failed:
+        type: integer
+      total:
+        type: integer
+      unanswered:
+        type: integer
     type: object
   db.Campaign:
     properties:
@@ -315,29 +426,41 @@ definitions:
     type: object
   db.CampaignLead:
     properties:
+      company:
+        type: string
       created_at:
         type: string
       crm_provider:
         type: string
       dial_attempts:
         type: integer
+      executive_id:
+        type: integer
       external_id:
         type: string
       first_name:
         type: string
+      follow_up_at:
+        type: string
       follow_up_note:
         type: string
+      has_pending_scheduled_call:
+        type: boolean
       id:
         type: integer
       interest:
         type: string
       last_name:
         type: string
+      next_scheduled_at:
+        type: string
       org_id:
         type: integer
       phone:
         type: string
       recording_count:
+        type: integer
+      scheduled_call_id:
         type: integer
       source:
         type: string
@@ -429,6 +552,33 @@ definitions:
       uploaded_at:
         type: string
     type: object
+  db.ExotelCreds:
+    properties:
+      apisecret:
+        description: Twilio only
+        type: string
+      exotel_account_sid:
+        type: string
+      exotel_api_key:
+        type: string
+      exotel_api_token:
+        type: string
+      exotel_app_id:
+        type: string
+      exotel_app_type:
+        type: string
+      exotel_caller_id:
+        type: string
+      exotel_region:
+        description: 'Exotel region: in, us, sg, etc.'
+        type: string
+      exotel_subdomain:
+        description: Exotel account subdomain override
+        type: string
+      provider:
+        description: '"exotel" or "twilio"; empty means exotel'
+        type: string
+    type: object
   db.FailureReason:
     properties:
       count:
@@ -464,6 +614,49 @@ definitions:
         type: array
       total_calls:
         type: integer
+    type: object
+  db.InteractionEvent:
+    properties:
+      body:
+        type: string
+      id:
+        type: integer
+      metadata:
+        additionalProperties: {}
+        type: object
+      timestamp:
+        type: string
+      title:
+        type: string
+      type:
+        $ref: '#/definitions/db.InteractionEventType'
+    type: object
+  db.InteractionEventType:
+    enum:
+    - lead_created
+    - note
+    - call
+    - scheduled_call
+    - whatsapp
+    - status_change
+    type: string
+    x-enum-varnames:
+    - InteractionLeadCreated
+    - InteractionNote
+    - InteractionCall
+    - InteractionScheduledCall
+    - InteractionWhatsApp
+    - InteractionStatusChange
+  db.InteractionTimeline:
+    properties:
+      event_count:
+        type: integer
+      events:
+        items:
+          $ref: '#/definitions/db.InteractionEvent'
+        type: array
+      lead:
+        $ref: '#/definitions/db.Lead'
     type: object
   db.Invoice:
     properties:
@@ -513,13 +706,19 @@ definitions:
     type: object
   db.Lead:
     properties:
+      company:
+        type: string
       created_at:
         type: string
       crm_provider:
         type: string
+      executive_id:
+        type: integer
       external_id:
         type: string
       first_name:
+        type: string
+      follow_up_at:
         type: string
       follow_up_note:
         type: string
@@ -537,6 +736,48 @@ definitions:
         type: string
       status:
         type: string
+    type: object
+  db.LeadWithCampaign:
+    properties:
+      campaignId:
+        type: integer
+      campaignName:
+        type: string
+      company:
+        type: string
+      executive_id:
+        type: integer
+      first_name:
+        type: string
+      id:
+        type: integer
+      last_name:
+        type: string
+      phone:
+        type: string
+      source:
+        type: string
+      status:
+        type: string
+    type: object
+  db.Notification:
+    properties:
+      body:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: integer
+      is_read:
+        type: boolean
+      payload:
+        type: string
+      title:
+        type: string
+      type:
+        type: string
+      user_id:
+        type: integer
     type: object
   db.OrgCredit:
     properties:
@@ -569,6 +810,8 @@ definitions:
     properties:
       created_at:
         type: string
+      domain:
+        type: string
       id:
         type: integer
       name:
@@ -586,6 +829,16 @@ definitions:
         type: string
       id:
         type: integer
+      image_urls:
+        description: scraped from website
+        items:
+          type: string
+        type: array
+      manual_images:
+        description: manually uploaded via UI
+        items:
+          $ref: '#/definitions/db.ProductImage'
+        type: array
       manual_notes:
         type: string
       name:
@@ -595,6 +848,13 @@ definitions:
       scraped_info:
         type: string
       website_url:
+        type: string
+    type: object
+  db.ProductImage:
+    properties:
+      label:
+        type: string
+      url:
         type: string
     type: object
   db.Pronunciation:
@@ -700,6 +960,10 @@ definitions:
         type: string
       id:
         type: integer
+      is_active:
+        type: boolean
+      manager_id:
+        type: integer
       org_id:
         type: integer
       role:
@@ -801,8 +1065,15 @@ definitions:
       provider_msg_id:
         type: string
     type: object
+host: localhost:8011
 info:
-  contact: {}
+  contact:
+    email: support@callified.ai
+    name: Callified Support
+  description: AI-powered outbound calling, WhatsApp CRM & receptionist platform.
+  termsOfService: http://callified.ai/terms
+  title: Callified Backend API
+  version: "1.0"
 paths:
   /api/active-calls:
     get:
@@ -833,6 +1104,227 @@ paths:
       summary: List active calls
       tags:
       - calls
+  /api/admin/feature-flags:
+    post:
+      consumes:
+      - application/json
+      description: Super-admin endpoint to enable/disable feature flags for an email.
+      parameters:
+      - description: Feature flag payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.UserFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UserFeatureFlagResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Set user feature flag
+      tags:
+      - admin
+  /api/admin/feature-flags/{email}:
+    delete:
+      description: Super-admin endpoint to remove feature flags for an email.
+      parameters:
+      - description: Email address
+        in: path
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Delete user feature flag
+      tags:
+      - admin
+    get:
+      description: Super-admin endpoint to fetch feature flags for an email.
+      parameters:
+      - description: Email address
+        in: path
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.UserFeatureFlagResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get user feature flag
+      tags:
+      - admin
+  /api/admin/subscriptions:
+    get:
+      description: Super-admin endpoint to fetch all admin subscriptions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/api.AdminSubscriptionResponse'
+            type: array
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List all subscriptions
+      tags:
+      - admin
+    post:
+      consumes:
+      - application/json
+      description: Super-admin endpoint to set or extend a subscription for an admin
+        email.
+      parameters:
+      - description: Subscription payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.AdminSubscriptionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AdminSubscriptionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Create or update subscription
+      tags:
+      - admin
+  /api/admin/subscriptions/{email}:
+    get:
+      description: Super-admin endpoint to fetch a subscription by admin email.
+      parameters:
+      - description: Admin email
+        in: path
+        name: email
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.AdminSubscriptionResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get subscription
+      tags:
+      - admin
+  /api/analytics/agent-report:
+    get:
+      description: 'Returns an .xlsx workbook with multiple sheets: Summary, Call
+        Activity, Efficiency, Outcomes, and Detail.'
+      parameters:
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: to
+        type: string
+      - description: Campaign ID (0 = all)
+        format: int64
+        in: query
+        name: campaign_id
+        type: integer
+      produces:
+      - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Agent productivity Excel report
+      tags:
+      - analytics
   /api/analytics/dashboard:
     get:
       description: Returns full analytics including daily call counts, sentiment breakdown,
@@ -1119,7 +1611,8 @@ paths:
     patch:
       consumes:
       - application/json
-      description: Revokes or reactivates an API key. Requires Admin role.
+      description: 'Activate or revoke an API key. Body: {"is_active": false} to revoke.
+        Requires Admin role.'
       parameters:
       - description: API Key ID
         format: int64
@@ -1127,7 +1620,7 @@ paths:
         name: id
         required: true
         type: integer
-      - description: Active flag
+      - description: Active state
         in: body
         name: body
         required: true
@@ -1171,7 +1664,7 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Update API key (revoke/reactivate)
+      summary: Toggle API key status
       tags:
       - api-keys
   /api/auth/forgot-password:
@@ -1366,88 +1859,6 @@ paths:
       summary: SSO JWT login
       tags:
       - auth
-  /api/billing/cancel:
-    post:
-      description: Alias for DELETE /api/billing/subscription. Cancels the org's active
-        subscription. Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.BoolResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Cancel subscription (alias)
-      tags:
-      - billing
-  /api/billing/create-order:
-    post:
-      consumes:
-      - application/json
-      description: Creates a Razorpay order for subscribing to a plan. Alias for POST
-        /api/billing/subscription. Requires Admin role.
-      parameters:
-      - description: Subscription request
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            billing_cycle:
-              type: string
-            plan_id:
-              format: int64
-              type: integer
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              billing_cycle:
-                type: string
-              order_id:
-                type: string
-              razorpay_key:
-                type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "502":
-          description: Bad Gateway
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Create Razorpay order (alias)
-      tags:
-      - billing
   /api/billing/credits:
     get:
       description: Returns the org's prepaid credit balance and minutes available.
@@ -1953,46 +2364,6 @@ paths:
       summary: Verify payment
       tags:
       - billing
-  /api/billing/webhook:
-    post:
-      consumes:
-      - application/json
-      description: Receives Razorpay payment events. HMAC-verified — no auth header
-        required.
-      responses:
-        "200":
-          description: OK
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      summary: Razorpay webhook
-      tags:
-      - billing
-  /api/calling-status:
-    get:
-      description: Returns current calling status including business hours check for
-        the org.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get current calling status (business hours check)
-      tags:
-      - misc
   /api/campaign-events:
     get:
       description: Server-sent event stream for campaign dial progress. Use campaign_id=0
@@ -2216,6 +2587,104 @@ paths:
       summary: Update campaign
       tags:
       - campaigns
+  /api/campaigns/{id}/assign-users:
+    post:
+      consumes:
+      - application/json
+      description: Replaces the set of dashboard users assigned to a campaign. Admin
+        only.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User IDs to assign
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            user_ids:
+              items:
+                format: int64
+                type: integer
+              type: array
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Assign users to campaign
+      tags:
+      - campaigns
+  /api/campaigns/{id}/assigned-users:
+    get:
+      description: Returns the user IDs currently assigned to a campaign. Visible
+        to any user who can view the campaign.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              user_ids:
+                items:
+                  format: int64
+                  type: integer
+                type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List assigned users
+      tags:
+      - campaigns
   /api/campaigns/{id}/call-insights:
     get:
       description: Aggregates call reviews into summary cards, improvement areas,
@@ -2293,6 +2762,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Get campaign call log
+      tags:
+      - campaigns
+  /api/campaigns/{id}/call-outcome-stats:
+    get:
+      description: Returns the number of total, connected, completed, unanswered,
+        busy, and failed calls for a campaign.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/db.CallOutcomeStats'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get campaign call outcome stats
       tags:
       - campaigns
   /api/campaigns/{id}/call-reviews:
@@ -2434,6 +2942,140 @@ paths:
       summary: Dial campaign lead
       tags:
       - dialing
+  /api/campaigns/{id}/exotel-creds:
+    get:
+      description: Returns the Exotel credentials stored for a campaign. All fields
+        empty means the platform default is used.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/db.ExotelCreds'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get campaign Exotel credentials
+      tags:
+      - campaigns
+    put:
+      consumes:
+      - application/json
+      description: Stores per-campaign Exotel API credentials. Pass empty strings
+        to revert to platform defaults.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Exotel credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/db.ExotelCreds'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save campaign Exotel credentials
+      tags:
+      - campaigns
+  /api/campaigns/{id}/human-call/{lead_id}:
+    post:
+      consumes:
+      - application/json
+      description: Dials the agent's phone first via Exotel, then bridges to the lead's
+        phone. Uses campaign-level Exotel credentials.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lead ID
+        format: int64
+        in: path
+        name: lead_id
+        required: true
+        type: integer
+      - description: Agent phone
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Initiate human call
+      tags:
+      - campaigns
   /api/campaigns/{id}/import-csv:
     post:
       consumes:
@@ -2447,7 +3089,7 @@ paths:
         name: id
         required: true
         type: integer
-      - description: 'CSV file (columns: first_name, last_name, phone, source)'
+      - description: 'CSV file (columns: first_name, last_name, phone, company, source)'
         in: formData
         name: file
         required: true
@@ -2467,6 +3109,10 @@ paths:
                 type: array
               imported:
                 type: integer
+              rejected:
+                items:
+                  $ref: '#/definitions/api.ImportRejection'
+                type: array
             type: object
         "400":
           description: Bad Request
@@ -2491,7 +3137,7 @@ paths:
       - campaigns
   /api/campaigns/{id}/leads:
     get:
-      description: Returns all leads enrolled in a campaign.
+      description: Returns a paginated list of leads enrolled in a campaign.
       parameters:
       - description: Campaign ID
         format: int64
@@ -2499,15 +3145,39 @@ paths:
         name: id
         required: true
         type: integer
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - default: 100
+        description: Page size
+        in: query
+        name: limit
+        type: integer
+      - description: Search by name/phone/source
+        in: query
+        name: search
+        type: string
+      - description: Comma-separated executive IDs
+        in: query
+        name: executive_ids
+        type: string
+      - description: Scheduled from (ISO datetime)
+        in: query
+        name: scheduled_from
+        type: string
+      - description: Scheduled to (ISO datetime)
+        in: query
+        name: scheduled_to
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/db.CampaignLead'
-            type: array
+            $ref: '#/definitions/api.PaginatedCampaignLeadsResponse'
         "400":
           description: Bad Request
           schema:
@@ -2864,205 +3534,6 @@ paths:
       summary: Dashboard summary
       tags:
       - dashboard
-  /api/debug/call-timeline:
-    get:
-      description: Returns call timeline debug information. Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get call timeline debug info
-      tags:
-      - debug
-  /api/debug/health:
-    get:
-      description: Returns debug health check information including DB status. Requires
-        Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              db:
-                type: string
-              status:
-                type: string
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Debug health check
-      tags:
-      - debug
-  /api/debug/last-dial:
-    get:
-      description: Returns debug information about the last dial attempt. Requires
-        Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get last dial debug info
-      tags:
-      - debug
-  /api/debug/logs:
-    get:
-      description: Returns debug log entries. Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              type: object
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Fetch debug logs
-      tags:
-      - debug
-  /api/debug/recording-config:
-    get:
-      description: Returns recording configuration debug information. Requires Admin
-        role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get recording config debug info
-      tags:
-      - debug
-  /api/demo-requests:
-    get:
-      description: Returns all submitted demo requests. Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              type: object
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: List demo requests
-      tags:
-      - misc
-    post:
-      consumes:
-      - application/json
-      description: Public endpoint — no authentication required. Submits a new demo
-        request.
-      parameters:
-      - description: Demo request details
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            company:
-              type: string
-            email:
-              type: string
-            message:
-              type: string
-            name:
-              type: string
-            phone:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            properties:
-              id:
-                format: int64
-                type: integer
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      summary: Submit a demo request (public)
-      tags:
-      - misc
   /api/dial/{lead_id}:
     post:
       consumes:
@@ -3199,7 +3670,7 @@ paths:
     delete:
       description: Removes a DND entry by row ID or phone number. Requires Admin role.
       parameters:
-      - description: Row ID or 10-digit phone number
+      - description: Row ID or Indian phone number
         in: path
         name: id
         required: true
@@ -3240,7 +3711,7 @@ paths:
     get:
       description: Checks if a phone number is on the org's DND list.
       parameters:
-      - description: 10-digit phone number
+      - description: Indian phone number
         in: query
         name: phone
         required: true
@@ -3276,7 +3747,7 @@ paths:
     get:
       description: Checks if a phone number is on the org's DND list using path parameter.
       parameters:
-      - description: 10-digit phone number
+      - description: Indian phone number
         in: path
         name: phone
         required: true
@@ -3308,53 +3779,6 @@ paths:
       summary: Check DND by phone (path param)
       tags:
       - dnd
-  /api/dnd/import:
-    get:
-      consumes:
-      - multipart/form-data
-      description: Alias for POST /api/dnd/import-csv. Bulk-imports DND numbers from
-        a CSV file. Requires Admin role.
-      parameters:
-      - description: 'CSV file (first column: 10-digit phone)'
-        in: formData
-        name: file
-        required: true
-        type: file
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              imported:
-                type: integer
-              skipped:
-                items:
-                  type: string
-                type: array
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Import DND numbers from CSV (alias)
-      tags:
-      - dnd
   /api/dnd/import-csv:
     post:
       consumes:
@@ -3362,7 +3786,7 @@ paths:
       description: Bulk-adds phone numbers from a CSV file (first column = phone).
         Requires Admin role.
       parameters:
-      - description: 'CSV file (first column: 10-digit phone)'
+      - description: 'CSV file (first column: Indian phone number)'
         in: formData
         name: file
         required: true
@@ -3764,16 +4188,26 @@ paths:
       - knowledge
   /api/leads:
     get:
-      description: Returns all leads for the authenticated user's org.
+      description: Returns a paginated list of leads for the authenticated user's
+        org.
+      parameters:
+      - default: 1
+        description: Page number (1-based)
+        in: query
+        name: page
+        type: integer
+      - default: 100
+        description: Page size
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            items:
-              $ref: '#/definitions/db.Lead'
-            type: array
+            $ref: '#/definitions/api.PaginatedLeadsResponse'
         "401":
           description: Unauthorized
           schema:
@@ -3946,6 +4380,49 @@ paths:
       summary: Update lead
       tags:
       - leads
+  /api/leads/{id}/disposition:
+    put:
+      consumes:
+      - application/json
+      description: Atomically updates lead status, follow-up note and follow-up datetime
+        after a call. Used by the browser auto-dial "Save & Next" flow.
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Disposition data
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.leadDispositionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Save lead disposition
+      tags:
+      - leads
   /api/leads/{id}/documents:
     get:
       description: Returns all uploaded documents attached to a lead.
@@ -4025,9 +4502,12 @@ paths:
       summary: Upload lead document
       tags:
       - leads
-  /api/leads/{id}/draft-email:
-    get:
-      description: Generates a draft email for a lead using AI.
+  /api/leads/{id}/executive:
+    put:
+      consumes:
+      - application/json
+      description: Assigns or unassigns an executive for a lead without re-validating
+        name/phone.
       parameters:
       - description: Lead ID
         format: int64
@@ -4035,18 +4515,23 @@ paths:
         name: id
         required: true
         type: integer
+      - description: Executive ID (0 to unassign)
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            executive_id:
+              format: int64
+              type: integer
+          type: object
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            properties:
-              body:
-                type: string
-              subject:
-                type: string
-            type: object
+            $ref: '#/definitions/api.BoolResponse'
         "400":
           description: Bad Request
           schema:
@@ -4065,7 +4550,46 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Generate a draft email for a lead using AI
+      summary: Update lead executive
+      tags:
+      - leads
+  /api/leads/{id}/interactions:
+    get:
+      description: 'Returns a unified timeline of all interactions for a lead: creation,
+        notes, calls, scheduled calls, and WhatsApp messages.'
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/db.InteractionTimeline'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Get lead interaction timeline
       tags:
       - leads
   /api/leads/{id}/notes:
@@ -4111,6 +4635,55 @@ paths:
       security:
       - BearerAuth: []
       summary: Add lead note
+      tags:
+      - leads
+  /api/leads/{id}/source:
+    put:
+      consumes:
+      - application/json
+      description: Updates the source of a lead without re-validating name/phone.
+      parameters:
+      - description: Lead ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Source value
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            source:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Update lead source
       tags:
       - leads
   /api/leads/{id}/status:
@@ -4199,7 +4772,7 @@ paths:
       description: Returns all calls for the lead matching the given phone number,
         combined with recording URL and transcript.
       parameters:
-      - description: 10-digit phone number
+      - description: Indian phone number
         in: path
         name: phone
         required: true
@@ -4258,7 +4831,7 @@ paths:
       consumes:
       - multipart/form-data
       description: 'Accepts a multipart/form-data CSV upload with columns: first_name,
-        last_name, phone, source.'
+        last_name, phone, company, source.'
       parameters:
       - description: CSV file
         in: formData
@@ -4317,7 +4890,8 @@ paths:
       - leads
   /api/leads/search:
     get:
-      description: Full-text search across leads in the org by name, phone, or source.
+      description: Full-text search across leads in the org by name, phone, company,
+        or source.
       parameters:
       - description: Search query
         in: query
@@ -4350,25 +4924,48 @@ paths:
       summary: Search leads
       tags:
       - leads
-  /api/live-logs:
+  /api/leads/search-campaigns:
     get:
-      description: Legacy alias. Server-sent event stream of live backend log entries.
-        Authenticate via ?ticket=<sse-ticket>.
+      description: |-
+        Searches leads by name/phone within the org and returns one row
+        per campaign the lead belongs to. Accepts an optional comma-separated
+        status filter.
       parameters:
-      - description: Short-lived SSE ticket
+      - description: Search query
         in: query
-        name: ticket
+        name: q
+        required: true
+        type: string
+      - description: Comma-separated statuses
+        in: query
+        name: status
         type: string
       produces:
-      - text/event-stream
+      - application/json
       responses:
         "200":
-          description: 'event: log\ndata: {...}\n\n'
+          description: OK
           schema:
-            type: string
-      summary: Live log stream (SSE, legacy alias)
+            items:
+              $ref: '#/definitions/db.LeadWithCampaign'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Search leads with campaign info
       tags:
-      - sse
+      - leads
   /api/manual-call:
     post:
       consumes:
@@ -4425,20 +5022,24 @@ paths:
       summary: Manual call
       tags:
       - dialing
-  /api/onboarding:
+  /api/notifications:
     get:
-      description: Returns the onboarding completion flag for the authenticated user's
-        org.
+      description: Returns the authenticated user's notifications, newest first.
+      parameters:
+      - default: 50
+        description: Maximum notifications to return
+        in: query
+        name: limit
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            properties:
-              completed:
-                type: boolean
-            type: object
+            items:
+              $ref: '#/definitions/db.Notification'
+            type: array
         "401":
           description: Unauthorized
           schema:
@@ -4449,28 +5050,32 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Get onboarding completion flag
+      summary: List notifications
       tags:
-      - onboarding
-  /api/onboarding/complete:
-    post:
-      description: Marks onboarding as complete for the org. Requires Admin role.
+      - notifications
+  /api/notifications/{id}/read:
+    put:
+      description: Marks a single notification as read.
+      parameters:
+      - description: Notification ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            properties:
-              ok:
-                type: boolean
-            type: object
-        "401":
-          description: Unauthorized
+            $ref: '#/definitions/api.BoolResponse'
+        "400":
+          description: Bad Request
           schema:
             $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
+        "401":
+          description: Unauthorized
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":
@@ -4479,12 +5084,35 @@ paths:
             $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Mark onboarding as complete
+      summary: Mark notification read
       tags:
-      - onboarding
-  /api/onboarding/status:
+      - notifications
+  /api/notifications/read-all:
+    put:
+      description: Marks every notification for the current user as read.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications read
+      tags:
+      - notifications
+  /api/notifications/unread-count:
     get:
-      description: Returns detailed onboarding status with per-step completion flags.
+      description: Returns the number of unread notifications for the current user.
       produces:
       - application/json
       responses:
@@ -4492,31 +5120,15 @@ paths:
           description: OK
           schema:
             properties:
-              completed:
-                type: boolean
-              steps:
-                properties:
-                  campaign:
-                    type: boolean
-                  leads:
-                    type: boolean
-                  voice:
-                    type: boolean
-                type: object
+              count:
+                format: int64
+                type: integer
             type: object
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Get onboarding status with step flags
+      summary: Unread notification count
       tags:
-      - onboarding
+      - notifications
   /api/organizations:
     get:
       description: Returns the caller's org (or all orgs for superadmin).
@@ -4620,47 +5232,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Delete organization
-      tags:
-      - organizations
-  /api/organizations/{id}/generate-prompt:
-    post:
-      description: AI-generates a system prompt for the given org. Requires Admin role.
-      parameters:
-      - description: Org ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              prompt:
-                type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: AI-generate a system prompt for an org
       tags:
       - organizations
   /api/organizations/{id}/products:
@@ -4967,6 +5538,137 @@ paths:
       summary: Save org voice settings
       tags:
       - organizations
+  /api/presence:
+    get:
+      description: Returns live status for every agent in the org. Admin only.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/db.AgentPresenceRow'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List agent presence
+      tags:
+      - presence
+  /api/presence/break:
+    post:
+      description: Convenience endpoint for the agent dashboard to mark themselves
+        on break.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Set agent on break
+      tags:
+      - presence
+  /api/presence/heartbeat:
+    post:
+      consumes:
+      - application/json
+      description: Agents ping this endpoint periodically to report their current
+        status.
+      parameters:
+      - description: 'status: idle | break | on_call'
+        in: body
+        name: body
+        schema:
+          properties:
+            status:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Agent presence heartbeat
+      tags:
+      - presence
+  /api/presence/idle:
+    post:
+      description: Marks the current agent as idle (available).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BoolResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Clear break / set agent idle
+      tags:
+      - presence
+  /api/product-images/{filename}:
+    get:
+      description: Serves an uploaded product image file (public, no auth required
+        — URLs are sent via WhatsApp).
+      parameters:
+      - description: Image filename
+        in: path
+        name: filename
+        required: true
+        type: string
+      responses:
+        "200":
+          description: Image file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Serve product image
+      tags:
+      - products
   /api/products/{id}:
     delete:
       description: Permanently deletes a product. Requires Admin role.
@@ -5051,86 +5753,93 @@ paths:
       summary: Update product
       tags:
       - products
-  /api/products/{id}/generate-persona:
+  /api/products/{id}/images:
     post:
-      description: AI-generates a product persona. Requires Admin role.
+      consumes:
+      - multipart/form-data
+      description: Uploads an image file and appends it to the product's manual_images
+        list.
       parameters:
       - description: Product ID
-        format: int64
         in: path
         name: id
         required: true
         type: integer
-      produces:
-      - application/json
+      - description: Image file
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: Human-readable label used by AI for matching
+        in: formData
+        name: label
+        type: string
       responses:
-        "200":
-          description: OK
+        "201":
+          description: Created
           schema:
-            properties:
-              persona:
-                type: string
-            type: object
+            $ref: '#/definitions/db.ProductImage'
         "400":
           description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
           schema:
             $ref: '#/definitions/api.ErrorResponse'
         "500":
           description: Internal Server Error
           schema:
             $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: AI-generate a product persona
+      summary: Upload product image
       tags:
       - products
-  /api/products/{id}/generate-prompt:
-    post:
-      description: AI-generates a product prompt. Requires Admin role.
+    put:
+      description: Replaces the full manual_images array (used to update labels or
+        reorder).
       parameters:
       - description: Product ID
-        format: int64
         in: path
         name: id
         required: true
         type: integer
-      produces:
-      - application/json
+      - description: Full images array
+        in: body
+        name: body
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/db.ProductImage'
+          type: array
       responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              prompt:
-                type: string
-            type: object
+        "204":
+          description: No Content
+      summary: Replace all manual images
+      tags:
+      - products
+  /api/products/{id}/images/{index}:
+    delete:
+      description: Removes a manually uploaded image by its index in the manual_images
+        list.
+      parameters:
+      - description: Product ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Zero-based index in manual_images array
+        in: path
+        name: index
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
         "400":
           description: Bad Request
           schema:
             $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
+        "404":
+          description: Not Found
           schema:
             $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: AI-generate a product prompt
+      summary: Delete product image
       tags:
       - products
   /api/products/{id}/prompt:
@@ -5221,45 +5930,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Update product prompt
-      tags:
-      - products
-  /api/products/{id}/scrape:
-    post:
-      description: Scrapes product information from the product's website URL. Requires
-        Admin role.
-      parameters:
-      - description: Product ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Scrape product info from URL
       tags:
       - products
   /api/pronunciation:
@@ -5437,7 +6107,20 @@ paths:
       - misc
   /api/scheduled-calls:
     get:
-      description: Returns all scheduled calls for the org. Requires Admin role.
+      description: Returns scheduled calls for the org. Supports filtering by mode,
+      parameters:
+      - description: 'Filter by mode: ai | manual'
+        in: query
+        name: mode
+        type: string
+      - description: 'Filter by status: pending | dialing | completed | failed | cancelled'
+        in: query
+        name: status
+        type: string
+      - description: If true, return only calls due now (scheduled_at <= NOW() + 30s)
+        in: query
+        name: due
+        type: boolean
       produces:
       - application/json
       responses:
@@ -5467,7 +6150,8 @@ paths:
     post:
       consumes:
       - application/json
-      description: Schedules a future outbound call for a lead. Requires Admin role.
+      description: Schedules a future outbound or manual call for a lead. Requires
+        Admin role.
       parameters:
       - description: 'scheduled_at: RFC3339 or YYYY-MM-DD HH:MM:SS'
         in: body
@@ -5478,13 +6162,21 @@ paths:
             campaign_id:
               format: int64
               type: integer
+            executive_id:
+              format: int64
+              type: integer
             lead_id:
               format: int64
               type: integer
+            mode:
+              type: string
             notes:
               type: string
             scheduled_at:
               type: string
+            scheduled_by_user_id:
+              format: int64
+              type: integer
           type: object
       produces:
       - application/json
@@ -5605,6 +6297,48 @@ paths:
       security:
       - BearerAuth: []
       summary: Live log stream (SSE)
+      tags:
+      - sse
+  /api/sse/notifications:
+    get:
+      description: Server-sent event stream for in-app notifications. Authenticate
+        via ?ticket=<sse-ticket> or Authorization header.
+      parameters:
+      - description: Short-lived SSE ticket
+        in: query
+        name: ticket
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: 'event: notification\ndata: {...}\n\n'
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Notification stream (SSE)
+      tags:
+      - sse
+  /api/sse/presence:
+    get:
+      description: Server-sent event stream of agent presence changes for the admin
+        dashboard.
+      parameters:
+      - description: Short-lived SSE ticket
+        in: query
+        name: ticket
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: 'data: {...}\n\n'
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Presence SSE stream
       tags:
       - sse
   /api/sse/ticket:
@@ -5984,102 +6718,6 @@ paths:
       summary: Get invite link
       tags:
       - team
-  /api/test-email:
-    post:
-      description: Sends a test email. Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.MessageResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Send a test email
-      tags:
-      - misc
-  /api/transcripts/{id}/conclusion:
-    post:
-      description: Generates or retrieves an AI conclusion for a transcript. Pass force=1
-        to regenerate.
-      parameters:
-      - description: Transcript ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Pass "1" to force regeneration
-        in: query
-        name: force
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              appointment_booked:
-                type: boolean
-              failure_reason:
-                type: string
-              insights:
-                type: string
-              org_id:
-                format: int64
-                type: integer
-              prompt_improvement_suggestion:
-                type: string
-              quality_score:
-                format: double
-                type: number
-              sentiment:
-                type: string
-              summary:
-                type: string
-              transcript_id:
-                format: int64
-                type: integer
-              what_went_well:
-                type: string
-              what_went_wrong:
-                type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "503":
-          description: Service Unavailable
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Generate AI conclusion for transcript
-      tags:
-      - transcripts
   /api/transcripts/{id}/review:
     get:
       description: Returns the AI-generated call review for a specific transcript.
@@ -6214,6 +6852,52 @@ paths:
       security:
       - BearerAuth: []
       summary: Blast WhatsApp campaign
+      tags:
+      - whatsapp
+  /api/wa/campaign-blast/{campaign_id}/send-one:
+    post:
+      consumes:
+      - application/json
+      description: Sends a WhatsApp greeting to a single lead in a campaign. Requires
+        Admin role.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: campaign_id
+        required: true
+        type: integer
+      - description: Lead ID
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            lead_id:
+              format: int64
+              type: integer
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              sent:
+                type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Send WA message to one campaign lead
       tags:
       - whatsapp
   /api/wa/campaign-blast/status/{job_id}:
@@ -6926,6 +7610,72 @@ paths:
       summary: Ensure WhatsApp conversation
       tags:
       - whatsapp
+  /api/wa/meta/app-config:
+    get:
+      description: Returns public Meta app config (app_id, es_config_id) needed by
+        the frontend for Embedded Signup.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              app_id:
+                type: string
+              es_config_id:
+                type: string
+              graph_version:
+                type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Meta app config
+      tags:
+      - whatsapp
+  /api/wa/onboard/exchange:
+    post:
+      consumes:
+      - application/json
+      description: Exchanges an Embedded Signup code for a long-lived access token,
+        fetches the phone number ID, and stores both per-org. Requires Admin role.
+      parameters:
+      - description: OAuth code
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            code:
+              type: string
+            phone_number_id:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            properties:
+              phone_display:
+                type: string
+              phone_number_id:
+                type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Meta Embedded Signup exchange
+      tags:
+      - whatsapp
   /api/wa/send:
     post:
       consumes:
@@ -7181,35 +7931,6 @@ paths:
       summary: Toggle AI by phone
       tags:
       - whatsapp
-  /api/whatsapp:
-    get:
-      description: Returns WhatsApp log entries (legacy endpoint). Requires Admin role.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              type: object
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "403":
-          description: Forbidden
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: List WhatsApp logs (legacy endpoint)
-      tags:
-      - whatsapp
   /api/webhooks:
     get:
       description: Returns all configured outbound webhooks for the org. Requires
@@ -7369,392 +8090,6 @@ paths:
       summary: Get webhook logs
       tags:
       - webhooks
-  /mobile/leads:
-    get:
-      description: Returns all leads for the authenticated user's org (mobile).
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/db.Lead'
-            type: array
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: List leads (mobile)
-      tags:
-      - mobile
-    post:
-      consumes:
-      - application/json
-      description: Creates a new CRM lead for the org (mobile).
-      parameters:
-      - description: Lead data
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.leadCreateRequest'
-      produces:
-      - application/json
-      responses:
-        "201":
-          description: Created
-          schema:
-            $ref: '#/definitions/api.IDResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "409":
-          description: phone already exists
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Create lead (mobile)
-      tags:
-      - mobile
-  /mobile/leads/export:
-    get:
-      description: Streams all org leads as a downloadable CSV file (mobile).
-      produces:
-      - text/csv
-      responses:
-        "200":
-          description: OK
-          schema:
-            type: file
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Export all leads (mobile)
-      tags:
-      - mobile
-  /mobile/leads/search:
-    get:
-      description: Full-text search across leads in the org by name, phone, or source
-        (mobile).
-      parameters:
-      - description: Search query
-        in: query
-        name: q
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              $ref: '#/definitions/db.Lead'
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Search leads (mobile)
-      tags:
-      - mobile
-  /mobile/leads/{id}:
-    delete:
-      description: Permanently deletes a lead from the org (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.DeletedResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Delete lead (mobile)
-      tags:
-      - mobile
-    get:
-      description: Returns a single lead by ID (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/db.Lead'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get lead (mobile)
-      tags:
-      - mobile
-    put:
-      consumes:
-      - application/json
-      description: Updates lead fields. All fields are replaced (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Updated lead data
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/api.leadUpdateRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.BoolResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "404":
-          description: Not Found
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Update lead (mobile)
-      tags:
-      - mobile
-  /mobile/leads/{id}/notes:
-    post:
-      consumes:
-      - application/json
-      description: Saves a follow-up note against a lead (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: Note text (max 5000 chars)
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            note:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.BoolResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Add lead note (mobile)
-      tags:
-      - mobile
-  /mobile/leads/{id}/status:
-    put:
-      consumes:
-      - application/json
-      description: Changes the CRM status of a lead (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      - description: New status
-        in: body
-        name: body
-        required: true
-        schema:
-          properties:
-            status:
-              type: string
-          type: object
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/api.BoolResponse'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Update lead status (mobile)
-      tags:
-      - mobile
-  /mobile/leads/{id}/transcripts:
-    get:
-      description: Returns all call transcripts for a lead (mobile).
-      parameters:
-      - description: Lead ID
-        format: int64
-        in: path
-        name: id
-        required: true
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            items:
-              type: object
-            type: array
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/api.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Get lead transcripts (mobile)
-      tags:
-      - mobile
-  /ping:
-    get:
-      description: Returns a simple pong response to verify the server is running.
-        No authentication required.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            properties:
-              pong:
-                type: boolean
-            type: object
-      summary: Health check ping
-      tags:
-      - misc
   /crm-webhook:
     get:
       description: Receives CRM push notifications (new lead events) or responds to
@@ -7895,6 +8230,30 @@ paths:
       summary: Exotel ExoML hook
       tags:
       - webhooks
+  /webhook/exotel/human-call:
+    get:
+      description: Returns ExoML that announces the customer and bridges the agent
+        to them. Called by Exotel when the agent answers.
+      parameters:
+      - description: Customer phone number
+        in: query
+        name: customer_phone
+        required: true
+        type: string
+      - description: Customer display name
+        in: query
+        name: customer_name
+        type: string
+      produces:
+      - application/xml
+      responses:
+        "200":
+          description: ExoML response
+          schema:
+            type: string
+      summary: Human call ExoML hook
+      tags:
+      - webhooks
   /webhook/exotel/status:
     post:
       consumes:
@@ -7949,4 +8308,14 @@ paths:
       summary: Twilio call status hook
       tags:
       - webhooks
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter: **Bearer {JWT token}**. Obtain a token from POST /api/auth/login
+      or POST /api/auth/signup.'
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

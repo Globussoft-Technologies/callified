@@ -117,12 +117,13 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/webhooks/{id}/logs [get]
 func (s *Server) getWebhookLogs(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	logs, err := s.db.GetWebhookLogs(id, 50)
+	logs, err := s.db.GetWebhookLogs(ac.OrgID, id, 50)
 	if err != nil {
 		s.logger.Sugar().Errorw("getWebhookLogs", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

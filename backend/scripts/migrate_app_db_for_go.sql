@@ -68,6 +68,7 @@ DELIMITER ;
 -- ============================================================
 
 CALL add_col_if_missing('leads', 'dial_attempts', 'INT DEFAULT 0');
+CALL add_col_if_missing('leads', 'company', 'VARCHAR(255) DEFAULT NULL');
 
 CALL add_col_if_missing('call_transcripts', 'org_id', 'INT DEFAULT NULL');
 CALL add_col_if_missing('call_transcripts', 'tts_language', 'VARCHAR(10) DEFAULT NULL');

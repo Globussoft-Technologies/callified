@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
 import { useToast } from '../contexts/UIContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -16,6 +17,7 @@ const card = {
 
 export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const toast = useToast();
+  const { currentUser } = useAuth();
   const [scheduledCalls, setScheduledCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [confirmCancelId, setConfirmCancelId] = useState(null);
@@ -60,7 +62,11 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
     borderBottom: `1px solid ${T.border}`, verticalAlign: 'middle',
   };
 
-  const hasActive = scheduledCalls.some(c => c.status === 'pending' || c.status === 'dialing');
+  const myUserId = currentUser?.id;
+  const visibleCalls = myUserId
+    ? scheduledCalls.filter(c => c.scheduled_by_user_id === myUserId)
+    : scheduledCalls;
+  const hasActive = visibleCalls.some(c => c.status === 'pending' || c.status === 'dialing');
 
   return (
     <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
@@ -77,7 +83,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
         <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>
           Loading scheduled calls...
         </div>
-      ) : scheduledCalls.length === 0 ? (
+      ) : visibleCalls.length === 0 ? (
         <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>
           No scheduled calls. Schedule calls from the CRM or campaign pages.
         </div>
@@ -94,7 +100,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
               </tr>
             </thead>
             <tbody>
-              {scheduledCalls.map((call, i) => {
+              {visibleCalls.map((call, i) => {
                 const sc = statusStyle(call.status);
                 const isLast = i === scheduledCalls.length - 1;
                 const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };

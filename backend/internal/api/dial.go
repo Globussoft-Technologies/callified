@@ -59,13 +59,23 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ac := getAuth(r)
+	if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+
 	var body struct {
 		CampaignID int64 `json:"campaign_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
+	if body.CampaignID > 0 && !s.canViewCampaign(ac, body.CampaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
 	vs, _ := s.db.GetCampaignVoiceSettings(body.CampaignID)
-	ac := getAuth(r)
 
 	data := dial.CallData{
 		LeadID:      lead.ID,
@@ -106,11 +116,12 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     502  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial/{lead_id} [post]
 func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	ac := getAuth(r)
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid lead_id")
@@ -122,9 +133,12 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
+	if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
 
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
-	ac := getAuth(r)
 
 	data := dial.CallData{
 		LeadID:      lead.ID,
@@ -176,11 +190,11 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial-all [post]
 func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	force := r.URL.Query().Get("force") == "true"
 
 	leads, err := s.db.GetCampaignLeads(campaignID)
@@ -302,11 +316,11 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/redial-failed [post]
 func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 
 	leads, err := s.db.GetFailedLeadsInCampaign(campaignID)
 	if err != nil {

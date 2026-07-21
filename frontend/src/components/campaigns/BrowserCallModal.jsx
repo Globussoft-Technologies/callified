@@ -286,7 +286,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
   }[status] || status;
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && (status === 'ended' || status === 'error')) onClose(); }}>
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && (status === 'ended' || status === 'error')) onClose(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
       <div style={{
         background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16,
         boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%',

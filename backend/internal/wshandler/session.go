@@ -504,10 +504,16 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	return snap
 }
 
-// MaxTokens returns 600 for all languages. The LLM self-regulates and stops
-// naturally when the response is complete — 600 is a safety cap to prevent
-// runaway responses while giving enough room for 3-4 full sentences in any
-// Indian script without mid-sentence cutoffs.
-func (s *CallSession) MaxTokens(_ string) int32 {
-	return 600
+// MaxTokens returns a token budget based on transcript length, clamped
+// between 150 and 400. Roughly 20 tokens per word is used as a heuristic.
+func (s *CallSession) MaxTokens(transcript string) int32 {
+	words := len(strings.Fields(transcript))
+	tokens := int32(words * 20)
+	if tokens < 150 {
+		return 150
+	}
+	if tokens > 400 {
+		return 400
+	}
+	return tokens
 }

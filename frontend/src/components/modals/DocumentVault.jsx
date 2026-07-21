@@ -7,8 +7,8 @@ export default function DocumentVault({
   if (!activeLeadDocs) return null;
 
   return (
-    <div className="modal-overlay" onClick={() => setActiveLeadDocs(null)}>
-      <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '600px'}}>
+    <div className="modal-overlay" onClick={() => setActiveLeadDocs(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+      <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '600px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
         <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📁 Document Vault</h2>
         <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Client: {activeLeadDocs.first_name} {activeLeadDocs.last_name}</p>
         

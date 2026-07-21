@@ -169,7 +169,10 @@ func (s *Server) downloadKnowledge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "file not found")
 		return
 	}
-	storagePath := s.knowledgeStoragePath(ac.OrgID, kf.ID, kf.Filename)
+	// Defensive: the filename was sanitized at upload, but re-base it here so
+	// a legacy/malicious row cannot traverse out of the knowledge directory.
+	filename := filepath.Base(kf.Filename)
+	storagePath := s.knowledgeStoragePath(ac.OrgID, kf.ID, filename)
 	if _, err := os.Stat(storagePath); err != nil {
 		// Older uploads (pre-storage) won't have a file on disk. Be
 		// explicit so the user understands re-upload is needed.

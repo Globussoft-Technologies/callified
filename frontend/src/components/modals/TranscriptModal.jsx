@@ -181,7 +181,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
   const close = () => setTranscriptLead(null);
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) close(); }}>
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) close(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
       <div style={{
         position: 'relative',
         background: T.card,

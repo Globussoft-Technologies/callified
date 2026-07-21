@@ -30,6 +30,7 @@ func (s *Server) SetWSHandler(h activeCallLister) {
 // @Failure     403  {object}  ErrorResponse
 // @Router      /api/active-calls [get]
 func (s *Server) activeCalls(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	if s.wsHandler == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"count":        0,
@@ -38,8 +39,14 @@ func (s *Server) activeCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessions := s.wsHandler.ActiveSessions()
+	filtered := sessions[:0]
+	for _, sess := range sessions {
+		if sess.OrgID == ac.OrgID {
+			filtered = append(filtered, sess)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"count":        len(sessions),
-		"active_calls": sessions,
+		"count":        len(filtered),
+		"active_calls": filtered,
 	})
 }

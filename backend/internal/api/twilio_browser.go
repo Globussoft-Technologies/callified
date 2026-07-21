@@ -17,11 +17,11 @@ import (
 // campaign via Provider Accounts.
 
 func (s *Server) twilioToken(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 
 	// Look up the campaign's linked provider account (must be Twilio).
 	creds, err := s.db.GetCampaignExotelCreds(campaignID)

@@ -47,12 +47,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Syntax check all Python files
-        run: python -m py_compile database.py routes.py main.py billing.py billing_routes.py prompt_builder.py ws_handler.py dial_routes.py auth.py scheduler.py retry_worker.py email_service.py invoice_service.py call_guard.py webhook_dispatch.py recording_service.py tts.py wa_followup.py
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short || true
+      - name: Install test dependencies
+        run: pip install pytest requests
+      - name: Run E2E tests (best-effort, requires running server)
+        run: python -m pytest tests/e2e/test_api_v1.py -v --tb=short || true
 
   frontend-build:
     runs-on: ubuntu-latest

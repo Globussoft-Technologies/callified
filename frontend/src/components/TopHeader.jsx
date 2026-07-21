@@ -4,11 +4,16 @@ import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
 import { formatDateTime } from '../utils/dateFormat';
+import NotificationBell from './NotificationBell';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
 
 const AGENT_TABS = [
+  { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
+];
+
+const TEAM_LEADER_PRIMARY_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
 ];
 
@@ -20,6 +25,9 @@ const PRIMARY_ADMIN_TABS = [
   { id: 'whatsapp',  label: 'WhatsApp Comms', path: '/whatsapp',  testid: 'tab-whatsapp' },
 ];
 
+// More-menu tabs accessible to Team Leaders (subset of MORE_ADMIN_TABS).
+const TEAM_LEADER_MORE_TAB_IDS = new Set(['scheduled', 'interaction-history', 'settings']);
+
 const MORE_ADMIN_TABS = [
   { id: 'integrations',     label: 'Integrations',      path: '/integrations',      testid: 'tab-integrations' },
   { id: 'exotel-accounts', label: 'Provider Accounts',  path: '/exotel-accounts',   testid: 'tab-exotel-accounts' },
@@ -27,6 +35,10 @@ const MORE_ADMIN_TABS = [
   { id: 'knowledge',    label: 'RAG Knowledge',   path: '/knowledge',    testid: 'tab-rag' },
   { id: 'sandbox',      label: 'AI Sandbox',      path: '/sandbox',      testid: 'tab-sandbox' },
   { id: 'scheduled',    label: 'Scheduled',       path: '/scheduled',    testid: 'tab-scheduled' },
+  { id: 'interaction-history', label: 'Interaction History', path: '/interaction-history', testid: 'tab-interaction-history' },
+  { id: 'agent-presence', label: 'Agent Presence', path: '/agent-presence', testid: 'tab-agent-presence' },
+  { id: 'agent-report', label: 'Agent Report', path: '/agent-report', testid: 'tab-agent-report' },
+  { id: 'campaign-progress', label: 'Campaign Progress', path: '/campaign-progress', testid: 'tab-campaign-progress' },
   { id: 'billing',      label: 'Billing',         path: '/billing',      testid: 'tab-billing' },
   { id: 'dnd',          label: 'DND',             path: '/dnd',          testid: 'tab-dnd' },
   { id: 'executives',   label: 'Executives',      path: '/executives',   testid: 'tab-executives' },
@@ -43,7 +55,7 @@ const SUPER_ADMIN_TABS = [
 
 const font = "'DM Sans', sans-serif";
 
-export default function TopHeader({ userRole, currentUser, handleLogout }) {
+export default function TopHeader({ userRole, currentUser, handleLogout, apiFetch }) {
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
@@ -56,8 +68,14 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
   const moreRef = useRef(null);
   const notifRef = useRef(null);
 
-  const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls } = useCall();
+  const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls, manualPresenceStatus, setManualPresenceStatus } = useCall();
   const notifCount = dueScheduledCalls.length;
+
+  const statusLabel = manualPresenceStatus === 'break' ? 'On Break' : 'Idle';
+  const statusColor = manualPresenceStatus === 'break' ? '#f59e0b' : '#10b981';
+  const toggleBreak = () => {
+    setManualPresenceStatus(manualPresenceStatus === 'break' ? 'idle' : 'break');
+  };
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -102,6 +120,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
 
   // Super admins see the same navigation as admins, plus the super-admin-only tabs.
   const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
+  const isTeamLeader = userRole === 'TeamLeader';
 
   const userName = currentUser?.full_name || currentUser?.email || '';
   const userInitial = userName.charAt(0).toUpperCase();
@@ -155,14 +174,20 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {isTeamLeader && TEAM_LEADER_PRIMARY_TABS
+          .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
+          .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
         {isAdminLike && PRIMARY_ADMIN_TABS
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
-        {isAdminLike && (
+        {(isAdminLike || isTeamLeader) && (
           (() => {
             const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
-            const allMoreTabs = [...visibleMoreTabs, ...superAdminTabs];
+            const roleFilteredMoreTabs = isTeamLeader
+              ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id))
+              : visibleMoreTabs;
+            const allMoreTabs = [...roleFilteredMoreTabs, ...superAdminTabs];
             if (allMoreTabs.length === 1) {
               const t = allMoreTabs[0];
               return tabBtn(t.id, t.label, t.path, t.testid);
@@ -194,7 +219,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
                     boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
                     display: 'flex', flexDirection: 'column', gap: 2,
                   }}>
-                    {visibleMoreTabs.map(t => (
+                    {roleFilteredMoreTabs.map(t => (
                       <button key={t.id} data-testid={t.testid} role="menuitem"
                         onClick={() => goTo(t.path)}
                         style={{
@@ -250,6 +275,21 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
           </span>
         )}
 
+        {/* Agent presence toggle */}
+        <button
+          onClick={toggleBreak}
+          title="Toggle break status"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '4px 10px', borderRadius: 20, border: `1px solid ${statusColor}`,
+            background: `${statusColor}15`, color: statusColor,
+            fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: font,
+          }}
+        >
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor }} />
+          {statusLabel}
+        </button>
+
         {/* Bell */}
         <div ref={notifRef} style={{ position: 'relative' }}>
           <div
@@ -285,7 +325,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 padding: '0 16px 10px', borderBottom: '1px solid #f3f4f6',
               }}>
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: font }}>Notifications</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', fontFamily: font }}>Scheduled callbacks</span>
               </div>
               {notifCount === 0 ? (
                 <div style={{ padding: '20px 16px', textAlign: 'center', color: '#6b7280', fontSize: 13, fontFamily: font }}>
@@ -349,6 +389,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout }) {
             </div>
           )}
         </div>
+
+        {/* In-app notifications (campaign assignments, etc.) */}
+        <NotificationBell apiFetch={apiFetch} />
 
         {/* User avatar + name */}
         {currentUser && (

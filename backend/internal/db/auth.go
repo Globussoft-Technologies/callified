@@ -16,20 +16,30 @@ type User struct {
 	PasswordHash string `json:"-"`
 	FullName     string `json:"full_name"`
 	Role         string `json:"role"`
+	ManagerID    *int64 `json:"manager_id,omitempty"`
+	IsActive     bool   `json:"is_active"`
 	CreatedAt    string `json:"created_at,omitempty"`
 }
 
 // GetUserByEmail fetches a user by email. Returns nil, nil when not found.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	row := d.pool.QueryRow(
-		`SELECT id, COALESCE(org_id,0), email, password_hash, COALESCE(full_name,''), COALESCE(role,'Admin')
+		`SELECT id, COALESCE(org_id,0), email, password_hash, COALESCE(full_name,''), COALESCE(role,'Admin'),
+		        manager_id, COALESCE(is_active,1)
 		 FROM users WHERE email = ?`, email)
 	u := &User{}
-	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role)
+	var managerID sql.NullInt64
+	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return u, err
+	if err != nil {
+		return nil, err
+	}
+	if managerID.Valid {
+		u.ManagerID = &managerID.Int64
+	}
+	return u, nil
 }
 
 // CreateUser inserts a new user and returns its ID.
@@ -48,21 +58,14 @@ func (d *DB) CreateUser(email, passwordHash, fullName, role string, orgID int64)
 func (d *DB) GetTeamMembers(orgID int64) ([]User, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Member'),
+		        manager_id, COALESCE(is_active,1),
 		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE org_id=? ORDER BY id ASC`, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var list []User
-	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		list = append(list, u)
-	}
-	return list, rows.Err()
+	return scanUsers(rows)
 }
 
 // CreateUserWithRole creates a user already assigned to an org (team invite flow).
@@ -100,15 +103,7 @@ func (d *DB) CountAdminsInOrg(orgID int64) (int, error) {
 // when not found (or in a different org). Used by the team-delete handler to
 // look up the target's role before deciding whether removal is safe.
 func (d *DB) GetUserByIDInOrg(userID, orgID int64) (*User, error) {
-	row := d.pool.QueryRow(
-		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Member')
-		 FROM users WHERE id=? AND org_id=?`, userID, orgID)
-	u := &User{}
-	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return u, err
+	return d.GetUserByIDInOrgWithRole(userID, orgID)
 }
 
 // HashPassword returns a bcrypt hash of the plain-text password.

@@ -135,21 +135,19 @@ func (s *Server) deleteExotelAccount(w http.ResponseWriter, r *http.Request) {
 // ── GET /api/campaigns/{id}/exotel-account ───────────────────────────────────
 
 func (s *Server) getCampaignExotelAccount(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
-	accountID, _ := s.db.GetCampaignExotelAccountID(campaignID)
+	accountID, _ := s.db.GetCampaignExotelAccountID(campaign.ID)
 	writeJSON(w, http.StatusOK, map[string]int64{"exotel_account_id": accountID})
 }
 
 // ── PUT /api/campaigns/{id}/exotel-account ───────────────────────────────────
 
 func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
 	var req struct {
@@ -159,7 +157,7 @@ func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.SetCampaignExotelAccount(campaignID, req.ExotelAccountID); err != nil {
+	if err := s.db.SetCampaignExotelAccount(campaign.ID, req.ExotelAccountID); err != nil {
 		s.logger.Sugar().Errorw("setCampaignExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

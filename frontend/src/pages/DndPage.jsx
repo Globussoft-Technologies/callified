@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useToast, useConfirm } from '../contexts/UIContext';
 import { useAuth } from '../contexts/AuthContext';
+import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -40,17 +41,6 @@ function SourceBadge({ source }) {
   );
 }
 
-// Accept 10-digit Indian mobile numbers, optionally prefixed with +91 or 91.
-// Strips spaces, dashes, and parentheses before checking.
-function validatePhone(value) {
-  if (!value.trim()) return 'Phone number is required.';
-  const digits = value.replace(/[\s\-\(\)\+]/g, '');
-  if (!/^\d+$/.test(digits)) return 'Only digits are allowed (e.g. 9876543210 or +91 98765 43210).';
-  const normalized = digits.startsWith('91') && digits.length === 12 ? digits.slice(2) : digits;
-  if (normalized.length !== 10) return 'Enter a valid 10-digit mobile number (e.g. 9876543210).';
-  return '';
-}
-
 export default function DndPage({ apiFetch, API_URL }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -69,8 +59,6 @@ export default function DndPage({ apiFetch, API_URL }) {
   const [checkError, setCheckError] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(null);
   const perPage = 50;
-
-  const isValidPhone = (p) => /^\d{10}$/.test(p);
 
   const addErrTimer = useRef(null);
   const checkErrTimer = useRef(null);
@@ -106,7 +94,7 @@ export default function DndPage({ apiFetch, API_URL }) {
   const handleAdd = async () => {
     const phone = addPhone.trim();
     if (!phone) { setAddError('Phone number is required'); return; }
-    if (!isValidPhone(phone)) { setAddError('Phone must be exactly 10 digits'); return; }
+    if (!isValidPhone(phone)) { setAddError(PHONE_VALIDATION_MESSAGE); return; }
     setAddError('');
     try {
       const body = { phone: addPhone.trim() };
@@ -138,7 +126,7 @@ export default function DndPage({ apiFetch, API_URL }) {
   const handleCheck = async () => {
     const phone = checkPhone.trim();
     if (!phone) { setCheckResult({ error: 'Phone number is required' }); return; }
-    if (!isValidPhone(phone)) { setCheckResult({ error: 'Phone must be exactly 10 digits' }); return; }
+    if (!isValidPhone(phone)) { setCheckResult({ error: PHONE_VALIDATION_MESSAGE }); return; }
     try {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(checkPhone.trim())}`);
       const data = await res.json();
@@ -205,14 +193,11 @@ export default function DndPage({ apiFetch, API_URL }) {
             <div style={labelStyle}>Add Number to DND</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                type="text" inputMode="numeric" maxLength={10}
-                placeholder="10-digit phone (e.g. 9876543210)" value={addPhone}
+                type="text" inputMode="tel"
+                placeholder="Phone (e.g. 9876543210 or 01112345678)" value={addPhone}
                 onChange={e => {
-                  const raw = e.target.value;
-                  const digits = raw.replace(/\D/g, '').slice(0, 10);
-                  setAddPhone(digits);
-                  if (raw !== digits && raw.length > digits.length) flashAddError('Only digits allowed (0-9)');
-                  else if (addError) setAddError('');
+                  setAddPhone(e.target.value);
+                  if (addError) setAddError('');
                 }}
                 onKeyDown={e => e.key === 'Enter' && handleAdd()}
                 style={{ ...inputStyle(!!addError), flex: 1 }}
@@ -255,17 +240,14 @@ export default function DndPage({ apiFetch, API_URL }) {
             <div style={labelStyle}>Check Number</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
-                type="text" inputMode="numeric" maxLength={10}
-                placeholder="10-digit phone" value={checkPhone}
+                type="text" inputMode="tel"
+                placeholder="Phone (e.g. 9876543210)" value={checkPhone}
                 onChange={e => {
-                  const raw = e.target.value;
-                  const digits = raw.replace(/\D/g, '').slice(0, 10);
-                  setCheckPhone(digits);
-                  if (raw !== digits && raw.length > digits.length) flashCheckError('Only digits allowed (0-9)');
-                  else setCheckResult(null);
+                  setCheckPhone(e.target.value);
+                  setCheckResult(null);
                 }}
                 onKeyDown={e => e.key === 'Enter' && handleCheck()}
-                style={{ ...inputStyle(checkResult?.error), width: 180 }}
+                style={{ ...inputStyle(checkResult?.error), width: 200 }}
               />
               <button onClick={handleCheck} style={{
                 padding: '9px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,

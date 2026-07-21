@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,12 +75,17 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/tasks/{id}/complete [put]
 func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := s.db.CompleteTask(id); err != nil {
+	if err := s.db.CompleteTask(id, ac.OrgID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "task not found")
+			return
+		}
 		s.logger.Sugar().Errorw("completeTask", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -228,6 +235,7 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 // @Failure     401  {object}  ErrorResponse
 // @Router      /api/recordings/{filename} [get]
 func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	relPath := r.PathValue("filename")
 
 	// Reject path traversal: no ".." segments anywhere
@@ -242,6 +250,21 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	relPath = relPath[1:] // strip leading slash added for Clean
+
+	// Authorise: the local recording URL stored in call_transcripts must belong
+	// to the caller's org. Cloud recordings are served directly from object
+	// storage and do not hit this endpoint.
+	recordingURL := "/api/recordings/" + relPath
+	tx, err := s.db.GetTranscriptByRecordingURL(ac.OrgID, recordingURL)
+	if err != nil {
+		s.logger.Sugar().Errorw("serveRecording", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if tx == nil {
+		writeError(w, http.StatusNotFound, "recording not found")
+		return
+	}
 
 	fullPath := filepath.Join(s.cfg.RecordingsDir, relPath)
 	// Backward compatibility: if the segregated path doesn't exist, fall back
@@ -318,6 +341,15 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := getAuth(r)
+
+	// Validate lead access before touching any transcript rows.
+	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
+		if !s.canAccessLead(ac, leadID) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	}
+
 	userDir := ""
 	if ac.Email != "" {
 		userDir = sanitizeEmailForPath(ac.Email)
@@ -503,7 +535,7 @@ func (s *Server) onboardingStatus(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	completed, _ := s.db.IsOnboardingCompleted(ac.OrgID)
 
-	leads, _ := s.db.GetAllLeads(ac.OrgID)
+	leads, _ := s.db.GetAllLeads(ac.OrgID, nil, false)
 	campaigns, _ := s.db.GetCampaignsByOrg(ac.OrgID)
 	vs, _ := s.db.GetOrganizationVoiceSettings(ac.OrgID)
 

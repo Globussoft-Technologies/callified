@@ -303,8 +303,8 @@ function ConfigModal({ show, onClose, apiFetch, API_URL }) {
   const webhookUrl = `${window.location.origin}/wa/webhook/${provider}`;
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div className="glass-panel" style={modalStyle} onClick={e => e.stopPropagation()}>
+    <div style={overlayStyle} onClick={onClose} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+      <div className="glass-panel" style={modalStyle} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.2rem' }}>
           <h3 style={{ margin: 0, color: '#1e293b' }}>WhatsApp Channel Config</h3>
           <button onClick={onClose} style={closeBtnStyle}>&times;</button>
@@ -688,6 +688,9 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
         <div
           style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={() => setConfirmDisconnect(false)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
         >
           <div
             style={{
@@ -697,6 +700,9 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
               boxShadow: '0 20px 60px rgba(0,0,0,0.12)',
             }}
             onClick={e => e.stopPropagation()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
           >
             <h3 style={{ margin: '0 0 0.75rem 0', color: '#1e293b' }}>Disconnect WhatsApp?</h3>
             <p style={{ color: '#64748b', fontSize: '0.85rem', lineHeight: 1.5, marginBottom: '1.2rem' }}>
@@ -795,8 +801,8 @@ function NewChatModal({ show, onClose, apiFetch, API_URL, onStarted }) {
   };
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div className="glass-panel" style={{ ...modalStyle, maxWidth: '440px' }} onClick={e => e.stopPropagation()}>
+    <div style={overlayStyle} onClick={onClose} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+      <div className="glass-panel" style={{ ...modalStyle, maxWidth: '440px' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0, color: '#1e293b' }}>Start New Chat</h3>
           <button onClick={onClose} style={closeBtnStyle}>&times;</button>
@@ -1124,7 +1130,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
             steal vertical space; clicking it flips the list between
             "active" and "archived" — same poll, different filter. */}
         <div style={{ padding: '0.5rem 0.75rem', display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <input type="text" placeholder="Search by name or phone..." value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Search by name, phone or company..." value={search} onChange={e => setSearch(e.target.value)}
             style={{ ...inputStyle, margin: 0, fontSize: '0.8rem', padding: '6px 10px', flex: 1 }} />
           <button onClick={() => setShowArchived(v => !v)}
             title={showArchived ? 'Showing archived — click to show active' : 'Show archived conversations'}
@@ -1156,7 +1162,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
             const linkedNow = sessionConnected && sessionPhone && noPlus === sessionPhone.replace(/^\+/, '');
             const isLinkedDevice = linkedNow;
             return (
-            <div key={conv.phone} onClick={() => setSelectedPhone(conv.phone)}
+            <div key={conv.phone} onClick={() => setSelectedPhone(conv.phone)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
               style={{
                 padding: '0.7rem 1rem', cursor: 'pointer', borderBottom: '1px solid #f1f5f9',
                 background: selectedPhone === conv.phone ? 'rgba(37,211,102,0.08)' : 'transparent',
@@ -1211,7 +1217,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                     ⋮
                   </button>
                   {openMenu === conv.phone && (
-                    <div onClick={(e) => e.stopPropagation()}
+                    <div onClick={(e) => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
                       style={{
                         position: 'absolute', top: '100%', right: 0, marginTop: '4px',
                         background: '#ffffff', border: '1px solid #e2e8f0',
@@ -1301,6 +1307,9 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                             alt="Sent image"
                             style={{ display: 'block', maxWidth: '260px', maxHeight: '260px', width: '100%', borderRadius: '8px', objectFit: 'cover', cursor: 'pointer' }}
                             onClick={() => window.open(msg.message_text || msg.text, '_blank')}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
                             onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }}
                           />
                           <span style={{ display: 'none', padding: '8px 12px', fontSize: '0.78rem', color: isOutbound ? 'rgba(255,255,255,0.8)' : '#64748b' }}>
@@ -1377,6 +1386,9 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
         <div
           style={{ ...overlayStyle, background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
           onClick={() => setConfirmAction(null)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
         >
           <div
             style={{
@@ -1386,6 +1398,9 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
               boxShadow: '0 20px 60px rgba(0,0,0,0.12)',
             }}
             onClick={e => e.stopPropagation()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
           >
             <h3 style={{ margin: '0 0 0.75rem 0', color: '#1e293b' }}>
               {confirmAction.type === 'clear' ? 'Clear chat history?' : 'Delete conversation?'}

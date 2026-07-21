@@ -117,12 +117,7 @@ callified-ai-dailer/
 │   ├── e2e/                   # Python API + WebSocket E2E tests
 │   └── ui_e2e/                # Playwright browser tests
 ├── frontend/                  # React SPA
-├── main.py                    # Python FastAPI entry point
-├── ws_handler.py              # Python WebSocket (legacy, being phased out)
-├── database.py                # Python MySQL layer
-├── prompt_builder.py          # LLM prompt construction
-├── grpc_server.py             # Python gRPC logic server (:50051)
-├── docker-compose.yml         # Full-stack: MySQL, Redis, Python, Go, Nginx
+├── docker-compose.yml         # Full-stack: MySQL, Redis, RAG, Go, Nginx
 └── .env.example               # Environment variable template
 ```
 
@@ -147,33 +142,12 @@ The real-time audio pipeline rewritten in Go to eliminate Python GIL contention:
 - **Precise HANGUP** — calculated from bytes-sent + timestamp instead of `sleep(7)`
 - **REST API** — 34 endpoints for auth, leads, campaigns, orgs, products, tasks, reports, pronunciations, and recording file serving
 
-### Python gRPC Logic Server (`grpc_server.py`)
-
-Wraps the AI logic into 4 gRPC RPCs that Go calls per conversation turn:
-
-| RPC | Called when | Does |
-|-----|------------|------|
-| `InitializeCall` | WebSocket connect | Returns system prompt, greeting, TTS config |
-| `ProcessTranscript` | Each user utterance | Streams LLM sentence chunks back to Go |
-| `FinalizeCall` | Call ends | Saves transcript, triggers Gemini QA analysis |
-| `RetrieveContext` | Optional RAG | Returns FAISS-retrieved product knowledge |
-
-### Python FastAPI (`main.py` / `routes.py`)
-
-Handles everything that doesn't need sub-millisecond latency:
-- CRM polling (100+ provider integrations)
-- Knowledge base upload / FAISS indexing
-- AI-generation endpoints (scrape product pages, generate prompts, draft emails)
-- WhatsApp automation triggers
-- Sites / geofenced field ops
-
 ### Nginx Routing
 
 | Path pattern | Backend |
 |-------------|---------|
 | `/media-stream`, `/ws/*` | Go `:8001` (shadow-mode split controlled by `go_ramp.conf`) |
-| `/api/(auth\|leads\|campaigns\|organizations\|products\|tasks\|reports\|pronunciation\|recordings)` | Go `:8001` |
-| `/api/*` (everything else) | Python `:8000` |
+| `/api/*` | Go `:8001` |
 | `/metrics` | Go `:8001` (internal networks only) |
 | `/health` | Go `:8001` |
 

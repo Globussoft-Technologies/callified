@@ -257,9 +257,10 @@ type CampaignExportRow struct {
 	CalledAt        string  `json:"called_at"`
 }
 
-// GetCampaignAnalyticsForExport returns one row per call transcript in a campaign.
-func (d *DB) GetCampaignAnalyticsForExport(campaignID int64) ([]CampaignExportRow, error) {
-	rows, err := d.pool.Query(`
+// GetCampaignAnalyticsForExport returns one row per call transcript in a campaign
+// (or across all org campaigns when campaignID == 0).
+func (d *DB) GetCampaignAnalyticsForExport(orgID, campaignID int64) ([]CampaignExportRow, error) {
+	q := `
 		SELECT
 			CONCAT(l.first_name,' ',COALESCE(l.last_name,'')) AS lead_name,
 			l.phone,
@@ -271,8 +272,14 @@ func (d *DB) GetCampaignAnalyticsForExport(campaignID int64) ([]CampaignExportRo
 			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts ct
 		JOIN leads l ON ct.lead_id=l.id
-		WHERE ct.campaign_id=?
-		ORDER BY ct.id DESC`, campaignID)
+		WHERE ct.org_id=?`
+	args := []any{orgID}
+	if campaignID > 0 {
+		q += ` AND ct.campaign_id=?`
+		args = append(args, campaignID)
+	}
+	q += ` ORDER BY ct.id DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

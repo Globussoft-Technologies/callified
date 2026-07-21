@@ -204,7 +204,7 @@ export default function FeatureFlagsPage({ apiFetch }) {
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '12px 14px', borderRadius: 8, border: '1px solid #d1d5db',
             marginBottom: '1rem', cursor: 'pointer',
-          }} onClick={() => setHideAiFeatures(v => !v)}>
+          }} onClick={() => setHideAiFeatures(v => !v)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}>
             <input
               type="checkbox"
               checked={hideAiFeatures}

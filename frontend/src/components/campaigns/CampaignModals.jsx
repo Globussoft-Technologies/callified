@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -13,7 +14,8 @@ export default function CampaignModals({
   executives,
   // Add Leads Modal
   showAddLeadsModal, setShowAddLeadsModal,
-  availableLeads, selectedLeadIds, toggleLeadSelection,
+  addLeadsSearch, addLeadsResults, addLeadsLoading, searchAvailableLeads,
+  selectedLeadIds, toggleLeadSelection,
   handleAddLeads,
   // CSV Import Modal
   showCsvImportModal, setShowCsvImportModal,
@@ -71,8 +73,8 @@ export default function CampaignModals({
     <>
       {/* Create Campaign Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={handleClose}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()}
+        <div className="modal-overlay" onClick={handleClose} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '680px', width: '95%', maxHeight: '85vh', overflowY: 'auto'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
 
@@ -99,7 +101,10 @@ export default function CampaignModals({
                         border: isSelected ? '2px solid #60a5fa' : '1px solid rgba(255,255,255,0.08)',
                         background: isSelected ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.03)',
                         transition: 'all 0.15s ease',
-                      }}>
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}>
                       <div style={{fontWeight: 600, fontSize: '0.82rem', color: '#e2e8f0', marginBottom: '4px'}}>{tpl.name}</div>
                       <div style={{display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px'}}>
                         <span style={{background: ic.bg, color: ic.color, fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
@@ -269,20 +274,32 @@ export default function CampaignModals({
 
       {/* Add Leads Modal */}
       {showAddLeadsModal && (
-        <div className="modal-overlay" onClick={() => setShowAddLeadsModal(false)}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()}
+        <div className="modal-overlay" onClick={() => setShowAddLeadsModal(false)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '500px', width: '90%', maxHeight: '70vh', display: 'flex', flexDirection: 'column'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Add Leads to Campaign</h3>
-            {availableLeads.length === 0 ? (
-              <p style={{color: '#64748b'}}>All leads are already in this campaign.</p>
+            <input
+              autoFocus
+              type="text"
+              placeholder="Search leads by name, phone or company..."
+              value={addLeadsSearch}
+              onChange={e => searchAvailableLeads(e.target.value)}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#e2e8f0', fontSize: 13, fontFamily: 'inherit', outline: 'none', marginBottom: 12 }}
+            />
+            {addLeadsLoading ? (
+              <p style={{color: '#64748b'}}>Searching...</p>
+            ) : addLeadsSearch.trim().length < 2 ? (
+              <p style={{color: '#64748b'}}>Type at least 2 characters to search.</p>
+            ) : addLeadsResults.length === 0 ? (
+              <p style={{color: '#64748b'}}>No matching leads found.</p>
             ) : (
               <div style={{flex: 1, overflowY: 'auto', marginBottom: '1rem'}}>
-                {availableLeads.map(lead => (
+                {addLeadsResults.map(lead => (
                   <label key={lead.id} style={{display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 4px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)'}}>
                     <input type="checkbox" checked={selectedLeadIds.includes(lead.id)}
                       onChange={() => { toggleLeadSelection(lead.id); setAddLeadsError(''); }} />
                     <span style={{color: '#e2e8f0', fontWeight: 500}}>{lead.first_name} {lead.last_name}</span>
-                    <span style={{color: '#64748b', fontSize: '0.8rem'}}>{lead.phone}</span>
+                    <span style={{color: '#64748b', fontSize: '0.8rem'}}>{lead.phone}{lead.company ? ` · ${lead.company}` : ''}</span>
                   </label>
                 ))}
               </div>
@@ -306,16 +323,16 @@ export default function CampaignModals({
 
       {/* CSV Import Modal */}
       {showCsvImportModal && (
-        <div className="modal-overlay" onClick={closeCsvImportModal}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()}
+        <div className="modal-overlay" onClick={closeCsvImportModal} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '520px', width: '90%', maxHeight: '85vh', overflowY: 'auto'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Import Leads from CSV</h3>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.5rem'}}>
-              Upload a CSV with columns: first_name, last_name, phone, source. Leads will be created and added to this campaign.
+              Upload a CSV with columns: first_name, last_name, phone, company, source. Leads will be created and added to this campaign.
             </p>
             <button
               onClick={() => {
-                const csv = 'first_name,last_name,phone,source\n';
+                const csv = 'first_name,last_name,phone,company,source\n';
                 const blob = new Blob([csv], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -427,8 +444,8 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()}
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
             <form onSubmit={e => {
@@ -538,8 +555,8 @@ export default function CampaignModals({
 
       {/* Edit Lead Modal */}
       {editLead && (
-        <div className="modal-overlay" onClick={() => setEditLead(null)}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px'}}>
+        <div className="modal-overlay" onClick={() => setEditLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h2 style={{marginTop: 0, marginBottom: '1.5rem'}}>Edit Lead</h2>
             <div className="form-group">
               <label>First Name</label>
@@ -554,12 +571,16 @@ export default function CampaignModals({
                 onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
             </div>
             <div className="form-group">
-              <label>Phone (10 digits)</label>
+              <label>Phone</label>
               <input className="form-input" value={editForm.phone}
-                inputMode="numeric" maxLength={10} pattern="\d{10}"
-                onChange={e => { setEditForm({...editForm, phone: e.target.value.replace(/\D/g, '').slice(0, 10)}); setEditErrors(prev => ({...prev, phone: ''})); }}
+                inputMode="tel"
+                onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
                 style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
               {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
+            </div>
+            <div className="form-group">
+              <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+              <input className="form-input" value={editForm.company || ''} onChange={e => setEditForm({...editForm, company: e.target.value})} placeholder="e.g. Acme Inc." />
             </div>
             <div className="form-group">
               <label>Source</label>
@@ -578,7 +599,7 @@ export default function CampaignModals({
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
-                if (!/^\d{10}$/.test(editForm.phone || '')) { alert('Phone must be exactly 10 digits'); return; }
+                if (!isValidPhone(editForm.phone || '')) { alert(PHONE_VALIDATION_MESSAGE); return; }
                 handleSaveEdit();
               }}>Save</button>
             </div>

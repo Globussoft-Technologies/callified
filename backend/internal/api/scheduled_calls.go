@@ -28,13 +28,23 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	q := r.URL.Query()
 
+	u, uErr := s.db.GetUserByEmail(ac.Email)
+	if uErr != nil || u == nil {
+		s.logger.Sugar().Errorw("listScheduledCalls", "err", uErr)
+		writeError(w, http.StatusUnauthorized, "invalid user")
+		return
+	}
+	isAdmin := s.isSuperAdmin(ac.Email) || u.Role == db.RoleAdmin
+
 	var calls []db.ScheduledCall
 	var err error
 
 	if q.Get("due") == "true" {
-		calls, err = s.db.GetDueManualScheduledCalls(ac.OrgID, 30)
-	} else {
+		calls, err = s.db.GetDueManualScheduledCalls(ac.OrgID, u.ID, 30)
+	} else if isAdmin {
 		calls, err = s.db.GetScheduledCallsByOrg(ac.OrgID)
+	} else {
+		calls, err = s.db.GetScheduledCallsByScheduledByUserID(ac.OrgID, u.ID)
 	}
 	if err != nil {
 		s.logger.Sugar().Errorw("listScheduledCalls", "err", err)
@@ -69,7 +79,7 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body  body      object{lead_id=int64,campaign_id=int64,scheduled_at=string,notes=string,mode=string,executive_id=int64}  true  "scheduled_at: RFC3339 or YYYY-MM-DD HH:MM:SS"
+// @Param       body  body      object{lead_id=int64,campaign_id=int64,scheduled_at=string,notes=string,mode=string,executive_id=int64,scheduled_by_user_id=int64}  true  "scheduled_at: RFC3339 or YYYY-MM-DD HH:MM:SS"
 // @Success     201   {object}  IDResponse
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
@@ -80,12 +90,13 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
 	var body struct {
-		LeadID      int64  `json:"lead_id"`
-		CampaignID  int64  `json:"campaign_id"`
-		ScheduledAt string `json:"scheduled_at"`
-		Notes       string `json:"notes"`
-		Mode        string `json:"mode"`
-		ExecutiveID int64  `json:"executive_id"`
+		LeadID          int64  `json:"lead_id"`
+		CampaignID      int64  `json:"campaign_id"`
+		ScheduledAt     string `json:"scheduled_at"`
+		Notes           string `json:"notes"`
+		Mode            string `json:"mode"`
+		ExecutiveID     int64  `json:"executive_id"`
+		ScheduledByUserID int64 `json:"scheduled_by_user_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.LeadID == 0 || body.ScheduledAt == "" {
 		writeError(w, http.StatusBadRequest, "lead_id and scheduled_at required")
@@ -107,10 +118,25 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lead, leadErr := s.db.GetLeadByID(body.LeadID)
-	if leadErr != nil || lead == nil {
-		writeError(w, http.StatusBadRequest, "lead not found")
+	lead := s.requireLeadAccess(w, r, body.LeadID)
+	if lead == nil {
 		return
+	}
+	if body.CampaignID > 0 && !s.canViewCampaign(ac, body.CampaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if body.ExecutiveID > 0 {
+		exec, err := s.db.GetExecutiveByID(body.ExecutiveID, ac.OrgID)
+		if err != nil {
+			s.logger.Sugar().Errorw("createScheduledCall", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if exec == nil {
+			writeError(w, http.StatusNotFound, "executive not found")
+			return
+		}
 	}
 	if isDND, dndErr := s.db.IsDNDNumber(ac.OrgID, lead.Phone); dndErr == nil && isDND {
 		writeError(w, http.StatusConflict,
@@ -127,6 +153,16 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		executiveID = lead.ExecutiveID
 	}
 
+	// The scheduling user is always derived from the auth token so users cannot
+	// spoof callbacks as someone else.
+	u, uErr := s.db.GetUserByEmail(ac.Email)
+	if uErr != nil || u == nil {
+		s.logger.Sugar().Errorw("createScheduledCall", "err", uErr)
+		writeError(w, http.StatusUnauthorized, "invalid user")
+		return
+	}
+	scheduledByUserID := u.ID
+
 	// If the lead already has a pending scheduled call, update it instead of
 	// creating a second row. This makes the UI "reschedule" behaviour predictable
 	// (the badge and reminder popup reflect the latest time).
@@ -137,7 +173,7 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing != nil {
-		if updateErr := s.db.UpdateScheduledCall(existing.ID, scheduledAt, body.Notes, mode, executiveID); updateErr != nil {
+		if updateErr := s.db.UpdateScheduledCall(existing.ID, scheduledAt, body.Notes, mode, executiveID, scheduledByUserID); updateErr != nil {
 			s.logger.Sugar().Errorw("createScheduledCall", "err", updateErr)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -146,7 +182,7 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := s.db.CreateScheduledCall(ac.OrgID, body.LeadID, body.CampaignID, executiveID, scheduledAt, body.Notes, mode)
+	id, err := s.db.CreateScheduledCall(ac.OrgID, body.LeadID, body.CampaignID, executiveID, scheduledByUserID, scheduledAt, body.Notes, mode)
 	if err != nil {
 		s.logger.Sugar().Errorw("createScheduledCall", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -177,7 +213,18 @@ func (s *Server) cancelScheduledCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	cancelled, err := s.db.CancelScheduledCall(ac.OrgID, id)
+	u, uErr := s.db.GetUserByEmail(ac.Email)
+	if uErr != nil || u == nil {
+		s.logger.Sugar().Errorw("cancelScheduledCall", "err", uErr)
+		writeError(w, http.StatusUnauthorized, "invalid user")
+		return
+	}
+	isAdmin := s.isSuperAdmin(ac.Email) || u.Role == db.RoleAdmin
+	var userID int64
+	if !isAdmin {
+		userID = u.ID
+	}
+	cancelled, err := s.db.CancelScheduledCall(ac.OrgID, id, userID)
 	if err != nil {
 		s.logger.Sugar().Errorw("cancelScheduledCall", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -293,6 +293,10 @@ func (s *Server) campaignBlastSendOne(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
+	if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
 
 	productName, _ := s.db.GetProductName(campaign.ProductID)
 

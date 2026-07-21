@@ -71,9 +71,9 @@ func (s *Server) addDND(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "phone required")
 		return
 	}
-	body.Phone = strings.TrimSpace(body.Phone)
-	if !isValidPhone(body.Phone) {
-		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+	body.Phone = normalizePhone(strings.TrimSpace(body.Phone))
+	if body.Phone == "" {
+		writeError(w, http.StatusBadRequest, "phone must be a valid Indian number")
 		return
 	}
 	src := body.Source
@@ -96,7 +96,7 @@ func (s *Server) addDND(w http.ResponseWriter, r *http.Request) {
 // @Accept      multipart/form-data
 // @Produce     json
 // @Security    BearerAuth
-// @Param       file  formData  file  true  "CSV file (first column: 10-digit phone)"
+// @Param       file  formData  file  true  "CSV file (first column: Indian phone number)"
 // @Success     200   {object}  object{imported=int,skipped=[]string}
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
@@ -132,12 +132,12 @@ func (s *Server) importDNDCSV(w http.ResponseWriter, r *http.Request) {
 		if len(rec) == 0 {
 			continue
 		}
-		p := strings.TrimSpace(rec[0])
+		p := normalizePhone(strings.TrimSpace(rec[0]))
 		if p == "" {
-			continue
-		}
-		if !isValidPhone(p) {
-			skipped = append(skipped, fmt.Sprintf("row %d: %q not 10 digits", i+1, p))
+			if strings.TrimSpace(rec[0]) == "" {
+				continue
+			}
+			skipped = append(skipped, fmt.Sprintf("row %d: %q is not a valid Indian number", i+1, strings.TrimSpace(rec[0])))
 			continue
 		}
 		phones = append(phones, p)
@@ -161,7 +161,7 @@ func (s *Server) importDNDCSV(w http.ResponseWriter, r *http.Request) {
 // @Tags        dnd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id  path      string  true  "Row ID or 10-digit phone number"
+// @Param       id  path      string  true  "Row ID or Indian phone number"
 // @Success     200  {object}  DeletedResponse
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -190,7 +190,12 @@ func (s *Server) removeDND(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	deleted, err := s.db.RemoveDNDNumberByPhone(ac.OrgID, raw)
+	phone := normalizePhone(raw)
+	if phone == "" {
+		writeError(w, http.StatusBadRequest, "phone must be a valid Indian number")
+		return
+	}
+	deleted, err := s.db.RemoveDNDNumberByPhone(ac.OrgID, phone)
 	if err != nil {
 		s.logger.Sugar().Errorw("removeDND/byPhone", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -210,7 +215,7 @@ func (s *Server) removeDND(w http.ResponseWriter, r *http.Request) {
 // @Tags        dnd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       phone  query  string  true  "10-digit phone number"
+// @Param       phone  query  string  true  "Indian phone number"
 // @Success     200  {object}  object{is_dnd=bool}
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -218,13 +223,9 @@ func (s *Server) removeDND(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/dnd/check [get]
 func (s *Server) checkDND(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	phone := strings.TrimSpace(r.URL.Query().Get("phone"))
+	phone := normalizePhone(strings.TrimSpace(r.URL.Query().Get("phone")))
 	if phone == "" {
-		writeError(w, http.StatusBadRequest, "phone query param required")
-		return
-	}
-	if !isValidPhone(phone) {
-		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+		writeError(w, http.StatusBadRequest, "phone must be a valid Indian number")
 		return
 	}
 	isDND, err := s.db.IsDNDNumber(ac.OrgID, phone)
@@ -244,7 +245,7 @@ func (s *Server) checkDND(w http.ResponseWriter, r *http.Request) {
 // @Tags        dnd
 // @Produce     json
 // @Security    BearerAuth
-// @Param       phone  path  string  true  "10-digit phone number"
+// @Param       phone  path  string  true  "Indian phone number"
 // @Success     200  {object}  object{is_dnd=bool}
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -252,13 +253,9 @@ func (s *Server) checkDND(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/dnd/check/{phone} [get]
 func (s *Server) checkDNDByPhone(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	phone := strings.TrimSpace(r.PathValue("phone"))
+	phone := normalizePhone(strings.TrimSpace(r.PathValue("phone")))
 	if phone == "" {
-		writeError(w, http.StatusBadRequest, "phone required")
-		return
-	}
-	if !isValidPhone(phone) {
-		writeError(w, http.StatusBadRequest, "phone must be exactly 10 digits")
+		writeError(w, http.StatusBadRequest, "phone must be a valid Indian number")
 		return
 	}
 	isDND, err := s.db.IsDNDNumber(ac.OrgID, phone)
@@ -275,9 +272,9 @@ func (s *Server) checkDNDByPhone(w http.ResponseWriter, r *http.Request) {
 // have client-side). Delete by phone, scoped to the caller's org.
 func (s *Server) removeDNDByPhone(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	phone := r.PathValue("phone")
+	phone := normalizePhone(r.PathValue("phone"))
 	if phone == "" {
-		writeError(w, http.StatusBadRequest, "phone required")
+		writeError(w, http.StatusBadRequest, "phone must be a valid Indian number")
 		return
 	}
 	deleted, err := s.db.RemoveDNDNumberByPhone(ac.OrgID, phone)

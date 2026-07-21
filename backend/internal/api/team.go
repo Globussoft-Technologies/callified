@@ -517,6 +517,7 @@ var commonPasswords = map[string]struct{}{
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/{id}/role [put]
 func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -529,7 +530,22 @@ func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "role required")
 		return
 	}
-	if err := s.db.UpdateUserRole(id, body.Role); err != nil {
+	target, err := s.db.GetUserByIDInOrgWithRole(id, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateTeamRole: lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	role := normalizeRole(body.Role)
+	if role == "" {
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		return
+	}
+	if err := s.db.UpdateUser(id, ac.OrgID, target.FullName, role, target.ManagerID, target.IsActive); err != nil {
 		s.logger.Sugar().Errorw("updateTeamRole", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

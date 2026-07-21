@@ -51,7 +51,7 @@ func (a *Agent) ProcessIncoming(ctx context.Context, cfg ChannelConfig, msg *Inc
 	// short prevents old AI messages — generated before a product was configured
 	// — from polluting the context and causing the model to hallucinate the
 	// wrong product category.
-	history, _ := a.db.GetWAChatHistory(convID, 4)
+	history, _ := a.db.GetWAChatHistory(cfg.OrgID, convID, 4)
 	var chatHistory []llm.ChatMessage
 	for i := len(history) - 1; i >= 0; i-- {
 		h := history[i]

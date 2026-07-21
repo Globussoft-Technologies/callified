@@ -19,16 +19,12 @@ function clearBrowserData() {
       });
     }
   } catch { /* ignore */ }
-  try {
-    if (typeof caches !== 'undefined') {
-      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(() => {});
-    }
-  } catch { /* ignore */ }
-  try {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister())).catch(() => {});
-    }
-  } catch { /* ignore */ }
+  if (typeof caches !== 'undefined') {
+    caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(() => {});
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister())).catch(() => {});
+  }
 }
 
 // Safely parse a cached user blob from localStorage.

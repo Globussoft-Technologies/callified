@@ -22,19 +22,25 @@ import (
 //     detects IsBridge=true and skips the AI pipeline, relaying audio to the
 //     agent browser instead.
 func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
-	campaignID, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid campaign id")
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
 		return
 	}
+	campaignID := campaign.ID
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid lead id")
 		return
 	}
 
+	ac := getAuth(r)
+
 	lead, err := s.db.GetLeadByID(leadID)
 	if err != nil || lead == nil {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	if !s.canAccessLead(ac, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
@@ -53,7 +59,6 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ac := getAuth(r)
 	leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
 
 	var body struct {

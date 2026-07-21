@@ -129,6 +129,19 @@ func (s *Server) setCampaignExecutives(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
+	// Reject any executive IDs that do not belong to the caller's org.
+	if len(body.ExecutiveIDs) > 0 {
+		matchCount, err := s.db.CountExecutivesByOrgAndIDs(ac.OrgID, body.ExecutiveIDs)
+		if err != nil {
+			s.logger.Sugar().Errorw("setCampaignExecutives", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if int(matchCount) != len(body.ExecutiveIDs) {
+			writeError(w, http.StatusBadRequest, "one or more executives do not belong to this org")
+			return
+		}
+	}
 	if err := s.db.SetCampaignExecutives(campaignID, body.ExecutiveIDs); err != nil {
 		s.logger.Sugar().Errorw("setCampaignExecutives", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

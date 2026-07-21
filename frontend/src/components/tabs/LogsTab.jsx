@@ -164,7 +164,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
   const statusOptions = useMemo(() => {
     const s = new Set();
     parsedLogs.forEach(p => { if (p.status) s.add(p.status); });
-    return Array.from(s).sort();
+    return Array.from(s).sort((a, b) => a.localeCompare(b));
   }, [parsedLogs]);
 
   const campaignOptions = useMemo(() => {
@@ -310,7 +310,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
           </select>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" style={{ ...inputStyle, width: 140 }} />
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" style={{ ...inputStyle, width: 140 }} />
-          <input placeholder="Search name or phone..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, width: 200 }} />
+          <input placeholder="Search name, phone or company..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, width: 200 }} />
           {(statusFilter || campaignFilter || dateFrom || dateTo || search) && (
             <button onClick={() => { setStatusFilter(''); setCampaignFilter(''); setDateFrom(''); setDateTo(''); setSearch(''); }}
               style={{ padding: '4px 10px', borderRadius: 6, border: `1px solid ${T.border}`, background: T.card, color: T.sub, cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>

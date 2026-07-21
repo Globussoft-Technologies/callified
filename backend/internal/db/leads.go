@@ -19,7 +19,9 @@ type Lead struct {
 	Source       string  `json:"source"`
 	Status       string  `json:"status"`
 	FollowUpNote string  `json:"follow_up_note"`
+	FollowUpAt   string  `json:"follow_up_at"`
 	Interest     string  `json:"interest"`
+	Company      string  `json:"company"`
 	ExternalID   string  `json:"external_id"`
 	CRMProvider  string  `json:"crm_provider"`
 	ExecutiveID  int64   `json:"executive_id"`
@@ -28,11 +30,11 @@ type Lead struct {
 
 func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 	l := &Lead{}
-	var orgID, followUpNote, interest, extID, crmProvider sql.NullString
+	var orgID, followUpNote, followUpAt, interest, company, extID, crmProvider sql.NullString
 	var orgIDInt, executiveID sql.NullInt64
 	err := row.Scan(
 		&l.ID, &orgIDInt, &l.FirstName, &l.LastName, &l.Phone,
-		&l.Source, &l.Status, &followUpNote, &interest, &extID, &crmProvider,
+		&l.Source, &l.Status, &followUpNote, &followUpAt, &interest, &company, &extID, &crmProvider,
 		&executiveID, &l.CreatedAt,
 	)
 	_ = orgID
@@ -46,7 +48,9 @@ func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 		l.ExecutiveID = executiveID.Int64
 	}
 	l.FollowUpNote = followUpNote.String
+	l.FollowUpAt = followUpAt.String
 	l.Interest = interest.String
+	l.Company = company.String
 	l.ExternalID = extID.String
 	l.CRMProvider = crmProvider.String
 	return l, nil
@@ -54,39 +58,131 @@ func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
 
 const leadCols = `id, org_id, first_name, COALESCE(last_name,''), phone,
 	COALESCE(source,''), COALESCE(status,'new'), COALESCE(follow_up_note,''),
-	COALESCE(interest,''), COALESCE(external_id,''), COALESCE(crm_provider,''),
+	COALESCE(follow_up_at,''),
+	COALESCE(interest,''), COALESCE(company,''), COALESCE(external_id,''), COALESCE(crm_provider,''),
 	COALESCE(executive_id,0),
 	DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s')`
 
 // leadColsL is leadCols prefixed with table alias "l" for use in JOIN queries.
 const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
 	COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.follow_up_note,''),
-	COALESCE(l.interest,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
+	COALESCE(l.follow_up_at,''),
+	COALESCE(l.interest,''), COALESCE(l.company,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
 	COALESCE(l.executive_id,0),
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
+func execFilterClause(execIDs []int64, apply bool) (string, []any) {
+	if !apply || len(execIDs) == 0 {
+		return "", nil
+	}
+	placeholders := make([]string, len(execIDs))
+	args := make([]any, len(execIDs))
+	for i, id := range execIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return fmt.Sprintf("COALESCE(l.executive_id, 0) IN (%s)", strings.Join(placeholders, ",")), args
+}
+
 // GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
-func (d *DB) GetAllLeads(orgID int64) ([]Lead, error) {
-	q := `SELECT ` + leadCols + ` FROM leads`
+// When applyExecFilter is true, only leads whose executive_id is in execIDs
+// (including 0 for unassigned leads) are returned.
+func (d *DB) GetAllLeads(orgID int64, execIDs []int64, applyExecFilter bool) ([]Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads l`
 	var args []any
+	var conds []string
 	if orgID != 0 {
-		q += ` WHERE org_id = ?`
+		conds = append(conds, `l.org_id = ?`)
 		args = append(args, orgID)
 	}
-	q += ` ORDER BY created_at DESC`
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	q += ` ORDER BY l.created_at DESC`
 	return queryLeads(d.pool, q, args...)
 }
 
-// SearchLeads full-text searches by name/phone in the given org.
-func (d *DB) SearchLeads(query string, orgID int64) ([]Lead, error) {
-	like := "%" + query + "%"
-	q := `SELECT ` + leadCols + ` FROM leads WHERE (first_name LIKE ? OR last_name LIKE ? OR phone LIKE ?)`
-	args := []any{like, like, like}
+// GetLeadsPaginated returns one page of leads for the given org ordered by
+// created_at DESC, id DESC for stable pagination.
+// If excludeCampaignID is set, leads already enrolled in that campaign are omitted.
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+func (d *DB) GetLeadsPaginated(orgID, limit, offset, excludeCampaignID int64, execIDs []int64, applyExecFilter bool) ([]Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads l`
+	var args []any
+	var conds []string
 	if orgID != 0 {
-		q += ` AND org_id = ?`
+		conds = append(conds, `l.org_id = ?`)
 		args = append(args, orgID)
 	}
-	q += ` ORDER BY created_at DESC LIMIT 100`
+	if excludeCampaignID != 0 {
+		q += ` LEFT JOIN campaign_leads cl ON cl.lead_id = l.id AND cl.campaign_id = ?`
+		args = append(args, excludeCampaignID)
+		conds = append(conds, `cl.lead_id IS NULL`)
+	}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	q += ` ORDER BY l.created_at DESC, l.id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	return queryLeads(d.pool, q, args...)
+}
+
+// CountLeads returns the total number of leads for the given org.
+// If excludeCampaignID is set, leads already enrolled in that campaign are omitted.
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are counted.
+func (d *DB) CountLeads(orgID, excludeCampaignID int64, execIDs []int64, applyExecFilter bool) (int64, error) {
+	q := `SELECT COUNT(*) FROM leads l`
+	var args []any
+	var conds []string
+	if orgID != 0 {
+		conds = append(conds, `l.org_id = ?`)
+		args = append(args, orgID)
+	}
+	if excludeCampaignID != 0 {
+		q += ` LEFT JOIN campaign_leads cl ON cl.lead_id = l.id AND cl.campaign_id = ?`
+		args = append(args, excludeCampaignID)
+		conds = append(conds, `cl.lead_id IS NULL`)
+	}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
+	}
+	if len(conds) > 0 {
+		q += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	var n int64
+	err := d.pool.QueryRow(q, args...).Scan(&n)
+	return n, err
+}
+
+// SearchLeads full-text searches by name/phone/company in the given org.
+// If excludeCampaignID is set, leads already enrolled in that campaign are omitted.
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+func (d *DB) SearchLeads(query string, orgID, excludeCampaignID int64, execIDs []int64, applyExecFilter bool) ([]Lead, error) {
+	like := "%" + query + "%"
+	q := `SELECT ` + leadCols + ` FROM leads l WHERE (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ?)`
+	args := []any{like, like, like, like}
+	if orgID != 0 {
+		q += ` AND l.org_id = ?`
+		args = append(args, orgID)
+	}
+	if excludeCampaignID != 0 {
+		q += ` AND NOT EXISTS (SELECT 1 FROM campaign_leads cl WHERE cl.lead_id = l.id AND cl.campaign_id = ?)`
+		args = append(args, excludeCampaignID)
+	}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY l.created_at DESC LIMIT 100`
 	return queryLeads(d.pool, q, args...)
 }
 
@@ -96,6 +192,7 @@ type LeadWithCampaign struct {
 	FirstName    string `json:"first_name"`
 	LastName     string `json:"last_name"`
 	Phone        string `json:"phone"`
+	Company      string `json:"company"`
 	Source       string `json:"source"`
 	Status       string `json:"status"`
 	ExecutiveID  int64  `json:"executive_id"`
@@ -106,14 +203,15 @@ type LeadWithCampaign struct {
 // SearchLeadsWithCampaigns searches leads by name/phone in the org and returns
 // one row per campaign membership. If statuses is provided, only leads whose
 // status matches one of the values are returned.
-func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string) ([]LeadWithCampaign, error) {
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string, execIDs []int64, applyExecFilter bool) ([]LeadWithCampaign, error) {
 	like := "%" + query + "%"
-	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.source,''), COALESCE(l.status,'new'), l.executive_id, c.id, c.name
+	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.executive_id,0), c.id, c.name
 		FROM leads l
 		LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
 		LEFT JOIN campaigns c ON c.id = cl.campaign_id
-		WHERE l.org_id = ? AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ?)`
-	args := []any{orgID, like, like, like}
+		WHERE l.org_id = ? AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ?)`
+	args := []any{orgID, like, like, like, like}
 	if len(statuses) > 0 {
 		placeholders := make([]string, len(statuses))
 		for i := range statuses {
@@ -121,6 +219,10 @@ func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []stri
 			args = append(args, statuses[i])
 		}
 		q += ` AND l.status IN (` + strings.Join(placeholders, ",") + `)`
+	}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` ORDER BY l.created_at DESC LIMIT 100`
 
@@ -135,7 +237,7 @@ func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []stri
 		var r LeadWithCampaign
 		var campaignID sql.NullInt64
 		var campaignName sql.NullString
-		err := rows.Scan(&r.ID, &r.FirstName, &r.LastName, &r.Phone, &r.Source, &r.Status, &r.ExecutiveID, &campaignID, &campaignName)
+		err := rows.Scan(&r.ID, &r.FirstName, &r.LastName, &r.Phone, &r.Company, &r.Source, &r.Status, &r.ExecutiveID, &campaignID, &campaignName)
 		if err != nil {
 			return nil, err
 		}
@@ -178,12 +280,17 @@ func (d *DB) GetLeadByPhone(phone string) (*Lead, error) {
 // to their org_id — otherwise a non-Admin agent could enumerate other tenants'
 // leads by phone. orgID == 0 falls back to global match for backward compat
 // (legacy single-tenant deployments where leads.org_id is NULL).
-func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64) (*Lead, error) {
-	q := `SELECT ` + leadCols + ` FROM leads WHERE phone = ?`
+// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+func (d *DB) GetLeadByPhoneOrg(phone string, orgID int64, execIDs []int64, applyExecFilter bool) (*Lead, error) {
+	q := `SELECT ` + leadCols + ` FROM leads l WHERE l.phone = ?`
 	args := []any{phone}
 	if orgID > 0 {
-		q += ` AND (org_id = ? OR org_id IS NULL)`
+		q += ` AND (l.org_id = ? OR l.org_id IS NULL)`
 		args = append(args, orgID)
+	}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` LIMIT 1`
 	row := d.pool.QueryRow(q, args...)
@@ -239,11 +346,11 @@ func (d *DB) GetLeadIDsByPhones(orgID int64, phones []string) (map[string]int64,
 }
 
 // CreateLead inserts a new lead. Returns the new ID.
-func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, executiveID, orgID int64) (int64, error) {
+func (d *DB) CreateLead(firstName, lastName, phone, source, interest, company string, executiveID, orgID int64) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO leads (org_id, first_name, last_name, phone, source, interest, executive_id)
-		 VALUES (?,?,?,?,?,?,?)`,
-		nullInt64(orgID), firstName, lastName, phone, source, nullString(interest), nullInt64(executiveID),
+		`INSERT INTO leads (org_id, first_name, last_name, phone, source, interest, company, executive_id)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		nullInt64(orgID), firstName, lastName, phone, source, nullString(interest), company, nullInt64(executiveID),
 	)
 	if err != nil {
 		return 0, err
@@ -252,11 +359,11 @@ func (d *DB) CreateLead(firstName, lastName, phone, source, interest string, exe
 }
 
 // UpdateLead updates mutable lead fields. Returns true if a row was changed.
-func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest string, executiveID, orgID int64) (bool, error) {
+func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest, company string, executiveID, orgID int64) (bool, error) {
 	res, err := d.pool.Exec(
-		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?, executive_id=?
+		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?, company=?, executive_id=?
 		 WHERE id=? AND (org_id=? OR org_id IS NULL)`,
-		firstName, lastName, phone, source, nullString(interest), nullInt64(executiveID), id, orgID,
+		firstName, lastName, phone, source, nullString(interest), company, nullInt64(executiveID), id, orgID,
 	)
 	if err != nil {
 		return false, err
@@ -309,27 +416,71 @@ func (d *DB) UpdateLeadNote(id int64, note string) error {
 	return err
 }
 
+// UpdateLeadDisposition atomically updates the disposition fields saved after a
+// call: status, follow-up note, and follow-up datetime. followUpAt may be empty
+// to clear the follow-up datetime.
+func (d *DB) UpdateLeadDisposition(id int64, status, note, followUpAt string) error {
+	var fuAt interface{}
+	if strings.TrimSpace(followUpAt) == "" {
+		fuAt = nil
+	} else {
+		fuAt = followUpAt
+	}
+	_, err := d.pool.Exec(
+		`UPDATE leads SET status=?, follow_up_note=?, follow_up_at=? WHERE id=?`,
+		status, note, fuAt, id)
+	return err
+}
+
 // BulkCreateLeads inserts multiple leads, skipping duplicates. Returns (imported, errors).
 // Errors use the Row field from each LeadImportRow, so callers can map them back to the
 // original CSV line number.
 func (d *DB) BulkCreateLeads(rows []LeadImportRow, orgID int64) (int, []string) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	const batchSize = 1000
 	var imported int
 	var errs []string
-	for _, r := range rows {
-		_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", 0, orgID)
-		if err != nil {
-			msg := err.Error()
-			if strings.Contains(msg, "Duplicate") || strings.Contains(msg, "1062") {
-				msg = "duplicate phone"
-			}
-			rowNum := r.Row
-			if rowNum <= 0 {
-				rowNum = 1
-			}
-			errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg[:min(len(msg), 50)]))
-		} else {
-			imported++
+
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
 		}
+		batch := rows[i:end]
+
+		placeholders := strings.Repeat("(?,?,?,?,?,?,?,?),", len(batch)-1) + "(?,?,?,?,?,?,?,?)"
+		q := `INSERT INTO leads (org_id, first_name, last_name, phone, source, interest, company, executive_id) VALUES ` + placeholders
+		args := make([]any, 0, len(batch)*8)
+		for _, r := range batch {
+			args = append(args, nullInt64(orgID), r.FirstName, r.LastName, r.Phone, r.Source, nullString(""), r.Company, nullInt64(0))
+		}
+
+		res, err := d.pool.Exec(q, args...)
+		if err != nil {
+			// Fallback: insert row-by-row so we can report which rows failed.
+			for _, r := range batch {
+				_, err := d.CreateLead(r.FirstName, r.LastName, r.Phone, r.Source, "", r.Company, 0, orgID)
+				if err != nil {
+					msg := err.Error()
+					if strings.Contains(msg, "Duplicate") || strings.Contains(msg, "1062") {
+						msg = "duplicate phone"
+					}
+					rowNum := r.Row
+					if rowNum <= 0 {
+						rowNum = 1
+					}
+					errs = append(errs, fmt.Sprintf("Row %d: %s", rowNum, msg[:min(len(msg), 50)]))
+				} else {
+					imported++
+				}
+			}
+			continue
+		}
+		n, _ := res.RowsAffected()
+		imported += int(n)
 	}
 	return imported, errs
 }
@@ -341,6 +492,7 @@ type LeadImportRow struct {
 	LastName  string
 	Phone     string
 	Source    string
+	Company   string
 }
 
 // Document mirrors the documents table.
@@ -393,6 +545,7 @@ type Transcript struct {
 	ID            int64           `json:"id"`
 	LeadID        int64           `json:"lead_id"`
 	CampaignID    int64           `json:"campaign_id"`
+	OrgID         int64           `json:"org_id"`
 	Transcript    json.RawMessage `json:"transcript"`
 	RecordingURL  string          `json:"recording_url"`
 	TTSLanguage   string          `json:"tts_language"`
@@ -403,7 +556,7 @@ type Transcript struct {
 // GetTranscriptsByLead returns all transcripts for a lead.
 func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	rows, err := d.pool.Query(
-		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
 		        COALESCE(transcript,'[]'), COALESCE(recording_url,''),
 		        COALESCE(tts_language,''),
 		        COALESCE(call_duration_s,0),
@@ -416,7 +569,7 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	var list []Transcript
 	for rows.Next() {
 		var t Transcript
-		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, t)
@@ -427,7 +580,7 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 // GetRecentCallTimeline returns the most recent call transcripts for an org (across all leads).
 func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error) {
 	rows, err := d.pool.Query(`
-		SELECT ct.id, COALESCE(ct.lead_id,0), COALESCE(ct.campaign_id,0),
+		SELECT ct.id, COALESCE(ct.lead_id,0), COALESCE(ct.campaign_id,0), COALESCE(ct.org_id,0),
 		COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
 		COALESCE(ct.tts_language,''),
 		COALESCE(ct.call_duration_s,0),
@@ -443,7 +596,7 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 	var list []Transcript
 	for rows.Next() {
 		var t Transcript
-		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript,
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript,
 			&t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -480,14 +633,34 @@ func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON,
 // Returns (nil, nil) when no row matches.
 func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
 	row := d.pool.QueryRow(`
-		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0),
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
 		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
 		       COALESCE(tts_language,''),
 		       COALESCE(call_duration_s,0),
 		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts WHERE id=?`, id)
 	var t Transcript
-	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &t, err
+}
+
+// GetTranscriptByRecordingURL returns the transcript whose recording_url matches
+// the given value and whose org_id matches the caller. Used to authorise access
+// to local recording files served by /api/recordings/{filename}.
+func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''),
+		       COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts
+		WHERE org_id=? AND recording_url=?`, orgID, recordingURL)
+	var t Transcript
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -531,6 +704,24 @@ func (d *DB) UpdateHumanCallTranscriptDuration(callSid string, durationS float64
 		ORDER BY ct.created_at DESC
 		LIMIT 1`, durationS, callSid)
 	return err
+}
+
+// CountLeadsByOrgAndIDs returns how many of the supplied lead IDs belong to
+// the given org. Used to validate bulk campaign-enrolment requests.
+func (d *DB) CountLeadsByOrgAndIDs(orgID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := []any{orgID}
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	q := fmt.Sprintf("SELECT COUNT(*) FROM leads WHERE org_id=? AND id IN (%s)", strings.Join(placeholders, ","))
+	var n int64
+	err := d.pool.QueryRow(q, args...).Scan(&n)
+	return n, err
 }
 
 // helpers

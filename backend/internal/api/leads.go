@@ -15,18 +15,48 @@ import (
 	"github.com/globussoft/callified-backend/internal/llm"
 )
 
-// isValidPhone enforces exactly 10 digits, no other characters. Mirrors the
-// frontend constraint in the Quick Add / Edit Lead inputs.
-func isValidPhone(p string) bool {
-	if len(p) != 10 {
-		return false
-	}
+// stripPhoneDigits removes all non-digit characters from a phone number.
+func stripPhoneDigits(p string) string {
+	var b strings.Builder
 	for _, r := range p {
-		if r < '0' || r > '9' {
-			return false
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
 		}
 	}
-	return true
+	return b.String()
+}
+
+// normalizePhone converts an Indian phone number input (mobile or landline)
+// into a canonical 10-digit form stored in the database:
+//   - 10-digit mobile/landline: returned as-is
+//   - 11-digit number starting with 0 (landline STD code): strips the leading 0
+//   - 12-digit number starting with 91 or +91: strips the country code
+//
+// If the input is not a valid Indian phone number, it returns "".
+func normalizePhone(p string) string {
+	digits := stripPhoneDigits(p)
+
+	// Domestic format with trunk prefix, e.g. 01112345678 or 09876543210.
+	if strings.HasPrefix(digits, "0") {
+		digits = strings.TrimPrefix(digits, "0")
+	}
+
+	// Country-code prefix, e.g. 919876543210 or 911112345678.
+	if strings.HasPrefix(digits, "91") && len(digits) == 12 {
+		digits = digits[2:]
+	}
+
+	if len(digits) == 10 {
+		return digits
+	}
+	return ""
+}
+
+// isValidPhone accepts valid Indian mobile and landline numbers in common
+// formats: 10 digits, 0-prefixed domestic, +91/91-prefixed, and with
+// spaces/dashes/parentheses. It mirrors the relaxed frontend validation.
+func isValidPhone(p string) bool {
+	return normalizePhone(p) != ""
 }
 
 // ── GET /api/leads/sample-csv ─────────────────────────────────────────────────
@@ -45,7 +75,7 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="sample_leads.csv"`)
 	wr := csv.NewWriter(w)
 	// Only the header row — no sample data, so no default names leak into imports.
-	_ = wr.Write([]string{"first_name", "last_name", "phone", "source"})
+	_ = wr.Write([]string{"first_name", "last_name", "phone", "company", "source"})
 	wr.Flush()
 }
 
@@ -63,7 +93,13 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 // @Router      /api/leads/export [get]
 func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	leads, err := s.db.GetAllLeads(ac.OrgID)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("exportLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	leads, err := s.db.GetAllLeads(ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("exportLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -73,13 +109,13 @@ func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="leads_export.csv"`)
 	wr := csv.NewWriter(w)
 	_ = wr.Write([]string{
-		"id", "first_name", "last_name", "phone", "source",
+		"id", "first_name", "last_name", "phone", "company", "source",
 		"status", "interest", "follow_up_note", "external_id", "crm_provider", "created_at",
 	})
 	for _, l := range leads {
 		_ = wr.Write([]string{
 			strconv.FormatInt(l.ID, 10),
-			l.FirstName, l.LastName, l.Phone, l.Source,
+			l.FirstName, l.LastName, l.Phone, l.Company, l.Source,
 			l.Status, l.Interest, l.FollowUpNote, l.ExternalID, l.CRMProvider, l.CreatedAt,
 		})
 	}
@@ -88,30 +124,68 @@ func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
 
 // ── GET /api/leads ────────────────────────────────────────────────────────────
 
+// PaginatedLeadsResponse is the shape returned by listLeads.
+type PaginatedLeadsResponse struct {
+	Leads []db.Lead `json:"leads"`
+	Total int64     `json:"total"`
+	Page  int64     `json:"page"`
+	Limit int64     `json:"limit"`
+}
+
 // @Summary     List leads
-// @Description Returns all leads for the authenticated user's org.
+// @Description Returns a paginated list of leads for the authenticated user's org.
 // @Tags        leads
 // @Produce     json
 // @Security    BearerAuth
-// @Success     200  {array}   db.Lead
+// @Param       page   query  int  false  "Page number (1-based)"  default(1)
+// @Param       limit  query  int  false  "Page size"              default(100)
+// @Success     200  {object}  PaginatedLeadsResponse
 // @Failure     401  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads [get]
 func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	leads, err := s.db.GetAllLeads(ac.OrgID)
+	page, limit := parsePagination(r, 100, 500)
+	offset := (page - 1) * limit
+
+	var excludeCampaignID int64
+	if v := r.URL.Query().Get("exclude_campaign_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			excludeCampaignID = id
+		}
+	}
+
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("listLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, emptyJSON(leads))
+
+	leads, err := s.db.GetLeadsPaginated(ac.OrgID, limit, offset, excludeCampaignID, execIDs, apply)
+	if err != nil {
+		s.logger.Sugar().Errorw("listLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	total, err := s.db.CountLeads(ac.OrgID, excludeCampaignID, execIDs, apply)
+	if err != nil {
+		s.logger.Sugar().Errorw("listLeads count", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, PaginatedLeadsResponse{
+		Leads: emptyJSON(leads),
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	})
 }
 
 // ── GET /api/leads/search?q=... ───────────────────────────────────────────────
 
 // @Summary     Search leads
-// @Description Full-text search across leads in the org by name, phone, or source.
+// @Description Full-text search across leads in the org by name, phone, company, or source.
 // @Tags        leads
 // @Produce     json
 // @Security    BearerAuth
@@ -128,7 +202,19 @@ func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "q query param required")
 		return
 	}
-	leads, err := s.db.SearchLeads(q, ac.OrgID)
+	var excludeCampaignID int64
+	if v := r.URL.Query().Get("exclude_campaign_id"); v != "" {
+		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
+			excludeCampaignID = id
+		}
+	}
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("searchLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	leads, err := s.db.SearchLeads(q, ac.OrgID, excludeCampaignID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("searchLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -169,7 +255,13 @@ func (s *Server) searchLeadsWithCampaigns(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
-	leads, err := s.db.SearchLeadsWithCampaigns(q, ac.OrgID, statuses)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("searchLeadsWithCampaigns", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	leads, err := s.db.SearchLeadsWithCampaigns(q, ac.OrgID, statuses, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("searchLeadsWithCampaigns", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -184,6 +276,7 @@ type leadCreateRequest struct {
 	FirstName   string `json:"first_name"`
 	LastName    string `json:"last_name"`
 	Phone       string `json:"phone"`
+	Company     string `json:"company"`
 	Source      string `json:"source"`
 	Interest    string `json:"interest"`
 	ExecutiveID int64  `json:"executive_id"`
@@ -213,7 +306,8 @@ func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
-	id, err := s.db.CreateLead(req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, req.ExecutiveID, ac.OrgID)
+	phone := normalizePhone(req.Phone)
+	id, err := s.db.CreateLead(req.FirstName, req.LastName, phone, req.Source, req.Interest, req.Company, req.ExecutiveID, ac.OrgID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
 			writeFieldError(w, http.StatusConflict, "phone number already exists",
@@ -240,7 +334,7 @@ func validateLeadFields(firstName, phone string) map[string]string {
 	if strings.TrimSpace(phone) == "" {
 		fields["phone"] = "Phone is required"
 	} else if !isValidPhone(phone) {
-		fields["phone"] = "Indian numbers must be exactly 10 digits"
+		fields["phone"] = "Enter a valid Indian phone number (e.g. 9876543210 or 01112345678)"
 	}
 	return fields
 }
@@ -284,14 +378,8 @@ func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	lead, err := s.db.GetLeadByID(id)
-	if err != nil {
-		s.logger.Sugar().Errorw("getLead", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
+	lead := s.requireLeadAccess(w, r, id)
 	if lead == nil {
-		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, lead)
@@ -303,6 +391,7 @@ type leadUpdateRequest struct {
 	FirstName   string `json:"first_name"`
 	LastName    string `json:"last_name"`
 	Phone       string `json:"phone"`
+	Company     string `json:"company"`
 	Source      string `json:"source"`
 	Interest    string `json:"interest"`
 	ExecutiveID int64  `json:"executive_id"`
@@ -329,6 +418,9 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
 	var req leadUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -338,7 +430,8 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "validation failed", fields)
 		return
 	}
-	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, req.Phone, req.Source, req.Interest, req.ExecutiveID, ac.OrgID)
+	phone := normalizePhone(req.Phone)
+	updated, err := s.db.UpdateLead(id, req.FirstName, req.LastName, phone, req.Source, req.Interest, req.Company, req.ExecutiveID, ac.OrgID)
 	if err != nil {
 		if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "1062") {
 			writeFieldError(w, http.StatusConflict, "phone number already exists",
@@ -377,6 +470,9 @@ func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
 	deleted, err := s.db.DeleteLead(id, ac.OrgID)
 	if err != nil {
 		s.logger.Sugar().Errorw("deleteLead", "err", err)
@@ -406,9 +502,14 @@ func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/status [put]
 func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	lead := s.requireLeadAccess(w, r, id)
+	if lead == nil {
 		return
 	}
 	var body struct {
@@ -422,6 +523,13 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("updateLeadStatus", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	// Log the status change for agent productivity reporting.
+	if u, uErr := s.db.GetUserByEmail(ac.Email); uErr == nil && u != nil {
+		_ = s.db.LogAgentActivity(u.ID, u.OrgID, 0, id, db.ActivityStatusUpdate, map[string]any{
+			"new_status": body.Status,
+			"old_status": lead.Status,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
@@ -447,6 +555,9 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	var body struct {
@@ -491,6 +602,9 @@ func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
 	var body struct {
 		Source string `json:"source"`
 	}
@@ -527,9 +641,13 @@ func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/notes [post]
 func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	var body struct {
@@ -556,15 +674,72 @@ func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if u, uErr := s.db.GetUserByEmail(ac.Email); uErr == nil && u != nil {
+		_ = s.db.LogAgentActivity(u.ID, u.OrgID, 0, id, db.ActivityNote, map[string]any{
+			"note_preview": trimmed,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+// ── PUT /api/leads/{id}/disposition ───────────────────────────────────────────
+
+// leadDispositionRequest is the payload for saving a post-call disposition.
+type leadDispositionRequest struct {
+	Status     string `json:"status"`
+	Note       string `json:"note"`
+	FollowUpAt string `json:"follow_up_at"`
+}
+
+// @Summary     Save lead disposition
+// @Description Atomically updates lead status, follow-up note and follow-up datetime after a call. Used by the browser auto-dial "Save & Next" flow.
+// @Tags        leads
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                   true  "Lead ID"
+// @Param       body  body  leadDispositionRequest  true  "Disposition data"
+// @Success     200   {object}  BoolResponse
+// @Failure     400   {object}  ErrorResponse
+// @Failure     401   {object}  ErrorResponse
+// @Failure     500   {object}  ErrorResponse
+// @Router      /api/leads/{id}/disposition [put]
+func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
+	var body leadDispositionRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(body.Status) == "" {
+		writeError(w, http.StatusBadRequest, "status required")
+		return
+	}
+	if len(strings.TrimSpace(body.Note)) > 5000 {
+		writeError(w, http.StatusBadRequest, "note is too long (max 5000 characters)")
+		return
+	}
+	if err := s.db.UpdateLeadDisposition(id, strings.TrimSpace(body.Status), strings.TrimSpace(body.Note), strings.TrimSpace(body.FollowUpAt)); err != nil {
+		s.logger.Sugar().Errorw("updateLeadDisposition", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
 
 // ── POST /api/leads/import-csv ────────────────────────────────────────────────
 // Accepts multipart/form-data with a "file" field containing a CSV.
-// CSV columns (header row): first_name,last_name,phone,source
+// CSV columns (header row): first_name,last_name,phone,company,source
 
 // @Summary     Import leads from CSV
-// @Description Accepts a multipart/form-data CSV upload with columns: first_name, last_name, phone, source.
+// @Description Accepts a multipart/form-data CSV upload with columns: first_name, last_name, phone, company, source.
 // @Tags        leads
 // @Accept      multipart/form-data
 // @Produce     json
@@ -612,6 +787,7 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	iFirst := idx("first_name")
 	iLast := idx("last_name")
 	iPhone := idx("phone")
+	iCompany := idx("company")
 	iSource := idx("source")
 
 	if iFirst < 0 || iPhone < 0 {
@@ -629,9 +805,9 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for rowIdx, rec := range records[1:] {
-		phone := get(rec, iPhone)
-		if !isValidPhone(phone) {
-			skipped = append(skipped, fmt.Sprintf("row %d: phone %q not 10 digits", rowIdx+2, phone))
+		phone := normalizePhone(get(rec, iPhone))
+		if phone == "" {
+			skipped = append(skipped, fmt.Sprintf("row %d: phone %q is not a valid Indian number", rowIdx+2, get(rec, iPhone)))
 			continue
 		}
 		rows = append(rows, db.LeadImportRow{
@@ -639,6 +815,7 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 			FirstName: get(rec, iFirst),
 			LastName:  get(rec, iLast),
 			Phone:     phone,
+			Company:   get(rec, iCompany),
 			Source:    get(rec, iSource),
 		})
 	}
@@ -669,6 +846,9 @@ func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
 	docs, err := s.db.GetDocumentsByLead(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getLeadDocuments", "err", err)
@@ -697,6 +877,9 @@ func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	if err := r.ParseMultipartForm(20 << 20); err != nil {
@@ -756,6 +939,9 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireTranscriptAccess(w, r, id) == nil {
+		return
+	}
 	review, err := s.db.GetCallReviewByTranscript(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getTranscriptReview", "err", err)
@@ -788,6 +974,9 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
 	transcripts, err := s.db.GetTranscriptsByLead(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getLeadTranscripts", "err", err)
@@ -795,6 +984,43 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(transcripts))
+}
+
+// ── GET /api/leads/{id}/interactions ──────────────────────────────────────────
+
+// @Summary     Get lead interaction timeline
+// @Description Returns a unified timeline of all interactions for a lead: creation, notes, calls, scheduled calls, and WhatsApp messages.
+// @Tags        leads
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path      int64  true  "Lead ID"
+// @Success     200  {object}  db.InteractionTimeline
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/leads/{id}/interactions [get]
+func (s *Server) getLeadInteractions(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	if s.requireLeadAccess(w, r, id) == nil {
+		return
+	}
+	timeline, err := s.db.GetLeadInteractions(ac.OrgID, id)
+	if err != nil {
+		s.logger.Sugar().Errorw("getLeadInteractions", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if timeline == nil {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, timeline)
 }
 
 // ── GET /api/leads/by-phone/{phone}/calls ─────────────────────────────────────
@@ -831,21 +1057,27 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 // @Tags        leads
 // @Produce     json
 // @Security    BearerAuth
-// @Param       phone  path      string  true  "10-digit phone number"
+// @Param       phone  path      string  true  "Indian phone number"
 // @Success     200    {array}   object
 // @Failure     400    {object}  ErrorResponse
 // @Failure     401    {object}  ErrorResponse
 // @Failure     500    {object}  ErrorResponse
 // @Router      /api/leads/by-phone/{phone}/calls [get]
 func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
-	phone := strings.TrimSpace(r.PathValue("phone"))
+	phone := normalizePhone(strings.TrimSpace(r.PathValue("phone")))
 	if phone == "" {
 		writeError(w, http.StatusBadRequest, "phone required")
 		return
 	}
 
 	ac := getAuth(r)
-	lead, err := s.db.GetLeadByPhoneOrg(phone, ac.OrgID)
+	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getLeadCallsByPhone", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	lead, err := s.db.GetLeadByPhoneOrg(phone, ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getLeadCallsByPhone: lookup", "err", err, "phone", phone)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -906,9 +1138,8 @@ func (s *Server) draftLeadEmail(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	lead, err := s.db.GetLeadByID(id)
-	if err != nil || lead == nil {
-		writeError(w, http.StatusNotFound, "lead not found")
+	lead := s.requireLeadAccess(w, r, id)
+	if lead == nil {
 		return
 	}
 
@@ -952,9 +1183,8 @@ func (s *Server) generateFollowupNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	lead, err := s.db.GetLeadByID(id)
-	if err != nil || lead == nil {
-		writeError(w, http.StatusNotFound, "lead not found")
+	lead := s.requireLeadAccess(w, r, id)
+	if lead == nil {
 		return
 	}
 
@@ -1052,6 +1282,16 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "transcript not found")
 		return
 	}
+	ac := getAuth(r)
+	if t.LeadID > 0 {
+		if !s.canAccessLead(ac, t.LeadID) {
+			writeError(w, http.StatusNotFound, "transcript not found")
+			return
+		}
+	} else if t.OrgID != ac.OrgID {
+		writeError(w, http.StatusNotFound, "transcript not found")
+		return
+	}
 
 	// Return cached review unless force=1 — makes modal opens cheap.
 	if !force {
@@ -1106,15 +1346,9 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var orgID int64
-	if t.LeadID > 0 {
-		if ld, _ := s.db.GetLeadByID(t.LeadID); ld != nil {
-			orgID = ld.OrgID
-		}
-	}
 	review := &db.CallReview{
 		TranscriptID:                id,
-		OrgID:                       orgID,
+		OrgID:                       t.OrgID,
 		QualityScore:                a.QualityScore,
 		Sentiment:                   a.Sentiment,
 		AppointmentBooked:           a.AppointmentBooked,

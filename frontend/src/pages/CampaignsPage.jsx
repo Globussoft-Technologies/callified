@@ -10,24 +10,9 @@ export default function CampaignsPage({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   campaigns, fetchCampaigns
 }) {
-  // Leads for adding to campaigns (the global leads pool)
-  const [leads, setLeads] = useState([]);
-
   // Transcript state (for campaign lead transcripts)
   const [transcriptLead, setTranscriptLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
-
-  useEffect(() => {
-    fetchLeads();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const fetchLeads = async () => {
-    try {
-      const res = await apiFetch(`${API_URL}/leads`);
-      setLeads(await res.json());
-    } catch { /* ignore */ }
-  };
 
   const handleViewTranscripts = async (lead) => {
     setTranscriptLead(lead);
@@ -43,7 +28,7 @@ export default function CampaignsPage({
     <>
       <CampaignsTab
         campaigns={campaigns} fetchCampaigns={fetchCampaigns}
-        orgProducts={orgProducts} leads={leads}
+        orgProducts={orgProducts}
         apiFetch={apiFetch} API_URL={API_URL} selectedOrg={selectedOrg}
         onCampaignDial={handleCampaignDial} onCampaignWebCall={handleCampaignWebCall}
         activeVoiceProvider={activeVoiceProvider} activeVoiceId={activeVoiceId}

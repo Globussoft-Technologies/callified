@@ -105,7 +105,7 @@ export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
           padding: '12px 18px', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 500,
           boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
           color: toast.type === 'success' ? '#4ade80' : '#fca5a5',
-          background: toast.type === 'success' ? 'rgba(15,23,42,0.95)' : 'rgba(15,23,42,0.95)',
+          background: 'rgba(15,23,42,0.95)',
           border: `1px solid ${toast.type === 'success' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
           animation: 'fadeInUp 0.2s ease',
         }}>

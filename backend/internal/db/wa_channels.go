@@ -343,19 +343,20 @@ func (d *DB) GetWAConversationsList(orgID int64, limit int, includeArchived bool
 	return list, rows.Err()
 }
 
-// GetWAChatHistory returns messages for a conversation.
-func (d *DB) GetWAChatHistory(conversationID int64, limit int) ([]WAMessage, error) {
+// GetWAChatHistory returns messages for a conversation, scoped to org.
+func (d *DB) GetWAChatHistory(orgID, conversationID int64, limit int) ([]WAMessage, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := d.pool.Query(`
-		SELECT id, conversation_id,
-		COALESCE(direction,'inbound'), COALESCE(message_text,''),
-		COALESCE(message_type,'text'), COALESCE(provider_msg_id,''),
-		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM whatsapp_messages
-		WHERE conversation_id=?
-		ORDER BY id DESC LIMIT ?`, conversationID, limit)
+		SELECT m.id, m.conversation_id,
+		COALESCE(m.direction,'inbound'), COALESCE(m.message_text,''),
+		COALESCE(m.message_type,'text'), COALESCE(m.provider_msg_id,''),
+		DATE_FORMAT(m.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM whatsapp_messages m
+		JOIN whatsapp_conversations c ON c.id = m.conversation_id
+		WHERE m.conversation_id=? AND c.org_id=?
+		ORDER BY m.id DESC LIMIT ?`, conversationID, orgID, limit)
 	if err != nil {
 		return nil, err
 	}

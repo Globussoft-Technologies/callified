@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
+import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -66,6 +67,7 @@ export default function ExecutivesPage() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) { setError('Executive name is required.'); return; }
+    if (form.phone.trim() && !isValidPhone(form.phone)) { setError(PHONE_VALIDATION_MESSAGE); return; }
     setSaving(true);
     setError('');
     try {
@@ -140,8 +142,8 @@ export default function ExecutivesPage() {
               </div>
               <div>
                 <label style={labelStyle}>Phone</label>
-                <input style={inputStyle} placeholder="10-digit mobile"
-                  value={form.phone} onChange={e => setField('phone', e.target.value.replace(/\D/g, '').slice(0, 10))} />
+                <input style={inputStyle} placeholder="Phone (e.g. 9876543210)"
+                  value={form.phone} onChange={e => setField('phone', e.target.value)} />
               </div>
             </div>
             {error && (

@@ -1,20 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
+import { normalizePhone } from '../../utils/phone';
+import { isAdmin } from '../../utils/roles';
 
 export default function CampaignsTab({
-  campaigns, fetchCampaigns, orgProducts, leads,
+  campaigns, fetchCampaigns, orgProducts,
   apiFetch, API_URL,
   onCampaignDial, onCampaignWebCall,
   handleViewTranscripts,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
-  const { fetchSseTicket } = useAuth();
+  const { fetchSseTicket, currentUser } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
   const location = useLocation();
@@ -24,17 +26,21 @@ export default function CampaignsTab({
   const [autoOpened, setAutoOpened] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
+  const [campaignLeadsTotal, setCampaignLeadsTotal] = useState(0);
   const [callLog, setCallLog] = useState([]);
   const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showAddLeadsModal, setShowAddLeadsModal] = useState(false);
   const [editLead, setEditLead] = useState(null);
-  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', source: '', executive_id: 0 });
+  const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', company: '', source: '', executive_id: 0 });
   const [editErrors, setEditErrors] = useState({});
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
+  const [addLeadsSearch, setAddLeadsSearch] = useState('');
+  const [addLeadsResults, setAddLeadsResults] = useState([]);
+  const [addLeadsLoading, setAddLeadsLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showCsvImportModal, setShowCsvImportModal] = useState(false);
   const [csvFile, setCsvFile] = useState(null);
@@ -49,6 +55,13 @@ export default function CampaignsTab({
   const eventSourceRef = React.useRef(null);
   const [campVoice, setCampVoice] = useState({ tts_provider: '', tts_voice_id: '', tts_language: '' });
   const [campVoiceSaveStatus, setCampVoiceSaveStatus] = useState(''); // '', 'saving', 'saved', 'error'
+
+  // Campaign-user assignment state (Admin only).
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignCampaign, setAssignCampaign] = useState(null);
+  const [assignableUsers, setAssignableUsers] = useState([]);
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [assignLoading, setAssignLoading] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -115,6 +128,15 @@ export default function CampaignsTab({
   // Close any active SSE stream when this component unmounts.
   useEffect(() => () => stopEventStream(), []);
 
+  // Reset add-leads search state when the modal closes.
+  useEffect(() => {
+    if (!showAddLeadsModal) {
+      setAddLeadsSearch('');
+      setAddLeadsResults([]);
+      setSelectedLeadIds([]);
+    }
+  }, [showAddLeadsModal]);
+
   // Auto-open the campaign from the /campaigns/:campaignId route.
   // Using autoOpened prevents the list view from flashing and stops repeated attempts.
   useEffect(() => {
@@ -138,14 +160,22 @@ export default function CampaignsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeCampaignId, campaigns, autoOpened]);
 
-  const fetchCampaignLeads = async (campaignId) => {
+  const fetchCampaignLeads = useCallback(async (campaignId, opts = {}) => {
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads`);
-      if (!res.ok) { setCampaignLeads([]); return; }
+      const params = new URLSearchParams();
+      params.set('page', String(opts.page || 1));
+      params.set('limit', String(opts.limit || 100));
+      if (opts.search) params.set('search', opts.search);
+      if (opts.executiveIds?.length) params.set('executive_ids', opts.executiveIds.join(','));
+      if (opts.scheduledFrom) params.set('scheduled_from', opts.scheduledFrom);
+      if (opts.scheduledTo) params.set('scheduled_to', opts.scheduledTo);
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads?${params.toString()}`);
+      if (!res.ok) { setCampaignLeads([]); setCampaignLeadsTotal(0); return; }
       const data = await res.json();
-      setCampaignLeads(Array.isArray(data) ? data : []);
-    } catch { setCampaignLeads([]);  }
-  };
+      setCampaignLeads(Array.isArray(data.leads) ? data.leads : []);
+      setCampaignLeadsTotal(typeof data.total === 'number' ? data.total : 0);
+    } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
+  }, [apiFetch, API_URL]);
 
   const fetchCallLog = async (campaignId) => {
     try {
@@ -426,6 +456,73 @@ export default function CampaignsTab({
     setLoading(false);
   };
 
+  // ── Campaign-user assignment (Admin only) ─────────────────────────────────
+  const userRole = currentUser?.role || 'Agent';
+
+  const openAssignModal = async (campaign) => {
+    setAssignCampaign(campaign);
+    setShowAssignModal(true);
+    setAssignLoading(true);
+    try {
+      const [usersRes, assignedRes] = await Promise.all([
+        apiFetch(`${API_URL}/users`),
+        apiFetch(`${API_URL}/campaigns/${campaign.id}/assigned-users`),
+      ]);
+      let users = [];
+      if (usersRes.ok) {
+        const allUsers = await usersRes.json();
+        users = (allUsers || []).filter(u => u.role === 'Agent' || u.role === 'TeamLeader');
+      }
+      setAssignableUsers(users);
+      if (assignedRes.ok) {
+        const data = await assignedRes.json();
+        setSelectedUserIds(Array.isArray(data.user_ids) ? data.user_ids : []);
+      } else {
+        setSelectedUserIds([]);
+      }
+    } catch (e) {
+      console.error(e);
+      toast('Failed to load users', 'error');
+    }
+    setAssignLoading(false);
+  };
+
+  const closeAssignModal = () => {
+    setShowAssignModal(false);
+    setAssignCampaign(null);
+    setAssignableUsers([]);
+    setSelectedUserIds([]);
+  };
+
+  const toggleUserSelection = (userId) => {
+    setSelectedUserIds(prev =>
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const handleAssignUsers = async () => {
+    if (!assignCampaign) return;
+    setAssignLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${assignCampaign.id}/assign-users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_ids: selectedUserIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast('Users assigned successfully', 'success');
+        closeAssignModal();
+      } else {
+        toast(data.error || 'Failed to assign users', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      toast('Network error', 'error');
+    }
+    setAssignLoading(false);
+  };
+
   const handleAddLeads = async () => {
     if (selectedLeadIds.length === 0) return;
     setLoading(true);
@@ -436,12 +533,35 @@ export default function CampaignsTab({
         body: JSON.stringify({ lead_ids: selectedLeadIds })
       });
       setSelectedLeadIds([]);
+      setAddLeadsSearch('');
+      setAddLeadsResults([]);
       setShowAddLeadsModal(false);
       fetchCampaignLeads(selectedCampaign.id);
       fetchCampaigns();
     } catch (e) { console.error(e); }
     setLoading(false);
   };
+
+  const searchAvailableLeads = useCallback(async (q) => {
+    if (!selectedCampaign?.id) return;
+    setAddLeadsSearch(q);
+    const query = q.trim();
+    if (query.length < 2) {
+      setAddLeadsResults([]);
+      return;
+    }
+    setAddLeadsLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/leads/search?q=${encodeURIComponent(query)}&exclude_campaign_id=${selectedCampaign.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setAddLeadsResults(Array.isArray(data) ? data : []);
+      } else {
+        setAddLeadsResults([]);
+      }
+    } catch { setAddLeadsResults([]); }
+    setAddLeadsLoading(false);
+  }, [selectedCampaign?.id, apiFetch, API_URL]);
 
   const handleRemoveLead = async (leadId) => {
     try {
@@ -453,7 +573,7 @@ export default function CampaignsTab({
 
   const handleEditLead = (lead) => {
     setEditLead(lead);
-    setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', source: lead.source || '', executive_id: lead.executive_id || 0 });
+    setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', company: lead.company || '', source: lead.source || '', executive_id: lead.executive_id || 0 });
     setEditErrors({});
   };
 
@@ -462,7 +582,8 @@ export default function CampaignsTab({
     const payload = {
       first_name: editForm.first_name,
       last_name: editForm.last_name,
-      phone: editForm.phone,
+      phone: normalizePhone(editForm.phone),
+      company: editForm.company,
       source: editForm.source,
       interest: '',
       executive_id: editForm.executive_id ? parseInt(editForm.executive_id, 10) : 0
@@ -553,7 +674,15 @@ export default function CampaignsTab({
 
   const getCampaignStats = (campaign) => {
     const s = campaign.stats || {};
-    return { total: s.total || 0, called: s.called || 0, qualified: s.qualified || 0, booked: s.appointments || 0 };
+    const total = s.total || 0;
+    const called = s.called || 0;
+    return {
+      total,
+      called,
+      remaining: Math.max(0, total - called),
+      qualified: s.qualified || 0,
+      booked: s.appointments || 0,
+    };
   };
 
   const handleCsvImport = async () => {
@@ -594,9 +723,6 @@ export default function CampaignsTab({
     setCsvFile(null);
   };
 
-  // Available leads = org leads not already in this campaign
-  const availableLeads = leads.filter(l => !campaignLeads.some(cl => cl.id === l.id));
-
   // ─── DETAIL VIEW ───
   if (view === 'detail' && selectedCampaign) {
     return (
@@ -605,6 +731,7 @@ export default function CampaignsTab({
           selectedCampaign={selectedCampaign}
           setSelectedCampaign={setSelectedCampaign}
           campaignLeads={campaignLeads}
+          campaignLeadsTotal={campaignLeadsTotal}
           callLog={callLog}
           detailTab={detailTab}
           setDetailTab={setDetailTab}
@@ -656,7 +783,10 @@ export default function CampaignsTab({
           setSelectedTemplate={setSelectedTemplate}
           showAddLeadsModal={showAddLeadsModal}
           setShowAddLeadsModal={setShowAddLeadsModal}
-          availableLeads={availableLeads}
+          addLeadsSearch={addLeadsSearch}
+          addLeadsResults={addLeadsResults}
+          addLeadsLoading={addLeadsLoading}
+          searchAvailableLeads={searchAvailableLeads}
           selectedLeadIds={selectedLeadIds}
           toggleLeadSelection={toggleLeadSelection}
           handleAddLeads={handleAddLeads}
@@ -739,6 +869,12 @@ export default function CampaignsTab({
                     {campaign.name}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    {isAdmin(userRole) && (
+                      <button onClick={(e) => { e.stopPropagation(); openAssignModal(campaign); }}
+                        style={smallBtn('#eff6ff', '#2563eb', '#bfdbfe')}>
+                        Assign Users
+                      </button>
+                    )}
                     <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
                       style={smallBtn('#fff', '#374151', '#e5e7eb')}>
                       Edit
@@ -773,6 +909,7 @@ export default function CampaignsTab({
                   {[
                     { label: 'Total',     val: stats.total,     color: '#111827' },
                     { label: 'Called',    val: stats.called,    color: '#111827' },
+                    { label: 'Remaining', val: stats.remaining, color: '#f59e0b' },
                     { label: 'Qualified', val: stats.qualified, color: '#10b981' },
                     { label: 'Booked',    val: stats.booked,    color: '#6366f1' },
                   ].map(({ label, val, color }) => (
@@ -817,7 +954,6 @@ export default function CampaignsTab({
         setSelectedTemplate={setSelectedTemplate}
         showAddLeadsModal={false}
         setShowAddLeadsModal={setShowAddLeadsModal}
-        availableLeads={availableLeads}
         selectedLeadIds={selectedLeadIds}
         toggleLeadSelection={toggleLeadSelection}
         handleAddLeads={handleAddLeads}
@@ -842,6 +978,63 @@ export default function CampaignsTab({
         editCampaignError={editCampaignError}
         setEditCampaignError={setEditCampaignError}
       />
+
+      {/* Assign Users Modal */}
+      {showAssignModal && assignCampaign && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 200,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={closeAssignModal}>
+          <div style={{
+            background: '#fff', borderRadius: 12, padding: '24px 28px', width: 420, maxWidth: '90vw',
+            boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, color: '#111827' }}>Assign Users</h3>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+              {assignCampaign.name}
+            </p>
+
+            {assignLoading ? (
+              <div style={{ color: '#9ca3af', fontSize: 13 }}>Loading...</div>
+            ) : assignableUsers.length === 0 ? (
+              <div style={{ color: '#9ca3af', fontSize: 13 }}>No agents or team leaders available.</div>
+            ) : (
+              <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 0' }}>
+                {assignableUsers.map(u => (
+                  <label key={u.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 14px', cursor: 'pointer', fontSize: 13, color: '#374151',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedUserIds.includes(u.id)}
+                      onChange={() => toggleUserSelection(u.id)}
+                    />
+                    <span style={{ flex: 1 }}>{u.full_name || u.email}</span>
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>{u.role === 'TeamLeader' ? 'Team Leader' : 'Agent'}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+              <button
+                onClick={closeAssignModal}
+                style={{ background: '#fff', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 16px', fontSize: 13, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAssignUsers}
+                disabled={assignLoading}
+                style={{ background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 13, cursor: 'pointer' }}
+              >
+                {assignLoading ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

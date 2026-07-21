@@ -118,6 +118,25 @@ func (d *DB) GetExecutiveByID(id, orgID int64) (*Executive, error) {
 	return &e, err
 }
 
+// CountExecutivesByOrgAndIDs returns how many of the supplied executive IDs
+// belong to the given org. Used to reject campaign-executive assignments that
+// reference foreign executives.
+func (d *DB) CountExecutivesByOrgAndIDs(orgID int64, execIDs []int64) (int64, error) {
+	if len(execIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+	args := make([]any, 0, len(execIDs)+1)
+	args = append(args, orgID)
+	for _, id := range execIDs {
+		args = append(args, id)
+	}
+	var count int64
+	err := d.pool.QueryRow(
+		"SELECT COUNT(*) FROM executives WHERE org_id=? AND id IN ("+placeholders+")", args...).Scan(&count)
+	return count, err
+}
+
 // SetCampaignExecutives replaces the executive assignments for a campaign.
 func (d *DB) SetCampaignExecutives(campaignID int64, execIDs []int64) error {
 	tx, err := d.pool.Begin()

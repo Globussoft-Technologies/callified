@@ -431,11 +431,11 @@ export default function BillingPage({ apiFetch, API_URL }) {
 
       {/* Top-up modal */}
       {topupOpen && (
-        <div onClick={() => !topupBusy && setTopupOpen(false)} style={{
+        <div onClick={() => !topupBusy && setTopupOpen(false)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem',
         }}>
-          <div onClick={e => e.stopPropagation()} style={{
+          <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
             ...card, maxWidth: 480, width: '100%', padding: '28px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -491,9 +491,9 @@ export default function BillingPage({ apiFetch, API_URL }) {
 
       {/* Invoice viewer modal */}
       {viewingInvoice && (
-        <div onClick={() => { if (viewingInvoice?.blobUrl) URL.revokeObjectURL(viewingInvoice.blobUrl); setViewingInvoice(null); }}
+        <div onClick={() => { if (viewingInvoice?.blobUrl) URL.revokeObjectURL(viewingInvoice.blobUrl); setViewingInvoice(null); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '1rem' }}>
-          <div onClick={e => e.stopPropagation()} style={{
+          <div onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }} style={{
             width: '100%', maxWidth: 880, height: '90vh', maxHeight: 1100,
             background: T.card, border: `1px solid ${T.border}`, borderRadius: 12,
             boxShadow: '0 24px 48px rgba(0,0,0,0.15)', display: 'flex', flexDirection: 'column', overflow: 'hidden',

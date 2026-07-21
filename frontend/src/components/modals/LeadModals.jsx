@@ -8,8 +8,8 @@ export default function LeadModals({
   return (
     <>
       {isModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setIsModalOpen(false)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h2 style={{marginTop: 0, marginBottom: '2rem'}}>New Lead</h2>
             <form onSubmit={handleCreateLead}>
               <div className="form-group">
@@ -23,6 +23,10 @@ export default function LeadModals({
               <div className="form-group">
                 <label>Phone Number</label>
                 <input data-testid="lead-phone" name="phone" className="form-input" required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="+917406317771" />
+              </div>
+              <div className="form-group">
+                <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+                <input data-testid="lead-company" name="company" className="form-input" value={formData.company || ""} onChange={e => setFormData({...formData, company: e.target.value})} placeholder="e.g. Acme Inc." />
               </div>
               <div className="form-group">
                 <label>Source</label>
@@ -50,8 +54,8 @@ export default function LeadModals({
       )}
 
       {editModalOpen && editingLead && (
-        <div className="modal-overlay" onClick={() => setEditModalOpen(false)}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setEditModalOpen(false)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
             <h2 style={{marginTop: 0, marginBottom: '2rem'}}>Edit Lead</h2>
             <form onSubmit={handleSaveEdit}>
               <div className="form-group">
@@ -65,6 +69,10 @@ export default function LeadModals({
               <div className="form-group">
                 <label>Phone Number</label>
                 <input name="phone" className="form-input" required type="tel" value={editFormData.phone} onChange={e => setEditFormData({...editFormData, phone: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+                <input name="company" className="form-input" value={editFormData.company || ''} onChange={e => setEditFormData({...editFormData, company: e.target.value})} placeholder="e.g. Acme Inc." />
               </div>
               <div className="form-group">
                 <label>Source</label>

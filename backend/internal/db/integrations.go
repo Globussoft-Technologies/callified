@@ -30,6 +30,35 @@ type CRMIntegration struct {
 	CreatedAt    string            `json:"created_at"`
 }
 
+// GetActiveCRMIntegrationsByOrg returns active CRM integrations for a single org.
+func (d *DB) GetActiveCRMIntegrationsByOrg(orgID int64) ([]CRMIntegration, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, org_id, provider, COALESCE(credentials,'{}'),
+		COALESCE(is_active,1),
+		COALESCE(DATE_FORMAT(last_synced_at,'%Y-%m-%d %H:%i:%s'),''),
+		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM crm_integrations WHERE org_id=? AND is_active=1 ORDER BY id`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CRMIntegration
+	for rows.Next() {
+		var ci CRMIntegration
+		var credsJSON string
+		var active int
+		if err := rows.Scan(&ci.ID, &ci.OrgID, &ci.Provider, &credsJSON,
+			&active, &ci.LastSyncedAt, &ci.CreatedAt); err != nil {
+			return nil, err
+		}
+		ci.IsActive = active == 1
+		ci.SyncStatus = computeSyncStatus(ci.IsActive, ci.LastSyncedAt)
+		json.Unmarshal([]byte(credsJSON), &ci.Credentials) //nolint:errcheck
+		list = append(list, ci)
+	}
+	return list, rows.Err()
+}
+
 // GetActiveCRMIntegrations returns all active CRM integrations across all orgs.
 func (d *DB) GetActiveCRMIntegrations() ([]CRMIntegration, error) {
 	rows, err := d.pool.Query(`

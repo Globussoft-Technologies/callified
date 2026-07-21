@@ -15,6 +15,7 @@ type ActiveSession struct {
 	LeadPhone  string `json:"lead_phone,omitempty"`
 	CampaignID int64  `json:"campaign_id,omitempty"`
 	OrgID      int64  `json:"org_id,omitempty"`
+	UserEmail  string `json:"user_email,omitempty"`
 	IsExotel   bool   `json:"is_exotel"`
 	IsWebSim   bool   `json:"is_web_sim"`
 	StartedAt  string `json:"started_at"` // RFC3339
@@ -47,6 +48,7 @@ func (h *Handler) ActiveSessions() []ActiveSession {
 			LeadPhone:  sess.LeadPhone,
 			CampaignID: sess.CampaignID,
 			OrgID:      sess.OrgID,
+			UserEmail:  sess.UserEmail,
 			IsExotel:   sess.IsExotel,
 			IsWebSim:   sess.IsWebSim,
 			StartedAt:  sess.CallStart.UTC().Format(time.RFC3339),

@@ -254,7 +254,8 @@ func (e *ExotelClient) FetchRecordingURL(ctx context.Context, callSid string) (s
 }
 
 // NormalizePhone converts an Indian phone number to E.164 format (+91XXXXXXXXXX).
-// Handles 10-digit numbers, numbers with spaces/dashes, and numbers already with +91.
+// Handles 10-digit numbers, 0-prefixed domestic numbers (landline/mobile),
+// numbers with spaces/dashes/parentheses, and numbers already with +91/91.
 func NormalizePhone(phone string) string {
 	// Strip whitespace, dashes, parentheses
 	phone = strings.Map(func(r rune) rune {
@@ -265,6 +266,10 @@ func NormalizePhone(phone string) string {
 	}, phone)
 	if strings.HasPrefix(phone, "+91") {
 		return phone
+	}
+	// Domestic trunk prefix (e.g. 01112345678 or 09876543210).
+	if strings.HasPrefix(phone, "0") {
+		phone = strings.TrimPrefix(phone, "0")
 	}
 	if strings.HasPrefix(phone, "91") && len(phone) == 12 {
 		return "+" + phone
