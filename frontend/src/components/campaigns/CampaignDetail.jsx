@@ -959,7 +959,7 @@ export default function CampaignDetail({
   useEffect(() => {
     if (selectedCampaign.channel === 'whatsapp') return;
     // Fetch all org accounts
-    apiFetch(`${API_URL}/exotel-accounts`)
+    apiFetch(`${API_URL}/exotel-accounts/options`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setOrgExotelAccounts(Array.isArray(data) ? data : []))
       .catch(() => {});

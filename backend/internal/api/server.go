@@ -239,7 +239,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminAuth(s.saveCampaignVoiceSettings))
 	mux.HandleFunc("GET /api/campaigns/{id}/exotel-creds", adminAuth(s.getCampaignExotelCreds))
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-creds", adminAuth(s.saveCampaignExotelCreds))
-	mux.HandleFunc("GET /api/campaigns/{id}/exotel-account", adminAuth(s.getCampaignExotelAccount))
+	mux.HandleFunc("GET /api/campaigns/{id}/exotel-account", adminOrAgent(s.getCampaignExotelAccount))
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-account", adminAuth(s.setCampaignExotelAccount))
 	mux.HandleFunc("POST /api/campaigns/{id}/human-call/{lead_id}", adminOrAgent(s.humanCallLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads/{lead_id}/browser-call", adminOrAgent(s.browserCall))
@@ -251,6 +251,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Org Exotel accounts ───────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/exotel-accounts", adminAuth(s.listExotelAccounts))
+	mux.HandleFunc("GET /api/exotel-accounts/options", auth(s.listExotelAccountOptions))
 	mux.HandleFunc("POST /api/exotel-accounts", adminAuth(s.createExotelAccount))
 	mux.HandleFunc("PUT /api/exotel-accounts/{id}", adminAuth(s.updateExotelAccount))
 	mux.HandleFunc("DELETE /api/exotel-accounts/{id}", adminAuth(s.deleteExotelAccount))

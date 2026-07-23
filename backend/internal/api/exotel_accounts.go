@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+type exotelAccountOption struct {
+	ID         int64  `json:"id"`
+	Provider   string `json:"provider"`
+	Name       string `json:"name"`
+	AccountSID string `json:"account_sid"`
+	CallerID   string `json:"caller_id"`
+	AppType    string `json:"app_type"`
+	Region     string `json:"region"`
+	Subdomain  string `json:"subdomain"`
+}
+
 // ── GET /api/exotel-accounts ─────────────────────────────────────────────────
 
 func (s *Server) listExotelAccounts(w http.ResponseWriter, r *http.Request) {
@@ -17,6 +28,32 @@ func (s *Server) listExotelAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(accounts))
+}
+
+// ── GET /api/exotel-accounts/options ─────────────────────────────────────────
+
+func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	accounts, err := s.db.GetOrgExotelAccounts(ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("listExotelAccountOptions", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	options := make([]exotelAccountOption, 0, len(accounts))
+	for _, a := range accounts {
+		options = append(options, exotelAccountOption{
+			ID:         a.ID,
+			Provider:   a.Provider,
+			Name:       a.Name,
+			AccountSID: a.AccountSID,
+			CallerID:   a.CallerID,
+			AppType:    a.AppType,
+			Region:     a.Region,
+			Subdomain:  a.Subdomain,
+		})
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(options))
 }
 
 // ── POST /api/exotel-accounts ────────────────────────────────────────────────

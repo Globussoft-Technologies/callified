@@ -31,8 +31,33 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
 		summary, err = s.db.GetAllDashboardSummary()
-	} else {
+	} else if user, userErr := s.db.GetUserByEmail(ac.Email); userErr != nil {
+		s.logger.Sugar().Errorw("dashboardSummary", "err", userErr)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if user == nil {
+		writeError(w, http.StatusUnauthorized, "invalid user")
+		return
+	} else if user.Role == db.RoleAdmin {
 		summary, err = s.db.GetOrgDashboardSummary(ac.OrgID)
+	} else {
+		campaigns, campErr := s.listCampaignsForUser(ac)
+		if campErr != nil {
+			s.logger.Sugar().Errorw("dashboardSummary", "err", campErr)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		campaignIDs := make([]int64, 0, len(campaigns))
+		for _, c := range campaigns {
+			campaignIDs = append(campaignIDs, c.ID)
+		}
+		execIDs, applyExecFilter, execErr := s.leadAccessExecIDs(ac)
+		if execErr != nil {
+			s.logger.Sugar().Errorw("dashboardSummary", "err", execErr)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		summary, err = s.db.GetDashboardSummaryForCampaigns(ac.OrgID, campaignIDs, execIDs, applyExecFilter)
 	}
 	if err != nil {
 		s.logger.Sugar().Errorw("dashboardSummary", "err", err)

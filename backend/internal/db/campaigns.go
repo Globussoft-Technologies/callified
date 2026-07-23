@@ -729,6 +729,50 @@ func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
 	return s, err
 }
 
+// GetDashboardSummaryForCampaigns returns dashboard totals scoped to a set of
+// visible campaigns and, optionally, a subset of visible executive IDs. This
+// keeps the CRM dashboard in sync with RBAC-filtered campaign and lead access.
+func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs []int64, applyExecFilter bool) (OrgDashboardSummary, error) {
+	var s OrgDashboardSummary
+	if len(campaignIDs) == 0 {
+		return s, nil
+	}
+
+	campaignPlaceholders := strings.Repeat("?,", len(campaignIDs)-1) + "?"
+	campaignArgs := make([]any, 0, 1+len(campaignIDs))
+	campaignArgs = append(campaignArgs, orgID)
+	for _, id := range campaignIDs {
+		campaignArgs = append(campaignArgs, id)
+	}
+
+	if err := d.pool.QueryRow(
+		`SELECT COUNT(*) FROM campaigns
+		  WHERE org_id=? AND status='active' AND id IN (`+campaignPlaceholders+`)`,
+		campaignArgs...,
+	).Scan(&s.Campaigns); err != nil {
+		return s, err
+	}
+
+	leadQuery := `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
+			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
+			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
+		JOIN campaigns c ON c.id = cl.campaign_id
+		WHERE c.org_id=? AND c.id IN (` + campaignPlaceholders + `)`
+	leadArgs := append([]any{}, campaignArgs...)
+	if clause, args := execFilterClause(execIDs, applyExecFilter); clause != "" {
+		leadQuery += ` AND ` + clause
+		leadArgs = append(leadArgs, args...)
+	}
+
+	err := d.pool.QueryRow(leadQuery, leadArgs...).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
+	return s, err
+}
+
 // GetCampaignStats returns 4 aggregate metrics for a campaign.
 // When applyExecFilter is true, only leads whose executive_id is in execIDs are counted.
 func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter bool) (CampaignStats, error) {
