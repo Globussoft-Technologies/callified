@@ -441,6 +441,8 @@ type CampaignLead struct {
 	NextScheduledAt         string `json:"next_scheduled_at,omitempty"`
 	HasPendingScheduledCall bool   `json:"has_pending_scheduled_call"`
 	ScheduledCallID         int64  `json:"scheduled_call_id"`
+	ScheduledCallMode       string `json:"scheduled_call_mode,omitempty"`
+	ScheduledCallNotes      string `json:"scheduled_call_notes,omitempty"`
 }
 
 // GetCampaignLeads returns all leads in a campaign with call stats.
@@ -474,29 +476,35 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 		COALESCE(ct.dial_attempts, 0) AS dial_attempts,
 		DATE_FORMAT(pc.scheduled_at, '%Y-%m-%dT%H:%i:%sZ') AS next_scheduled_at,
 		pc.scheduled_at IS NOT NULL AS has_pending_scheduled_call,
-		NULL AS scheduled_call_id
+		COALESCE(pc.id, 0) AS scheduled_call_id,
+		COALESCE(pc.mode, '') AS scheduled_call_mode,
+		COALESCE(pc.notes, '') AS scheduled_call_notes
 	 FROM campaign_leads cl2
 	 JOIN leads l ON l.id = cl2.lead_id
 	 LEFT JOIN (
 		SELECT lead_id,
 			COUNT(*) AS dial_attempts,
-			SUM(CASE WHEN call_duration_s > 5 THEN 1 ELSE 0 END) AS transcript_count,
+			COUNT(*) AS transcript_count,
 			SUM(CASE WHEN recording_url IS NOT NULL AND recording_url != '' THEN 1 ELSE 0 END) AS recording_count
 		FROM call_transcripts
-		WHERE campaign_id = ?
 		GROUP BY lead_id
 	 ) ct ON ct.lead_id = l.id
 	 LEFT JOIN (
-		SELECT lead_id, MIN(scheduled_at) AS scheduled_at
-		FROM scheduled_calls
-		WHERE campaign_id = ? AND status = 'pending'
-		  AND scheduled_at >= COALESCE(NULLIF(?, ''), scheduled_at)
-		  AND scheduled_at <= COALESCE(NULLIF(?, ''), scheduled_at)
-		GROUP BY lead_id
+		SELECT sc1.lead_id, sc1.id, sc1.scheduled_at, COALESCE(sc1.mode, 'manual') AS mode, COALESCE(sc1.notes, '') AS notes
+		FROM scheduled_calls sc1
+		JOIN (
+			SELECT lead_id, MIN(scheduled_at) AS scheduled_at
+			FROM scheduled_calls
+			WHERE campaign_id = ? AND status = 'pending'
+			  AND scheduled_at >= COALESCE(NULLIF(?, ''), scheduled_at)
+			  AND scheduled_at <= COALESCE(NULLIF(?, ''), scheduled_at)
+			GROUP BY lead_id
+		) picked ON picked.lead_id = sc1.lead_id AND picked.scheduled_at = sc1.scheduled_at
+		WHERE sc1.campaign_id = ? AND sc1.status = 'pending'
 	 ) pc ON pc.lead_id = l.id
 	 WHERE cl2.campaign_id = ?
 	   AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)`
-	args := []any{filter.CampaignID, filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
+	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, filter.CampaignID, search, search, search, search, search}
 	if len(filter.ExecIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
 		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
@@ -568,12 +576,13 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	var nextScheduled sql.NullString
 	var hasPending sql.NullBool
 	var scheduledCallID sql.NullInt64
+	var scheduledCallMode, scheduledCallNotes sql.NullString
 	err := row.Scan(
 		&cl.ID, &orgIDInt, &cl.FirstName, &cl.LastName, &cl.Phone,
 		&cl.Source, &cl.Status, &followUpNote, &followUpAt, &interest, &company, &extID, &crmProvider,
 		&executiveID, &cl.CreatedAt,
 		&cl.TranscriptCount, &cl.RecordingCount, &cl.DialAttempts,
-		&nextScheduled, &hasPending, &scheduledCallID,
+		&nextScheduled, &hasPending, &scheduledCallID, &scheduledCallMode, &scheduledCallNotes,
 	)
 	if err != nil {
 		return nil, err
@@ -599,6 +608,8 @@ func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error
 	if scheduledCallID.Valid {
 		cl.ScheduledCallID = scheduledCallID.Int64
 	}
+	cl.ScheduledCallMode = scheduledCallMode.String
+	cl.ScheduledCallNotes = scheduledCallNotes.String
 	return cl, nil
 }
 

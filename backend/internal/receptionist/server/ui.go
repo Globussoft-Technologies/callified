@@ -430,7 +430,13 @@ async function send(text){
   const meta='intent: '+d.intent+(d.metadata&&Object.keys(d.metadata).length?' • '+JSON.stringify(d.metadata):'');
   addMsg('bot',d.message,{emergency:d.is_emergency,meta});
   await speak(d.message);
-  if(d.state==='ended'){input.disabled=true;setMic('off');setStatus('Call ended. Click "New call".');return;}
+  if(d.state==='ended'){
+    setMic('off');
+    setStatus('Conversation ended. Type a message to continue or click "New chat".');
+    input.disabled=false;
+    input.focus();
+    return;
+  }
   // Auto-engage mic for the next caller turn (works for both normal
   // and emergency-followup states — caller still needs to speak).
   setStatus(recog?'Listening… go ahead.':'Type a message and press Enter.');

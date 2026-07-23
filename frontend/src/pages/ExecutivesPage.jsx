@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useConfirm } from '../contexts/UIContext';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
 
 const T = {
@@ -30,6 +31,7 @@ const EMPTY_FORM = { name: '', email: '', phone: '' };
 
 export default function ExecutivesPage() {
   const { apiFetch } = useAuth();
+  const confirm = useConfirm();
   const [executives, setExecutives] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -92,7 +94,13 @@ export default function ExecutivesPage() {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Delete this executive? Leads assigned to them will become unassigned.')) return;
+    if (!await confirm({
+      title: 'Delete Executive',
+      message: 'Delete this executive? Leads assigned to them will become unassigned.',
+      okText: 'Delete',
+      cancelText: 'Cancel',
+      danger: true,
+    })) return;
     try {
       await apiFetch(`${API_URL}/executives/${id}`, { method: 'DELETE' });
       fetchExecutives();

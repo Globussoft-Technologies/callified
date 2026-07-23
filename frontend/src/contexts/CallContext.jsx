@@ -316,8 +316,13 @@ export function CallProvider({ children }) {
     }
   }, []);
 
-  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId) => {
+  const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId, scheduledCallId) => {
     if (!lead || !campaignId) return false;
+    const accountId = exotelAccountId && !isNaN(exotelAccountId) ? parseInt(exotelAccountId, 10) : getBrowserAccountId(campaignId);
+    if (!accountId) {
+      toast({ message: 'Select a browser call account before calling', kind: 'error' });
+      return false;
+    }
     try {
       await ensureMicrophoneAvailable();
     } catch (e) {
@@ -330,11 +335,13 @@ export function CallProvider({ children }) {
     setBrowserCallSid(null);
     setBrowserCallDialing(true);
     try {
-      const accountId = exotelAccountId && !isNaN(exotelAccountId) ? parseInt(exotelAccountId, 10) : getBrowserAccountId(campaignId);
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads/${lead.id}/browser-call`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ exotel_account_id: accountId || 0 }),
+        body: JSON.stringify({
+          exotel_account_id: accountId || 0,
+          scheduled_call_id: scheduledCallId || 0,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `Browser call failed (HTTP ${res.status})`);
@@ -368,7 +375,7 @@ export function CallProvider({ children }) {
       first_name: call.first_name || 'Customer',
       phone: call.phone || '',
     };
-    triggerBrowserCall(lead, call.campaign_id);
+    triggerBrowserCall(lead, call.campaign_id, undefined, undefined, call.id);
   }, [scheduledCallbackPreview, triggerBrowserCall]);
 
   const dismissScheduledCallbackPreview = useCallback(() => {

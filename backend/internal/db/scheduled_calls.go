@@ -246,6 +246,34 @@ func (d *DB) UpdateScheduledCallStatus(id int64, status string) error {
 	return err
 }
 
+// ClaimScheduledCallForManualDial moves a due manual callback from pending to
+// dialing for the user who scheduled it. This prevents the same callback from
+// reappearing on refresh once the agent has already started handling it.
+func (d *DB) ClaimScheduledCallForManualDial(orgID, id, scheduledByUserID, leadID, campaignID int64) (bool, error) {
+	res, err := d.pool.Exec(`
+		UPDATE scheduled_calls
+		SET status='dialing'
+		WHERE id=? AND org_id=? AND scheduled_by_user_id=? AND lead_id=?
+		  AND COALESCE(campaign_id,0)=? AND mode='manual' AND status='pending'`,
+		id, orgID, scheduledByUserID, leadID, campaignID)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// ResetScheduledCallToPending restores a claimed callback if the browser-call
+// initiation fails before the call is actually placed.
+func (d *DB) ResetScheduledCallToPending(orgID, id, scheduledByUserID int64) error {
+	_, err := d.pool.Exec(`
+		UPDATE scheduled_calls
+		SET status='pending'
+		WHERE id=? AND org_id=? AND scheduled_by_user_id=? AND mode='manual' AND status='dialing'`,
+		id, orgID, scheduledByUserID)
+	return err
+}
+
 // CancelScheduledCall marks a pending call as cancelled. If userID > 0, the
 // call must have been created by that user (non-admin scope). Returns true if
 // updated.

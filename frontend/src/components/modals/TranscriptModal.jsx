@@ -158,6 +158,13 @@ function isHumanCallStub(turns) {
   return turns.some(t => t.role === 'system' && (t.content || t.text || '').includes('Human call'));
 }
 
+function isBrowserOrManualTranscript(turns) {
+  if (isHumanCallStub(turns)) return true;
+  if (!Array.isArray(turns)) return false;
+  const spokenTurns = turns.filter(turn => turn.role !== 'system');
+  return spokenTurns.length === 0;
+}
+
 export default function TranscriptModal({ transcriptLead, setTranscriptLead, transcripts, orgTimezone, onRefresh }) {
   const [refreshing, setRefreshing] = useState(false);
   const list = Array.isArray(transcripts) ? transcripts : [];
@@ -238,6 +245,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
           ) : (
             list.map((t, idx) => {
               const agentName = extractAgentName(t.transcript);
+              const hideLanguageTag = isBrowserOrManualTranscript(t.transcript);
               return (
                 <div key={t.id || idx} style={{
                   marginBottom: 16, background: T.bg, borderRadius: 12,
@@ -250,7 +258,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                       <span style={{ fontSize: '0.8rem', color: T.muted }}>{formatDateTime(t.created_at, orgTimezone)}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      {t.tts_language && (
+                      {t.tts_language && !hideLanguageTag && (
                         <span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.72rem', fontWeight: 600, border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6, padding: '2px 8px' }}>
                           🗣 {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}
                         </span>

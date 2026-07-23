@@ -4,7 +4,6 @@ import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
 import { formatDateTime } from '../utils/dateFormat';
-import NotificationBell from './NotificationBell';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
@@ -389,9 +388,6 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             </div>
           )}
         </div>
-
-        {/* In-app notifications (campaign assignments, etc.) */}
-        <NotificationBell apiFetch={apiFetch} />
 
         {/* User avatar + name */}
         {currentUser && (

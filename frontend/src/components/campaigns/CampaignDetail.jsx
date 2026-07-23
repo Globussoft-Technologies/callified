@@ -368,6 +368,7 @@ export default function CampaignDetail({
   const [scheduleAt, setScheduleAt] = useState('');
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleMode, setScheduleMode] = useState('manual');
+  const [scheduleEditingCallId, setScheduleEditingCallId] = useState(0);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
   const [scheduleError, setScheduleError] = useState('');
@@ -403,6 +404,20 @@ export default function CampaignDetail({
   // the campaign default used by AI/server calls.
   const [browserAccountId, setBrowserAccountId] = useState('');
   const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
+
+  const openScheduleModal = useCallback((lead, editing = false) => {
+    setScheduleEditingCallId(editing ? Number(lead?.scheduled_call_id || 0) : 0);
+    setScheduleLead(lead);
+    setScheduleStatus({ kind: '', text: '' });
+    setScheduleError('');
+  }, []);
+
+  const closeScheduleModal = useCallback(() => {
+    setScheduleLead(null);
+    setScheduleEditingCallId(0);
+    setScheduleStatus({ kind: '', text: '' });
+    setScheduleError('');
+  }, []);
 
   useEffect(() => {
     setExecFilter([]);
@@ -587,7 +602,15 @@ export default function CampaignDetail({
   const [qaApiErr, setQaApiErr] = useState('');
 
   const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
+  const requireSelectedDialAccount = useCallback(() => {
+    const selected = String(browserAccountId || '').trim();
+    if (selected) return true;
+    toast('Select a browser call account before dialing');
+    return false;
+  }, [browserAccountId, toast]);
+
   const handleDialClick = async (lead) => {
+    if (!requireSelectedDialAccount()) return;
     onCampaignDial(lead, selectedCampaign.id);
     try {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(lead.phone || '')}`);
@@ -742,6 +765,7 @@ export default function CampaignDetail({
   }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, browserAccountId, toast]);
 
   const startBrowserCallWithAutoDial = async (lead) => {
+    if (!requireSelectedDialAccount()) return;
     const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
     if (started && autoDialEnabled) {
       setAutoDialActiveId(lead.id);
@@ -774,13 +798,22 @@ export default function CampaignDetail({
   // Pre-fill date/time to current time every time the modal opens for a lead.
   useEffect(() => {
     if (!scheduleLead) return;
+    if (scheduleEditingCallId) {
+      const d = scheduleLead.next_scheduled_at ? new Date(scheduleLead.next_scheduled_at) : new Date();
+      const p = n => String(n).padStart(2, '0');
+      setScheduleAt(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`);
+      setScheduleNotes(scheduleLead.scheduled_call_notes || '');
+      setScheduleError('');
+      setScheduleMode(scheduleLead.scheduled_call_mode || 'manual');
+      return;
+    }
     const d = new Date();
     const p = n => String(n).padStart(2, '0');
     setScheduleAt(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`);
     setScheduleNotes('');
     setScheduleError('');
     setScheduleMode('manual');
-  }, [scheduleLead]);
+  }, [scheduleLead, scheduleEditingCallId]);
 
   const handleScheduleCall = async () => {
     if (!scheduleLead || !scheduleAt) return;
@@ -1386,6 +1419,7 @@ export default function CampaignDetail({
         {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
+              if (!requireSelectedDialAccount()) return;
               const newCount = (campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length;
               if (!await confirm({ message: `Dial ALL ${newCount} new leads? (30s gap between calls)` })) return;
               try {
@@ -1401,6 +1435,7 @@ export default function CampaignDetail({
         )}
         {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
+            if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
             try {
               const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, { method: 'POST' });
@@ -2026,12 +2061,14 @@ export default function CampaignDetail({
                         )}
                         <button
                           onClick={() => handleViewTranscripts(lead)}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: lead.transcript_count > 0 ? 600 : 400,
-                            background: lead.transcript_count > 0 ? 'rgba(16,185,129,0.08)' : T.bg,
-                            color: lead.transcript_count > 0 ? '#065f46' : T.muted,
-                            border: lead.transcript_count > 0 ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
+                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
+                            background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
+                            color: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '#065f46' : T.muted,
+                            border: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
                           }}>
-                          {lead.transcript_count > 0 ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}` : '📋 No Calls'}
+                          {lead.transcript_count > 0
+                            ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}`
+                            : (lead.recording_count > 0 || lead.dial_attempts > 0) ? '📋 Call History' : '📋 No Calls'}
                           {lead.recording_count > 0 && ' 🔊'}
                           {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
                         </button>
@@ -2042,11 +2079,7 @@ export default function CampaignDetail({
                         </button>
                         <button
                           onClick={() => {
-                            setScheduleLead(lead);
-                            const d = new Date(Date.now() + 60 * 60 * 1000);
-                            const pad = n => String(n).padStart(2, '0');
-                            setScheduleAt(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
-                            setScheduleNotes('');
+                            openScheduleModal(lead, false);
                           }}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📅 Schedule
@@ -2068,37 +2101,52 @@ export default function CampaignDetail({
                           Remove
                         </button>
                         {lead.has_pending_scheduled_call && lead.next_scheduled_at && (
-                          <span style={{
-                            fontSize: 11, padding: '4px 10px', borderRadius: 6,
-                            background: 'rgba(59,130,246,0.12)', color: '#1e40af',
-                            border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
-                            fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6
-                          }}>
+                          <button
+                            onClick={() => openScheduleModal(lead, true)}
+                            title="Edit scheduled call"
+                            style={{
+                              position: 'relative',
+                              fontSize: 11, padding: '4px 28px 4px 10px', borderRadius: 6,
+                              background: 'rgba(59,130,246,0.12)', color: '#1e40af',
+                              border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
+                              fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6,
+                              cursor: 'pointer'
+                            }}>
                             📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}
                             {lead.scheduled_call_id > 0 && (
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation();
                                   try {
+                                    const ok = await confirm({
+                                      title: 'Cancel Scheduled Call',
+                                      message: `Cancel the scheduled call for ${lead.first_name || 'this lead'}?`,
+                                      danger: true,
+                                      okText: 'Cancel Call',
+                                      cancelText: 'Keep It',
+                                    });
+                                    if (!ok) return;
                                     const res = await apiFetch(`${API_URL}/scheduled-calls/${lead.scheduled_call_id}`, { method: 'DELETE' });
-                                    if (!res.ok) throw new Error('Failed to dismiss scheduled call');
-                                    toast('Scheduled call dismissed');
+                                    if (!res.ok) throw new Error('Failed to cancel scheduled call');
+                                    toast('Scheduled call cancelled');
                                     fetchCampaignLeads(selectedCampaign.id);
                                     refreshScheduledCalls?.();
                                   } catch (err) {
-                                    toast(err?.message || 'Dismiss failed');
+                                    toast(err?.message || 'Cancel failed');
                                   }
                                 }}
-                                title="Dismiss scheduled call"
+                                title="Cancel scheduled call"
                                 style={{
-                                  background: 'rgba(59,130,246,0.2)', border: 'none', borderRadius: 4,
-                                  color: '#1e40af', cursor: 'pointer', fontSize: 10, lineHeight: 1,
-                                  padding: '2px 4px', fontWeight: 700
+                                  position: 'absolute', top: 2, right: 4,
+                                  width: 16, height: 16, padding: 0, cursor: 'pointer',
+                                  background: 'rgba(254,226,226,0.95)', border: '1px solid #fca5a5',
+                                  color: T.red, borderRadius: 999, fontWeight: 700, fontFamily: T.font,
+                                  fontSize: 10, lineHeight: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
                                 }}>
-                                ✕
+                                🗑
                               </button>
                             )}
-                          </span>
+                          </button>
                         )}
                       </div>
                     </td>
@@ -2254,15 +2302,15 @@ export default function CampaignDetail({
       {scheduleLead && (
         <div
           className="modal-overlay"
-          onClick={e => { if (e.target === e.currentTarget) setScheduleLead(null); }}
+          onClick={e => { if (e.target === e.currentTarget) closeScheduleModal(); }}
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Schedule Call</h3>
-              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>{scheduleEditingCallId ? '📅 Edit Scheduled Call' : '📅 Schedule Call'}</h3>
+              <button onClick={closeScheduleModal}
                 style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
@@ -2317,7 +2365,7 @@ export default function CampaignDetail({
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
-              <button onClick={() => { setScheduleLead(null); setScheduleStatus({ kind: '', text: '' }); }}
+              <button onClick={closeScheduleModal}
                 style={{ ...btnGhost }}>
                 Cancel
               </button>
@@ -2353,9 +2401,8 @@ export default function CampaignDetail({
                         text: 'Failed to schedule: ' + (data.error || data.detail || res.status) });
                     } else {
                       const data = await res.json().catch(() => ({}));
-                      setScheduleLead(null);
-                      setScheduleStatus({ kind: '', text: '' });
-                      toast('Call scheduled');
+                      closeScheduleModal();
+                      toast(scheduleEditingCallId ? 'Scheduled call updated' : 'Call scheduled');
                       fetchCampaignLeads(selectedCampaign.id);
                       refreshScheduledCalls?.();
                       if (data.id) clearDismissedScheduledCall?.(data.id);
@@ -2364,7 +2411,7 @@ export default function CampaignDetail({
                   }
                   setScheduleSaving(false);
                 }}>
-                {scheduleSaving ? 'Scheduling…' : 'Schedule Call'}
+                {scheduleSaving ? (scheduleEditingCallId ? 'Saving…' : 'Scheduling…') : (scheduleEditingCallId ? 'Save Changes' : 'Schedule Call')}
               </button>
             </div>
           </div>

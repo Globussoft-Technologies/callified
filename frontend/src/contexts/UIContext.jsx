@@ -28,20 +28,20 @@ function ensureStyles() {
 .uip-toast .uip-toast-x{background:transparent;border:none;color:#94a3b8;cursor:pointer;font-size:18px;line-height:1;padding:0 4px;}
 .uip-toast .uip-toast-x:hover{color:#e2e8f0;}
 @keyframes uip-toast-in{from{transform:translateX(20px);opacity:0;}to{transform:translateX(0);opacity:1;}}
-.uip-modal-overlay{position:fixed;inset:0;background:rgba(2,6,23,.7);display:flex;align-items:center;justify-content:center;z-index:99998;animation:uip-fade-in .15s ease-out;}
-.uip-modal{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:12px;padding:22px;width:min(440px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(0,0,0,.5);}
-.uip-modal-title{margin:0 0 8px;font-size:16px;font-weight:600;}
-.uip-modal-msg{margin:0 0 18px;font-size:14px;line-height:1.5;color:#cbd5e1;white-space:pre-wrap;}
-.uip-modal-input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:18px;box-sizing:border-box;}
-.uip-modal-input:focus{box-shadow:0 0 0 2px #2563eb;}
+.uip-modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.28);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:99998;animation:uip-fade-in .15s ease-out;}
+.uip-modal{background:#ffffff;color:#111827;border:1px solid #e5e7eb;border-radius:16px;padding:22px;width:min(440px,calc(100vw - 40px));box-shadow:0 20px 60px rgba(15,23,42,.18);}
+.uip-modal-title{margin:0 0 8px;font-size:16px;font-weight:700;color:#111827;}
+.uip-modal-msg{margin:0 0 18px;font-size:14px;line-height:1.5;color:#4b5563;white-space:pre-wrap;}
+.uip-modal-input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #d1d5db;background:#ffffff;color:#111827;font-size:14px;outline:none;margin-bottom:18px;box-sizing:border-box;}
+.uip-modal-input:focus{box-shadow:0 0 0 3px rgba(99,102,241,.18);border-color:#818cf8;}
 .uip-modal-actions{display:flex;gap:8px;justify-content:flex-end;}
 .uip-btn{padding:8px 16px;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;}
 .uip-btn-primary{background:#2563eb;color:#fff;}
 .uip-btn-primary:hover{background:#1d4ed8;}
 .uip-btn-danger{background:#dc2626;color:#fff;}
 .uip-btn-danger:hover{background:#b91c1c;}
-.uip-btn-secondary{background:#475569;color:#e2e8f0;}
-.uip-btn-secondary:hover{background:#334155;}
+.uip-btn-secondary{background:#f3f4f6;color:#374151;border:1px solid #d1d5db;}
+.uip-btn-secondary:hover{background:#e5e7eb;}
 @keyframes uip-fade-in{from{opacity:0;}to{opacity:1;}}
 `;
   document.head.appendChild(el);

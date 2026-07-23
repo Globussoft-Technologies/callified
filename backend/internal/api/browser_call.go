@@ -63,8 +63,33 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		ExotelAccountID int64 `json:"exotel_account_id"`
+		ScheduledCallID int64 `json:"scheduled_call_id"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	var scheduledByUserID int64
+	if body.ScheduledCallID > 0 {
+		u, err := s.db.GetUserByEmail(ac.Email)
+		if err != nil || u == nil {
+			writeError(w, http.StatusUnauthorized, "invalid user")
+			return
+		}
+		scheduledByUserID = u.ID
+		claimed, err := s.db.ClaimScheduledCallForManualDial(ac.OrgID, body.ScheduledCallID, scheduledByUserID, lead.ID, campaignID)
+		if err != nil {
+			s.logger.Warn("browserCall: claim scheduled call failed",
+				zap.Int64("scheduled_call_id", body.ScheduledCallID),
+				zap.Int64("lead_id", leadID),
+				zap.Int64("campaign_id", campaignID),
+				zap.Error(err))
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !claimed {
+			writeError(w, http.StatusConflict, "scheduled callback is no longer pending")
+			return
+		}
+	}
 
 	data := dial.CallData{
 		LeadID:      lead.ID,
@@ -83,6 +108,13 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 
 	callSid, err := s.initiator.Initiate(r.Context(), data)
 	if err != nil {
+		if body.ScheduledCallID > 0 && scheduledByUserID > 0 {
+			if resetErr := s.db.ResetScheduledCallToPending(ac.OrgID, body.ScheduledCallID, scheduledByUserID); resetErr != nil {
+				s.logger.Warn("browserCall: reset scheduled call failed",
+					zap.Int64("scheduled_call_id", body.ScheduledCallID),
+					zap.Error(resetErr))
+			}
+		}
 		s.logger.Warn("browserCall: initiate failed",
 			zap.Int64("lead_id", leadID),
 			zap.Int64("campaign_id", campaignID),
