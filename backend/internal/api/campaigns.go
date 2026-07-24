@@ -960,11 +960,18 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 		addedToCampaign, _ = s.db.AddLeadsToCampaign(campaignID, addIDs)
 	}
 
+	const maxReturnedRejected = 500
+	rejectedTotal := len(rejected)
+	if rejectedTotal > maxReturnedRejected {
+		rejected = rejected[:maxReturnedRejected]
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"imported":          imported,
 		"added_to_campaign": addedToCampaign,
 		"updated":           updatedNames,
 		"rejected":          rejected,
+		"rejected_total":    rejectedTotal,
 		"errors":            remainingErrors,
 	})
 }

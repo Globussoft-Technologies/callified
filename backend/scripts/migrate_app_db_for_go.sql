@@ -105,10 +105,18 @@ UPDATE call_retries SET attempts = attempt_number, next_attempt_at = retry_after
 
 CALL add_col_if_missing('webhooks', 'event', 'VARCHAR(100) DEFAULT NULL');
 CALL add_col_if_missing('webhooks', 'secret_key', 'VARCHAR(255) DEFAULT NULL');
+CALL add_col_if_missing('webhooks', 'active', 'TINYINT(1) DEFAULT 1');
 
 -- If Python stored a JSON array in `events`, copy the first element to the Go column.
 UPDATE webhooks SET event = JSON_UNQUOTE(JSON_EXTRACT(events, '$[0]'))
   WHERE event IS NULL AND JSON_VALID(events) AND JSON_LENGTH(events) > 0;
+
+-- Back-fill Go columns from legacy Python columns.
+UPDATE webhooks SET secret_key = secret
+  WHERE secret_key IS NULL AND secret IS NOT NULL AND secret <> '';
+
+UPDATE webhooks SET active = COALESCE(is_active, 1)
+  WHERE active IS NULL;
 
 CALL add_col_if_missing('webhook_logs', 'status_code', 'INT DEFAULT NULL');
 CALL add_col_if_missing('webhook_logs', 'response', 'TEXT DEFAULT NULL');
