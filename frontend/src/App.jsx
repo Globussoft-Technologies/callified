@@ -123,7 +123,7 @@ export default function App() {
     );
   }
 
-  if (!authToken || !currentUser) {
+  if (!currentUser) {
     return <AuthPage redirectTo={location.pathname !== '/reset-password' ? location.pathname : '/crm'} />;
   }
 

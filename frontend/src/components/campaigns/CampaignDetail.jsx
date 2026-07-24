@@ -300,8 +300,7 @@ function AuthAudioPlayer({ src, style }) {
   React.useEffect(() => {
     if (!src) return;
     let objectUrl;
-    const token = localStorage.getItem('authToken');
-    fetch(src, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    fetch(src, { credentials: 'include' })
       .then(r => { if (!r.ok) throw new Error(r.status); return r.blob(); })
       .then(blob => { objectUrl = URL.createObjectURL(blob); setBlobUrl(objectUrl); })
       .catch(() => setErr(true));

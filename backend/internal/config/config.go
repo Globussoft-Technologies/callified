@@ -49,11 +49,14 @@ type Config struct {
 	// Recordings directory (local fallback when S3 is not configured)
 	RecordingsDir string `env:"RECORDINGS_DIR" envDefault:"recordings"`
 
-	// S3 storage for recordings (optional — if set, recordings go to S3)
-	S3Bucket          string `env:"S3_BUCKET"`
-	S3Region          string `env:"S3_REGION"           envDefault:"ap-south-1"`
-	AWSAccessKeyID    string `env:"AWS_ACCESS_KEY_ID"`
+	// Object storage for recordings (S3 or Oracle Cloud — optional)
+	S3Bucket           string `env:"S3_BUCKET"`
+	S3Region           string `env:"S3_REGION"            envDefault:"ap-south-1"`
+	AWSAccessKeyID     string `env:"AWS_ACCESS_KEY_ID"`
 	AWSSecretAccessKey string `env:"AWS_SECRET_ACCESS_KEY"`
+	// Oracle Cloud Object Storage (S3-compatible). When OCI_NAMESPACE is set,
+	// the S3 client uses Oracle's endpoint and URL format instead of AWS.
+	OCIEndpoint string `env:"OCI_ENDPOINT"`
 
 	// OCI Object Storage for recordings (optional — if set, takes precedence over S3)
 	OCIRegion          string `env:"OCI_REGION"`

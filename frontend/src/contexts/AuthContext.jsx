@@ -27,27 +27,14 @@ function clearBrowserData() {
   }
 }
 
-// Safely parse a cached user blob from localStorage.
-function loadCachedUser() {
-  try {
-    const raw = localStorage.getItem('currentUser');
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 export function AuthProvider({ children }) {
-  const [authToken, setAuthToken] = useState(localStorage.getItem('authToken') || null);
-  // Seed currentUser from localStorage so the dashboard renders instantly on
-  // refresh — no login-page flash, no loading splash. /auth/me revalidates in
-  // the background and clears the session if the token is no longer good.
-  const [currentUser, setCurrentUser] = useState(loadCachedUser);
+  const [authToken, setAuthToken] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   // authReady becomes true once /auth/me has run (or when there's no token).
   // apiFetch only calls clearSession on 401 after authReady=true to avoid a
   // race where a component's first fetch clears a stale-but-not-yet-validated
   // token before /auth/me gets a chance to do it cleanly.
-  const [authReady, setAuthReady] = useState(!localStorage.getItem('authToken'));
+  const [authReady, setAuthReady] = useState(false);
 
   const clearSession = useCallback(() => {
     setAuthToken(null);
@@ -59,7 +46,11 @@ export function AuthProvider({ children }) {
   const apiFetch = useCallback(async (url, options = {}) => {
     const res = await fetch(url, {
       ...options,
-      headers: { ...options.headers, 'Authorization': `Bearer ${authToken}` }
+      credentials: 'include',
+      headers: {
+        ...options.headers,
+        ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+      },
     });
     if (res.status === 401) {
       if (authReady) clearSession();
@@ -84,22 +75,23 @@ export function AuthProvider({ children }) {
   // Sets authReady=true when done so apiFetch knows it's safe to clear the
   // session on 401 (rather than racing with this check on first render).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (!authToken) { setAuthReady(true); return; }
     setAuthReady(false);
-    fetch(`${API_URL}/auth/me`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+    fetch(`${API_URL}/auth/me`, { credentials: 'include', headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {} })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(u => {
         setCurrentUser(u);
-        localStorage.setItem('currentUser', JSON.stringify(u));
         setAuthReady(true);
       })
-      .catch(() => clearSession());
+      .catch(() => {
+        setAuthToken(null);
+        setCurrentUser(null);
+        setAuthReady(true);
+      });
   }, [authToken, clearSession]);
 
   const login = async (email, password) => {
     const res = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ email, password })
     });
     if (!res.ok) {
@@ -115,8 +107,6 @@ export function AuthProvider({ children }) {
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
-    localStorage.setItem('authToken', data.access_token);
-    localStorage.setItem('currentUser', JSON.stringify(data.user));
     return data;
   };
 
@@ -125,7 +115,7 @@ export function AuthProvider({ children }) {
 
   const signup = async (orgName, fullName, email, password) => {
     const res = await fetch(`${API_URL}/auth/signup`, {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ org_name: orgName, full_name: fullName, email, password })
     });
     if (!res.ok) {
@@ -141,16 +131,18 @@ export function AuthProvider({ children }) {
     const data = await res.json();
     setAuthToken(data.access_token);
     setCurrentUser(data.user);
-    localStorage.setItem('authToken', data.access_token);
-    localStorage.setItem('currentUser', JSON.stringify(data.user));
     return data;
   };
 
   const logout = useCallback(() => {
-    clearSession();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/';
-    }
+    fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' })
+      .catch(() => {})
+      .finally(() => {
+        clearSession();
+        if (typeof window !== 'undefined') {
+          window.location.href = '/';
+        }
+      });
   }, [clearSession]);
 
   // loginWithToken finishes an SSO handshake. The backend already minted our
@@ -158,23 +150,24 @@ export function AuthProvider({ children }) {
   // commits the token and pulls the canonical user profile from /auth/me so
   // the SPA boots into the same shape as a regular password login.
   const loginWithToken = async (token) => {
-    setAuthToken(token);
-    localStorage.setItem('authToken', token);
-    const res = await fetch(`${API_URL}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const res = await fetch(`${API_URL}/auth/session`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
     });
     if (!res.ok) {
       clearSession();
-      throw new Error('SSO token rejected by /auth/me');
+      throw new Error('SSO token rejected');
     }
-    const user = await res.json();
-    setCurrentUser(user);
-    localStorage.setItem('currentUser', JSON.stringify(user));
-    return user;
+    const data = await res.json();
+    setAuthToken(token);
+    setCurrentUser(data.user);
+    return data.user;
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, loading: !authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures }}>
       {children}
     </AuthContext.Provider>
   );

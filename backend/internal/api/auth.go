@@ -6,12 +6,52 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/globussoft/callified-backend/internal/db"
 )
+
+const sessionCookieName = "callified_session"
+
+func cookieSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	host := strings.ToLower(r.Host)
+	return host != "" && !strings.HasPrefix(host, "localhost") && !strings.HasPrefix(host, "127.0.0.1")
+}
+
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(r),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(tokenTTL.Seconds()),
+		Expires:  time.Now().Add(tokenTTL),
+	})
+}
+
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   cookieSecure(r),
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+		Expires:  time.Unix(0, 0),
+	})
+}
 
 // ── POST /api/auth/signup ─────────────────────────────────────────────────────
 
@@ -103,6 +143,7 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.setSessionCookie(w, r, token)
 
 	// Match Python auth.py:202 — return a nested `user` object with
 	// org_name, so AuthContext.signup's `setCurrentUser(data.user)` gets
@@ -145,6 +186,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password required")
 		return
 	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	clientIP := loginClientIP(r)
+	now := time.Now()
+	if s.loginLimiter != nil {
+		if retryAfter, blocked := s.loginLimiter.check(clientIP, req.Email, now); blocked {
+			writeLoginRateLimitError(w, retryAfter)
+			return
+		}
+	}
 
 	user, err := s.db.GetUserByEmail(req.Email)
 	if err != nil {
@@ -153,8 +203,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil || !db.CheckPassword(req.Password, user.PasswordHash) {
+		if s.loginLimiter != nil {
+			if retryAfter := s.loginLimiter.registerFailure(clientIP, req.Email, now); retryAfter > 0 {
+				writeLoginRateLimitError(w, retryAfter)
+				return
+			}
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+	if s.loginLimiter != nil {
+		s.loginLimiter.reset(clientIP, req.Email)
 	}
 	if !user.IsActive {
 		writeError(w, http.StatusUnauthorized, "account disabled")
@@ -186,6 +245,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	s.setSessionCookie(w, r, token)
 
 	// Response shape matches Python auth.py:220 — `user` is nested so the
 	// frontend's AuthContext.login() line `setCurrentUser(data.user)` picks
@@ -195,6 +255,46 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		"access_token": token,
 		"token_type":   "bearer",
 		"user":         userResponse(s, user),
+	})
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	s.clearSessionCookie(w, r)
+	writeJSON(w, http.StatusOK, map[string]bool{"logged_out": true})
+}
+
+func (s *Server) sessionFromToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Token) == "" {
+		writeError(w, http.StatusBadRequest, "token required")
+		return
+	}
+	claims := &jwtClaims{}
+	_, err := jwt.ParseWithClaims(strings.TrimSpace(body.Token), claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+		}
+		return []byte(s.cfg.JWTSecret), nil
+	})
+	if err != nil || claims.Kind == "sse" {
+		writeError(w, http.StatusUnauthorized, "invalid or expired token")
+		return
+	}
+	user, err := s.db.GetUserByEmail(claims.Subject)
+	if err != nil {
+		s.logger.Sugar().Errorw("sessionFromToken: GetUserByEmail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if user == nil || !user.IsActive {
+		writeError(w, http.StatusUnauthorized, "account disabled")
+		return
+	}
+	s.setSessionCookie(w, r, strings.TrimSpace(body.Token))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user": userResponse(s, user),
 	})
 }
 

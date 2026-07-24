@@ -10,7 +10,7 @@ import { useVoice } from './VoiceContext';
 const CallContext = createContext(null);
 
 export function CallProvider({ children }) {
-  const { apiFetch, currentUser, authToken } = useAuth();
+  const { apiFetch, currentUser } = useAuth();
   const { orgProducts } = useOrg();
   const { activeVoiceProvider, activeVoiceId, activeLanguage } = useVoice();
   const toast = useToast();
@@ -598,16 +598,16 @@ export function CallProvider({ children }) {
   }, [apiFetch, currentUser?.id, scheduledCallbackPreview, browserCallLead, browserCallDialing]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!currentUser?.id) return;
     fetchDueManualCalls();
     const id = setInterval(fetchDueManualCalls, 5000);
     return () => clearInterval(id);
-  }, [authToken, fetchDueManualCalls]);
+  }, [currentUser?.id, fetchDueManualCalls]);
 
   // Agent presence heartbeat: on_call when in a browser/sim call, otherwise
   // respect the manual status (break/idle).
   useEffect(() => {
-    if (!authToken || !currentUser?.id) return;
+    if (!currentUser?.id) return;
     const sendHeartbeat = () => {
       let status = manualPresenceStatus;
       if (browserCallLead || webCallActive) {
@@ -622,7 +622,7 @@ export function CallProvider({ children }) {
     sendHeartbeat();
     const id = setInterval(sendHeartbeat, 15000);
     return () => clearInterval(id);
-  }, [authToken, currentUser?.id, manualPresenceStatus, browserCallLead, webCallActive, apiFetch]);
+  }, [currentUser?.id, manualPresenceStatus, browserCallLead, webCallActive, apiFetch]);
 
   return (
     <CallContext.Provider value={{

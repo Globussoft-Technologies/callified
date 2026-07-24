@@ -23,10 +23,7 @@ export default function KnowledgeBase({ apiUrl }) {
 
   const fetchFiles = async () => {
     try {
-      const authToken = localStorage.getItem('authToken');
-      const res = await fetch(`${apiUrl}/knowledge`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
-      });
+      const res = await apiFetch(`${apiUrl}/knowledge`);
       const data = await res.json();
       if (Array.isArray(data)) setFiles(data);
     } catch(e) { console.error(e); }
@@ -50,10 +47,8 @@ export default function KnowledgeBase({ apiUrl }) {
     setUploading(true);
     setStatusMsg('Vectorizing and Embedding PDF using internal local FAISS Engine...');
     try {
-      const authToken = localStorage.getItem('authToken');
-      const res = await fetch(`${apiUrl}/knowledge/upload`, {
+      const res = await apiFetch(`${apiUrl}/knowledge/upload`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData
       });
       const data = await res.json();
@@ -70,10 +65,8 @@ export default function KnowledgeBase({ apiUrl }) {
 
   const handleDelete = async (fileId, filename) => {
     try {
-      const authToken = localStorage.getItem('authToken');
-      await fetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
+      await apiFetch(`${apiUrl}/knowledge/${fileId}?filename=${encodeURIComponent(filename)}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` }
       });
       setConfirmDeleteId(null);
       fetchFiles();

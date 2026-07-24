@@ -78,9 +78,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
   useEffect(() => {
     const fetchStatus = () => {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-      fetch('/api/calling-status', { headers: { Authorization: `Bearer ${token}` } })
+      apiFetch('/api/calling-status')
         .then(r => r.json())
         .then(data => setCallingStatus(data))
         .catch(() => {});
@@ -88,7 +86,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
     fetchStatus();
     const interval = setInterval(fetchStatus, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [apiFetch]);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -258,21 +256,6 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
       {/* Right side */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 8 }}>
-
-        {/* AI Active status */}
-        {!hideAiFeatures && callingStatus && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            fontSize: 13, fontWeight: 600, fontFamily: font,
-            color: callingStatus.allowed ? '#10b981' : '#ef4444',
-          }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: callingStatus.allowed ? '#10b981' : '#ef4444',
-            }} />
-            {callingStatus.allowed ? 'AI Active' : 'AI Paused'}
-          </span>
-        )}
 
         {/* Agent presence toggle */}
         <button

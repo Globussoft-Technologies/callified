@@ -48,9 +48,10 @@ import (
 //	4. Mint our own internal JWT (same shape login uses, role embedded)
 //	5. 302 to <FrontendURL>/sso/return?token=<our-jwt>&next=<redirect>
 //
-// The frontend's /sso/return page reads ?token=, drops it into localStorage,
-// fetches /api/auth/me, and navigates to ?next=. Same UX as the regular
-// login flow once we hand off the token.
+// The frontend's /sso/return page reads ?token=, exchanges it for an
+// HttpOnly session cookie via /api/auth/session, fetches /api/auth/me, and
+// navigates to ?next=. Same UX as the regular login flow once we hand off
+// the token.
 
 // ssoClaims is the JWT envelope we accept from the external issuer. Inline
 // jwt.RegisteredClaims gives us automatic exp/nbf/iat validation.
@@ -192,8 +193,8 @@ func (s *Server) ssoJWT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 5. Redirect the browser into the SPA with the token. /sso/return is a
-	//    public route in App.jsx that stores the token, fetches /auth/me,
-	//    then navigates to ?next=.
+	//    public route in App.jsx that exchanges it for a secure cookie,
+	//    fetches /auth/me, then navigates to ?next=.
 	dst := s.cfg.FrontendURL + "/sso/return?token=" + url.QueryEscape(out) +
 		"&next=" + url.QueryEscape(next)
 	http.Redirect(w, r, dst, http.StatusFound)
