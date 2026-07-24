@@ -257,21 +257,6 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       {/* Right side */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 8 }}>
 
-        {/* AI Active status */}
-        {!hideAiFeatures && callingStatus && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 5,
-            fontSize: 13, fontWeight: 600, fontFamily: font,
-            color: callingStatus.allowed ? '#10b981' : '#ef4444',
-          }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: callingStatus.allowed ? '#10b981' : '#ef4444',
-            }} />
-            {callingStatus.allowed ? 'AI Active' : 'AI Paused'}
-          </span>
-        )}
-
         {/* Agent presence toggle */}
         <button
           onClick={toggleBreak}
