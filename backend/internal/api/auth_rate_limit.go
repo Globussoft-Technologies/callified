@@ -51,7 +51,7 @@ func (l *loginRateLimiter) check(ip, email string, now time.Time) (time.Duration
 			continue
 		}
 		entry.lastSeen = now
-		if !entry.blockedUntil.After(now) {
+		if !entry.blockedUntil.IsZero() && !entry.blockedUntil.After(now) {
 			entry.failures = 0
 			entry.blockedUntil = time.Time{}
 			continue
