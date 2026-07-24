@@ -369,6 +369,7 @@ export default function CampaignDetail({
   const [scheduleNotes, setScheduleNotes] = useState('');
   const [scheduleMode, setScheduleMode] = useState('manual');
   const [scheduleEditingCallId, setScheduleEditingCallId] = useState(0);
+  const [scheduleActionLeadId, setScheduleActionLeadId] = useState(null);
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState({ kind: '', text: '' });
   const [scheduleError, setScheduleError] = useState('');
@@ -418,6 +419,13 @@ export default function CampaignDetail({
     setScheduleStatus({ kind: '', text: '' });
     setScheduleError('');
   }, []);
+
+  useEffect(() => {
+    const onDocClick = () => setScheduleActionLeadId(null);
+    if (scheduleActionLeadId == null) return undefined;
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [scheduleActionLeadId]);
 
   useEffect(() => {
     setExecFilter([]);
@@ -2101,52 +2109,75 @@ export default function CampaignDetail({
                           Remove
                         </button>
                         {lead.has_pending_scheduled_call && lead.next_scheduled_at && (
-                          <button
-                            onClick={() => openScheduleModal(lead, true)}
-                            title="Edit scheduled call"
-                            style={{
-                              position: 'relative',
-                              fontSize: 11, padding: '4px 28px 4px 10px', borderRadius: 6,
-                              background: 'rgba(59,130,246,0.12)', color: '#1e40af',
-                              border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
-                              fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6,
-                              cursor: 'pointer'
-                            }}>
-                            📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}
-                            {lead.scheduled_call_id > 0 && (
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  try {
-                                    const ok = await confirm({
-                                      title: 'Cancel Scheduled Call',
-                                      message: `Cancel the scheduled call for ${lead.first_name || 'this lead'}?`,
-                                      danger: true,
-                                      okText: 'Cancel Call',
-                                      cancelText: 'Keep It',
-                                    });
-                                    if (!ok) return;
-                                    const res = await apiFetch(`${API_URL}/scheduled-calls/${lead.scheduled_call_id}`, { method: 'DELETE' });
-                                    if (!res.ok) throw new Error('Failed to cancel scheduled call');
-                                    toast('Scheduled call cancelled');
-                                    fetchCampaignLeads(selectedCampaign.id);
-                                    refreshScheduledCalls?.();
-                                  } catch (err) {
-                                    toast(err?.message || 'Cancel failed');
-                                  }
-                                }}
-                                title="Cancel scheduled call"
+                          <div style={{ position: 'relative', display: 'inline-flex' }}>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setScheduleActionLeadId((prev) => prev === lead.id ? null : lead.id);
+                              }}
+                              title="Scheduled call actions"
+                              style={{
+                                fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                background: 'rgba(59,130,246,0.12)', color: '#1e40af',
+                                border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
+                                fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 8,
+                                cursor: 'pointer'
+                              }}>
+                              <span>📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}</span>
+                              <span style={{ fontSize: 10, opacity: 0.85 }}>▾</span>
+                            </button>
+                            {scheduleActionLeadId === lead.id && (
+                              <div
+                                onClick={(e) => e.stopPropagation()}
                                 style={{
-                                  position: 'absolute', top: 2, right: 4,
-                                  width: 16, height: 16, padding: 0, cursor: 'pointer',
-                                  background: 'rgba(254,226,226,0.95)', border: '1px solid #fca5a5',
-                                  color: T.red, borderRadius: 999, fontWeight: 700, fontFamily: T.font,
-                                  fontSize: 10, lineHeight: '14px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center'
+                                  position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 140,
+                                  background: '#ffffff', border: '1px solid #dbe4ff', borderRadius: 10,
+                                  boxShadow: '0 10px 26px rgba(15,23,42,0.12)', padding: 6, zIndex: 20,
+                                  display: 'flex', flexDirection: 'column', gap: 4
                                 }}>
-                                🗑
-                              </button>
+                                <button
+                                  onClick={() => {
+                                    setScheduleActionLeadId(null);
+                                    openScheduleModal(lead, true);
+                                  }}
+                                  style={{
+                                    textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: 'none',
+                                    background: 'transparent', color: '#1e40af', cursor: 'pointer',
+                                    fontSize: 12, fontWeight: 600, fontFamily: T.font
+                                  }}>
+                                  Edit
+                                </button>
+                                <button
+                                  onClick={async () => {
+                                    setScheduleActionLeadId(null);
+                                    try {
+                                      const ok = await confirm({
+                                        title: 'Cancel Scheduled Call',
+                                        message: `Cancel the scheduled call for ${lead.first_name || 'this lead'}?`,
+                                        danger: true,
+                                        okText: 'Delete',
+                                        cancelText: 'Keep It',
+                                      });
+                                      if (!ok) return;
+                                      const res = await apiFetch(`${API_URL}/scheduled-calls/${lead.scheduled_call_id}`, { method: 'DELETE' });
+                                      if (!res.ok) throw new Error('Failed to cancel scheduled call');
+                                      toast('Scheduled call cancelled');
+                                      fetchCampaignLeads(selectedCampaign.id);
+                                      refreshScheduledCalls?.();
+                                    } catch (err) {
+                                      toast(err?.message || 'Delete failed');
+                                    }
+                                  }}
+                                  style={{
+                                    textAlign: 'left', padding: '8px 10px', borderRadius: 8, border: 'none',
+                                    background: 'rgba(239,68,68,0.08)', color: '#dc2626', cursor: 'pointer',
+                                    fontSize: 12, fontWeight: 600, fontFamily: T.font
+                                  }}>
+                                  Delete
+                                </button>
+                              </div>
                             )}
-                          </button>
+                          </div>
                         )}
                       </div>
                     </td>
