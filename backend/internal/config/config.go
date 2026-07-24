@@ -56,8 +56,7 @@ type Config struct {
 	AWSSecretAccessKey string `env:"AWS_SECRET_ACCESS_KEY"`
 	// Oracle Cloud Object Storage (S3-compatible). When OCI_NAMESPACE is set,
 	// the S3 client uses Oracle's endpoint and URL format instead of AWS.
-	OCINamespace string `env:"OCI_NAMESPACE"`
-	OCIEndpoint  string `env:"OCI_ENDPOINT"`
+	OCIEndpoint string `env:"OCI_ENDPOINT"`
 
 	// OCI Object Storage for recordings (optional — if set, takes precedence over S3)
 	OCIRegion          string `env:"OCI_REGION"`
