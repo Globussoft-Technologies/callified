@@ -30,6 +30,17 @@ func TestLoginRateLimiterBlocksAfterFiveFailures(t *testing.T) {
 	}
 }
 
+func TestLoginRateLimiterDoesNotBlockBeforeThreshold(t *testing.T) {
+	limiter := newLoginRateLimiter()
+	now := time.Date(2026, time.July, 24, 16, 2, 0, 0, time.UTC)
+
+	limiter.registerFailure("203.0.113.12", "agent@example.com", now)
+
+	if wait, blocked := limiter.check("203.0.113.12", "agent@example.com", now.Add(time.Second)); blocked || wait != 0 {
+		t.Fatalf("expected no block before threshold, blocked=%v wait=%v", blocked, wait)
+	}
+}
+
 func TestLoginRateLimiterResetOnSuccess(t *testing.T) {
 	limiter := newLoginRateLimiter()
 	now := time.Date(2026, time.July, 24, 16, 5, 0, 0, time.UTC)
@@ -41,6 +52,23 @@ func TestLoginRateLimiterResetOnSuccess(t *testing.T) {
 	limiter.reset("203.0.113.10", "user@example.com")
 	if wait, blocked := limiter.check("203.0.113.10", "user@example.com", now.Add(time.Second)); blocked || wait != 0 {
 		t.Fatalf("expected limiter state to clear after reset, blocked=%v wait=%v", blocked, wait)
+	}
+}
+
+func TestLoginRateLimiterUnlocksAfterWindow(t *testing.T) {
+	limiter := newLoginRateLimiter()
+	now := time.Date(2026, time.July, 24, 16, 10, 0, 0, time.UTC)
+
+	for i := 0; i < loginRateLimitMaxFailures; i++ {
+		limiter.registerFailure("203.0.113.11", "unlock@example.com", now)
+	}
+
+	if wait, blocked := limiter.check("203.0.113.11", "unlock@example.com", now.Add(10*time.Second)); !blocked || wait <= 0 {
+		t.Fatalf("expected limiter to remain blocked before window ends, blocked=%v wait=%v", blocked, wait)
+	}
+
+	if wait, blocked := limiter.check("203.0.113.11", "unlock@example.com", now.Add(31*time.Second)); blocked || wait != 0 {
+		t.Fatalf("expected limiter to unlock after window, blocked=%v wait=%v", blocked, wait)
 	}
 }
 
