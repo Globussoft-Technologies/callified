@@ -78,9 +78,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
   useEffect(() => {
     const fetchStatus = () => {
-      const token = localStorage.getItem('token');
-      if (!token) return;
-      fetch('/api/calling-status', { headers: { Authorization: `Bearer ${token}` } })
+      apiFetch('/api/calling-status')
         .then(r => r.json())
         .then(data => setCallingStatus(data))
         .catch(() => {});
@@ -88,7 +86,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
     fetchStatus();
     const interval = setInterval(fetchStatus, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [apiFetch]);
 
   useEffect(() => {
     if (!moreOpen) return;

@@ -18,8 +18,8 @@ import (
 	"github.com/globussoft/callified-backend/internal/email"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/rag"
-	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/recording"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/storage"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
@@ -38,11 +38,12 @@ type Server struct {
 	ragClient    *rag.Client
 	waAgent      *wa.Agent
 	waSender     waSenderIface
-	llmProvider  *llm.Provider // Phase 4: Gemini-powered generation endpoints
-	wsHandler    activeCallLister // wired in main.go via SetWSHandler — used by /api/active-calls
-	recordingSvc callAnalyzer     // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
-	s3           *storage.S3Client // nil when S3 is not configured
+	llmProvider  *llm.Provider      // Phase 4: Gemini-powered generation endpoints
+	wsHandler    activeCallLister   // wired in main.go via SetWSHandler — used by /api/active-calls
+	recordingSvc callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+	s3           *storage.S3Client  // nil when S3 is not configured
 	oci          *storage.OCIClient // nil when OCI is not configured
+	loginLimiter *loginRateLimiter
 }
 
 // callAnalyzer is the slice of recording.Service the API needs for on-demand
@@ -65,10 +66,6 @@ func (waSend) SendText(ctx context.Context, cfg wa.ChannelConfig, toPhone, text 
 	return wa.SendText(ctx, cfg, toPhone, text)
 }
 
-
-
-
-
 // New creates a new API server.
 func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Initiator, llmProvider *llm.Provider, logger *zap.Logger) *Server {
 	emailSvc := email.New(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPFromName, cfg.AppURL, logger)
@@ -76,17 +73,18 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 	ragCli := rag.New(cfg.RAGServiceURL, logger)
 
 	srv := &Server{
-		db:          d,
-		cfg:         cfg,
-		logger:      logger,
-		dispatcher:  webhook.New(d, logger),
-		store:       store,
-		initiator:   initiator,
-		billingSvc:  billingSvc,
-		emailSvc:    emailSvc,
-		ragClient:   ragCli,
-		waSender:    waSend{},
-		llmProvider: llmProvider,
+		db:           d,
+		cfg:          cfg,
+		logger:       logger,
+		dispatcher:   webhook.New(d, logger),
+		store:        store,
+		initiator:    initiator,
+		billingSvc:   billingSvc,
+		emailSvc:     emailSvc,
+		ragClient:    ragCli,
+		waSender:     waSend{},
+		llmProvider:  llmProvider,
+		loginLimiter: newLoginRateLimiter(),
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
 	if cfg.OCINamespace != "" && cfg.OCIBucket != "" && cfg.OCIAccessKeyID != "" && cfg.OCISecretAccessKey != "" {
@@ -164,6 +162,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Auth ──────────────────────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/auth/signup", s.signup)
 	mux.HandleFunc("POST /api/auth/login", s.login)
+	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("POST /api/auth/session", s.sessionFromToken)
 	mux.HandleFunc("GET /api/auth/me", auth(s.me))
 	mux.HandleFunc("POST /api/auth/forgot-password", s.forgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", s.resetPassword)

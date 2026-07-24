@@ -38,9 +38,9 @@ type jwtClaims struct {
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tokenStr, err := bearerToken(r)
+		tokenStr, err := authToken(r)
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "missing or malformed Authorization header")
+			writeError(w, http.StatusUnauthorized, "missing or malformed authentication")
 			return
 		}
 
@@ -81,6 +81,17 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), ctxKey{}, ac)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
+}
+
+func authToken(r *http.Request) (string, error) {
+	if token, err := bearerToken(r); err == nil {
+		return token, nil
+	}
+	c, err := r.Cookie(sessionCookieName)
+	if err == nil && strings.TrimSpace(c.Value) != "" {
+		return strings.TrimSpace(c.Value), nil
+	}
+	return "", fmt.Errorf("no auth token")
 }
 
 // getAuth retrieves AuthClaims from the request context.

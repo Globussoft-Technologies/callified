@@ -4,13 +4,14 @@ import { useAuth } from '../contexts/AuthContext';
 
 // SsoReturn handles the redirect from /api/auth/sso/jwt. The backend has
 // already verified the inbound JWT, minted our internal JWT, and bounced
-// here with ?token=<our-jwt>&next=<original redirect>. We store it, fetch
-// the user profile, then navigate the SPA to ?next=. If anything fails the
-// backend forwards us with ?error=<code> instead — we render that as a
-// short, plain message rather than a stack trace.
+// here with ?token=<our-jwt>&next=<original redirect>. We exchange that
+// token for an HttpOnly session cookie, fetch the user profile, then
+// navigate the SPA to ?next=. If anything fails the backend forwards us
+// with ?error=<code> instead — we render that as a short, plain message
+// rather than a stack trace.
 //
 // Public route — must be reachable without an existing session, so it sits
-// before App.jsx's authToken gate.
+// before App.jsx's currentUser gate.
 export default function SsoReturn() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
