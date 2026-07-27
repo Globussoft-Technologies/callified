@@ -1,6 +1,6 @@
 # Callified API Flow — Login → Campaigns → Leads → AI Dial
 
-This document describes the end-to-end API flow for authenticating with email/password, listing campaigns, adding a lead, enrolling it in a campaign, deleting a lead, triggering an AI/browser call, and retrieving the call transcript and AI review.
+This document describes the end-to-end API flow for authenticating with email/password, listing campaigns, adding a lead, enrolling it in a campaign, deleting a lead, triggering an AI/browser call, retrieving the call transcript and AI review, and retrieving call outcomes (duration, recording, sentiment, summary, cost).
 
 ---
 
@@ -549,6 +549,112 @@ curl -s https://app.callified.ai/api/transcripts/$TRANSCRIPT_ID/review \
 curl -s -X DELETE https://app.callified.ai/api/leads/$LEAD_ID \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+## Step 6 — Retrieve call outcome, duration, recording, sentiment, and summary
+
+After a call ends, the details you need are stored across a few tables. There is no single endpoint that returns everything yet.
+
+| Detail | Source | API endpoint |
+|--------|--------|--------------|
+| Outcome, duration, recording | `call_transcripts` + `leads.status` | `GET /api/campaigns/{campaign_id}/call-log` |
+| Sentiment, summary, quality score | `call_reviews` | `GET /api/transcripts/{transcript_id}/review` |
+| Cost (credit deduction) | `credit_transactions` | `GET /api/billing/credits/transactions` (org-wide, last 50) |
+
+### 6a. Get call log for a campaign
+
+**Endpoint**
+
+```http
+GET /api/campaigns/{campaign_id}/call-log
+```
+
+**Example response — 200 OK**
+
+```json
+[
+  {
+    "id": 501,
+    "first_name": "Rahul",
+    "last_name": "Sharma",
+    "phone": "9876543210",
+    "source": "Website",
+    "lead_status": "contacted",
+    "call_duration_s": 56.7,
+    "recording_url": "/recordings/rec_abc.wav",
+    "created_at": "2026-07-27 14:22:10",
+    "outcome": "Connected"
+  }
+]
+```
+
+### 6b. Get sentiment and summary for a call
+
+Use the `id` from the call log as the `transcript_id`.
+
+**Endpoint**
+
+```http
+GET /api/transcripts/{transcript_id}/review
+```
+
+**Example response — 200 OK**
+
+```json
+{
+  "id": 55,
+  "transcript_id": 501,
+  "sentiment": "positive",
+  "summary": "Customer showed strong interest and agreed to a demo.",
+  "appointment_booked": true,
+  "failure_reason": "",
+  "quality_score": 8.5
+}
+```
+
+### 6c. Get call cost (org-wide ledger)
+
+**Endpoint**
+
+```http
+GET /api/billing/credits/transactions
+```
+
+**Example response — 200 OK**
+
+```json
+[
+  {
+    "id": 123,
+    "org_id": 1,
+    "delta_paise": -470,
+    "balance_after_paise": 1999530,
+    "type": "exotel_abc123",
+    "reference": "exotel_abc123",
+    "call_duration_s": 56.7,
+    "rate_per_min_paise": 500,
+    "created_at": "2026-07-27 14:22:10"
+  }
+]
+```
+
+> `delta_paise` is negative for call charges. The `type`/`reference` field is the `call_sid`, but the call-log API does not currently expose `call_sid`, so matching a specific call to its cost requires backend changes.
+
+### 6d. Webhook after a call
+
+You can also receive a `call.completed` webhook. The payload includes:
+
+```json
+{
+  "transcript_id": 501,
+  "lead_id": 101,
+  "campaign_id": 42,
+  "duration_s": 56.7,
+  "sentiment": "positive",
+  "appointment_booked": true
+}
+```
+
+Then call `GET /api/transcripts/{transcript_id}/review` to fetch the full summary.
 
 ---
 
