@@ -3420,6 +3420,90 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/campaigns/{id}/leads/{lead_id}/browser-call": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Initiates a browser-to-phone (agent bridge) call for a specific lead. The agent opens the returned agent_url via WebSocket to receive audio.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dialing"
+                ],
+                "summary": "Browser call for campaign lead",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Campaign ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Lead ID",
+                        "name": "lead_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional Exotel account or scheduled callback ID",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/api.BrowserCallRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.BrowserCallResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/campaigns/{id}/redial-failed": {
             "post": {
                 "security": [
@@ -11150,6 +11234,31 @@ const docTemplate = `{
                 }
             }
         },
+        "api.BrowserCallRequest": {
+            "type": "object",
+            "properties": {
+                "exotel_account_id": {
+                    "type": "integer"
+                },
+                "scheduled_call_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BrowserCallResponse": {
+            "type": "object",
+            "properties": {
+                "agent_url": {
+                    "type": "string"
+                },
+                "call_sid": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
         "api.DeletedResponse": {
             "type": "object",
             "properties": {
@@ -11812,6 +11921,12 @@ const docTemplate = `{
                 },
                 "scheduled_call_id": {
                     "type": "integer"
+                },
+                "scheduled_call_mode": {
+                    "type": "string"
+                },
+                "scheduled_call_notes": {
+                    "type": "string"
                 },
                 "source": {
                     "type": "string"
