@@ -21,8 +21,8 @@ import (
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/prompt"
-	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/recording"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/stt"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
@@ -35,16 +35,16 @@ var upgrader = websocket.Upgrader{
 
 // Handler serves the /media-stream and /ws/sandbox WebSocket endpoints.
 type Handler struct {
-	cfg           *config.Config
-	promptBuilder *prompt.Builder    // Phase 3C: replaces gRPC InitializeCall
-	recordingSvc  *recording.Service // Phase 4: replaces gRPC FinalizeCall
-	store         *rstore.Store
-	db            *db.DB        // for lead lookups when Redis pending-call info is sparse
-	provider      *llm.Provider // Phase 0: native Go LLM
-	initiator     *dial.Initiator // optional: used to hang up bridge calls from browser
-	ttsKeys       map[string]string
-	log           *zap.Logger
-	sessions      sync.Map // stream_sid → *CallSession (for monitor WebSocket)
+	cfg               *config.Config
+	promptBuilder     *prompt.Builder    // Phase 3C: replaces gRPC InitializeCall
+	recordingSvc      *recording.Service // Phase 4: replaces gRPC FinalizeCall
+	store             *rstore.Store
+	db                *db.DB          // for lead lookups when Redis pending-call info is sparse
+	provider          *llm.Provider   // Phase 0: native Go LLM
+	initiator         *dial.Initiator // optional: used to hang up bridge calls from browser
+	ttsKeys           map[string]string
+	log               *zap.Logger
+	sessions          sync.Map // stream_sid → *CallSession (for monitor WebSocket)
 	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
 }
 
@@ -110,6 +110,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	sess.IsInbound = q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
 	// the lead label instead of the empty "()" we used to show.
@@ -121,6 +122,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if id := q.Get("campaign_id"); id != "" {
 		fmt.Sscanf(id, "%d", &sess.CampaignID)
+	}
+	if id := q.Get("org_id"); id != "" {
+		fmt.Sscanf(id, "%d", &sess.OrgID)
 	}
 	// Snapshot whether the URL explicitly carried a language BEFORE
 	// initializeCall has a chance to populate sess.Language from a platform-
@@ -192,6 +196,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.initializeCall(ctx, sess); err != nil {
 		h.log.Error("InitializeCall failed", zap.Error(err))
 		// Continue with defaults — don't abort the call
+	}
+	if sess.IsInbound {
+		h.applyInboundReceptionistPrompt(sess)
 	}
 
 	// --- Voice consistency cache (lead_voice:{id}, 90-day TTL) ---
@@ -301,6 +308,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
 		onLangDetected := func(transcript string, detectedLang string) {
+			if sess.IsInbound {
+				return
+			}
 			if detectedLang == "" || detectedLang == "od" {
 				// "od" (Odia) is a persistent Sarvam false positive for short
 				// filler syllables from te/kn/ta callers — ignore it entirely.
@@ -692,6 +702,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				// when the campaign is set to English.
 				if h.promptBuilder != nil {
 					_ = h.initializeCall(ctx, sess)
+					if sess.IsInbound {
+						h.applyInboundReceptionistPrompt(sess)
+					}
 				}
 				// Re-create the TTS provider in case the original startup picked
 				// the wrong one (Exotel calls hit tts.New("") which falls back
@@ -996,6 +1009,122 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		StereoWav:   wavBytes,
 		SkipCredits: sess.SkipCredits,
 		UserEmail:   sess.UserEmail,
+		IsInbound:   sess.IsInbound,
 	}
 	go h.recordingSvc.SaveAndAnalyze(ctx, req)
+}
+
+func (h *Handler) applyInboundReceptionistPrompt(sess *CallSession) {
+	baseKnowledge := h.inboundProductKnowledge(sess.OrgID)
+	if baseKnowledge == "" {
+		baseKnowledge = strings.TrimSpace(sess.SystemPrompt)
+	}
+	lang := sess.Language
+	if lang == "" {
+		lang = sess.TTSLanguage
+	}
+	if lang == "" {
+		lang = "en"
+	}
+	label := inboundLanguageLabel(lang)
+	company := "our team"
+	if sess.AgentName != "" {
+		company = sess.AgentName
+	}
+	if sess.Interest == "" {
+		sess.Interest = "inbound enquiry"
+	}
+	sess.SystemPrompt = fmt.Sprintf(`You are a warm inbound AI receptionist for %s.
+
+The customer called us first. Do not behave like an outbound sales caller and do not say you are calling them.
+
+Goal:
+Greet the caller, identify which product/service they are asking about, collect the caller's name, help with their requirement, then collect phone number before ending.
+
+Rules:
+1. Respond only in %s unless the customer explicitly asks for another language.
+2. Do not switch languages just because the caller speaks, mixes, or is transcribed in another language. Do not mirror the caller's language automatically.
+3. If the caller explicitly asks to continue in another language, switch to that language and stay there until they ask to switch again.
+4. Ask one question at a time.
+5. Keep every reply short and natural for voice. Use one complete sentence when possible, two at most, and always end with punctuation.
+6. If the caller asks about a known product and their name is not known yet, acknowledge the product briefly and ask for their name before answering details. Example: "Sure, I can help with EmpMonitor. May I know who I am speaking with?"
+7. If the caller gives their name, remember it and use it naturally.
+8. After name is known, answer product/service questions from the matching product's knowledge only.
+9. If the product is unclear, ask which product they mean instead of assuming.
+10. Phone number is compulsory before ending. Ask for it near the end if it is missing, even if the caller only wanted basic information.
+11. Do not ask for email address, mail ID, or any written-contact detail. If the caller wants details sent, say the team can call them and ask for their phone number.
+12. When the enquiry is complete and phone number is collected, summarize the next step and end with [HANGUP].
+13. Never reveal you are an AI.
+
+Call context: %s
+
+Available company/product knowledge:
+%s`, company, label, sess.Interest, baseKnowledge)
+
+	sess.GreetingText = inboundGreeting(lang, company)
+}
+
+func (h *Handler) inboundProductKnowledge(orgID int64) string {
+	if h.db == nil || orgID == 0 {
+		return ""
+	}
+	products, err := h.db.GetProductsByOrg(orgID)
+	if err != nil || len(products) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Use this catalog for inbound callers. The company has multiple products, so do not assume the first product. Match by product name or ask a clarifying question.\n")
+	for i, p := range products {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Product: %s\n", p.Name)
+		if s := strings.TrimSpace(p.ScrapedInfo); s != "" {
+			fmt.Fprintf(&b, "Details: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.ManualNotes); s != "" {
+			fmt.Fprintf(&b, "Notes: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.AgentPersona); s != "" {
+			fmt.Fprintf(&b, "Persona: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.CallFlowInstructions); s != "" {
+			fmt.Fprintf(&b, "Call flow: %s\n", s)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func inboundLanguageLabel(lang string) string {
+	switch lang {
+	case "hi":
+		return "Hindi"
+	case "mr":
+		return "Marathi"
+	case "bn":
+		return "Bengali"
+	case "gu":
+		return "Gujarati"
+	case "pa":
+		return "Punjabi"
+	case "ta":
+		return "Tamil"
+	case "te":
+		return "Telugu"
+	case "kn":
+		return "Kannada"
+	case "ml":
+		return "Malayalam"
+	default:
+		return "English"
+	}
+}
+
+func inboundGreeting(lang, company string) string {
+	switch lang {
+	case "hi":
+		return fmt.Sprintf("Namaste, %s mein aapka swagat hai. Main aapki kaise madad kar sakta hoon?", company)
+	default:
+		return fmt.Sprintf("Hi, thanks for calling %s. How can I help you today?", company)
+	}
 }

@@ -18,9 +18,10 @@ type SentenceChunk struct {
 
 // TranscriptRequest carries the input for a single LLM turn.
 type TranscriptRequest struct {
-	Transcript   string        // current user utterance
-	SystemPrompt string        // system/persona instruction
-	History      []ChatMessage // prior turns (excluding current transcript)
-	Language     string        // e.g. "hi", "mr", "en", "ta"
-	MaxTokens    int32
+	Transcript              string        // current user utterance
+	SystemPrompt            string        // system/persona instruction
+	History                 []ChatMessage // prior turns (excluding current transcript)
+	Language                string        // e.g. "hi", "mr", "en", "ta"
+	MaxTokens               int32
+	DropIncompleteRemainder bool
 }

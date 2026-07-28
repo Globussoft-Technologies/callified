@@ -39,6 +39,9 @@ type SaveRequest struct {
 	// UserEmail is the agent/admin who initiated the call; recordings are saved
 	// under a per-user subfolder.
 	UserEmail string
+	// IsInbound means the call started without a lead; post-call analysis should
+	// extract customer details and attach the transcript to a lead when possible.
+	IsInbound bool
 }
 
 // Service handles post-call analysis.
@@ -124,6 +127,26 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		zap.Int("turn_count", turnCount),
 		zap.Float32("duration_s", req.DurationS))
 
+	if req.IsInbound {
+		if err := s.database.UpdateCallTranscriptDirection(transcriptID, "inbound"); err != nil {
+			s.log.Warn("recording: mark inbound transcript failed", zap.Int64("transcript_id", transcriptID), zap.Error(err))
+		}
+	}
+
+	if req.IsInbound && req.LeadID == 0 && s.llm != nil && len(req.ChatHistory) > 0 {
+		if leadID, phone, err := s.upsertInboundLead(ctx, req.OrgID, transcriptID, req.ChatHistory); err != nil {
+			s.log.Warn("recording: inbound lead extraction failed", zap.Error(err))
+		} else if leadID > 0 {
+			req.LeadID = leadID
+			if phone != "" {
+				req.LeadPhone = phone
+			}
+			s.log.Info("recording: inbound transcript attached to lead",
+				zap.Int64("transcript_id", transcriptID),
+				zap.Int64("lead_id", leadID))
+		}
+	}
+
 	// 4. Run Gemini analysis (non-critical — log and continue on failure).
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
@@ -187,11 +210,11 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 7. Fire call.completed webhook.
 	if s.dispatcher != nil {
 		s.dispatcher.Dispatch(ctx, req.OrgID, "call.completed", map[string]any{
-			"transcript_id":     transcriptID,
-			"lead_id":           req.LeadID,
-			"campaign_id":       req.CampaignID,
-			"duration_s":        req.DurationS,
-			"sentiment":         review.Sentiment,
+			"transcript_id":      transcriptID,
+			"lead_id":            req.LeadID,
+			"campaign_id":        req.CampaignID,
+			"duration_s":         req.DurationS,
+			"sentiment":          review.Sentiment,
 			"appointment_booked": review.AppointmentBooked,
 		})
 	}
@@ -355,6 +378,182 @@ func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*
 		a.Sentiment = "neutral"
 	}
 	return &a, nil
+}
+
+type inboundLeadExtraction struct {
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+	Phone      string `json:"phone"`
+	Interest   string `json:"interest"`
+	Company    string `json:"company"`
+	Status     string `json:"status"`
+	FollowNote string `json:"follow_up_note"`
+}
+
+const inboundLeadExtractionPrompt = `Extract CRM lead details from an inbound receptionist call.
+Return ONLY a valid JSON object with these exact keys:
+- "first_name": string
+- "last_name": string
+- "phone": string, preferably E.164 if clearly available, otherwise the exact spoken number
+- "interest": short customer requirement
+- "company": customer company if mentioned, else empty
+- "status": one of "new", "Qualified", "Appointment Booked", "Not Interested"
+- "follow_up_note": one concise CRM note
+If a field was not provided, use an empty string. Do not invent details.`
+
+func (s *Service) upsertInboundLead(ctx context.Context, orgID, transcriptID int64, history []llm.ChatMessage) (int64, string, error) {
+	raw, err := s.llm.GenerateResponse(ctx, inboundLeadExtractionPrompt, []llm.ChatMessage{{
+		Role: "user",
+		Text: "Transcript:\n\n" + formatTranscript(history),
+	}}, 900)
+	if err != nil {
+		return 0, "", err
+	}
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		raw = raw[strings.Index(raw, "\n")+1:]
+		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
+	}
+	var ex inboundLeadExtraction
+	if err := json.Unmarshal([]byte(raw), &ex); err != nil {
+		return 0, "", fmt.Errorf("inbound extraction JSON parse: %w", err)
+	}
+	ex.FirstName = strings.TrimSpace(ex.FirstName)
+	ex.LastName = strings.TrimSpace(ex.LastName)
+	ex.Phone = strings.TrimSpace(ex.Phone)
+	ex.Interest = strings.TrimSpace(ex.Interest)
+	ex.Company = strings.TrimSpace(ex.Company)
+	ex.Status = strings.TrimSpace(ex.Status)
+	ex.FollowNote = strings.TrimSpace(ex.FollowNote)
+	applyInboundTranscriptFallback(&ex, history)
+	if ex.Status == "" {
+		ex.Status = "new"
+	}
+	if err := s.database.UpdateCallTranscriptInboundDetails(transcriptID, ex.FirstName, ex.LastName, ex.Phone, ex.Interest, ex.Status); err != nil {
+		s.log.Warn("recording: save inbound transcript details failed", zap.Int64("transcript_id", transcriptID), zap.Error(err))
+	}
+
+	var leadID int64
+	if ex.Phone != "" {
+		if existing, err := s.database.GetLeadByPhoneOrg(ex.Phone, orgID, nil, false); err != nil {
+			return 0, ex.Phone, err
+		} else if existing != nil {
+			leadID = existing.ID
+			first := coalesceString(ex.FirstName, existing.FirstName)
+			last := coalesceString(ex.LastName, existing.LastName)
+			interest := coalesceString(ex.Interest, existing.Interest)
+			company := coalesceString(ex.Company, existing.Company)
+			if _, err := s.database.UpdateLead(leadID, first, last, existing.Phone, "Inbound Call", interest, company, existing.ExecutiveID, orgID); err != nil {
+				return 0, ex.Phone, err
+			}
+		}
+	}
+	if leadID == 0 && (ex.FirstName != "" || ex.LastName != "" || ex.Phone != "" || ex.Interest != "" || ex.Company != "") {
+		id, err := s.database.CreateLead(ex.FirstName, ex.LastName, ex.Phone, "Inbound Call", ex.Interest, ex.Company, 0, orgID)
+		if err != nil {
+			s.log.Warn("recording: inbound lead create failed, keeping transcript leadless", zap.Error(err))
+			return 0, ex.Phone, nil
+		}
+		leadID = id
+	}
+	if leadID > 0 {
+		_ = s.database.UpdateLeadDisposition(leadID, ex.Status, ex.FollowNote, "")
+		_ = s.database.UpdateCallTranscriptLead(transcriptID, leadID)
+	}
+	return leadID, ex.Phone, nil
+}
+
+func applyInboundTranscriptFallback(ex *inboundLeadExtraction, history []llm.ChatMessage) {
+	for _, turn := range history {
+		if turn.Role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(turn.Text)
+		if text == "" {
+			continue
+		}
+		if ex.Phone == "" {
+			if phone := extractPhoneDigits(text); phone != "" {
+				ex.Phone = phone
+			}
+		}
+		if name := extractSpokenName(text); name != "" {
+			// Later corrections like "Sorry, this is Sri" should win over an
+			// earlier misheard name.
+			ex.FirstName = name
+			ex.LastName = ""
+		}
+	}
+}
+
+func extractPhoneDigits(text string) string {
+	var digits strings.Builder
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	raw := digits.String()
+	if strings.HasPrefix(raw, "91") && len(raw) == 12 {
+		raw = raw[2:]
+	}
+	if strings.HasPrefix(raw, "0") && len(raw) > 10 {
+		raw = strings.TrimPrefix(raw, "0")
+	}
+	if len(raw) == 10 {
+		return raw
+	}
+	return ""
+}
+
+func extractSpokenName(text string) string {
+	lower := strings.ToLower(text)
+	prefixes := []string{
+		"sorry, this is ",
+		"sorry this is ",
+		"my name is ",
+		"this is ",
+		"i am ",
+		"i'm ",
+		"name is ",
+	}
+	for _, prefix := range prefixes {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(text[idx+len(prefix):])
+		if rest == "" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.Trim(fields[0], ".,!?;:\"'()[]{}")
+		if name != "" && containsASCIILetter(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func containsASCIILetter(s string) bool {
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
+}
+
+func coalesceString(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ── WA appointment confirmation ───────────────────────────────────────────────
