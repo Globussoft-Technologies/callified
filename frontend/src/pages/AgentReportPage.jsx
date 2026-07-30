@@ -4,7 +4,7 @@ import { useToast } from '../contexts/UIContext';
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
   accent: '#6366f1', text: '#111827', sub: '#374151', muted: '#9ca3af',
-  font: "'DM Sans', sans-serif",
+  font: "Quicksand",
 };
 
 const card = {

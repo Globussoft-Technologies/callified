@@ -18,10 +18,10 @@ export default function ReceptionistPage() {
       display: 'flex', flexDirection: 'column',
     }}>
       <div style={{ marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', fontFamily: "'DM Sans', sans-serif" }}>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', fontFamily: "Quicksand, sans-serif" }}>
           AI Receptionist
         </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9ca3af', fontFamily: "'DM Sans', sans-serif" }}>
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9ca3af', fontFamily: "Quicksand, sans-serif" }}>
           Live chat &amp; voice demo powered by the AI receptionist engine.
         </p>
       </div>

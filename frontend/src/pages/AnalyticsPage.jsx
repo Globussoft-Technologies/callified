@@ -5,7 +5,7 @@ const T = {
   accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
   red: '#ef4444', pink: '#ec4899',
   text: '#111827', sub: '#374151', muted: '#9ca3af',
-  font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
+  font: "Quicksand", mono: "'DM Mono', monospace",
 };
 
 const card = {

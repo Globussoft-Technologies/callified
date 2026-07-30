@@ -52,7 +52,7 @@ const SUPER_ADMIN_TABS = [
   { id: 'feature-flags', label: 'Feature Flags', path: '/feature-flags', testid: 'tab-feature-flags' },
 ];
 
-const font = "'DM Sans', sans-serif";
+const font = "Quicksand";
 
 export default function TopHeader({ userRole, currentUser, handleLogout, apiFetch }) {
   const navigate = useNavigate();
