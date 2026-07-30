@@ -1386,12 +1386,10 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 // canViewCampaign decides whether the authenticated user may see a campaign.
 // Admins see every org campaign; Team Leaders see campaigns assigned to
 // themselves or their managed Agents; Agents see only their own assignments.
+// Super-admins bypass org scoping and see every campaign.
 func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 	campaign, err := s.db.GetCampaignByID(campaignID)
 	if err != nil || campaign == nil {
-		return false
-	}
-	if campaign.OrgID != ac.OrgID {
 		return false
 	}
 	user, err := s.db.GetUserByEmail(ac.Email)
@@ -1400,6 +1398,9 @@ func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 	}
 	if s.isSuperAdmin(ac.Email) || user.Role == db.RoleAdmin {
 		return true
+	}
+	if campaign.OrgID != ac.OrgID {
+		return false
 	}
 	if user.Role == db.RoleTeamLeader {
 		ok, err := s.db.IsCampaignAssignedToManager(campaignID, user.ID)
@@ -1415,6 +1416,7 @@ func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 // requireCampaignView parses the campaign ID from the URL, verifies the
 // campaign exists in the user's org, and enforces RBAC visibility. It returns
 // the campaign on success; on failure it writes an HTTP error and returns nil.
+// Super-admins bypass the org scoping check so they can inspect any campaign.
 func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db.Campaign {
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
@@ -1428,7 +1430,7 @@ func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return nil
 	}
-	if c == nil || c.OrgID != ac.OrgID {
+	if c == nil || (c.OrgID != ac.OrgID && !s.isSuperAdmin(ac.Email)) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return nil
 	}
