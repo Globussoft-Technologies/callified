@@ -207,11 +207,11 @@ export default function App() {
         <Route path="/sandbox" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />}</AdminOnly>} />
         <Route path="/products" element={
           <AdminOnly userRole={userRole}>
-            {hideAiFeatures ? <Navigate to="/crm" replace /> : <ProductsPage
+            <ProductsPage
               apiFetch={apiFetch} API_URL={API_URL}
               selectedOrg={selectedOrg} orgs={orgs}
               orgProducts={orgProducts} fetchOrgProducts={fetchOrgProducts}
-            />}
+            />
           </AdminOnly>
         } />
         <Route path="/settings" element={
