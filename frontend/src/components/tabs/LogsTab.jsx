@@ -222,7 +222,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title + controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>

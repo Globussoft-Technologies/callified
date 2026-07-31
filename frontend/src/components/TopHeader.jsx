@@ -4,6 +4,7 @@ import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
 import { formatDateTime } from '../utils/dateFormat';
+import { Popover, PopoverTrigger, PopoverContent, PopoverClose } from './ui/popover';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
@@ -61,10 +62,8 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const hideAiFeatures = useHideAiFeatures();
 
   const [callingStatus, setCallingStatus] = useState(null);
-  const [moreOpen, setMoreOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
-  const moreRef = useRef(null);
   const notifRef = useRef(null);
 
   const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls, manualPresenceStatus, setManualPresenceStatus } = useCall();
@@ -89,15 +88,6 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   }, [apiFetch]);
 
   useEffect(() => {
-    if (!moreOpen) return;
-    const onDocClick = (e) => {
-      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [moreOpen]);
-
-  useEffect(() => {
     if (!notifOpen) return;
     const onDocClick = (e) => {
       if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
@@ -106,14 +96,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [notifOpen]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setMoreOpen(false); setNotifOpen(false); }, [location.pathname]);
-
   const visibleMoreTabs = hideAiFeatures
     ? MORE_ADMIN_TABS.filter(t => !AI_TAB_IDS.has(t.id))
     : MORE_ADMIN_TABS;
   const moreActive = visibleMoreTabs.some(t => t.id === activeTab);
-  const goTo = (path) => { setMoreOpen(false); navigate(path); };
+  const goTo = (path) => navigate(path);
 
   // Super admins see the same navigation as admins, plus the super-admin-only tabs.
   const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
@@ -131,15 +118,17 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
         data-testid={testid}
         onClick={() => navigate(path)}
         style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          padding: '6px 10px', borderRadius: 6,
-          fontSize: 13, fontWeight: isActive ? 600 : 500,
-          color: isActive ? '#6366f1' : '#374151',
+          background: isActive ? '#eef2ff' : 'transparent',
+          border: isActive ? '1px solid #c7d2fe' : '1px solid transparent',
+          cursor: 'pointer',
+          padding: '5px 13px', borderRadius: 999,
+          fontSize: 13, fontWeight: isActive ? 700 : 600,
+          color: isActive ? '#4338ca' : '#475569',
           fontFamily: font, whiteSpace: 'nowrap',
-          transition: 'color 0.15s',
+          transition: 'background 0.15s, color 0.15s',
         }}
-        onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#111827'; }}
-        onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#374151'; }}
+        onMouseEnter={e => { if (!isActive) { e.currentTarget.style.color = '#1f2937'; } }}
+        onMouseLeave={e => { if (!isActive) { e.currentTarget.style.color = '#475569'; } }}
       >
         {label}
       </button>
@@ -148,10 +137,10 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
   return (
     <header style={{
-      display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: '6px',
-      padding: '0 24px', height: 56,
+      display: 'flex', flexWrap: 'nowrap', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
+      padding: '0 24px', height: 72,
       background: '#ffffff', borderBottom: '1px solid #e5e7eb',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+      boxShadow: '0 12px 40px rgba(15, 23, 42, 0.06)',
       position: 'sticky', top: 0, zIndex: 100,
       width: '100%', boxSizing: 'border-box',
     }}>
@@ -160,14 +149,24 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       <div
         onClick={() => navigate('/crm')}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0, marginRight: 12 }}>
-        <img src={navLogo} alt="Callified" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 10 }} />
-        <span style={{ fontSize: 15, fontWeight: 700, color: '#111827', fontFamily: font }}>
+        <img src={navLogo} alt="Callified" style={{ height: 50, width: 50, objectFit: 'contain', borderRadius: 10 }} />
+        <span style={{
+          fontSize: 25,
+          fontWeight: 900,
+          fontFamily: font,
+          background: 'linear-gradient(135deg, #7c3aed 0%, #0ea5e9 100%)',
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+          color: 'transparent',
+          letterSpacing: '0.02em',
+        }}>
           Callified
         </span>
       </div>
 
       {/* Tabs */}
-      <nav style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'nowrap', overflow: 'visible' }}>
+      <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'visible', padding: '4px 0' }}>
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
@@ -191,71 +190,47 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             }
             if (allMoreTabs.length === 0) return null;
             return (
-              <div ref={moreRef} style={{ position: 'relative' }}>
-                <button
-                  data-testid="tab-more"
-                  onClick={() => setMoreOpen(o => !o)}
-                  aria-haspopup="true"
-                  aria-expanded={moreOpen}
-                  style={{
-                    background: moreActive ? 'rgba(99,102,241,0.1)' : 'rgba(99,102,241,0.08)',
-                    border: '1px solid rgba(99,102,241,0.2)',
-                    borderRadius: 20, cursor: 'pointer',
-                    padding: '5px 14px', fontSize: 13,
-                    fontWeight: 600, color: '#6366f1',
-                    fontFamily: font, whiteSpace: 'nowrap',
-                    display: 'flex', alignItems: 'center', gap: 4,
-                  }}>
-                  More <span style={{ fontSize: '0.7em' }}>▾</span>
-                </button>
-                {moreOpen && (
-                  <div role="menu" style={{
-                    position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: '220px',
-                    background: '#ffffff', border: '1px solid #e5e7eb',
-                    borderRadius: 10, padding: 6,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.10)', zIndex: 1000,
-                    display: 'flex', flexDirection: 'column', gap: 2,
-                  }}>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    data-testid="tab-more"
+                    aria-haspopup="true"
+                    className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold cursor-pointer transition-colors duration-150 ${moreActive ? 'border-slate-300 bg-slate-100 text-slate-950' : 'border-transparent bg-transparent text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    More <span className="text-xs leading-none">▾</span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent side="bottom" align="end" alignOffset={8} className="w-[min(280px,100vw)] p-0 bg-white border border-slate-200 relative max-h-[calc(100svh-90px)] top-5 2xl:top-5 overflow-y-auto shadow-[0_16px_48px_rgba(15,23,42,0.12)]">
+                  <div role="menu" className="flex flex-col gap-1.5 p-2">
                     {roleFilteredMoreTabs.map(t => (
-                      <button key={t.id} data-testid={t.testid} role="menuitem"
-                        onClick={() => goTo(t.path)}
-                        style={{
-                          display: 'flex', alignItems: 'center',
-                          padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
-                          background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
-                          border: 'none', borderRadius: 6,
-                          color: activeTab === t.id ? '#6366f1' : '#374151',
-                          fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
-                          fontFamily: font,
-                        }}>
-                        {t.label}
-                      </button>
+                      <PopoverClose asChild key={t.id}>
+                        <button data-testid={t.testid} role="menuitem"
+                          onClick={() => goTo(t.path)}
+                          className={`w-full rounded-xl px-3 cursor-pointer py-2 text-left text-sm font-medium transition-colors duration-150 ${activeTab === t.id ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-100'}`}>
+                          {t.label}
+                        </button>
+                      </PopoverClose>
                     ))}
                     {superAdminTabs.map(t => (
-                      <button key={t.id} data-testid={t.testid} role="menuitem"
-                        onClick={() => goTo(t.path)}
-                        style={{
-                          display: 'flex', alignItems: 'center',
-                          padding: '8px 12px', textAlign: 'left', cursor: 'pointer',
-                          background: activeTab === t.id ? 'rgba(99,102,241,0.08)' : 'transparent',
-                          border: 'none', borderRadius: 6,
-                          color: activeTab === t.id ? '#6366f1' : '#374151',
-                          fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
-                          fontFamily: font,
-                        }}>
-                        {t.label}
-                      </button>
+                      <PopoverClose asChild key={t.id}>
+                        <button data-testid={t.testid} role="menuitem"
+                          onClick={() => goTo(t.path)}
+                          className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors duration-150 ${activeTab === t.id ? 'bg-indigo-50 text-indigo-600' : 'text-slate-700 hover:bg-slate-50'}`}>
+                          {t.label}
+                        </button>
+                      </PopoverClose>
                     ))}
                   </div>
-                )}
-              </div>
+                </PopoverContent>
+              </Popover>
             );
           })()
         )}
       </nav>
 
       {/* Right side */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, marginLeft: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0, marginLeft: 12 }}>
 
         {/* Agent presence toggle */}
         <button

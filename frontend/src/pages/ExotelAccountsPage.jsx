@@ -145,7 +145,7 @@ export default function ExotelAccountsPage() {
   const isExotel = form.provider === 'exotel';
 
   return (
-    <div style={{ padding: '28px 32px', maxWidth: 900, margin: '0 auto', fontFamily: T.font, background: T.bg, minHeight: '100%' }}>
+    <div style={{ maxWidth: 900, margin: '0 auto', fontFamily: T.font, minHeight: '100%' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>

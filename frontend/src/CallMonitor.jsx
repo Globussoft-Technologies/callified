@@ -67,7 +67,7 @@ export default function CallMonitor({ apiUrl }) {
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>

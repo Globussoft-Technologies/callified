@@ -297,7 +297,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>

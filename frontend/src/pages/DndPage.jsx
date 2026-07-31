@@ -154,7 +154,7 @@ export default function DndPage({ apiFetch, API_URL }) {
 
   if (currentUser?.role !== 'Admin') {
     return (
-      <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+      <div style={{ minHeight: '100%', fontFamily: T.font }}>
         <div style={{ ...card, padding: '3rem', textAlign: 'center', color: T.muted }}>
           <div style={{ fontSize: 16, fontWeight: 600, color: T.text, marginBottom: 6 }}>Access Restricted</div>
           <div style={{ fontSize: 13 }}>DND management is available to Admins only.</div>
@@ -174,7 +174,7 @@ export default function DndPage({ apiFetch, API_URL }) {
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>

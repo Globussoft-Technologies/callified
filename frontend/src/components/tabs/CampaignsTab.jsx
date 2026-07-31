@@ -820,7 +820,7 @@ export default function CampaignsTab({
   // ─── LIST VIEW ───
   if (routeCampaignId && view !== 'detail' && !autoOpened) {
     return (
-      <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ background: '#f4f5f9', minHeight: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ color: '#6b7280', fontSize: 14 }}>Loading campaign…</div>
       </div>
     );
@@ -838,7 +838,7 @@ export default function CampaignsTab({
   });
 
   return (
-    <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
+    <div style={{ background: '#f4f5f9', minHeight: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 10 }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
@@ -852,7 +852,7 @@ export default function CampaignsTab({
       </div>
 
       {campaigns.length === 0 ? (
-        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }} className='text-gray-500 font-semibold' >
           No campaigns yet. Create one to start dialing!
         </div>
       ) : (

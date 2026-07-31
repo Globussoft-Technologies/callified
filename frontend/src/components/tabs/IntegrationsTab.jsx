@@ -97,14 +97,14 @@ export default function IntegrationsTab({
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
           <span style={{ color: T.accent }}>CRM</span> Integrations
         </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
+        <p style={{ margin: '4px 0 0', fontSize: 13 }} className='text-gray-500 font-semibold' >
           Connect external CRM platforms to pull leads automatically and push call outcomes back.
         </p>
       </div>

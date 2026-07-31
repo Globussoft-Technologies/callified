@@ -56,8 +56,8 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading analytics…</div>;
-  if (!data)   return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Failed to load analytics data.</div>;
+  if (loading) return <div style={{ padding: '3rem', textAlign: 'center', fontFamily: T.font }} className='text-gray-600 font-semibold' >Loading analytics…</div>;
+  if (!data)   return <div style={{ padding: '3rem', textAlign: 'center', fontFamily: T.font }} className='text-gray-600 font-semibold' >Failed to load analytics data.</div>;
 
   const dailyCalls         = data.daily_calls          || [];
   const sentimentBreakdown = data.sentiment_breakdown  || { positive: 0, neutral: 0, negative: 0 };
@@ -102,7 +102,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>

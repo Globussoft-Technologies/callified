@@ -158,7 +158,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
   const popularIdx = Math.floor(plans.length / 2);
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Title */}
       <h2 style={{ margin: '0 0 24px', fontSize: 22, fontWeight: 700, color: T.text }}>Billing</h2>

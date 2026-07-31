@@ -85,12 +85,12 @@ export default function AuthPage({ redirectTo = '/crm' }) {
       <div style={{ width: '100%', maxWidth: '440px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '2rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 0 }}>
-            <img src={loginIcon} alt="" style={{ height: '1.2em', width: '1.2em', objectFit: 'contain' }} />
+            <img src={loginIcon} alt="" style={{ height: '1.6em', width: '1.6em', objectFit: 'contain' }} />
             <span style={{ background: 'linear-gradient(135deg, #a78bfa, #22d3ee)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               Callified AI
             </span>
           </h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.95rem', marginTop: '0.5rem' }}>AI-Powered Lead Qualification Platform</p>
+          <p style={{ fontSize: '0.95rem', marginTop: '0.5rem' }} className='text-white/90 font-semibold' >AI-Powered Lead Qualification Platform</p>
           <span style={{ display: 'none' }} data-version="2.0.1" />
         </div>
 
@@ -100,16 +100,16 @@ export default function AuthPage({ redirectTo = '/crm' }) {
               <button data-testid="auth-login-tab" onClick={() => { setAuthPage('login'); setAuthError(''); setForgotSuccess(''); }}
                 style={{
                   flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
-                  background: authPage === 'login' ? 'rgba(167,139,250,0.2)' : 'transparent',
-                  color: authPage === 'login' ? '#a78bfa' : '#64748b'
+                  background: authPage === 'login' ? 'rgba(167,139,250,0.2)' : 'rgba(167,139,250,0.06)',
+                  color: authPage === 'login' ? '#8b5cf6' : '#64748b'
                 }}>
                 Login
               </button>
               <button data-testid="auth-signup-tab" onClick={() => { setAuthPage('signup'); setAuthError(''); setForgotSuccess(''); }}
                 style={{
                   flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
-                  background: authPage === 'signup' ? 'rgba(34,211,238,0.2)' : 'transparent',
-                  color: authPage === 'signup' ? '#22d3ee' : '#64748b'
+                  background: authPage === 'signup' ? 'rgba(167,139,250,0.2)' : 'rgba(167,139,250,0.06)',
+                  color: authPage === 'signup' ? '#8b5cf6' : '#64748b'
                 }}>
                 Sign Up
               </button>
@@ -176,7 +176,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
             <form onSubmit={handleForgotPassword}>
               <div className="form-group">
                 <label>Email Address</label>
-                <input className="form-input" type="email" placeholder="you@company.com" required
+                <input className="form-input placeholder:font-medium" type="email" placeholder="you@company.com" required
                   value={forgotEmail} onChange={e => setForgotEmail(e.target.value)} />
               </div>
               <button type="submit" className="btn-primary" disabled={authLoading}
@@ -194,25 +194,25 @@ export default function AuthPage({ redirectTo = '/crm' }) {
                   <>
                     <div className="form-group">
                       <label>Organization Name</label>
-                      <input data-testid="auth-org-name" className="form-input" placeholder="e.g. Globussoft" required
+                      <input data-testid="auth-org-name" className="form-input placeholder:font-medium" placeholder="e.g. Globussoft" required
                         value={authForm.org_name} onChange={e => setAuthForm({ ...authForm, org_name: e.target.value })} />
                     </div>
                     <div className="form-group">
                       <label>Your Full Name</label>
-                      <input data-testid="auth-full-name" className="form-input" placeholder="e.g. Sumit Kumar" required
+                      <input data-testid="auth-full-name" className="form-input placeholder:font-medium" placeholder="e.g. Sumit Kumar" required
                         value={authForm.full_name} onChange={e => setAuthForm({ ...authForm, full_name: e.target.value })} />
                     </div>
                   </>
                 )}
                 <div className="form-group">
                   <label>Email</label>
-                  <input data-testid="auth-email" className="form-input" type="email" placeholder="you@company.com" required
+                  <input data-testid="auth-email" className="form-input placeholder:font-medium" type="email" placeholder="you@company.com" required
                     value={authForm.email} onChange={e => setAuthForm({ ...authForm, email: e.target.value })} />
                 </div>
                 <div className="form-group">
                   <label>Password</label>
                   <div style={{ position: 'relative' }}>
-                    <input data-testid="auth-password" className="form-input" type={showPassword ? 'text' : 'password'} placeholder="••••••••" required minLength={8} maxLength={128}
+                    <input data-testid="auth-password" className="form-input placeholder:font-medium" type={showPassword ? 'text' : 'password'} placeholder="••••••••" required minLength={8} maxLength={128}
                       value={authForm.password} onChange={e => setAuthForm({ ...authForm, password: e.target.value })}
                       style={{ paddingRight: '2.75rem' }} />
                     <button
@@ -261,7 +261,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
               {authPage === 'login' && (
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
                   <button onClick={() => { setAuthPage('forgot'); setAuthError(''); setForgotSuccess(''); setForgotEmail(''); }}
-                    style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }}>
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', textDecoration: 'underline' }} className='text-purple-600 font-semibold'  >
                     Forgot password?
                   </button>
                 </div>

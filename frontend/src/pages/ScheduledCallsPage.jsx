@@ -69,7 +69,7 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
   const hasActive = visibleCalls.some(c => c.status === 'pending' || c.status === 'dialing');
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
           <span style={{ color: T.accent }}>Scheduled</span> Calls

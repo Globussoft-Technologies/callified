@@ -69,7 +69,7 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
   };
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
@@ -118,7 +118,7 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
               </tr>
             </thead>
             <tbody>
-              {tasks.map((t, i) => {
+              {Array.isArray(tasks) && tasks.map((t, i) => {
                 const isLast = i === tasks.length - 1;
                 const rowTd = { ...tdStyle, borderBottom: isLast ? 'none' : `1px solid ${T.border}` };
                 return (

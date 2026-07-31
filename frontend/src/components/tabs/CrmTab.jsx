@@ -147,12 +147,12 @@ export default function CrmTab({
   };
 
   return (
-    <div style={{ padding: '24px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Heading + toggle */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>Dashboard</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: T.text}} >Dashboard</h2>
           {activeCampaigns.length > 0 && (
             <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
               AI is running {activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}
@@ -162,7 +162,7 @@ export default function CrmTab({
       </div>
 
       {/* 5 stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 15, marginBottom: 16 }}>
         {statCards.map(s => (
           <div key={s.label}
             onClick={() => setActiveModal(s.modal)}
@@ -174,11 +174,11 @@ export default function CrmTab({
             onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }} className='text-gray-800 font-bold' >
                 {s.label}
-                <span style={{ fontSize: 9, color: s.color }}>↗</span>
+                <span style={{ fontSize: 11, color: s.color }}>↗</span>
               </div>
-              <span style={{ fontSize: 10, fontWeight: 700, color: T.green, background: 'rgba(16,185,129,0.1)', padding: '1px 7px', borderRadius: 20 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, background: 'rgba(16,185,129,0.2)', padding: '1px 7px', borderRadius: 5 }}  className='text-emerald-700' >
                 {s.badge}
               </span>
             </div>
@@ -187,7 +187,7 @@ export default function CrmTab({
                 <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>
                   {s.value.toLocaleString()}
                 </div>
-                <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>{s.sub}</div>
+                <div style={{ fontSize: 11, marginTop: 4 }}  className='text-gray-500 font-semibold' >{s.sub}</div>
               </div>
               <Sparkline data={makeSpark(s.value)} color={s.color} width={64} height={28} />
             </div>
@@ -351,7 +351,7 @@ export default function CrmTab({
         <div style={{ ...card, padding: '18px 20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>Call Volume — per Campaign</div>
-            <div style={{ fontSize: 11, color: T.muted }}>All campaigns</div>
+            <div style={{ fontSize: 12 }} className='text-gray-500 font-semibold' >All campaigns</div>
           </div>
           {barData.length > 0 ? (
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 100 }}>
@@ -372,7 +372,7 @@ export default function CrmTab({
               ))}
             </div>
           ) : (
-            <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.muted, fontSize: 13 }}>
+            <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}  className='text-gray-400 font-medium' >
               No campaign data yet
             </div>
           )}
@@ -385,8 +385,8 @@ export default function CrmTab({
             {funnel.map((f, i) => (
               <div key={i}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                  <span style={{ fontSize: 11, color: T.sub }}>{f.label}</span>
-                  <span style={{ fontSize: 11, fontFamily: T.mono, fontWeight: 700, color: f.color }}>
+                  <span style={{ fontSize: 11 }} className='text-gray-500 font-semibold' >{f.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700 }} className='text-gray-500' >
                     {f.val.toLocaleString()}
                   </span>
                 </div>
@@ -435,7 +435,7 @@ export default function CrmTab({
               );
             })
           ) : (
-            <div style={{ fontSize: 12, color: T.muted, textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 12, textAlign: 'center', padding: '20px 0' }} className='text-gray-400 font-semibold' >
               {isAdmin ? 'No active campaigns' : 'No campaigns yet'}
             </div>
           )}

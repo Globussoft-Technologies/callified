@@ -1103,8 +1103,10 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
       <div className="glass-panel" style={leftPanelStyle}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid #e2e8f0' }}>
-          <h3 style={{ margin: 0, color: '#25D366', fontSize: '1rem' }}>
-            <span style={{ marginRight: '6px' }}>💬</span>WhatsApp Inbox
+          <h3 style={{ margin: 0, fontSize: '1rem' }} className='text-emerald-700 font-semibold' >
+            <span style={{ marginRight: '6px' }}>
+              <img src="https://cdn.simpleicons.org/whatsapp" className='size-5 inline relative -top-0.5' />
+              </span>WhatsApp Inbox
           </h3>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button onClick={() => setShowNewChat(true)}
@@ -1130,7 +1132,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
             steal vertical space; clicking it flips the list between
             "active" and "archived" — same poll, different filter. */}
         <div style={{ padding: '0.5rem 0.75rem', display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <input type="text" placeholder="Search by name, phone or company..." value={search} onChange={e => setSearch(e.target.value)}
+          <input type="text" placeholder="Search by name, phone or company..." value={search} onChange={e => setSearch(e.target.value)} className='placeholder:font-semibold'
             style={{ ...inputStyle, margin: 0, fontSize: '0.8rem', padding: '6px 10px', flex: 1 }} />
           <button onClick={() => setShowArchived(v => !v)}
             title={showArchived ? 'Showing archived — click to show active' : 'Show archived conversations'}
@@ -1147,7 +1149,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
         {/* Conversations */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {filtered.length === 0 ? (
-            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', fontSize: '0.85rem' }} className='text-gray-500 font-semibold' >
               No WhatsApp conversations yet
             </div>
           ) : filtered.map(conv => {
@@ -1257,7 +1259,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
       {/* ── RIGHT PANEL: Chat Window ── */}
       <div style={rightPanelStyle}>
         {!selectedPhone ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', fontSize: '0.95rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' , fontSize: '0.95rem' }} className='text-gray-500 font-semibold'  >
             Select a conversation to start chatting
           </div>
         ) : (
