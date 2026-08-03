@@ -35,6 +35,12 @@ const btnGhost = {
   fontSize: 12, fontWeight: 600, fontFamily: T.font,
 };
 
+function mergeProviderAccount(accounts, account) {
+  const list = Array.isArray(accounts) ? [...accounts] : [];
+  if (!account?.id) return list;
+  return list.some(a => String(a.id) === String(account.id)) ? list : [...list, account];
+}
+
 function withDate(label, tsMs) {
   label = String(label || '');
   const d = new Date(tsMs || Date.now());
@@ -618,7 +624,7 @@ export default function CampaignDetail({
 
   const handleDialClick = async (lead) => {
     if (!requireSelectedDialAccount()) return;
-    onCampaignDial(lead, selectedCampaign.id);
+    onCampaignDial(lead, selectedCampaign.id, browserAccountId);
     try {
       const res = await apiFetch(`${API_URL}/dnd/check/${encodeURIComponent(lead.phone || '')}`);
       if (!res.ok) return;
@@ -869,7 +875,7 @@ export default function CampaignDetail({
         if (data.is_dnd) { showDndBlock(lead.id); return; }
       }
     } catch (_) {}
-    onCampaignDial(lead, campaignId);
+    onCampaignDial(lead, campaignId, browserAccountId);
   };
 
   const handleWebCallWithDndCheck = async (lead, campaignId) => {
@@ -964,6 +970,7 @@ export default function CampaignDetail({
   // ── Exotel account selector state ─────────────────────────────────────────
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
+  const [campaignDefaultAccount, setCampaignDefaultAccount] = useState(null);
   const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
 
   const [humanCallLead, setHumanCallLead] = useState(null); // lead being human-called
@@ -1006,7 +1013,10 @@ export default function CampaignDetail({
     // Fetch which account is linked to this campaign
     apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`)
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
+      .then(data => {
+        if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id));
+        if (data?.account) setCampaignDefaultAccount(data.account);
+      })
       .catch(() => {});
     // Restore per-machine browser-call account from localStorage
     try {
@@ -1015,6 +1025,14 @@ export default function CampaignDetail({
     } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaign.id, browserAccountKey]);
+
+  const callingAccountOptions = mergeProviderAccount(orgExotelAccounts, campaignDefaultAccount)
+    .filter(a => a.provider === 'tata' || a.app_type === 'voicebot');
+  const findCallingAccount = (id) => callingAccountOptions.find(a => String(a.id) === String(id))
+    || orgExotelAccounts.find(a => String(a.id) === String(id));
+  const campaignDefaultLabel = campaignDefaultAccount
+    ? `Use campaign default ([${campaignDefaultAccount.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id})`
+    : 'Use campaign default';
 
   const handleSaveExotelAccount = async () => {
     setExotelAccountSaveStatus('saving');
@@ -1251,10 +1269,10 @@ export default function CampaignDetail({
                 } catch { /* ignore */ }
               }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
-              <option value="">Use campaign default</option>
-              {orgExotelAccounts.filter(a => a.app_type === 'voicebot').map(a => (
+              <option value="">{campaignDefaultLabel}</option>
+              {callingAccountOptions.map(a => (
                 <option key={a.id} value={String(a.id)}>
-                  {'[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
+                  [{a.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] {a.name} · {a.caller_id}
                 </option>
               ))}
             </select>
@@ -1262,12 +1280,14 @@ export default function CampaignDetail({
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
             {browserAccountId
               ? (() => {
-                  const a = orgExotelAccounts.find(x => String(x.id) === browserAccountId);
+                  const a = findCallingAccount(browserAccountId);
                   return a ? `Dialing from: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
                 })()
-              : orgExotelAccounts.length === 0
+              : callingAccountOptions.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
-                : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
+                : campaignDefaultAccount
+                  ? `Browser calls will use campaign default: ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id}`
+                  : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
           </div>
         </div>
       )}
@@ -1430,7 +1450,11 @@ export default function CampaignDetail({
               const newCount = (campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length;
               if (!await confirm({ message: `Dial ALL ${newCount} new leads? (30s gap between calls)` })) return;
               try {
-                const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, { method: 'POST' });
+                const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ exotel_account_id: parseInt(browserAccountId, 10) || 0 }),
+                });
                 const data = await res.json();
                 toast(data.message || 'Dialing started');
                 const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
@@ -1445,7 +1469,11 @@ export default function CampaignDetail({
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
             try {
-              const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, { method: 'POST' });
+              const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-all?force=true`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ exotel_account_id: parseInt(browserAccountId, 10) || 0 }),
+              });
               const data = await res.json();
               toast(data.message || 'Dialing started');
               const ri = setInterval(() => { fetchCampaignLeads(selectedCampaign.id); fetchCallLog(selectedCampaign.id); }, 15000);
