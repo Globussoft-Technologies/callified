@@ -67,18 +67,18 @@ func (d *DB) GetRetriesByCampaign(campaignID int64) ([]Retry, error) {
 // Issue #77 — the tab fell back to "no retries" forever because there was
 // no enriched read endpoint at all (route was unregistered → 404).
 type RetryWithLead struct {
-	ID            int64  `json:"id"`
-	LeadID        int64  `json:"lead_id"`
-	FirstName     string `json:"first_name"`
-	LastName      string `json:"last_name"`
-	Phone         string `json:"phone"`
-	CampaignID    int64  `json:"campaign_id"`
-	OrgID         int64  `json:"org_id"`
-	Attempt       int    `json:"attempt"`
-	MaxAttempts   int    `json:"max_attempts"`
-	Status        string `json:"status"`
-	RetryTime     string `json:"retry_time"`
-	CreatedAt     string `json:"created_at"`
+	ID          int64  `json:"id"`
+	LeadID      int64  `json:"lead_id"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Phone       string `json:"phone"`
+	CampaignID  int64  `json:"campaign_id"`
+	OrgID       int64  `json:"org_id"`
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+	Status      string `json:"status"`
+	RetryTime   string `json:"retry_time"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // GetRetriesByCampaignWithLead returns retries joined to leads so the UI can
@@ -118,6 +118,17 @@ func (d *DB) GetRetriesByCampaignWithLead(campaignID int64) ([]RetryWithLead, er
 func (d *DB) UpdateRetryStatus(id int64, status string) error {
 	_, err := d.pool.Exec(
 		`UPDATE call_retries SET status=? WHERE id=?`, status, id)
+	return err
+}
+
+// CompleteActiveRetry closes the active retry chain for a lead once the
+// provider confirms a successful final call result.
+func (d *DB) CompleteActiveRetry(leadID, campaignID int64) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_retries
+		SET status='completed'
+		WHERE lead_id=? AND campaign_id=? AND status IN ('pending','exhausted')`,
+		leadID, nullInt64(campaignID))
 	return err
 }
 
