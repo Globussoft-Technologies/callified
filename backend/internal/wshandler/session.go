@@ -23,6 +23,7 @@ type CallSession struct {
 	// Identity (set on connect / start event)
 	StreamSid string
 	CallSid   string
+	Provider  string
 	IsExotel  bool
 	IsWebSim  bool
 	IsInbound bool

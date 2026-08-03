@@ -83,7 +83,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); err != "" {
+	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); err != "" {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -134,7 +134,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -203,11 +203,15 @@ func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 }
 
 // validateProviderAccount checks required fields per provider.
-func validateProviderAccount(provider, name, apiKey, apiToken, apiSecret, accountSID, callerID string) string {
+func validateProviderAccount(provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID string) string {
 	if strings.TrimSpace(name) == "" {
 		return "account name is required"
 	}
 	switch provider {
+	case "tata", "smartflo", "tata_tele":
+		if apiKey == "" || callerID == "" || appID == "" {
+			return "api_key (Tata API token), app_id (agent number) and caller_id (Tata number) are required for Tata Tele"
+		}
 	case "twilio":
 		if accountSID == "" || apiKey == "" || apiToken == "" || apiSecret == "" || callerID == "" {
 			return "account_sid, api_key (auth token), api_token (API key SID), api_secret and caller_id (phone number) are required for Twilio"

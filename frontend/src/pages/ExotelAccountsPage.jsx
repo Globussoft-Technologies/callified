@@ -38,6 +38,13 @@ const EMPTY_FORM = {
 const PROVIDER_BADGE = {
   exotel: { label: 'Exotel', bg: 'rgba(99,102,241,0.08)', color: '#6366f1', border: 'rgba(99,102,241,0.25)' },
   twilio: { label: 'Twilio', bg: 'rgba(239,68,68,0.06)', color: '#ef4444', border: 'rgba(239,68,68,0.2)' },
+  tata: { label: 'Tata Tele', bg: 'rgba(16,185,129,0.08)', color: '#059669', border: 'rgba(16,185,129,0.25)' },
+};
+
+const PROVIDER_LABELS = {
+  exotel: 'Exotel',
+  tata: 'Tata Tele',
+  twilio: 'Twilio',
 };
 
 export default function ExotelAccountsPage() {
@@ -77,7 +84,7 @@ export default function ExotelAccountsPage() {
       api_secret: a.api_secret || '',
       account_sid: a.account_sid,
       caller_id: a.caller_id,
-      app_id: a.app_id || '',
+      app_id: a.provider === 'tata' ? (a.app_id || a.account_sid || '') : (a.app_id || ''),
       app_type: a.app_type || 'exoml',
       region: a.region || '',
       subdomain: a.subdomain || '',
@@ -101,6 +108,11 @@ export default function ExotelAccountsPage() {
         setError('Account SID, Auth Token, API Key SID, API Secret and Phone Number are required for Twilio.');
         return;
       }
+    } else if (provider === 'tata') {
+      if (!api_key || !caller_id || !form.app_id) {
+        setError('API Token, Caller ID and Agent Number are required for Tata Tele.');
+        return;
+      }
     } else {
       if (!api_key || !api_token || !account_sid || !caller_id) {
         setError('API Key, API Token, Account SID and Caller ID are required for Exotel.');
@@ -110,6 +122,9 @@ export default function ExotelAccountsPage() {
     setSaving(true);
     setError('');
     try {
+      const payload = form.provider === 'tata'
+        ? { ...form, api_token: form.api_token || form.api_key, account_sid: form.account_sid || form.app_id }
+        : form;
       const method = editingId ? 'PUT' : 'POST';
       const url = editingId
         ? `${API_URL}/exotel-accounts/${editingId}`
@@ -117,7 +132,7 @@ export default function ExotelAccountsPage() {
       const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -143,6 +158,8 @@ export default function ExotelAccountsPage() {
   };
 
   const isExotel = form.provider === 'exotel';
+  const isTata = form.provider === 'tata';
+  const isTwilio = form.provider === 'twilio';
 
   return (
     <div style={{ padding: '28px 32px', maxWidth: 900, margin: '0 auto', fontFamily: T.font, background: T.bg, minHeight: '100%' }}>
@@ -154,7 +171,7 @@ export default function ExotelAccountsPage() {
             📞 Provider Accounts
           </h2>
           <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
-            Save Exotel credentials and select one per campaign.
+            Save calling provider credentials and select one per campaign.
           </p>
         </div>
         <button onClick={openAdd}
@@ -180,7 +197,7 @@ export default function ExotelAccountsPage() {
             <div style={{ marginBottom: '1.2rem' }}>
               <label style={labelStyle}>Provider <span style={{ color: T.red }}>*</span></label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {['exotel' /* , 'twilio' */].map(p => (
+                {['exotel', 'tata' /* , 'twilio' */].map(p => (
                   <button key={p} type="button"
                     onClick={() => setField('provider', p)}
                     style={{
@@ -190,7 +207,7 @@ export default function ExotelAccountsPage() {
                       background: form.provider === p ? 'rgba(99,102,241,0.08)' : '#fff',
                       color: form.provider === p ? T.accent : T.sub,
                     }}>
-                    {p === 'exotel' ? 'Exotel' : 'Twilio'}
+                    {PROVIDER_LABELS[p] || p}
                   </button>
                 ))}
               </div>
@@ -288,8 +305,45 @@ export default function ExotelAccountsPage() {
               </div>
             )}
 
+            {/* Tata Tele fields */}
+            {isTata && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
+                <div>
+                  <label style={labelStyle}>API Token <span style={{ color: T.red }}>*</span></label>
+                  <div style={{ position: 'relative' }}>
+                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="Tata API token" type={showApiKey ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
+                    <button type="button" onClick={() => setShowApiKey(v => !v)}
+                      aria-label={showApiKey ? 'Hide API Token' : 'Show API Token'}
+                      style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.accent, fontSize: 12, fontWeight: 600, padding: 2 }}>
+                      {showApiKey ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>Caller ID <span style={{ color: T.red }}>*</span></label>
+                  <input style={inputStyle} placeholder="e.g. 919240232665"
+                    value={form.caller_id} onChange={e => setField('caller_id', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Agent Number <span style={{ color: T.red }}>*</span></label>
+                  <input style={inputStyle} placeholder="Smartflo agent/extension number"
+                    value={form.app_id} onChange={e => setField('app_id', e.target.value)} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Click-to-Call Endpoint</label>
+                  <input style={inputStyle} placeholder="Optional Tata API URL"
+                    value={form.subdomain} onChange={e => setField('subdomain', e.target.value)} />
+                  <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
+                    Leave blank to use the default Smartflo endpoint.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Twilio fields */}
-            {!isExotel && (
+            {isTwilio && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
                   <label style={labelStyle}>Account SID <span style={{ color: T.red }}>*</span></label>
@@ -390,11 +444,13 @@ export default function ExotelAccountsPage() {
                     }}>{badge.label}</span>
                   </div>
                   <div style={{ color: T.muted, fontSize: '0.78rem', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-                    <span>Account: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.account_sid}</span></span>
-                    <span>Caller: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>
+                    {a.provider !== 'tata' && <span>Account: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.account_sid}</span></span>}
+                    <span>{a.provider === 'tata' ? 'DID' : 'Caller'}: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>
                     {a.app_id && <span>App: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
-                    {a.provider !== 'twilio' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
-                    {a.provider !== 'twilio' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
+                    {a.provider === 'tata' && a.app_id && <span>Agent: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
+                    {a.provider !== 'twilio' && a.provider !== 'tata' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
+                    {a.provider === 'tata' && a.subdomain && <span>Endpoint: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain}</span></span>}
+                    {a.provider !== 'twilio' && a.provider !== 'tata' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
                     <span>Key: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.api_key.slice(0, 8)}…</span></span>
                   </div>
                 </div>

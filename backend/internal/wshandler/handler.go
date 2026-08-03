@@ -108,8 +108,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if streamSid == "" {
 		streamSid = fmt.Sprintf("web_sim_%s_%d", q.Get("lead_id"), time.Now().UnixMilli())
 	}
+	isTataStream := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	if isTataStream && strings.HasPrefix(streamSid, "web_sim_") {
+		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
+	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	if isTataStream {
+		sess.Provider = "tata"
+		sess.IsExotel = false
+		sess.UseUlaw = strings.EqualFold(q.Get("codec"), "ulaw") || strings.EqualFold(q.Get("codec"), "mulaw")
+	}
 	sess.IsInbound = q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
@@ -134,7 +143,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is empty until the start frame lands) correctly defers to
 	// handleStartEvent's Redis-hydration path instead of firing a greeting
 	// in the platform-default English/Aditya combo.
-	langFromQuery := q.Get("tts_language") != ""
+	langFromQuery := q.Get("tts_language") != "" || (isTataStream && (q.Get("lead_id") != "" || q.Get("campaign_id") != "" || q.Get("org_id") != ""))
 	if l := q.Get("tts_language"); l != "" {
 		sess.Language = l
 		sess.TTSLanguage = l
@@ -574,6 +583,9 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	if err := json.Unmarshal(data, &event); err != nil {
 		return false
 	}
+	if sess.Provider == "tata" {
+		event = normalizeTataFrame(sess, event)
+	}
 	switch event["event"] {
 	case "connected":
 		// Exotel handshake ack — ignore
@@ -585,6 +597,75 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 		return true
 	}
 	return false
+}
+
+func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[string]interface{} {
+	rawEvent := strings.ToLower(firstNonEmpty(
+		pickStr(event, "event", "Event"),
+		pickStr(event, "type", "Type"),
+		pickStr(event, "message", "Message"),
+	))
+
+	callSid := pickStr(event, "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "ref_id", "refId", "uuid")
+	streamSid := pickStr(event, "stream_sid", "streamSid", "stream_id", "streamId", "StreamID", "streamSid")
+	if streamSid == "" {
+		streamSid = sess.StreamSid
+	}
+
+	switch rawEvent {
+	case "connected", "connection_established", "websocket_connected":
+		event["event"] = "connected"
+	case "start", "started", "call_started", "stream_start", "stream_started", "call_connected", "answered":
+		event["event"] = "start"
+	case "media", "audio", "voice", "chunk", "audio_chunk":
+		event["event"] = "media"
+	case "stop", "stopped", "stream_stop", "stream_stopped", "call_ended", "completed", "hangup":
+		event["event"] = "stop"
+	default:
+		if _, ok := event["media"]; ok {
+			event["event"] = "media"
+		}
+	}
+
+	if event["event"] == "start" {
+		start, _ := event["start"].(map[string]interface{})
+		if start == nil {
+			start = map[string]interface{}{}
+			event["start"] = start
+		}
+		if callSid != "" {
+			start["call_sid"] = callSid
+		}
+		if streamSid != "" {
+			start["stream_sid"] = streamSid
+		}
+		if codec := strings.ToLower(pickStr(event, "codec", "audio_codec", "encoding")); codec != "" {
+			if codec == "ulaw" || codec == "mulaw" || codec == "pcmu" {
+				sess.UseUlaw = true
+			} else if strings.Contains(codec, "pcm") {
+				sess.UseUlaw = false
+			}
+		}
+	}
+
+	if event["event"] == "media" {
+		media, _ := event["media"].(map[string]interface{})
+		if media == nil {
+			media = map[string]interface{}{}
+			event["media"] = media
+		}
+		if payload := firstNonEmpty(
+			pickStr(media, "payload", "audio", "audio_data", "data", "chunk"),
+			pickStr(event, "payload", "audio", "audio_data", "data", "chunk"),
+		); payload != "" {
+			media["payload"] = payload
+		}
+		if streamSid != "" {
+			event["stream_sid"] = streamSid
+		}
+	}
+
+	return event
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {

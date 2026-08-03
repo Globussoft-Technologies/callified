@@ -40,10 +40,10 @@ func NewTataClient(apiToken, callerID, agentNumber, endpoint string) *TataClient
 }
 
 func (t *TataClient) IsSet() bool {
-	return t.apiToken != "" && t.callerID != ""
+	return t.apiToken != "" && t.callerID != "" && t.agentNumber != ""
 }
 
-func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL string) (string, error) {
+func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL, streamURL string) (string, error) {
 	if !t.IsSet() {
 		return "", fmt.Errorf("tata: api token, caller id and agent number are required")
 	}
@@ -52,10 +52,18 @@ func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL stri
 		"customer_ring_timeout": 30,
 		"api_key":               t.apiToken,
 		"caller_id":             strings.TrimPrefix(NormalizePhone(t.callerID), "+"),
+		"agent_number":          TataAgentNumber(t.agentNumber),
 		"async":                 1,
 	}
 	if callbackURL != "" {
 		payload["custom_identifier"] = callbackURL
+		payload["status_callback_url"] = callbackURL
+		payload["callback_url"] = callbackURL
+	}
+	if streamURL != "" {
+		payload["stream_url"] = streamURL
+		payload["voice_stream_url"] = streamURL
+		payload["media_stream_url"] = streamURL
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -98,4 +106,14 @@ func TataSupportPhone(phone string) string {
 		return phone[2:]
 	}
 	return phone
+}
+
+func TataAgentNumber(agent string) string {
+	agent = strings.Map(func(r rune) rune {
+		if r == ' ' || r == '-' || r == '(' || r == ')' || r == '.' || r == '+' {
+			return -1
+		}
+		return r
+	}, agent)
+	return strings.TrimSpace(agent)
 }

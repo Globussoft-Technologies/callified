@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -208,7 +210,8 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		}
 		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL)
+		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
+		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
@@ -268,6 +271,33 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	})
 
 	return callSid, nil
+}
+
+func tataStreamURL(publicURL string, leadID, campaignID, orgID int64) string {
+	base := strings.TrimRight(publicURL, "/")
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		base = "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		base = "ws://" + strings.TrimPrefix(base, "http://")
+	}
+	u, err := url.Parse(base + "/media-stream/tata")
+	if err != nil {
+		return base + "/media-stream/tata"
+	}
+	q := u.Query()
+	q.Set("provider", "tata")
+	if leadID > 0 {
+		q.Set("lead_id", fmt.Sprint(leadID))
+	}
+	if campaignID > 0 {
+		q.Set("campaign_id", fmt.Sprint(campaignID))
+	}
+	if orgID > 0 {
+		q.Set("org_id", fmt.Sprint(orgID))
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Hangup ends an in-progress carrier call. It first tries to use the same

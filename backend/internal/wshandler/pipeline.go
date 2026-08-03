@@ -318,11 +318,18 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	}
 
 	payloadB64 := base64.StdEncoding.EncodeToString(audioBytes)
-	frame, _ := json.Marshal(map[string]interface{}{
+	frameData := map[string]interface{}{
 		"event":  "media",
 		frameKey: sess.StreamSid,
 		"media":  map[string]string{"payload": payloadB64},
-	})
+	}
+	if sess.Provider == "tata" {
+		frameData["stream_id"] = sess.StreamSid
+		frameData["stream_sid"] = sess.StreamSid
+		frameData["payload"] = payloadB64
+		frameData["audio"] = payloadB64
+	}
+	frame, _ := json.Marshal(frameData)
 	_ = sess.SendText(frame)
 
 	// Relay a copy of the agent's outbound audio to any attached monitors so
