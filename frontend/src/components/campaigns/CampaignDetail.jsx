@@ -97,6 +97,8 @@ function AutoDialPanel({
   autoDialEnabled,
   autoDialQueue,
   autoDialActiveId,
+  autoDialUninterrupted,
+  onToggleUninterrupted,
   paginatedLeads,
   browserCallLead,
   browserCallDialing,
@@ -135,6 +137,21 @@ function AutoDialPanel({
           </button>
         </div>
       </div>
+
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+        fontSize: '0.85rem', color: T.sub, marginBottom: '1rem', userSelect: 'none'
+      }}>
+        <input
+          type="checkbox"
+          checked={autoDialUninterrupted}
+          onChange={(e) => onToggleUninterrupted(e.target.checked)}
+          style={{ width: 16, height: 16, accentColor: T.accent }}
+        />
+        <span>
+          <strong style={{ color: T.text }}>Uninterrupted mode</strong> — skip the post-call disposition screen and automatically dial the next lead until the batch is finished.
+        </span>
+      </label>
 
       {browserCallLead || browserCallDialing ? (
         <div style={{
@@ -389,6 +406,9 @@ export default function CampaignDetail({
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
+  // Uninterrupted mode: skip the post-call disposition modal and auto-advance
+  // to the next lead until the queue is exhausted.
+  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(false);
 
   // ── Disposition modal state (post-call before next auto-dial) ───────────────
   const [showDispositionModal, setShowDispositionModal] = useState(false);
@@ -433,6 +453,7 @@ export default function CampaignDetail({
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
+    setAutoDialUninterrupted(false);
     setShowDispositionModal(false);
     setDispositionLead(null);
     setDispositionNextLead(null);
@@ -667,11 +688,13 @@ export default function CampaignDetail({
   const autoDialEnabledRef = useRef(autoDialEnabled);
   const autoDialActiveIdRef = useRef(autoDialActiveId);
   const autoDialQueueRef = useRef(autoDialQueue);
+  const autoDialUninterruptedRef = useRef(autoDialUninterrupted);
   const campaignLeadsRef = useRef(campaignLeads);
   const paginatedLeadsRef = useRef(paginatedLeads);
   useEffect(() => { autoDialEnabledRef.current = autoDialEnabled; }, [autoDialEnabled]);
   useEffect(() => { autoDialActiveIdRef.current = autoDialActiveId; }, [autoDialActiveId]);
   useEffect(() => { autoDialQueueRef.current = autoDialQueue; }, [autoDialQueue]);
+  useEffect(() => { autoDialUninterruptedRef.current = autoDialUninterrupted; }, [autoDialUninterrupted]);
   useEffect(() => { campaignLeadsRef.current = campaignLeads; }, [campaignLeads]);
   useEffect(() => { paginatedLeadsRef.current = paginatedLeads; }, [paginatedLeads]);
 
@@ -703,6 +726,30 @@ export default function CampaignDetail({
       return;
     }
 
+    // Uninterrupted mode: skip the disposition modal and dial the next lead
+    // automatically. When the queue is exhausted, stop cleanly.
+    if (autoDialUninterruptedRef.current) {
+      if (nextLead) {
+        setTimeout(async () => {
+          const started = await triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+          if (started) {
+            setAutoDialActiveId(nextLead.id);
+          } else {
+            toast('Auto dial stopped: could not start next call');
+            setAutoDialEnabled(false);
+            setAutoDialActiveId(null);
+            setAutoDialQueue([]);
+          }
+        }, 400);
+        return;
+      }
+      toast('Auto dial complete');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+
     if (!nextId) {
       // Last lead in the queue: still show disposition, then mark complete after save.
       setDispositionNextLead(null);
@@ -716,7 +763,7 @@ export default function CampaignDetail({
     setDispositionRemarks(finishedLead.follow_up_note || '');
     setDispositionFollowUpAt(finishedLead.follow_up_at ? finishedLead.follow_up_at.slice(0, 16) : '');
     setShowDispositionModal(true);
-  }, [toast]);
+  }, [toast, triggerBrowserCall, selectedCampaign.id, browserAccountId]);
 
   const saveDispositionAndAdvance = useCallback(async (stopAfterSave) => {
     if (!dispositionLead) return;
@@ -1485,6 +1532,8 @@ export default function CampaignDetail({
           autoDialEnabled={autoDialEnabled}
           autoDialQueue={autoDialQueue}
           autoDialActiveId={autoDialActiveId}
+          autoDialUninterrupted={autoDialUninterrupted}
+          onToggleUninterrupted={setAutoDialUninterrupted}
           paginatedLeads={paginatedLeads}
           browserCallLead={browserCallLead}
           browserCallDialing={browserCallDialing}
@@ -1493,6 +1542,7 @@ export default function CampaignDetail({
             setAutoDialEnabled(false);
             setAutoDialActiveId(null);
             setAutoDialQueue([]);
+            setAutoDialUninterrupted(false);
             toast('Auto dial stopped');
           }}
           campaignName={selectedCampaign.name}
