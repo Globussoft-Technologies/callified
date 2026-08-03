@@ -263,11 +263,12 @@ func (s *Server) twilioStatus(w http.ResponseWriter, r *http.Request) {
 		cl, _ := s.db.GetCallLogByCallSid(callSid)
 		if cl != nil {
 			s.dispatcher.Dispatch(r.Context(), cl.OrgID, "call.completed", map[string]any{
-				"call_sid":   callSid,
-				"status":     callStatus,
-				"lead_id":    cl.LeadID,
+				"call_sid":    callSid,
+				"status":      callStatus,
+				"lead_id":     cl.LeadID,
 				"campaign_id": cl.CampaignID,
 			})
+			s.completeRetryIfAnswered(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 		}
 	}
@@ -317,6 +318,19 @@ func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status st
 	s.logger.Info("enqueueRetryIfFailed: queued",
 		zap.Int64("lead_id", leadID), zap.Int64("campaign_id", campaignID),
 		zap.String("reason", status))
+}
+
+func (s *Server) completeRetryIfAnswered(leadID, campaignID, orgID int64, status string) {
+	if status != "completed" || leadID == 0 {
+		return
+	}
+	if err := s.db.CompleteActiveRetry(leadID, campaignID); err != nil {
+		s.logger.Warn("completeRetryIfAnswered: CompleteActiveRetry",
+			zap.Int64("lead_id", leadID),
+			zap.Int64("campaign_id", campaignID),
+			zap.Int64("org_id", orgID),
+			zap.Error(err))
+	}
 }
 
 // ── POST /webhook/exotel/status ───────────────────────────────────────────────
@@ -401,6 +415,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 				"lead_id":     cl.LeadID,
 				"campaign_id": cl.CampaignID,
 			})
+			s.completeRetryIfAnswered(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 
 			// For human (agent-bridged) calls, Exotel often omits RecordingUrl from
