@@ -606,7 +606,7 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 		pickStr(event, "message", "Message"),
 	))
 
-	callSid := pickStr(event, "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "ref_id", "refId", "uuid")
+	callSid := pickStr(event, "ref_id", "refId", "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "uuid")
 	streamSid := pickStr(event, "stream_sid", "streamSid", "stream_id", "streamId", "StreamID", "streamSid")
 	if streamSid == "" {
 		streamSid = sess.StreamSid
@@ -694,6 +694,12 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		case hasCamel && !hasSnake:
 			sess.UseUlaw = true
 		}
+		if sess.Provider == "tata" {
+			// Tata Voice Streaming frames arrive in Twilio-style camelCase and
+			// the media payload size matches 8 kHz μ-law chunks. Keep Tata on
+			// μ-law unless Tata explicitly adds a PCM codec marker above.
+			sess.UseUlaw = true
+		}
 		h.log.Info("ws codec detected",
 			zap.String("stream_sid", sess.StreamSid),
 			zap.Bool("is_exotel", sess.IsExotel),
@@ -707,7 +713,11 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			sess.UserEmail = email
 		}
 
-		if callSid := pickStr(startData, "callSid", "call_sid", "CallSid"); callSid != "" {
+		callSidKeys := []string{"callSid", "call_sid", "CallSid"}
+		if sess.Provider == "tata" {
+			callSidKeys = []string{"ref_id", "refId", "call_sid", "callSid", "CallSid"}
+		}
+		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
 			// Redis lookup precedence:

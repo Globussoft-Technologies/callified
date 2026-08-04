@@ -463,7 +463,7 @@ func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
 		return ""
 	}
 
-	callSid := value("CallSid", "call_sid", "callSid", "call_id", "callId", "ref_id", "refId", "uuid", "id")
+	callSid := value("CallSid", "call_sid", "callSid", "ref_id", "refId", "call_id", "callId", "uuid", "id")
 	callStatus := value("Status", "status", "CallStatus", "call_status", "callStatus", "DetailedStatus", "detailed_status")
 	recordingURL := value("RecordingUrl", "recording_url", "recordingUrl")
 	var callDurationS float64
@@ -485,6 +485,13 @@ func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := mapTataStatus(callStatus)
+	rawLower := strings.ToLower(callStatus)
+	if status == "in-progress" || rawLower == "answered" || rawLower == "connected" || rawLower == "in-progress" || rawLower == "inprogress" {
+		s.store.MarkBridgeAnswered(r.Context(), callSid)
+		if internalCallSid := value("call_id", "callId", "CallSid", "call_sid"); internalCallSid != "" && internalCallSid != callSid {
+			s.store.MarkBridgeAnswered(r.Context(), internalCallSid)
+		}
+	}
 	if err := s.db.UpdateCallLogStatus(callSid, status); err != nil {
 		s.logger.Warn("tataStatus: UpdateCallLogStatus",
 			zap.String("call_sid", callSid), zap.Error(err))

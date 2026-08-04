@@ -58,7 +58,6 @@ func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL, str
 	if callbackURL != "" {
 		payload["custom_identifier"] = callbackURL
 		payload["status_callback_url"] = callbackURL
-		payload["callback_url"] = callbackURL
 	}
 	if streamURL != "" {
 		payload["stream_url"] = streamURL

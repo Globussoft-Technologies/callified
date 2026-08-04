@@ -324,6 +324,9 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 		"media":  map[string]string{"payload": payloadB64},
 	}
 	if sess.Provider == "tata" {
+		seq := sess.outboundSeq.Add(1)
+		frameData["streamSid"] = sess.StreamSid
+		frameData["sequenceNumber"] = seq
 		frameData["stream_id"] = sess.StreamSid
 		frameData["stream_sid"] = sess.StreamSid
 		frameData["payload"] = payloadB64

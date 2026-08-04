@@ -69,6 +69,7 @@ type CallSession struct {
 	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
 	lastTTSEndNano  atomic.Int64 // UnixNano
 	lastTranscript  atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq     atomic.Uint64
 
 	// Serialization
 	llmMu sync.Mutex // one LLM turn at a time per session
