@@ -143,7 +143,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is empty until the start frame lands) correctly defers to
 	// handleStartEvent's Redis-hydration path instead of firing a greeting
 	// in the platform-default English/Aditya combo.
-	langFromQuery := q.Get("tts_language") != "" || (isTataStream && (q.Get("lead_id") != "" || q.Get("campaign_id") != "" || q.Get("org_id") != ""))
+	deferTataInboundUntilStart := isTataStream && sess.IsInbound
+	langFromQuery := !deferTataInboundUntilStart && (q.Get("tts_language") != "" || (isTataStream && (q.Get("lead_id") != "" || q.Get("campaign_id") != "" || q.Get("org_id") != "")))
 	if l := q.Get("tts_language"); l != "" {
 		sess.Language = l
 		sess.TTSLanguage = l
@@ -639,6 +640,17 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 		if streamSid != "" {
 			start["stream_sid"] = streamSid
 		}
+		for _, key := range []string{
+			"from", "From", "caller", "Caller", "caller_id", "callerId", "caller_id_number", "callerIdNumber",
+			"customer_number", "customerNumber", "customer_no", "customerNo", "call_from", "CallFrom", "call_from_number", "from_number", "ani",
+			"to", "To", "call_to_number", "callToNumber", "called_number", "calledNumber", "did", "DID",
+			"destination", "destination_number", "destinationNumber",
+			"caller_name", "callerName", "customer_name", "customerName", "name", "Name",
+		} {
+			if v := pickStr(event, key); v != "" {
+				start[key] = v
+			}
+		}
 		if codec := strings.ToLower(pickStr(event, "codec", "audio_codec", "encoding")); codec != "" {
 			if codec == "ulaw" || codec == "mulaw" || codec == "pcmu" {
 				sess.UseUlaw = true
@@ -711,6 +723,43 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		// event because WebSocket connections cannot send Authorization headers.
 		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
 			sess.UserEmail = email
+		}
+		if phone := pickStr(startData,
+			"from", "From", "caller", "Caller", "caller_id", "callerId", "caller_id_number", "callerIdNumber",
+			"customer_number", "customerNumber", "customer_no", "customerNo", "call_from", "CallFrom", "call_from_number", "from_number", "ani",
+		); phone != "" && sess.LeadPhone == "" {
+			sess.LeadPhone = phone
+		}
+		if name := pickStr(startData, "caller_name", "callerName", "customer_name", "customerName", "name", "Name"); name != "" && sess.LeadName == "" {
+			sess.LeadName = name
+		}
+		if sess.Provider == "tata" && sess.IsInbound && sess.OrgID == 0 && h.db != nil {
+			if did := pickStr(startData,
+				"to", "To", "call_to_number", "callToNumber", "called_number", "calledNumber",
+				"did", "DID", "destination", "destination_number", "destinationNumber",
+			); did != "" {
+				if account, err := h.db.GetInboundTataAccountByDID(did); err == nil && account != nil {
+					sess.OrgID = account.OrgID
+					if sess.Interest == "" {
+						sess.Interest = "inbound enquiry"
+					}
+					h.log.Info("tata inbound account matched",
+						zap.String("did", did),
+						zap.Int64("org_id", account.OrgID),
+						zap.Int64("account_id", account.ID))
+				} else if err != nil {
+					h.log.Warn("tata inbound account lookup failed", zap.String("did", did), zap.Error(err))
+				}
+			}
+		}
+		if sess.IsInbound && sess.LeadName == "" && sess.LeadPhone != "" && sess.OrgID > 0 && h.db != nil {
+			if lead, err := h.db.GetLeadByPhoneOrg(sess.LeadPhone, sess.OrgID, nil, false); err == nil && lead != nil {
+				sess.LeadID = lead.ID
+				sess.LeadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+				if sess.Interest == "" {
+					sess.Interest = lead.Interest
+				}
+			}
 		}
 
 		callSidKeys := []string{"callSid", "call_sid", "CallSid"}
@@ -829,6 +878,24 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					if sess.SendGreeting != nil {
 						sess.SendGreeting()
 					}
+				}
+			}
+			if sess.IsInbound && !sess.IsBridge {
+				if h.promptBuilder != nil {
+					_ = h.initializeCall(ctx, sess)
+					h.applyInboundReceptionistPrompt(sess)
+				}
+				if sess.TTSProvider != "" {
+					if newProv, err := tts.New(sess.TTSProvider, h.ttsKeys); err == nil && newProv != nil {
+						sess.SetTTSInstance(newProv)
+					}
+				}
+				if sess.StartSTT != nil && sess.Language != "" {
+					sess.StartSTT()
+					sess.StartSTT = nil
+				}
+				if sess.SendGreeting != nil {
+					sess.SendGreeting()
 				}
 			}
 		}

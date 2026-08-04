@@ -134,7 +134,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	}
 
 	if req.IsInbound && req.LeadID == 0 && s.llm != nil && len(req.ChatHistory) > 0 {
-		if leadID, phone, err := s.upsertInboundLead(ctx, req.OrgID, transcriptID, req.ChatHistory); err != nil {
+		if leadID, phone, err := s.upsertInboundLead(ctx, req.OrgID, transcriptID, req.ChatHistory, req.LeadPhone); err != nil {
 			s.log.Warn("recording: inbound lead extraction failed", zap.Error(err))
 		} else if leadID > 0 {
 			req.LeadID = leadID
@@ -401,7 +401,7 @@ Return ONLY a valid JSON object with these exact keys:
 - "follow_up_note": one concise CRM note
 If a field was not provided, use an empty string. Do not invent details.`
 
-func (s *Service) upsertInboundLead(ctx context.Context, orgID, transcriptID int64, history []llm.ChatMessage) (int64, string, error) {
+func (s *Service) upsertInboundLead(ctx context.Context, orgID, transcriptID int64, history []llm.ChatMessage, fallbackPhone string) (int64, string, error) {
 	raw, err := s.llm.GenerateResponse(ctx, inboundLeadExtractionPrompt, []llm.ChatMessage{{
 		Role: "user",
 		Text: "Transcript:\n\n" + formatTranscript(history),
@@ -421,11 +421,15 @@ func (s *Service) upsertInboundLead(ctx context.Context, orgID, transcriptID int
 	ex.FirstName = strings.TrimSpace(ex.FirstName)
 	ex.LastName = strings.TrimSpace(ex.LastName)
 	ex.Phone = strings.TrimSpace(ex.Phone)
+	fallbackPhone = strings.TrimSpace(fallbackPhone)
 	ex.Interest = strings.TrimSpace(ex.Interest)
 	ex.Company = strings.TrimSpace(ex.Company)
 	ex.Status = strings.TrimSpace(ex.Status)
 	ex.FollowNote = strings.TrimSpace(ex.FollowNote)
 	applyInboundTranscriptFallback(&ex, history)
+	if ex.Phone == "" {
+		ex.Phone = fallbackPhone
+	}
 	if ex.Status == "" {
 		ex.Status = "new"
 	}

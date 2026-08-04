@@ -205,7 +205,7 @@ export default function CampaignModals({
                     {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
-                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
+                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.some(a => (a.direction || 'outbound') !== 'inbound') && (
                   <div style={{marginBottom: '1.5rem'}}>
                     <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                       Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
@@ -214,7 +214,7 @@ export default function CampaignModals({
                       onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
                       style={{width: '100%'}}>
                       <option value="">-- Use default / set later --</option>
-                      {orgExotelAccounts.map(a => (
+                      {orgExotelAccounts.filter(a => (a.direction || 'outbound') !== 'inbound').map(a => (
                         <option key={a.id} value={a.id}>
                           {a.name} · {a.account_sid} · {a.caller_id}
                         </option>

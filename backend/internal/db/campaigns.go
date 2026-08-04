@@ -1039,6 +1039,7 @@ type ExotelCreds struct {
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 	AppType    string `json:"exotel_app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"exotel_region"`    // Exotel region: in, us, sg, etc.
 	Subdomain  string `json:"exotel_subdomain"` // Exotel account subdomain override
 }
@@ -1049,6 +1050,9 @@ func (e ExotelCreds) IsSet() bool {
 		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
 	}
 	if e.Provider == "tata" || e.Provider == "smartflo" || e.Provider == "tata_tele" {
+		if e.Direction == "inbound" {
+			return e.APIKey != "" && e.CallerID != ""
+		}
 		return e.APIKey != "" && e.CallerID != "" && e.AppID != ""
 	}
 	// exotel: AppID is required for voice app routing

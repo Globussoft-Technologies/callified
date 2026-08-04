@@ -13,6 +13,7 @@ type exotelAccountOption struct {
 	AccountSID string `json:"account_sid"`
 	CallerID   string `json:"caller_id"`
 	AppType    string `json:"app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"region"`
 	Subdomain  string `json:"subdomain"`
 }
@@ -49,6 +50,7 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 			AccountSID: a.AccountSID,
 			CallerID:   a.CallerID,
 			AppType:    a.AppType,
+			Direction:  a.Direction,
 			Region:     a.Region,
 			Subdomain:  a.Subdomain,
 		})
@@ -70,6 +72,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Direction  string `json:"direction"`
 		Region     string `json:"region"`
 		Subdomain  string `json:"subdomain"`
 	}
@@ -83,7 +86,8 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); err != "" {
+	req.Direction = normalizeProviderDirection(req.Direction)
+	if err := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); err != "" {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -93,7 +97,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain)
 	if err != nil {
 		s.logger.Sugar().Errorw("createExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -121,6 +125,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Direction  string `json:"direction"`
 		Region     string `json:"region"`
 		Subdomain  string `json:"subdomain"`
 	}
@@ -134,7 +139,8 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
+	req.Direction = normalizeProviderDirection(req.Direction)
+	if errMsg := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -144,7 +150,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain); err != nil {
 		s.logger.Sugar().Errorw("updateExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -203,12 +209,27 @@ func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 }
 
 // validateProviderAccount checks required fields per provider.
-func validateProviderAccount(provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID string) string {
+func normalizeProviderDirection(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "inbound":
+		return "inbound"
+	default:
+		return "outbound"
+	}
+}
+
+func validateProviderAccount(provider, direction, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID string) string {
 	if strings.TrimSpace(name) == "" {
 		return "account name is required"
 	}
 	switch provider {
 	case "tata", "smartflo", "tata_tele":
+		if direction == "inbound" {
+			if apiKey == "" || callerID == "" {
+				return "api_key (Tata API token) and caller_id (Tata DID) are required for inbound Tata Tele"
+			}
+			return ""
+		}
 		if apiKey == "" || callerID == "" || appID == "" {
 			return "api_key (Tata API token), app_id (agent number) and caller_id (Tata number) are required for Tata Tele"
 		}

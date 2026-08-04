@@ -178,6 +178,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		} else {
 			return "", fmt.Errorf("provider account not found or incomplete")
 		}
+		if creds.Direction == "inbound" {
+			return "", fmt.Errorf("selected provider account is inbound-only; choose an outbound account")
+		}
 		isTataProvider := creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele"
 		if data.IsBridge && !isTataProvider && creds.AppType != "voicebot" {
 			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
@@ -187,6 +190,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
+	}
+	if creds.Direction == "inbound" {
+		return "", fmt.Errorf("campaign provider account is inbound-only; choose an outbound account")
 	}
 	provider := creds.Provider
 	if provider == "" {

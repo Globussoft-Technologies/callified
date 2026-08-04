@@ -1027,9 +1027,10 @@ export default function CampaignDetail({
   }, [selectedCampaign.id, browserAccountKey]);
 
   const callingAccountOptions = mergeProviderAccount(orgExotelAccounts, campaignDefaultAccount)
+    .filter(a => (a.direction || 'outbound') !== 'inbound')
     .filter(a => a.provider === 'tata' || a.app_type === 'voicebot');
   const findCallingAccount = (id) => callingAccountOptions.find(a => String(a.id) === String(id))
-    || orgExotelAccounts.find(a => String(a.id) === String(id));
+    || orgExotelAccounts.find(a => String(a.id) === String(id) && (a.direction || 'outbound') !== 'inbound');
   const campaignDefaultLabel = campaignDefaultAccount
     ? `Use campaign default ([${campaignDefaultAccount.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id})`
     : 'Use campaign default';
