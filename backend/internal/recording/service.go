@@ -329,11 +329,6 @@ type analysis struct {
 	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
-// Analysis is the exported view of the LLM scoring output. Mirrors `analysis`
-// so the API layer can call AnalyzeCall on demand (for the Transcript modal's
-// "regenerate conclusion" flow) without importing internal types.
-type Analysis = analysis
-
 // AnalyzeCall is the public wrapper around analyzeCall. Used by the API
 // layer to (re)generate a call conclusion on demand when the post-call
 // pipeline skipped it (short/one-sided call) or the operator hits a
@@ -376,12 +371,6 @@ FIELDS:
 The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language. Reference specific things from THIS transcript — never write generic filler.
 
 Return ONLY valid JSON. No markdown, no explanation. Keep each string under 240 chars.`
-
-// AnalyzeCall is the public wrapper around analyzeCall. Used by the API
-// layer for on-demand conclusion generation without importing internal types.
-func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
-	return s.analyzeCall(ctx, history)
-}
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)
