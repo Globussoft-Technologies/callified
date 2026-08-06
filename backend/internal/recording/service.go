@@ -352,11 +352,6 @@ type analysis struct {
 	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
-// Analysis is the exported view of the LLM scoring output. Mirrors `analysis`
-// so the API layer can call AnalyzeCall on demand (for the Transcript modal's
-// "regenerate conclusion" flow) without importing internal types.
-type Analysis = analysis
-
 // AnalyzeCall is the public wrapper around analyzeCall. Used by the API
 // layer to (re)generate a call conclusion on demand when the post-call
 // pipeline skipped it (short/one-sided call) or the operator hits a
