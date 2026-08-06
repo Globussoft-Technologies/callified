@@ -221,12 +221,11 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 					zap.String("sentence", sentence))
 				continue
 			}
-			// Discard sentences queued before barge-in — customer interrupted,
-			// old agent response is stale.
-			if sess.IsBargeInActive() {
-				sess.Log.Info("barge-in: discarding stale sentence", zap.String("text", sentence))
-				continue
-			}
+			// BARGE-IN DISABLED: do not discard sentences on barge-in.
+			// if sess.IsBargeInActive() {
+			// 	sess.Log.Info("barge-in: discarding stale sentence", zap.String("text", sentence))
+			// 	continue
+			// }
 			provider := sess.TTSInstance()
 			if provider == nil {
 				sess.Log.Warn("TTS worker: no provider available, dropping sentence",
@@ -284,11 +283,10 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
 // Handles ulaw conversion for Exotel and JSON framing differences.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
-	// Drop frames immediately on barge-in so the wsMu write queue doesn't fill
-	// up with stale audio behind the {"type":"clear"} control message.
-	if sess.IsBargeInActive() {
-		return
-	}
+	// BARGE-IN DISABLED: do not drop frames on barge-in.
+	// if sess.IsBargeInActive() {
+	// 	return
+	// }
 	// Record for server-side stereo WAV
 	sess.AppendTTSChunk(pcm8k)
 	// Feed echo canceller (ulaw representation)

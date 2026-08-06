@@ -35,8 +35,8 @@ func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest, onSentence func(SentenceChunk)) error {
 	var buf strings.Builder
 
-	// Marathi always uses Gemini; all others follow LLM_PROVIDER config
-	useGemini := req.Language == "mr" || p.cfg.LLMProvider != "groq"
+	// All languages follow LLM_PROVIDER config.
+	useGemini := p.cfg.LLMProvider != "groq"
 	providerName := "groq"
 	if useGemini {
 		providerName = "gemini"

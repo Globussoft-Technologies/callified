@@ -268,10 +268,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 		}
 	}
-	// BARGE-IN DISABLED — uncomment to re-enable
-	onSpeechStarted := func() {
-		sess.Log.Info("barge-in: SpeechStarted (disabled)", zap.Bool("tts_playing", sess.IsTTSPlaying()))
-	}
+	// BARGE-IN DISABLED — handler removed; STT OnSpeechStarted left nil so no
+	// speech-started callbacks fire. Energy-VAD barge-in is also commented below.
 
 	var wg sync.WaitGroup
 
@@ -297,40 +295,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// g2: STT goroutine.
 		// Sarvam STT is used for Indian-language calls — it auto-detects language
-		// per utterance (te-IN, hi-IN, etc.) enabling reliable mid-call switching.
+		// per utterance (te-IN, hi-IN, etc.). Language switching is now triggered
+		// ONLY by explicit customer requests (e.g. "speak in Hindi") handled in
+		// onTranscript; Sarvam's detected language is no longer used to auto-switch.
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
-		onLangDetected := func(transcript string, detectedLang string) {
-			if detectedLang == "" || detectedLang == "od" {
-				// "od" (Odia) is a persistent Sarvam false positive for short
-				// filler syllables from te/kn/ta callers — ignore it entirely.
-				return
-			}
-			// Require at least 2 words before trusting Sarvam's language
-			// detection — single words like "అవును", "येस", "ம்" are too
-			// short and ambiguous, causing false cross-language switches.
-			if len(strings.Fields(transcript)) < 3 {
-				return
-			}
-			// Validate transcript script against detected language. Sarvam
-			// occasionally mis-labels similar-sounding languages (kn→ta, hi→pa,
-			// ta→ml). Since each Indian language uses a unique Unicode block,
-			// a Kannada transcript cannot contain Tamil characters — so if the
-			// script doesn't match the detected language, it's a mis-detection.
-			if !scriptMatchesLang(transcript, detectedLang) {
-				sess.Log.Debug("lang switch rejected: script mismatch",
-					zap.String("text", transcript),
-					zap.String("detected", detectedLang))
-				return
-			}
-			sess.SwitchLanguage(detectedLang)
-		}
 		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
 			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
 			sarvamClient.OnTranscript = onTranscript
-			sarvamClient.OnSpeechStarted = onSpeechStarted
-			sarvamClient.OnTranscriptWithLang = onLangDetected
-			sarvamClient.CurrentLang = func() string { return sess.Language }
+			// BARGE-IN DISABLED: OnSpeechStarted left nil.
 			go func() {
 				defer wg.Done()
 				sarvamClient.Run(ctx, sess.AudioIn)
@@ -341,7 +314,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if useDualSTT {
 				dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
 				dual.OnTranscript = onTranscript
-				dual.OnSpeechStarted = onSpeechStarted
+				// BARGE-IN DISABLED: OnSpeechStarted left nil.
 				go func() {
 					defer wg.Done()
 					dual.Run(ctx, sess.AudioIn)
@@ -349,7 +322,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} else {
 				dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
 				dgClient.OnTranscript = onTranscript
-				dgClient.OnSpeechStarted = onSpeechStarted
+				// BARGE-IN DISABLED: OnSpeechStarted left nil.
 				go func() {
 					defer wg.Done()
 					dgClient.Run(ctx, sess.AudioIn)
