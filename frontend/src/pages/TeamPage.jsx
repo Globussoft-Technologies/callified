@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
 
@@ -46,6 +46,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
   // Only the most-recently-issued key per user is surfaced — older orphaned rows
@@ -222,6 +224,53 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setInviteLoading(false);
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/team/template-csv`);
+      if (!res.ok) {
+        toast('Failed to download template', 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'team_members_template.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast('Network error', 'error');
+    }
+  };
+
+  const handleBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    setBulkLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/team/import-csv`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to import team members', 'error');
+      } else {
+        const failed = Array.isArray(data.errors) ? data.errors.length : 0;
+        toast(`Created ${data.created || 0} member${data.created === 1 ? '' : 's'}${failed ? `, ${failed} skipped` : ''}`, failed ? 'error' : 'success');
+        fetchTeam();
+      }
+    } catch {
+      toast('Network error', 'error');
+    }
+    setBulkLoading(false);
+  };
+
   const handleCopyInviteLink = async (inviteId) => {
     try {
       const res = await apiFetch(`${API_URL}/team/invites/${inviteId}/link`);
@@ -324,15 +373,43 @@ export default function TeamPage({ apiFetch, API_URL }) {
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
           <span style={{ color: T.accent }}>Team</span> Members
         </h2>
-        <button
-          onClick={() => setShowInvite(true)}
-          style={{
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-            borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
-            fontWeight: 700, fontSize: 13, fontFamily: T.font,
-          }}>
-          + Add Member
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button
+            onClick={handleDownloadTemplate}
+            style={{
+              background: '#fff', border: `1px solid ${T.border}`,
+              borderRadius: 8, color: T.sub, padding: '10px 16px', cursor: 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font,
+            }}>
+            Download Template
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleBulkUpload}
+            style={{ display: 'none' }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={bulkLoading}
+            style={{
+              background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+              borderRadius: 8, color: T.accent, padding: '10px 16px', cursor: bulkLoading ? 'wait' : 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: bulkLoading ? 0.7 : 1,
+            }}>
+            {bulkLoading ? 'Importing...' : 'Import Members'}
+          </button>
+          <button
+            onClick={() => setShowInvite(true)}
+            style={{
+              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+              borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font,
+            }}>
+            + Add Member
+          </button>
+        </div>
       </div>
 
       {/* Invite Modal */}

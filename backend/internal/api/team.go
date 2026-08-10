@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"unicode"
@@ -88,6 +91,122 @@ func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(members))
+}
+
+func (s *Server) teamMembersTemplateCSV(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="team_members_template.csv"`)
+	wr := csv.NewWriter(w)
+	_ = wr.Write([]string{"full_name", "email", "password", "role"})
+	wr.Flush()
+}
+
+func (s *Server) importTeamMembersCSV(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid multipart form")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	reader.TrimLeadingSpace = true
+	header, err := reader.Read()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "CSV header is required")
+		return
+	}
+	idx := map[string]int{}
+	for i, h := range header {
+		idx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+	required := []string{"full_name", "email", "password", "role"}
+	for _, col := range required {
+		if _, ok := idx[col]; !ok {
+			writeError(w, http.StatusBadRequest, "CSV must include full_name,email,password,role")
+			return
+		}
+	}
+
+	type rowError struct {
+		Row   int    `json:"row"`
+		Email string `json:"email,omitempty"`
+		Error string `json:"error"`
+	}
+	var errorsOut []rowError
+	created := 0
+	rowNum := 1
+	get := func(row []string, key string) string {
+		i := idx[key]
+		if i < 0 || i >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[i])
+	}
+
+	for {
+		row, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		rowNum++
+		if err != nil {
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Error: "invalid CSV row"})
+			continue
+		}
+		fullName := get(row, "full_name")
+		email := strings.ToLower(get(row, "email"))
+		password := get(row, "password")
+		role := normalizeRole(get(row, "role"))
+		if fullName == "" && email == "" && password == "" && get(row, "role") == "" {
+			continue
+		}
+		if email == "" {
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Error: "email is required"})
+			continue
+		}
+		if password == "" {
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "password is required"})
+			continue
+		}
+		if role == "" {
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "role must be Admin, TeamLeader, Agent, or Executive"})
+			continue
+		}
+		if existing, err := s.db.GetUserByEmail(email); err != nil {
+			s.logger.Sugar().Errorw("importTeamMembersCSV: user lookup", "err", err)
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "could not validate email"})
+			continue
+		} else if existing != nil {
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "user already exists"})
+			continue
+		}
+		hash, err := db.HashPassword(password)
+		if err != nil {
+			s.logger.Sugar().Errorw("importTeamMembersCSV: hash", "err", err)
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "could not hash password"})
+			continue
+		}
+		if _, err := s.db.CreateUserWithRole(email, hash, fullName, role, ac.OrgID); err != nil {
+			s.logger.Sugar().Errorw("importTeamMembersCSV: create user", "err", err)
+			errorsOut = append(errorsOut, rowError{Row: rowNum, Email: email, Error: "could not create user"})
+			continue
+		}
+		if role == db.RoleExecutive {
+			_ = s.db.EnsureExecutiveForUser(ac.OrgID, fullName, email)
+		}
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created": created,
+		"errors":  emptyJSON(errorsOut),
+	})
 }
 
 // ── POST /api/team/invite ─────────────────────────────────────────────────────

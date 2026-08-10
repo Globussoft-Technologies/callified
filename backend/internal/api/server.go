@@ -341,6 +341,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Team ──────────────────────────────────────────────────────────────────
 	// Team management (invite, role change, delete) is strictly Admin.
 	mux.HandleFunc("GET /api/team", adminAuth(s.listTeam))
+	mux.HandleFunc("GET /api/team/template-csv", adminAuth(s.teamMembersTemplateCSV))
+	mux.HandleFunc("POST /api/team/import-csv", adminAuth(s.importTeamMembersCSV))
 	mux.HandleFunc("POST /api/team/invite", adminAuth(s.inviteTeamMember))
 	mux.HandleFunc("GET /api/team/invites", adminAuth(s.listPendingInvites))
 	mux.HandleFunc("GET /api/team/invites/{id}/link", adminAuth(s.getInviteLink))
