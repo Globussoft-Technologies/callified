@@ -63,7 +63,7 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	if len(raw) > 10 {
 		prefix = raw[:10]
 	}
-	id, err := s.db.CreateAPIKey(ac.OrgID, body.Name, hashed, prefix)
+	id, err := s.db.CreateAPIKey(ac.OrgID, body.Name, hashed, prefix, raw)
 	if err != nil {
 		s.logger.Sugar().Errorw("createAPIKey", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

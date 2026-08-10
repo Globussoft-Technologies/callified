@@ -171,6 +171,26 @@ export default function TeamPage({ apiFetch, API_URL }) {
     }
   };
 
+  const copyStoredKey = async (key) => {
+    if (!key) return;
+    const copyValue = key.key_plaintext || '';
+    if (!copyValue) {
+      toast('Full key is unavailable for older keys. Generate a new key to enable full-key copy.', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      toast('Full API key copied to clipboard', 'success');
+    } catch {
+      await promptInline({
+        title: 'Copy API key',
+        message: 'Clipboard access was blocked — select and copy manually.',
+        defaultValue: copyValue,
+        okText: 'Done',
+      });
+    }
+  };
+
   const closeInvite = () => {
     setShowInvite(false);
     setInviteForm({ email: '', full_name: '', password: '', role: 'Agent' });
@@ -553,6 +573,16 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           }}>
                             {key.key_prefix}…
                           </code>
+                          <button
+                            onClick={() => copyStoredKey(key)}
+                            disabled={busy}
+                            title={key.key_plaintext ? 'Copy full API key' : 'Full key unavailable for older keys. Generate a new key to copy the full value.'}
+                            style={{
+                              background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.22)',
+                              borderRadius: 4, color: T.accent, padding: '2px 8px',
+                              cursor: busy ? 'wait' : 'pointer', fontSize: 11, fontFamily: T.font,
+                              opacity: key.key_plaintext ? 1 : 0.65,
+                            }}>Copy</button>
                           {key.is_active ? (
                             <span style={{ fontSize: 11, color: T.green, fontWeight: 600 }}>active</span>
                           ) : (

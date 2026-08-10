@@ -62,6 +62,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureAgentActivitiesTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure agent activities table: %w", err)
 	}
+	if err := d.EnsureAPIKeysTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure API keys table: %w", err)
+	}
 	return d, nil
 }
 
