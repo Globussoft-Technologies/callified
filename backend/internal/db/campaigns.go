@@ -632,28 +632,52 @@ type CallOutcomeStats struct {
 }
 
 // GetCampaignCallOutcomeStats returns the count of calls by outcome for a campaign.
+// Connected/completed calls are derived from transcript rows because that is
+// where duration lives. Failed terminal outcomes are derived from call_logs too:
+// providers can report busy/no-answer without ever producing a transcript row,
+// and the live activity panel is fed by those call_log status callbacks.
 // When applyExecFilter is true, only calls whose lead's executive_id is in execIDs are counted.
 func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, applyExecFilter bool) (CallOutcomeStats, error) {
 	var s CallOutcomeStats
 	q := `
-		SELECT
-			CASE
-				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'completed'
-				WHEN ct.call_duration_s>5 THEN 'connected'
-				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'busy'
-				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'failed'
-				ELSE 'unanswered'
-			END AS outcome,
-			COUNT(*)
-		FROM call_transcripts ct
-		LEFT JOIN leads l ON ct.lead_id=l.id
-		WHERE ct.campaign_id=?`
+		SELECT outcome, COUNT(*)
+		FROM (
+			SELECT
+				CASE
+					WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'completed'
+					WHEN ct.call_duration_s>5 THEN 'connected'
+					ELSE 'unanswered'
+				END AS outcome
+			FROM call_transcripts ct
+			LEFT JOIN leads l ON ct.lead_id=l.id
+			WHERE ct.campaign_id=?`
 	args := []any{campaignID}
 	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
-	q += ` GROUP BY outcome`
+	q += `
+			UNION ALL
+			SELECT
+				CASE
+					WHEN cl.status='busy' THEN 'busy'
+					WHEN cl.status IN ('no-answer','no_answer') THEN 'unanswered'
+					WHEN cl.status IN ('failed','cancelled') THEN 'failed'
+					ELSE ''
+				END AS outcome
+			FROM call_logs cl
+			LEFT JOIN leads l ON cl.lead_id=l.id
+			WHERE cl.campaign_id=?
+			  AND cl.status IN ('busy','no-answer','no_answer','failed','cancelled')`
+	args = append(args, campaignID)
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += `
+		) outcomes
+		WHERE outcome != ''
+		GROUP BY outcome`
 	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return s, err

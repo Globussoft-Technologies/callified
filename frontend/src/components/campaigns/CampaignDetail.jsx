@@ -705,7 +705,8 @@ export default function CampaignDetail({
   useEffect(() => { paginatedLeadsRef.current = paginatedLeads; }, [paginatedLeads]);
 
   const advanceAutoDial = useCallback((status, errorMsg) => {
-    if (status === 'error') {
+    const terminalError = status === 'error';
+    if (terminalError && (!autoDialEnabledRef.current || !autoDialActiveIdRef.current || !autoDialUninterruptedRef.current)) {
       toast('Auto dial stopped: browser call failed');
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
@@ -737,16 +738,21 @@ export default function CampaignDetail({
     if (autoDialUninterruptedRef.current) {
       if (nextLead) {
         setTimeout(async () => {
-          const started = await triggerBrowserCall(nextLead, selectedCampaign.id, advanceAutoDial, browserAccountId);
-          if (started) {
-            setAutoDialActiveId(nextLead.id);
-          } else {
-            toast('Auto dial stopped: could not start next call');
-            setAutoDialEnabled(false);
-            setAutoDialActiveId(null);
-            setAutoDialQueue([]);
+          for (let i = nextIdx; i < autoDialQueueRef.current.length; i += 1) {
+            const id = autoDialQueueRef.current[i];
+            const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
+            if (!lead) continue;
+            const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+            if (started) {
+              setAutoDialActiveId(lead.id);
+              return;
+            }
           }
-        }, 400);
+          toast('Auto dial complete');
+          setAutoDialEnabled(false);
+          setAutoDialActiveId(null);
+          setAutoDialQueue([]);
+        }, terminalError ? 800 : 400);
         return;
       }
       toast('Auto dial complete');
