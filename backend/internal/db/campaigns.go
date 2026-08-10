@@ -208,12 +208,12 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		GROUP BY cl.campaign_id`
 
 	rows, err := d.pool.Query(
-		`SELECT `+campaignCols+`,
+		`SELECT ` + campaignCols + `,
 			COALESCE(s.total,0), COALESCE(s.called,0),
 			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
 		FROM campaigns c
 		LEFT JOIN products p ON c.product_id = p.id
-		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		LEFT JOIN (` + statsSub + `) s ON s.campaign_id = c.id
 		ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -459,11 +459,11 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 
 // CampaignLeadsFilter holds optional filters for campaign lead listings.
 type CampaignLeadsFilter struct {
-	CampaignID     int64
-	ExecIDs        []int64
-	Search         string
-	ScheduledFrom  string // ISO datetime or empty
-	ScheduledTo    string // ISO datetime or empty
+	CampaignID    int64
+	ExecIDs       []int64
+	Search        string
+	ScheduledFrom string // ISO datetime or empty
+	ScheduledTo   string // ISO datetime or empty
 }
 
 // GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
@@ -1030,6 +1030,7 @@ func coalesceStr(s, def string) string {
 //	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
 //	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
 type ExotelCreds struct {
+	AccountID  int64  `json:"-"`
 	Provider   string // "exotel" or "twilio"; empty means exotel
 	APIKey     string `json:"exotel_api_key"`
 	APIToken   string `json:"exotel_api_token"`

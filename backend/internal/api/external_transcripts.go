@@ -24,6 +24,7 @@ import (
 //
 //	?campaign_id=<id>  — restrict to one campaign. Omit to get all campaigns
 //	                     in the org.
+//	?executive_ids=<ids> — comma-separated lead executive IDs to restrict leads.
 //
 // Response shape:
 //
@@ -76,6 +77,13 @@ func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getExternalTranscripts", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	campaigns, err := s.db.GetCampaignsByOrg(ac.OrgID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getExternalTranscripts: campaigns lookup", "err", err, "org_id", ac.OrgID)
@@ -90,7 +98,7 @@ func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) 
 		}
 
 		stats, _ := s.db.GetCampaignStats(c.ID, nil, false)
-		leads, err := s.db.GetCampaignLeads(c.ID)
+		leads, err := s.db.GetCampaignLeadsFiltered(c.ID, execIDs)
 		if err != nil {
 			s.logger.Sugar().Warnw("getExternalTranscripts: leads lookup", "err", err, "campaign_id", c.ID)
 			leads = nil

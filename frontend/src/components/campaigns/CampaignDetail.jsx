@@ -365,7 +365,8 @@ export default function CampaignDetail({
   setSelectedLeadIds, setShowAddLeadsModal, setShowCsvImportModal, setCsvFile,
   apiFetch, API_URL, orgTimezone,
   handleEditCampaign,
-  executives
+  executives,
+  detailExecutiveFilter, setDetailExecutiveFilter
 }) {
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
@@ -394,6 +395,8 @@ export default function CampaignDetail({
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
+  const [showDetailExecFilter, setShowDetailExecFilter] = useState(false);
+  const [detailExecSearch, setDetailExecSearch] = useState('');
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
 
@@ -450,6 +453,9 @@ export default function CampaignDetail({
     setExecFilter([]);
     setExecSearch('');
     setShowExecFilter(false);
+    setDetailExecutiveFilter([]);
+    setDetailExecSearch('');
+    setShowDetailExecFilter(false);
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
@@ -460,7 +466,7 @@ export default function CampaignDetail({
     setScheduleFrom('');
     setScheduleTo('');
     setCurrentPage(1);
-  }, [selectedCampaign?.id]);
+  }, [selectedCampaign?.id, setDetailExecutiveFilter]);
 
   // Server-side pagination: fetch the current page with active filters.
   const loadCampaignLeads = useCallback(() => {
@@ -944,9 +950,12 @@ export default function CampaignDetail({
     setInsightsLoading(true);
     setInsightsError('');
     try {
+      const params = new URLSearchParams();
+      if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
       const [insightsRes, reviewsRes] = await Promise.all([
-        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
-        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights${query}`),
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews${query}`),
       ]);
       if (!insightsRes.ok) {
         setCallInsights(null);
@@ -970,7 +979,10 @@ export default function CampaignDetail({
   const fetchRetries = async () => {
     setRetriesLoading(true);
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
+      const params = new URLSearchParams();
+      if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries${query}`);
       const data = await res.json();
       setRetries(Array.isArray(data) ? data : (data?.retries || []));
     } catch (e) { console.error('Failed to fetch retries', e); }
@@ -978,11 +990,11 @@ export default function CampaignDetail({
   };
 
   useEffect(() => {
-     
+    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter);
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailTab, selectedCampaign.id]);
+  }, [detailTab, selectedCampaign.id, detailExecutiveFilter]);
 
   // Load call outcome stats whenever the campaign detail is opened.
   useEffect(() => {
@@ -1549,6 +1561,71 @@ export default function CampaignDetail({
         />
       )}
 
+      {/* Agent filter for detail tabs */}
+      {!autoDialEnabled && detailExecutiveFilter && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Filter by agent</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowDetailExecFilter(v => !v)}
+              style={{
+                padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
+                fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
+                cursor: 'pointer', minWidth: 160, textAlign: 'left'
+              }}>
+              {detailExecutiveFilter.length === 0 ? 'All agents' : `${detailExecutiveFilter.length} agent${detailExecutiveFilter.length > 1 ? 's' : ''}`} ▾
+            </button>
+            {showDetailExecFilter && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: 220,
+                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
+                maxHeight: 300, overflowY: 'auto'
+              }}>
+                <input
+                  type="text"
+                  placeholder="Search agents..."
+                  value={detailExecSearch}
+                  onChange={e => setDetailExecSearch(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
+                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
+                    outline: 'none'
+                  }}
+                />
+                <div
+                  onClick={() => setDetailExecutiveFilter([])}
+                  style={{
+                    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                    color: detailExecutiveFilter.length === 0 ? T.accent : T.text, fontWeight: detailExecutiveFilter.length === 0 ? 700 : 400,
+                    background: detailExecutiveFilter.length === 0 ? 'rgba(99,102,241,0.08)' : 'transparent'
+                  }}>
+                  All agents
+                </div>
+                {(() => {
+                  const q = detailExecSearch.trim().toLowerCase();
+                  const filtered = q ? (executives || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (executives || []);
+                  if (filtered.length === 0) {
+                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No agents found.</div>;
+                  }
+                  return filtered.map(e => {
+                    const checked = detailExecutiveFilter.includes(e.id);
+                    return (
+                      <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => setDetailExecutiveFilter(prev => checked ? prev.filter(id => id !== e.id) : [...prev, e.id])} />
+                        {e.name || e.full_name || e.email}
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Search + Tab Switcher */}
       {!autoDialEnabled && (<>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -1560,10 +1637,7 @@ export default function CampaignDetail({
           { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
-              onClick={() => {
-                if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
-                else setDetailTab(tab.id);
-              }}
+              onClick={() => setDetailTab(tab.id)}
               style={{
                 padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
                 fontSize: 13, fontWeight: 600, fontFamily: T.font,
@@ -1686,13 +1760,19 @@ export default function CampaignDetail({
         <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 16px 0' }}>
             <a
-              href={`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`}
+              href={(() => {
+                const params = new URLSearchParams();
+                if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+                return `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings${params.toString() ? `?${params.toString()}` : ''}`;
+              })()}
               download
               onClick={e => {
                 e.preventDefault();
+                const params = new URLSearchParams();
+                if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
                 downloadCSV({
                   apiFetch,
-                  url: `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`,
+                  url: `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings${params.toString() ? `?${params.toString()}` : ''}`,
                   filename: `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`,
                   toast,
                 });

@@ -394,21 +394,19 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := db.CampaignLeadsFilter{
 		CampaignID:    campaign.ID,
-		ExecIDs:       parseExecutiveIDs(q.Get("executive_ids")),
 		Search:        q.Get("search"),
 		ScheduledFrom: q.Get("scheduled_from"),
 		ScheduledTo:   q.Get("scheduled_to"),
 	}
-	// Enforce per-lead isolation for Agents and Team Leaders.
-	allowed, apply, err := s.leadAccessExecIDs(ac)
+	// Enforce per-lead isolation for Agents and Team Leaders; allow Admins to
+	// filter by specific agents via ?executive_ids=.
+	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaignLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if apply {
-		filter.ExecIDs = allowed
-	}
+	filter.ExecIDs = execIDs
 	page, limit := parsePagination(r, 100, 500)
 	offset := (page - 1) * limit
 
@@ -541,7 +539,12 @@ func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 	if campaign == nil {
 		return
 	}
-	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignStats", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	stats, err := s.db.GetCampaignStats(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignStats", "err", err)
@@ -571,7 +574,12 @@ func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Requ
 	if campaign == nil {
 		return
 	}
-	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallOutcomeStats", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	stats, err := s.db.GetCampaignCallOutcomeStats(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallOutcomeStats", "err", err)
@@ -601,14 +609,11 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ac := getAuth(r)
-	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
-	}
-	if !apply {
-		execIDs = nil
 	}
 	log, err := s.db.GetCampaignCallLog(campaign.ID, execIDs)
 	if err != nil {
@@ -627,14 +632,11 @@ func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ac := getAuth(r)
-	execIDs, apply, err := s.leadAccessExecIDs(ac)
+	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("exportRecordings", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
-	}
-	if !apply {
-		execIDs = nil
 	}
 	entries, err := s.db.GetCampaignRecordingsExport(campaign.ID, execIDs)
 	if err != nil {
@@ -1045,7 +1047,8 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 // @Tags        campaigns
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id  path      int64  true  "Campaign ID"
+// @Param       id              path   int64  true  "Campaign ID"
+// @Param       executive_ids   query  string false  "Comma-separated executive IDs"
 // @Success     200  {array}   object
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1053,11 +1056,18 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-reviews [get]
 func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
 	}
-	reviews, err := s.db.GetCallReviewsByCampaign(campaign.ID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallReviews", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	reviews, err := s.db.GetCallReviewsByCampaign(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallReviews", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1076,7 +1086,8 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // @Tags        campaigns
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id  path      int64  true  "Campaign ID"
+// @Param       id              path   int64  true  "Campaign ID"
+// @Param       executive_ids   query  string false  "Comma-separated executive IDs"
 // @Success     200  {array}   db.RetryWithLead
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1084,11 +1095,18 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/retries [get]
 func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
 	}
-	retries, err := s.db.GetRetriesByCampaignWithLead(campaign.ID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	retries, err := s.db.GetRetriesByCampaignWithLead(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1108,7 +1126,8 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // @Tags        campaigns
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id  path      int64  true  "Campaign ID"
+// @Param       id              path   int64  true  "Campaign ID"
+// @Param       executive_ids   query  string false  "Comma-separated executive IDs"
 // @Success     200  {object}  object
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1116,11 +1135,18 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-insights [get]
 func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
 	}
-	insights, err := s.db.GetCampaignCallInsights(campaign.ID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	insights, err := s.db.GetCampaignCallInsights(campaign.ID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1179,10 +1205,24 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	creds, err := s.db.GetCampaignExotelCreds(campaignID)
-	if err != nil || !creds.IsSet() {
-		writeError(w, http.StatusBadRequest, "no Exotel credentials configured for this campaign")
-		return
+	// Resolve credentials. Agents/TeamLeaders use their own provider account when
+	// available; otherwise fall back to the campaign/org default.
+	var creds db.ExotelCreds
+	uid := userIDForDial(ac)
+	if uid > 0 {
+		if c, cerr := s.db.GetUserExotelAccountCreds(uid, ac.OrgID); cerr == nil && c.IsSet() {
+			creds = c
+		} else if cerr != nil {
+			s.logger.Sugar().Errorw("humanCallLead: user account lookup", "err", cerr)
+		}
+	}
+	if !creds.IsSet() {
+		var cerr error
+		creds, cerr = s.db.GetCampaignExotelCreds(campaignID)
+		if cerr != nil || !creds.IsSet() {
+			writeError(w, http.StatusBadRequest, "no Exotel credentials configured for this campaign")
+			return
+		}
 	}
 
 	exotelClient := dial.NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
@@ -1494,7 +1534,34 @@ func (s *Server) canAccessLead(ac AuthClaims, leadID int64) bool {
 	return false
 }
 
-// requireLeadAccess fetches a lead and verifies the user can access it (org +
+// resolveExecutiveIDs merges an optional ?executive_ids= query filter with the
+// RBAC access rules for the caller. Admins/SuperAdmins get the requested filter
+// (or none). Agents/TeamLeaders get the intersection of the requested filter
+// and the executive IDs they are allowed to see.
+func (s *Server) resolveExecutiveIDs(r *http.Request, ac AuthClaims) ([]int64, bool, error) {
+	allowed, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil {
+		return nil, false, err
+	}
+	requested := parseExecutiveIDs(r.URL.Query().Get("executive_ids"))
+	if !apply {
+		return requested, false, nil
+	}
+	if len(requested) == 0 {
+		return allowed, true, nil
+	}
+	allowedSet := make(map[int64]struct{}, len(allowed))
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+	var out []int64
+	for _, id := range requested {
+		if _, ok := allowedSet[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out, true, nil
+}
 // executive_id). It returns the lead on success, or writes a 404 and returns nil.
 func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadID int64) *db.Lead {
 	ac := getAuth(r)

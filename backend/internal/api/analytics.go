@@ -16,6 +16,7 @@ import (
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {object}  db.FullDashboardStats
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -23,7 +24,13 @@ import (
 // @Router      /api/analytics/dashboard [get]
 func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	stats, err := s.db.GetFullDashboardStats(ac.OrgID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsDashboard", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	stats, err := s.db.GetFullDashboardStats(ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("analyticsDashboard", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -38,6 +45,7 @@ func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {array}   db.LanguagePerf
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -45,7 +53,13 @@ func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/analytics/languages [get]
 func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	langs, err := s.db.GetLanguagePerformance(ac.OrgID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsLanguages", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	langs, err := s.db.GetLanguagePerformance(ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("analyticsLanguages", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -60,7 +74,8 @@ func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     text/csv
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Param       campaign_id    query  int64   false  "Campaign ID (0 = all campaigns)"
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {file}    binary
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -76,7 +91,14 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsExportCSV", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -105,7 +127,8 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     text/html
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Param       campaign_id    query  int64   false  "Campaign ID (0 = all campaigns)"
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {string}  string  "HTML report"
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -121,7 +144,14 @@ func (s *Server) analyticsExportReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsExportReport", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -149,7 +179,8 @@ th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f5f5f5}</s
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID"
+// @Param       campaign_id    query  int64  false  "Campaign ID"
+// @Param       executive_ids  query  string false  "Comma-separated executive IDs"
 // @Success     200  {array}   object
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -160,7 +191,14 @@ func (s *Server) scoredLeads(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
 
-	leads, err := s.db.GetScoredLeads(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("scoredLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	leads, err := s.db.GetScoredLeads(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -192,6 +230,7 @@ func formatSeconds(sec int64) string {
 // @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
 // @Param       to           query  string  false  "End date (YYYY-MM-DD)"
 // @Param       campaign_id  query  int64   false  "Campaign ID (0 = all)"
+// @Param       user_id      query  int64   false  "Agent user ID (Agent role can only request self)"
 // @Success     200  {file}  binary
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -223,18 +262,29 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
 
+	userIDStr := r.URL.Query().Get("user_id")
+	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
+	// Agents may only view their own report.
+	if ac.Role == "Agent" {
+		if userID != 0 && userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		userID = ac.UserID
+	}
+
 	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 
-	summary, err := s.db.GetAgentActivitySummary(ac.OrgID, from, to, campaignID)
+	summary, err := s.db.GetAgentActivitySummary(ac.OrgID, from, to, campaignID, userID)
 	if err != nil {
 		s.logger.Sugar().Errorw("agentReportXLSX", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	detail, err := s.db.GetAgentActivityDetail(ac.OrgID, from, to, campaignID)
+	detail, err := s.db.GetAgentActivityDetail(ac.OrgID, from, to, campaignID, userID)
 	if err != nil {
 		s.logger.Sugar().Errorw("agentReportXLSX", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

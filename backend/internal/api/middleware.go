@@ -15,9 +15,10 @@ type ctxKey struct{}
 
 // AuthClaims holds the fields extracted from a validated JWT.
 type AuthClaims struct {
-	Email string
-	OrgID int64
-	Role  string
+	Email  string
+	OrgID  int64
+	Role   string
+	UserID int64
 }
 
 // jwtClaims maps the Python-issued JWT payload.
@@ -29,10 +30,10 @@ type AuthClaims struct {
 // downgraded into a query-string ticket. (issue #80)
 type jwtClaims struct {
 	jwt.RegisteredClaims
-	OrgID int64  `json:"org_id"`
-	
-	Role  string `json:"role"`
-	Kind  string `json:"kind,omitempty"`
+	OrgID int64 `json:"org_id"`
+
+	Role string `json:"role"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
@@ -66,17 +67,21 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		// Re-validate the user record: disabled/deleted accounts must lose API
 		// access immediately, not when their 30-day JWT expires.
+		var userID int64
 		if s.db != nil && claims.Subject != "" {
 			if u, err := s.db.GetUserByEmail(claims.Subject); err != nil || u == nil || !u.IsActive {
 				writeError(w, http.StatusUnauthorized, "account disabled")
 				return
+			} else if u != nil {
+				userID = u.ID
 			}
 		}
 
 		ac := AuthClaims{
-			Email: claims.Subject, // Python sets sub = email
-			OrgID: claims.OrgID,
-			Role:  claims.Role,
+			Email:  claims.Subject, // Python sets sub = email
+			OrgID:  claims.OrgID,
+			Role:   claims.Role,
+			UserID: userID,
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, ac)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -127,6 +132,9 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 			if s.db != nil && ac.Email != "" {
 				if u, err := s.db.GetUserByEmail(ac.Email); err == nil && u != nil {
 					role = u.Role
+					ac.Role = role
+					ctx := context.WithValue(r.Context(), ctxKey{}, ac)
+					r = r.WithContext(ctx)
 				}
 			}
 			// Super-admins can access any role-gated endpoint.

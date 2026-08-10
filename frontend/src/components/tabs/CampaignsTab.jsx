@@ -37,6 +37,7 @@ export default function CampaignsTab({
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
+  const [detailExecutiveFilter, setDetailExecutiveFilter] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [addLeadsSearch, setAddLeadsSearch] = useState('');
   const [addLeadsResults, setAddLeadsResults] = useState([]);
@@ -148,8 +149,9 @@ export default function CampaignsTab({
       setAutoOpened(true);
       setSelectedCampaign(target);
       setView('detail');
+      setDetailExecutiveFilter([]);
       fetchCampaignLeads(target.id);
-      fetchCallLog(target.id);
+      fetchCallLog(target.id, []);
       fetchCampVoice(target.id);
       startEventStream(target.id).catch(() => {});
       setDetailTab('leads');
@@ -177,9 +179,12 @@ export default function CampaignsTab({
     } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
   }, [apiFetch, API_URL]);
 
-  const fetchCallLog = async (campaignId) => {
+  const fetchCallLog = async (campaignId, executiveIds = []) => {
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
+      const params = new URLSearchParams();
+      if (executiveIds?.length) params.set('executive_ids', executiveIds.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log${query}`);
       if (!res.ok) { setCallLog([]); return; }
       const data = await res.json();
       setCallLog(Array.isArray(data) ? data : []);
@@ -239,11 +244,12 @@ export default function CampaignsTab({
     if (routeCampaignId && campaign?.id !== parseInt(routeCampaignId, 10)) {
       navigate(`/campaigns/${campaign.id}`, { replace: true });
     }
+    setDetailExecutiveFilter([]);
     const detail = await fetchCampaignDetail(campaign.id);
     setSelectedCampaign(detail ? { ...campaign, ...detail } : campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
-    fetchCallLog(campaign.id);
+    fetchCallLog(campaign.id, []);
     fetchCampVoice(campaign.id);
     startEventStream(campaign.id).catch(() => {});
     setDetailTab('leads');
@@ -768,6 +774,8 @@ export default function CampaignsTab({
           orgTimezone={orgTimezone}
           handleEditCampaign={handleEditCampaign}
           executives={executives}
+          detailExecutiveFilter={detailExecutiveFilter}
+          setDetailExecutiveFilter={setDetailExecutiveFilter}
         />
         <CampaignModals
           showCreateModal={false}

@@ -117,17 +117,18 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    leadName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  campaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: provider,
-		TTSVoiceID:  voiceID,
-		TTSLanguage: lang,
+		LeadID:          lead.ID,
+		LeadName:        leadName,
+		LeadPhone:       lead.Phone,
+		CampaignID:      campaignID,
+		OrgID:           ac.OrgID,
+		Interest:        lead.Interest,
+		TTSProvider:     provider,
+		TTSVoiceID:      voiceID,
+		TTSLanguage:     lang,
 		IsBridge:        true,
 		UserEmail:       ac.Email,
+		UserID:          userIDForDial(ac),
 		ExotelAccountID: body.ExotelAccountID,
 	}
 

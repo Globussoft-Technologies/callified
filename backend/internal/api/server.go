@@ -361,6 +361,16 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/users/agent", teamLeaderAuth(s.createAgentUnderManager))
 	mux.HandleFunc("PUT /api/users/{id}/agent", teamLeaderAuth(s.updateManagedAgent))
 
+		// Per-user provider accounts (Exotel/Twilio) — callers manage their own,
+		// Team Leaders manage their agents, Admins manage anyone. The handlers
+		// enforce the RBAC rules internally so we can use auth() here.
+		mux.HandleFunc("GET /api/users/me/provider-accounts", auth(s.listMyProviderAccounts))
+		mux.HandleFunc("POST /api/users/me/provider-accounts", auth(s.createMyProviderAccount))
+		mux.HandleFunc("GET /api/users/{id}/provider-accounts", auth(s.listUserProviderAccounts))
+		mux.HandleFunc("POST /api/users/{id}/provider-accounts", auth(s.createUserProviderAccount))
+		mux.HandleFunc("PUT /api/users/{id}/provider-accounts/{account_id}", auth(s.updateUserProviderAccount))
+		mux.HandleFunc("DELETE /api/users/{id}/provider-accounts/{account_id}", auth(s.deleteUserProviderAccount))
+
 	// ── Executives ────────────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/executives", adminAuth(s.listExecutives))
 	mux.HandleFunc("POST /api/executives", adminAuth(s.createExecutive))

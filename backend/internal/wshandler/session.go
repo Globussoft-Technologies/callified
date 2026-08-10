@@ -33,6 +33,8 @@ type CallSession struct {
 	SkipCredits bool
 	// UserEmail is the agent/admin who initiated the call.
 	UserEmail string
+	// UserID is the resolved DB user id of the agent/admin who initiated the call.
+	UserID int64
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").

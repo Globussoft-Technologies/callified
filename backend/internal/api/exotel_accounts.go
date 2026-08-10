@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/globussoft/callified-backend/internal/db"
 )
 
 type exotelAccountOption struct {
@@ -40,12 +42,28 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	options := make([]exotelAccountOption, 0, len(accounts))
+	var userAccounts []db.OrgExotelAccount
+	if ac.UserID > 0 {
+		userAccounts, _ = s.db.GetUserExotelAccounts(ac.UserID, ac.OrgID)
+	}
+	options := make([]exotelAccountOption, 0, len(accounts)+len(userAccounts))
 	for _, a := range accounts {
 		options = append(options, exotelAccountOption{
 			ID:         a.ID,
 			Provider:   a.Provider,
 			Name:       a.Name,
+			AccountSID: a.AccountSID,
+			CallerID:   a.CallerID,
+			AppType:    a.AppType,
+			Region:     a.Region,
+			Subdomain:  a.Subdomain,
+		})
+	}
+	for _, a := range userAccounts {
+		options = append(options, exotelAccountOption{
+			ID:         a.ID,
+			Provider:   a.Provider,
+			Name:       a.Name + " (personal)",
 			AccountSID: a.AccountSID,
 			CallerID:   a.CallerID,
 			AppType:    a.AppType,

@@ -11,6 +11,7 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 		CREATE TABLE IF NOT EXISTS org_exotel_accounts (
 			id BIGINT AUTO_INCREMENT PRIMARY KEY,
 			org_id BIGINT NOT NULL,
+			user_id BIGINT DEFAULT NULL,
 			provider VARCHAR(50) DEFAULT 'exotel',
 			name VARCHAR(255) NOT NULL,
 			api_key VARCHAR(512) NOT NULL,
@@ -23,7 +24,9 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 			region VARCHAR(50) DEFAULT '',
 			subdomain VARCHAR(255) DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_org_id (org_id)
+			INDEX idx_org_id (org_id),
+			INDEX idx_user_org (user_id, org_id),
+			CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 	`)
 	if err != nil {
@@ -34,37 +37,61 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN app_type VARCHAR(20) DEFAULT 'exoml'`)
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN region VARCHAR(50) DEFAULT ''`)
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN subdomain VARCHAR(255) DEFAULT ''`)
+	// Backward-compat for per-agent accounts (user_id may be missing on older DBs).
+	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN user_id BIGINT DEFAULT NULL`)
+	_, _ = d.pool.Exec(`CREATE INDEX idx_user_org ON org_exotel_accounts(user_id, org_id)`)
+	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`)
 	return nil
 }
 
 // OrgExotelAccount holds a named set of provider credentials (Exotel or Twilio)
-// stored at the org level. Multiple accounts let a single org run campaigns
-// with different providers / sub-accounts.
+// stored at the org or user level. Multiple accounts let a single org run campaigns
+// with different providers / sub-accounts, and individual agents can use their own
+// credentials for calls they place personally.
 type OrgExotelAccount struct {
 	ID         int64  `json:"id"`
 	OrgID      int64  `json:"org_id"`
+	UserID     *int64 `json:"user_id,omitempty"`
 	Provider   string `json:"provider"` // "exotel" or "twilio"
 	Name       string `json:"name"`
 	APIKey     string `json:"api_key"`    // Exotel: API Key   | Twilio: Auth Token
 	APIToken   string `json:"api_token"`  // Exotel: API Token | Twilio: API Key SID (SK…)
 	APISecret  string `json:"api_secret"` // Twilio only: API Secret
 	AccountSID string `json:"account_sid"`
-	CallerID   string `json:"caller_id"`  // Exotel: Caller ID | Twilio: Phone Number
-	AppID      string `json:"app_id"`     // Exotel: App ID    | Twilio: TwiML App SID
-	AppType    string `json:"app_type"`   // Exotel: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON)
-	Region     string `json:"region"`     // Exotel region: in, us, sg, etc.
-	Subdomain  string `json:"subdomain"`  // Exotel account subdomain override
+	CallerID   string `json:"caller_id"` // Exotel: Caller ID | Twilio: Phone Number
+	AppID      string `json:"app_id"`    // Exotel: App ID    | Twilio: TwiML App SID
+	AppType    string `json:"app_type"`  // Exotel: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON)
+	Region     string `json:"region"`    // Exotel region: in, us, sg, etc.
+	Subdomain  string `json:"subdomain"` // Exotel account subdomain override
 	CreatedAt  string `json:"created_at"`
 }
 
-// GetOrgExotelAccounts returns all saved provider accounts for an org.
+func scanOrgExotelAccount(rows *sql.Rows, a *OrgExotelAccount) error {
+	var userID sql.NullInt64
+	err := rows.Scan(&a.ID, &a.OrgID, &userID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
+		&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
+		&a.Region, &a.Subdomain, &a.CreatedAt)
+	if err != nil {
+		return err
+	}
+	if userID.Valid {
+		a.UserID = &userID.Int64
+	}
+	return nil
+}
+
+func orgExotelAccountSelectColumns() string {
+	return `id, org_id, user_id, COALESCE(provider,'exotel'), name, api_key, api_token,
+		COALESCE(api_secret,''), account_sid, caller_id,
+		COALESCE(app_id,''), COALESCE(app_type,'exoml'),
+		COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')`
+}
+
+// GetOrgExotelAccounts returns org-level provider accounts for an org (user_id IS NULL).
 func (d *DB) GetOrgExotelAccounts(orgID int64) ([]OrgExotelAccount, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, org_id, COALESCE(provider,'exotel'), name, api_key, api_token,
-		       COALESCE(api_secret,''), account_sid, caller_id,
-		       COALESCE(app_id,''), COALESCE(app_type,'exoml'),
-		       COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM org_exotel_accounts WHERE org_id=? ORDER BY id ASC`, orgID)
+		SELECT `+orgExotelAccountSelectColumns()+`
+		FROM org_exotel_accounts WHERE org_id=? AND user_id IS NULL ORDER BY id ASC`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -72,9 +99,7 @@ func (d *DB) GetOrgExotelAccounts(orgID int64) ([]OrgExotelAccount, error) {
 	var list []OrgExotelAccount
 	for rows.Next() {
 		var a OrgExotelAccount
-		if err := rows.Scan(&a.ID, &a.OrgID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
-			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
-			&a.Region, &a.Subdomain, &a.CreatedAt); err != nil {
+		if err := scanOrgExotelAccount(rows, &a); err != nil {
 			return nil, err
 		}
 		list = append(list, a)
@@ -82,32 +107,36 @@ func (d *DB) GetOrgExotelAccounts(orgID int64) ([]OrgExotelAccount, error) {
 	return list, rows.Err()
 }
 
-// GetOrgExotelAccountByID fetches a single account, scoping to orgID.
+// GetOrgExotelAccountByID fetches a single org-level account, scoping to orgID.
 func (d *DB) GetOrgExotelAccountByID(id, orgID int64) (*OrgExotelAccount, error) {
 	a := &OrgExotelAccount{}
+	var userID sql.NullInt64
 	err := d.pool.QueryRow(`
-		SELECT id, org_id, COALESCE(provider,'exotel'), name, api_key, api_token,
-		       COALESCE(api_secret,''), account_sid, caller_id,
-		       COALESCE(app_id,''), COALESCE(app_type,'exoml'),
-		       COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		FROM org_exotel_accounts WHERE id=? AND org_id=?`, id, orgID).
-		Scan(&a.ID, &a.OrgID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
+		SELECT `+orgExotelAccountSelectColumns()+`
+		FROM org_exotel_accounts WHERE id=? AND org_id=? AND user_id IS NULL`, id, orgID).
+		Scan(&a.ID, &a.OrgID, &userID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
 			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
 			&a.Region, &a.Subdomain, &a.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return a, err
+	if err != nil {
+		return nil, err
+	}
+	if userID.Valid {
+		a.UserID = &userID.Int64
+	}
+	return a, nil
 }
 
-// CreateOrgExotelAccount inserts a new account and returns its ID.
+// CreateOrgExotelAccount inserts a new org-level account and returns its ID.
 func (d *DB) CreateOrgExotelAccount(orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) (int64, error) {
 	if appType == "" {
 		appType = "exoml"
 	}
 	res, err := d.pool.Exec(`
-		INSERT INTO org_exotel_accounts (org_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, region, subdomain)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		INSERT INTO org_exotel_accounts (org_id, user_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, region, subdomain)
+		VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?)`,
 		orgID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain)
 	if err != nil {
 		return 0, err
@@ -115,7 +144,7 @@ func (d *DB) CreateOrgExotelAccount(orgID int64, provider, name, apiKey, apiToke
 	return res.LastInsertId()
 }
 
-// UpdateOrgExotelAccount updates all mutable fields on an existing account.
+// UpdateOrgExotelAccount updates all mutable fields on an existing org-level account.
 func (d *DB) UpdateOrgExotelAccount(id, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) error {
 	if appType == "" {
 		appType = "exoml"
@@ -123,15 +152,114 @@ func (d *DB) UpdateOrgExotelAccount(id, orgID int64, provider, name, apiKey, api
 	_, err := d.pool.Exec(`
 		UPDATE org_exotel_accounts
 		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, region=?, subdomain=?
-		WHERE id=? AND org_id=?`,
+		WHERE id=? AND org_id=? AND user_id IS NULL`,
 		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain, id, orgID)
 	return err
 }
 
-// DeleteOrgExotelAccount removes an account, scoping the delete to orgID.
+// DeleteOrgExotelAccount removes an org-level account, scoping the delete to orgID.
 func (d *DB) DeleteOrgExotelAccount(id, orgID int64) error {
-	_, err := d.pool.Exec(`DELETE FROM org_exotel_accounts WHERE id=? AND org_id=?`, id, orgID)
+	_, err := d.pool.Exec(`DELETE FROM org_exotel_accounts WHERE id=? AND org_id=? AND user_id IS NULL`, id, orgID)
 	return err
+}
+
+// GetUserExotelAccounts returns provider accounts owned by a specific user within an org.
+func (d *DB) GetUserExotelAccounts(userID, orgID int64) ([]OrgExotelAccount, error) {
+	rows, err := d.pool.Query(`
+		SELECT `+orgExotelAccountSelectColumns()+`
+		FROM org_exotel_accounts WHERE user_id=? AND org_id=? ORDER BY id ASC`, userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []OrgExotelAccount
+	for rows.Next() {
+		var a OrgExotelAccount
+		if err := scanOrgExotelAccount(rows, &a); err != nil {
+			return nil, err
+		}
+		list = append(list, a)
+	}
+	return list, rows.Err()
+}
+
+// GetUserExotelAccountByID fetches a single user-owned account, scoping to userID and orgID.
+func (d *DB) GetUserExotelAccountByID(id, userID, orgID int64) (*OrgExotelAccount, error) {
+	a := &OrgExotelAccount{}
+	var uid sql.NullInt64
+	err := d.pool.QueryRow(`
+		SELECT `+orgExotelAccountSelectColumns()+`
+		FROM org_exotel_accounts WHERE id=? AND user_id=? AND org_id=?`, id, userID, orgID).
+		Scan(&a.ID, &a.OrgID, &uid, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
+			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
+			&a.Region, &a.Subdomain, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if uid.Valid {
+		a.UserID = &uid.Int64
+	}
+	return a, nil
+}
+
+// CreateUserExotelAccount inserts a user-owned provider account and returns its ID.
+func (d *DB) CreateUserExotelAccount(userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) (int64, error) {
+	if appType == "" {
+		appType = "exoml"
+	}
+	res, err := d.pool.Exec(`
+		INSERT INTO org_exotel_accounts (org_id, user_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, region, subdomain)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orgID, userID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UpdateUserExotelAccount updates all mutable fields on a user-owned account.
+func (d *DB) UpdateUserExotelAccount(id, userID, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) error {
+	if appType == "" {
+		appType = "exoml"
+	}
+	_, err := d.pool.Exec(`
+		UPDATE org_exotel_accounts
+		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, region=?, subdomain=?
+		WHERE id=? AND user_id=? AND org_id=?`,
+		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain, id, userID, orgID)
+	return err
+}
+
+// DeleteUserExotelAccount removes a user-owned account.
+func (d *DB) DeleteUserExotelAccount(id, userID, orgID int64) error {
+	_, err := d.pool.Exec(`DELETE FROM org_exotel_accounts WHERE id=? AND user_id=? AND org_id=?`, id, userID, orgID)
+	return err
+}
+
+// GetExotelAccountByIDInOrg fetches any account (org or user-owned) by id and org_id.
+// Used when an account ID is supplied by the client and we need to verify it belongs to the org.
+func (d *DB) GetExotelAccountByIDInOrg(id, orgID int64) (*OrgExotelAccount, error) {
+	a := &OrgExotelAccount{}
+	var userID sql.NullInt64
+	err := d.pool.QueryRow(`
+		SELECT `+orgExotelAccountSelectColumns()+`
+		FROM org_exotel_accounts WHERE id=? AND org_id=?`, id, orgID).
+		Scan(&a.ID, &a.OrgID, &userID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
+			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
+			&a.Region, &a.Subdomain, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if userID.Valid {
+		a.UserID = &userID.Int64
+	}
+	return a, nil
 }
 
 // GetCampaignExotelAccountID returns the exotel_account_id linked to a campaign (0 if none).
@@ -163,6 +291,7 @@ func (d *DB) GetOrgExotelAccountCreds(accountID, orgID int64) (ExotelCreds, erro
 		return ExotelCreds{}, err
 	}
 	return ExotelCreds{
+		AccountID:  a.ID,
 		Provider:   a.Provider,
 		APIKey:     a.APIKey,
 		APIToken:   a.APIToken,
@@ -174,4 +303,71 @@ func (d *DB) GetOrgExotelAccountCreds(accountID, orgID int64) (ExotelCreds, erro
 		Region:     a.Region,
 		Subdomain:  a.Subdomain,
 	}, nil
+}
+
+// GetUserExotelAccountCreds returns the first active provider account owned by a user
+// in an org as ExotelCreds. Returns zero-value ExotelCreds when the user has no personal account.
+func (d *DB) GetUserExotelAccountCreds(userID, orgID int64) (ExotelCreds, error) {
+	if userID == 0 || orgID == 0 {
+		return ExotelCreds{}, nil
+	}
+	accounts, err := d.GetUserExotelAccounts(userID, orgID)
+	if err != nil {
+		return ExotelCreds{}, err
+	}
+	if len(accounts) == 0 {
+		return ExotelCreds{}, nil
+	}
+	a := accounts[0]
+	return ExotelCreds{
+		AccountID:  a.ID,
+		Provider:   a.Provider,
+		APIKey:     a.APIKey,
+		APIToken:   a.APIToken,
+		APISecret:  a.APISecret,
+		AccountSID: a.AccountSID,
+		CallerID:   a.CallerID,
+		AppID:      a.AppID,
+		AppType:    a.AppType,
+		Region:     a.Region,
+		Subdomain:  a.Subdomain,
+	}, nil
+}
+
+// accountToCreds converts an OrgExotelAccount to ExotelCreds.
+func accountToCreds(a *OrgExotelAccount) ExotelCreds {
+	if a == nil {
+		return ExotelCreds{}
+	}
+	return ExotelCreds{
+		AccountID:  a.ID,
+		Provider:   a.Provider,
+		APIKey:     a.APIKey,
+		APIToken:   a.APIToken,
+		APISecret:  a.APISecret,
+		AccountSID: a.AccountSID,
+		CallerID:   a.CallerID,
+		AppID:      a.AppID,
+		AppType:    a.AppType,
+		Region:     a.Region,
+		Subdomain:  a.Subdomain,
+	}
+}
+
+// GetOrgOrUserExotelAccountCreds returns an ExotelCreds from an account by ID,
+// verifying it belongs to the org and optionally to the requesting user.
+// accountID 0 returns zero-value ExotelCreds. If userID is provided (>0), the account
+// must be either org-level or owned by that user.
+func (d *DB) GetOrgOrUserExotelAccountCreds(accountID, orgID, userID int64) (ExotelCreds, error) {
+	if accountID == 0 {
+		return ExotelCreds{}, nil
+	}
+	a, err := d.GetExotelAccountByIDInOrg(accountID, orgID)
+	if err != nil || a == nil {
+		return ExotelCreds{}, err
+	}
+	if userID > 0 && a.UserID != nil && *a.UserID != userID {
+		return ExotelCreds{}, nil
+	}
+	return accountToCreds(a), nil
 }

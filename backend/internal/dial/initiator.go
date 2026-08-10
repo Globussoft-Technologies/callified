@@ -32,6 +32,11 @@ type CallData struct {
 	// UserEmail identifies the agent who clicked the call button. Used to honour
 	// per-user feature flags such as hide_ai_features → unlimited manual calls.
 	UserEmail string
+	// UserID is the authenticated dashboard user placing the call. When non-zero
+	// and the user owns a personal provider account, the initiator prefers that
+	// account over the campaign/org default so agent-initiated calls go out from
+	// the agent's own credentials.
+	UserID int64
 	// ExotelAccountID overrides the campaign's default provider account for this
 	// specific call. 0 means use the campaign default (used by AI/server calls).
 	ExotelAccountID int64
@@ -40,13 +45,13 @@ type CallData struct {
 // Initiator orchestrates the full dial sequence:
 // DND check → TRAI hours → Redis pending call → provider dial → DB log.
 type Initiator struct {
-	cfg     *config.Config
-	store   *rstore.Store
-	db      *db.DB
-	disp    *webhook.Dispatcher
-	twilio  *TwilioClient
-	exotel  *ExotelClient
-	log     *zap.Logger
+	cfg    *config.Config
+	store  *rstore.Store
+	db     *db.DB
+	disp   *webhook.Dispatcher
+	twilio *TwilioClient
+	exotel *ExotelClient
+	log    *zap.Logger
 }
 
 // New creates an Initiator wired to both telephony providers.
@@ -161,23 +166,40 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		IsBridge:    data.IsBridge,
 		SkipCredits: skipCredits,
 		UserEmail:   data.UserEmail,
+		UserID:      data.UserID,
 	}
 
 	// 4. Resolve provider credentials.
 	// Browser calls may override the campaign default with a per-machine/org
 	// account so multiple systems can dial in parallel. The override is scoped
 	// to the org and validated to be a voicebot account for bridge calls.
+	// When UserID is set (agent/team-leader placed the call), an explicit
+	// ExotelAccountID must belong either to the org or to that user; otherwise
+	// we prefer the user's personal provider account before falling back to the
+	// campaign/org default.
 	var creds db.ExotelCreds
 	if data.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID); cerr == nil && c.IsSet() {
-			creds = c
-		} else if cerr != nil {
-			return "", fmt.Errorf("lookup provider account: %w", cerr)
+		var lookupErr error
+		if data.UserID > 0 {
+			creds, lookupErr = i.db.GetOrgOrUserExotelAccountCreds(data.ExotelAccountID, data.OrgID, data.UserID)
 		} else {
-			return "", fmt.Errorf("provider account not found or incomplete")
+			creds, lookupErr = i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID)
+		}
+		if lookupErr != nil {
+			return "", fmt.Errorf("lookup provider account: %w", lookupErr)
+		}
+		if !creds.IsSet() {
+			return "", fmt.Errorf("provider account not found or inaccessible")
 		}
 		if data.IsBridge && creds.AppType != "voicebot" {
 			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
+		}
+	}
+	if !creds.IsSet() && data.UserID > 0 {
+		if c, cerr := i.db.GetUserExotelAccountCreds(data.UserID, data.OrgID); cerr == nil && c.IsSet() {
+			creds = c
+		} else if cerr != nil {
+			return "", fmt.Errorf("lookup user provider account: %w", cerr)
 		}
 	}
 	if !creds.IsSet() && data.CampaignID > 0 {
@@ -192,7 +214,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// Carry the Exotel app/flow type and account choice through to the webhook
 	// and hangup path so they use the same credentials used to place the call.
 	pending.AppType = creds.AppType
-	pending.ExotelAccountID = data.ExotelAccountID
+	if creds.AccountID > 0 {
+		pending.ExotelAccountID = creds.AccountID
+	}
 	var callSid string
 
 	switch provider {
@@ -281,7 +305,7 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 	var creds db.ExotelCreds
 	// 1. Per-call override from the Redis pending entry.
 	if pending, ok := i.store.GetPendingCall(ctx, callSid); ok && pending.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(pending.ExotelAccountID, pending.OrgID); cerr == nil && c.IsSet() {
+		if c, cerr := i.db.GetOrgOrUserExotelAccountCreds(pending.ExotelAccountID, pending.OrgID, 0); cerr == nil && c.IsSet() {
 			creds = c
 		}
 	}

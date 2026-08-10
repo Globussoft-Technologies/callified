@@ -29,7 +29,19 @@ func dialErrorStatus(err error) int {
 	}
 }
 
-// dialLead initiates an immediate call to a specific lead.
+// userIDForDial returns the authenticated user's ID when the caller is an
+// Agent or TeamLeader so that the initiator can prefer their personal provider
+// account. Admins/SuperAdmins return 0 so the campaign/org default is used.
+func userIDForDial(ac AuthClaims) int64 {
+	if ac.UserID == 0 {
+		return 0
+	}
+	if ac.Role == db.RoleAgent || ac.Role == db.RoleTeamLeader {
+		return ac.UserID
+	}
+	return 0
+}
+
 // POST /api/dial/{lead_id}
 // @Summary     Dial lead
 // @Description Initiates an immediate outbound call to a specific lead.
@@ -88,6 +100,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
 		UserEmail:   ac.Email,
+		UserID:      userIDForDial(ac),
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -151,6 +164,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
 		UserEmail:   ac.Email,
+		UserID:      userIDForDial(ac),
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {

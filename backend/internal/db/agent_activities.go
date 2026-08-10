@@ -84,12 +84,17 @@ type AgentActivitySummary struct {
 }
 
 // GetAgentActivitySummary returns aggregated agent productivity metrics for a date range.
-func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID int64) ([]AgentActivitySummary, error) {
+func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID, userID int64) ([]AgentActivitySummary, error) {
 	campaignFilter := ""
 	args := []any{orgID, from, to}
 	if campaignID > 0 {
 		campaignFilter = "AND aa.campaign_id=?"
 		args = append(args, campaignID)
+	}
+	userFilter := ""
+	if userID > 0 {
+		userFilter = "AND aa.user_id=?"
+		args = append(args, userID)
 	}
 
 	rows, err := d.pool.Query(fmt.Sprintf(`
@@ -117,9 +122,10 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			AND aa.created_at >= ?
 			AND aa.created_at <= ?
 			%s
+			%s
 		WHERE u.org_id=?
 		GROUP BY u.id, u.email, u.full_name, u.role
-		ORDER BY u.full_name, u.email`, campaignFilter), append(args, orgID)...)
+		ORDER BY u.full_name, u.email`, campaignFilter, userFilter), append(args, orgID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -139,19 +145,24 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 }
 
 // GetAgentActivityDetail returns raw activity rows for the report detail sheet.
-func (d *DB) GetAgentActivityDetail(orgID int64, from, to time.Time, campaignID int64) ([]AgentActivity, error) {
+func (d *DB) GetAgentActivityDetail(orgID int64, from, to time.Time, campaignID, userID int64) ([]AgentActivity, error) {
 	campaignFilter := ""
 	args := []any{orgID, from, to}
 	if campaignID > 0 {
 		campaignFilter = "AND campaign_id=?"
 		args = append(args, campaignID)
 	}
+	userFilter := ""
+	if userID > 0 {
+		userFilter = "AND user_id=?"
+		args = append(args, userID)
+	}
 	rows, err := d.pool.Query(fmt.Sprintf(`
 		SELECT id, user_id, org_id, COALESCE(campaign_id,0), COALESCE(lead_id,0),
 			activity_type, COALESCE(metadata,'{}'), DATE_FORMAT(created_at,'%%Y-%%m-%%d %%H:%%i:%%s')
 		FROM agent_activities
-		WHERE org_id=? AND created_at >= ? AND created_at <= ? %s
-		ORDER BY created_at DESC`, campaignFilter), args...)
+		WHERE org_id=? AND created_at >= ? AND created_at <= ? %s %s
+		ORDER BY created_at DESC`, campaignFilter, userFilter), args...)
 	if err != nil {
 		return nil, err
 	}

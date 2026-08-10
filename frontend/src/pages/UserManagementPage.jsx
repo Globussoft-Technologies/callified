@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm } from '../contexts/UIContext';
 import { isAdmin, isTeamLeader, ROLES } from '../utils/roles';
+import UserProviderAccountsModal from '../components/UserProviderAccountsModal';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -71,9 +72,15 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [providerAccountsUser, setProviderAccountsUser] = useState(null);
 
   const [form, setForm] = useState({
     email: '', password: '', full_name: '', role: ROLES.AGENT, manager_id: '',
+    setup_calling: false,
+    provider_account: {
+      provider: 'exotel', name: '', api_key: '', api_token: '', api_secret: '',
+      account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', region: '', subdomain: '',
+    },
   });
 
   const fetchUsers = useCallback(async () => {
@@ -93,7 +100,14 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const resetForm = () => {
-    setForm({ email: '', password: '', full_name: '', role: ROLES.AGENT, manager_id: '' });
+    setForm({
+      email: '', password: '', full_name: '', role: ROLES.AGENT, manager_id: '',
+      setup_calling: false,
+      provider_account: {
+        provider: 'exotel', name: '', api_key: '', api_token: '', api_secret: '',
+        account_sid: '', caller_id: '', app_id: '', app_type: 'exoml', region: '', subdomain: '',
+      },
+    });
   };
 
   const openAdd = () => { resetForm(); setShowAdd(true); };
@@ -122,6 +136,10 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
       // Team Leader creating an Agent under themselves.
       delete payload.role;
       delete payload.manager_id;
+    }
+    delete payload.setup_calling;
+    if (!form.setup_calling) {
+      delete payload.provider_account;
     }
     try {
       const url = isAdmin(userRole) ? `${API_URL}/users` : `${API_URL}/users/agent`;
@@ -274,6 +292,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
               <td style={tdStyle}>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button style={btnSecondary} onClick={() => openEdit(u)}>Edit</button>
+                  <button style={btnSecondary} onClick={() => setProviderAccountsUser(u)}>Provider Accounts</button>
                   <button style={btnSecondary} onClick={() => handleToggleActive(u)}>
                     {u.is_active !== false ? 'Disable' : 'Enable'}
                   </button>
@@ -329,6 +348,44 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                 )}
               </>
             )}
+            {(form.role !== ROLES.ADMIN || isTeamLeader(userRole)) && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 13, color: T.sub, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={!!form.setup_calling}
+                  onChange={e => setForm({ ...form, setup_calling: e.target.checked })}
+                />
+                Set up calling configuration (Exotel/Twilio) for this user
+              </label>
+            )}
+            {form.setup_calling && (
+              <div style={{ marginTop: 16, padding: 16, background: '#f9fafb', borderRadius: 8, border: `1px solid ${T.border}` }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 12 }}>Calling Provider Account</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <Field label="Account Name" value={form.provider_account?.name || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, name: v } })} required />
+                  <Select label="Provider" value={form.provider_account?.provider || 'exotel'} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, provider: v } })} options={[
+                    { value: 'exotel', label: 'Exotel' },
+                    { value: 'twilio', label: 'Twilio' },
+                  ]} />
+                  <Field label="API Key / Auth Token" value={form.provider_account?.api_key || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_key: v } })} required />
+                  <Field label="API Token / API Key SID" value={form.provider_account?.api_token || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_token: v } })} required />
+                  {form.provider_account?.provider === 'twilio' && (
+                    <Field label="API Secret" value={form.provider_account?.api_secret || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_secret: v } })} required />
+                  )}
+                  <Field label="Account SID" value={form.provider_account?.account_sid || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, account_sid: v } })} required />
+                  <Field label="Caller ID / From Number" value={form.provider_account?.caller_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, caller_id: v } })} required />
+                  <Field label="App ID / TwiML App SID" value={form.provider_account?.app_id || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, app_id: v } })} />
+                  {form.provider_account?.provider === 'exotel' && (
+                    <Select label="App Type" value={form.provider_account?.app_type || 'exoml'} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, app_type: v } })} options={[
+                      { value: 'exoml', label: 'ExoML (legacy XML)' },
+                      { value: 'voicebot', label: 'Voicebot (AgentStream JSON)' },
+                    ]} />
+                  )}
+                  <Field label="Region" value={form.provider_account?.region || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, region: v } })} placeholder="e.g. in" />
+                  <Field label="Subdomain" value={form.provider_account?.subdomain || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, subdomain: v } })} placeholder="e.g. myaccount" />
+                </div>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
               <button type="button" style={btnSecondary} onClick={closeAdd}>Cancel</button>
               <button type="submit" style={btnPrimary}>Create</button>
@@ -373,6 +430,15 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
             </div>
           </form>
         </Modal>
+      )}
+
+      {providerAccountsUser && (
+        <UserProviderAccountsModal
+          user={providerAccountsUser}
+          apiFetch={apiFetch}
+          API_URL={API_URL}
+          onClose={() => setProviderAccountsUser(null)}
+        />
       )}
     </div>
   );

@@ -72,7 +72,8 @@ const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.pho
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
 func execFilterClause(execIDs []int64, apply bool) (string, []any) {
-	if !apply || len(execIDs) == 0 {
+	_ = apply
+	if len(execIDs) == 0 {
 		return "", nil
 	}
 	placeholders := make([]string, len(execIDs))
