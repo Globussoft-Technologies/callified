@@ -36,6 +36,8 @@ func normalizeRole(role string) string {
 		return db.RoleTeamLeader
 	case "agent":
 		return db.RoleAgent
+	case "executive":
+		return db.RoleExecutive
 	default:
 		return ""
 	}
@@ -75,7 +77,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	role := normalizeRole(req.Role)
 	if role == "" {
-		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 		return
 	}
 	if role == db.RoleAdmin && req.ManagerID != nil && *req.ManagerID != 0 {
@@ -113,6 +115,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.maybeCreateUserProviderAccount(id, ac.OrgID, req.ProviderAccount)
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, req.FullName, req.Email)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "email": req.Email})
 }
 
@@ -165,7 +170,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role != "" {
 		role = normalizeRole(req.Role)
 		if role == "" {
-			writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+			writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 			return
 		}
 	}
@@ -197,6 +202,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("updateUser", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, fullName, target.Email)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }

@@ -12,7 +12,7 @@ import (
 )
 
 // ── GET /api/dashboard/summary ────────────────────────────────────────────────
-// Open to any authenticated role (Admin / Agent / Viewer) so the CRM
+// Open to any authenticated role (Admin / Agent / Executive) so the CRM
 // dashboard cards render real numbers even though full /api/campaigns is
 // admin-gated. Returns just the 5 aggregate counts — no campaign objects.
 
@@ -135,7 +135,7 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 	}
 	role := normalizeRole(body.Role)
 	if role == "" {
-		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 		return
 	}
 
@@ -168,6 +168,9 @@ func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("inviteTeamMember: create user", "err", err)
 		writeError(w, http.StatusInternalServerError, "Could not create user. Please try again.")
 		return
+	}
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, body.FullName, body.Email)
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -482,7 +485,7 @@ var commonPasswords = map[string]struct{}{
 // ── PUT /api/team/{id}/role ───────────────────────────────────────────────────
 
 // @Summary     Update team member role
-// @Description Changes a team member's role (Admin/Agent/Viewer). Requires Admin role.
+// @Description Changes a team member's role (Admin/Agent/Executive). Requires Admin role.
 // @Tags        team
 // @Accept      json
 // @Produce     json
@@ -521,13 +524,16 @@ func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 	}
 	role := normalizeRole(body.Role)
 	if role == "" {
-		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 		return
 	}
 	if err := s.db.UpdateUser(id, ac.OrgID, target.FullName, role, target.ManagerID, target.IsActive); err != nil {
 		s.logger.Sugar().Errorw("updateTeamRole", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, target.FullName, target.Email)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/wshandler"
 )
 
@@ -41,8 +42,8 @@ func (s *Server) activeCalls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userIDFilter, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
-	// Agents can only see their own active calls.
-	if ac.Role == "Agent" {
+	// Agents/Executives can only see their own active calls.
+	if db.IsAgentLikeRole(ac.Role) {
 		if userIDFilter != 0 && userIDFilter != ac.UserID {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return

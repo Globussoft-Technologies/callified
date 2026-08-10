@@ -115,7 +115,7 @@ func getAuth(r *http.Request) AuthClaims {
 // token doesn't accidentally bypass authorization. Subsequent re-logins
 // embed the role and skip the lookup.
 //
-// Role model: Admin | TeamLeader | Agent | Viewer. Admin sees everything;
+// Role model: Admin | TeamLeader | Agent | Executive. Admin sees everything;
 // TeamLeader sees self + managed Agents; Agent sees only self.
 func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
@@ -123,11 +123,11 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 			ac := getAuth(r)
 			// Always resolve the role from DB instead of trusting the JWT
 			// claim. Role changes by an Admin (e.g. promoting an Agent to
-			// Admin or demoting to Viewer) must take effect immediately for
+			// Admin or demoting to Executive/Agent) must take effect immediately for
 			// the affected user without forcing a re-login. Trusting the
 			// claim cached the old role for the JWT's full TTL — users
 			// reported "I changed my role but campaigns are still empty"
-			// because their JWT still said Viewer.
+			// because their JWT still carried the old role.
 			role := ac.Role
 			if s.db != nil && ac.Email != "" {
 				if u, err := s.db.GetUserByEmail(ac.Email); err == nil && u != nil {

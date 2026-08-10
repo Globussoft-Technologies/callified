@@ -37,8 +37,8 @@ func normalizeProviderAccountRequest(req *providerAccountRequest) {
 // canManageUserProviderAccounts decides whether the caller may read or mutate
 // provider accounts for targetUserID within the caller's org.
 //   - Admin: any user in the org.
-//   - TeamLeader: themselves or any Agent they manage.
-//   - Agent: only themselves.
+//   - TeamLeader: themselves or any Agent/Executive they manage.
+//   - Agent/Executive: only themselves.
 func canManageUserProviderAccounts(caller, target *db.User) bool {
 	if caller == nil || target == nil {
 		return false
@@ -53,8 +53,8 @@ func canManageUserProviderAccounts(caller, target *db.User) bool {
 		if caller.ID == target.ID {
 			return true
 		}
-		return target.Role == db.RoleAgent && target.ManagerID != nil && *target.ManagerID == caller.ID
-	case db.RoleAgent:
+		return db.IsAgentLikeRole(target.Role) && target.ManagerID != nil && *target.ManagerID == caller.ID
+	case db.RoleAgent, db.RoleExecutive:
 		return caller.ID == target.ID
 	default:
 		return false

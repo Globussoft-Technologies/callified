@@ -170,7 +170,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       <nav style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'nowrap', overflow: 'visible' }}>
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
-        {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {(userRole === 'Agent' || userRole === 'Executive') && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
         {isTeamLeader && TEAM_LEADER_PRIMARY_TABS
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}

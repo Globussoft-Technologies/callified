@@ -90,6 +90,16 @@ func (s *Server) listCampaignsForUser(ac AuthClaims) ([]db.Campaign, error) {
 			return nil, err
 		}
 		return s.db.GetCampaignsByIDs(ids)
+	case db.RoleExecutive:
+		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
+		if err != nil || exec == nil {
+			return []db.Campaign{}, err
+		}
+		ids, err := s.db.GetCampaignsForExecutive(exec.ID)
+		if err != nil {
+			return nil, err
+		}
+		return s.db.GetCampaignsByIDs(ids)
 	default:
 		return []db.Campaign{}, nil
 	}
@@ -1450,6 +1460,14 @@ func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 		ok, err := s.db.IsCampaignAssignedToUser(campaignID, user.ID)
 		return err == nil && ok
 	}
+	if user.Role == db.RoleExecutive {
+		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
+		if err != nil || exec == nil {
+			return false
+		}
+		ok, err := s.db.IsCampaignAssignedToExecutive(campaignID, exec.ID)
+		return err == nil && ok
+	}
 	return false
 }
 
@@ -1508,8 +1526,38 @@ func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 		ids = append(ids, managed...)
 	case db.RoleAgent:
 		ids = append(ids, user.ID)
+	case db.RoleExecutive:
+		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
+		if err != nil {
+			return nil, true, err
+		}
+		if exec == nil {
+			return []int64{-1}, true, nil
+		}
+		return []int64{exec.ID}, true, nil
 	}
 	return ids, true, nil
+}
+
+func (s *Server) canAccessCampaignLead(ac AuthClaims, campaignID, leadID int64) bool {
+	lead, err := s.db.GetLeadByID(leadID)
+	if err != nil || lead == nil || lead.OrgID != ac.OrgID {
+		return false
+	}
+	allowed, apply, err := s.leadAccessExecIDs(ac)
+	if err != nil || !apply {
+		return !apply
+	}
+	rows, err := s.db.GetCampaignLeadsPaginated(db.CampaignLeadsFilter{CampaignID: campaignID, ExecIDs: allowed}, 0, 0)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.ID == leadID {
+			return true
+		}
+	}
+	return false
 }
 
 // canAccessLead checks whether the authenticated user may view/dial a specific
@@ -1562,6 +1610,7 @@ func (s *Server) resolveExecutiveIDs(r *http.Request, ac AuthClaims) ([]int64, b
 	}
 	return out, true, nil
 }
+
 // executive_id). It returns the lead on success, or writes a 404 and returns nil.
 func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadID int64) *db.Lead {
 	ac := getAuth(r)

@@ -470,7 +470,12 @@ type CampaignLeadsFilter struct {
 // Use limit=0 to return all matching leads (backward compatibility).
 func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset int64) ([]CampaignLead, error) {
 	search := "%" + filter.Search + "%"
-	q := `SELECT ` + leadColsL + `,
+	q := `SELECT l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
+		COALESCE(l.source,''), COALESCE(l.status,'new'),
+		COALESCE(l.follow_up_note,''), COALESCE(DATE_FORMAT(l.follow_up_at, '%Y-%m-%dT%H:%i:%sZ'),''),
+		COALESCE(l.interest,''), COALESCE(l.company,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
+		COALESCE(cl2.executive_id,0),
+		DATE_FORMAT(l.created_at, '%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(ct.transcript_count, 0) AS transcript_count,
 		COALESCE(ct.recording_count, 0) AS recording_count,
 		COALESCE(ct.dial_attempts, 0) AS dial_attempts,
@@ -507,7 +512,7 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, filter.CampaignID, search, search, search, search, search}
 	if len(filter.ExecIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		q += ` AND COALESCE(cl2.executive_id,0) IN (` + placeholders + `)`
 		for _, id := range filter.ExecIDs {
 			args = append(args, id)
 		}
@@ -555,7 +560,7 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
 	if len(filter.ExecIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		q += ` AND COALESCE(cl.executive_id,0) IN (` + placeholders + `)`
 		for _, id := range filter.ExecIDs {
 			args = append(args, id)
 		}
@@ -566,6 +571,18 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	var n int64
 	err := d.pool.QueryRow(q, args...).Scan(&n)
 	return n, err
+}
+
+func campaignExecFilterClause(execIDs []int64, applyExecFilter bool) (string, []any) {
+	if !applyExecFilter || len(execIDs) == 0 {
+		return "", nil
+	}
+	placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+	args := make([]any, 0, len(execIDs))
+	for _, id := range execIDs {
+		args = append(args, id)
+	}
+	return `COALESCE(cl.executive_id,0) IN (` + placeholders + `)`, args
 }
 
 func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error) {
@@ -650,9 +667,10 @@ func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, appl
 				END AS outcome
 			FROM call_transcripts ct
 			LEFT JOIN leads l ON ct.lead_id=l.id
+			LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
 			WHERE ct.campaign_id=?`
 	args := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
@@ -667,11 +685,12 @@ func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, appl
 				END AS outcome
 			FROM call_logs cl
 			LEFT JOIN leads l ON cl.lead_id=l.id
+			LEFT JOIN campaign_leads cxl ON cxl.campaign_id=cl.campaign_id AND cxl.lead_id=cl.lead_id
 			WHERE cl.campaign_id=?
 			  AND cl.status IN ('busy','no-answer','no_answer','failed','cancelled')`
 	args = append(args, campaignID)
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
-		q += ` AND ` + c
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + strings.ReplaceAll(c, "cl.executive_id", "cxl.executive_id")
 		args = append(args, a...)
 	}
 	q += `
@@ -707,7 +726,7 @@ func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, appl
 }
 
 // OrgDashboardSummary is the org-wide top-of-page card row for /crm. Visible
-// to all authenticated roles (Admin / Agent / Viewer) without exposing full
+// to all authenticated roles (Admin / Agent / Executive) without exposing full
 // campaign objects — that's how non-Admins see meaningful numbers even
 // though /api/campaigns itself is admin-gated.
 type OrgDashboardSummary struct {
@@ -799,7 +818,7 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 		JOIN campaigns c ON c.id = cl.campaign_id
 		WHERE c.org_id=? AND c.id IN (` + campaignPlaceholders + `)`
 	leadArgs := append([]any{}, campaignArgs...)
-	if clause, args := execFilterClause(execIDs, applyExecFilter); clause != "" {
+	if clause, args := campaignExecFilterClause(execIDs, applyExecFilter); clause != "" {
 		leadQuery += ` AND ` + clause
 		leadArgs = append(leadArgs, args...)
 	}
@@ -815,7 +834,7 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 
 	totalQ := `SELECT COUNT(*) FROM campaign_leads cl JOIN leads l ON l.id=cl.lead_id WHERE cl.campaign_id=?`
 	totalArgs := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		totalQ += ` AND ` + c
 		totalArgs = append(totalArgs, a...)
 	}
@@ -825,7 +844,7 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 
 	statusQ := `SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id WHERE cl.campaign_id=?`
 	statusArgs := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		statusQ += ` AND ` + c
 		statusArgs = append(statusArgs, a...)
 	}
@@ -888,14 +907,12 @@ func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEnt
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
 		WHERE ct.campaign_id=?`
 	args := []any{campaignID}
-	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
-		}
+	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` ORDER BY ct.created_at DESC`
 	rows, err := d.pool.Query(q, args...)
@@ -954,14 +971,12 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64, execIDs []int64) ([]R
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id = l.id
+		LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
 		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''`
 	args := []any{campaignID}
-	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
-		}
+	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` ORDER BY ct.created_at DESC`
 	rows, err := d.pool.Query(q, args...)
@@ -1146,8 +1161,8 @@ func (d *DB) ExportCampaignLeads(campaignID int64, execIDs []int64, w io.Writer)
 			COALESCE(ct.dial_attempts, 0),
 			COALESCE(ct.recording_count, 0),
 			COALESCE(DATE_FORMAT(pc.scheduled_at, '%Y-%m-%d %H:%i:%s'), '')
-		FROM campaign_leads cl2
-		JOIN leads l ON l.id = cl2.lead_id
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
 		LEFT JOIN (
 			SELECT lead_id,
 				COUNT(*) AS dial_attempts,
@@ -1162,13 +1177,12 @@ func (d *DB) ExportCampaignLeads(campaignID int64, execIDs []int64, w io.Writer)
 			WHERE campaign_id = ? AND status = 'pending'
 			GROUP BY lead_id
 		) pc ON pc.lead_id = l.id
-		WHERE cl2.campaign_id = ?`
+		WHERE cl.campaign_id = ?`
 	args := []any{campaignID, campaignID, campaignID}
 	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
+		if c, a := campaignExecFilterClause(execIDs, true); c != "" {
+			q += ` AND ` + c
+			args = append(args, a...)
 		}
 	}
 	q += ` ORDER BY l.created_at DESC, l.id DESC`

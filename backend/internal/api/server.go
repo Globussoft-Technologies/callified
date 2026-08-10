@@ -152,10 +152,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	adminAuth := s.requireRole("Admin")
 	// teamLeaderAuth allows Team Leaders to manage their own Agents.
 	teamLeaderAuth := s.requireRole("TeamLeader")
-	// adminOrAgent allows Admin and Agent but excludes Viewer. Used for
-	// campaign read endpoints — Agents need to see + dial campaign leads,
-	// Viewers should only have CRM. TeamLeader is also included now.
-	adminOrAgent := s.requireRole("Admin", "TeamLeader", "Agent")
+	// adminOrAgent allows roles that can read/dial assigned campaign work.
+	adminOrAgent := s.requireRole("Admin", "TeamLeader", "Agent", "Executive")
 	// superAdmin gates the subscription management endpoints.
 	superAdmin := s.requireSuperAdmin
 
@@ -217,8 +215,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/presence", adminAuth(s.listPresence))
 
 	// ── Campaigns ─────────────────────────────────────────────────────────────
-	// Read endpoints are open to Admin + TeamLeader + Agent so Agents can see
-	// campaigns + dial leads. Viewers are locked out — their only tab is CRM.
+	// Read endpoints are open to Admin + TeamLeader + Agent + Executive so
+	// assigned users can see campaigns + dial leads.
 	// Write endpoints (create/edit/delete/import, remove-lead, voice-settings
 	// save) stay Admin-only — Agents/TeamLeaders shouldn't mutate shared
 	// campaign config.
@@ -298,7 +296,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/organizations/{id}/system-prompt", adminAuth(s.saveOrgSystemPrompt))
 
 	// ── Campaign reviews ──────────────────────────────────────────────────────
-	// Same role gate as the campaign reads — Viewers can't open campaigns at
+	// Same role gate as the campaign reads — unauthorized roles can't open campaigns at
 	// all, so per-campaign reviews/insights/retries should be unreachable to
 	// them too.
 	mux.HandleFunc("GET /api/campaigns/{id}/call-reviews", adminOrAgent(s.getCampaignCallReviews))
@@ -336,7 +334,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Dashboard summary ────────────────────────────────────────────────────
 	// 5 aggregate numbers for the CRM landing dashboard. Open to any
-	// authenticated role so Viewers / Agents see real totals even though
+	// authenticated role so Agents / Executives see real totals even though
 	// /api/campaigns is admin-gated.
 	mux.HandleFunc("GET /api/dashboard/summary", auth(s.dashboardSummary))
 
@@ -361,18 +359,18 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/users/agent", teamLeaderAuth(s.createAgentUnderManager))
 	mux.HandleFunc("PUT /api/users/{id}/agent", teamLeaderAuth(s.updateManagedAgent))
 
-		// Per-user provider accounts (Exotel/Twilio) — callers manage their own,
-		// Team Leaders manage their agents, Admins manage anyone. The handlers
-		// enforce the RBAC rules internally so we can use auth() here.
-		mux.HandleFunc("GET /api/users/me/provider-accounts", auth(s.listMyProviderAccounts))
-		mux.HandleFunc("POST /api/users/me/provider-accounts", auth(s.createMyProviderAccount))
-		mux.HandleFunc("GET /api/users/{id}/provider-accounts", auth(s.listUserProviderAccounts))
-		mux.HandleFunc("POST /api/users/{id}/provider-accounts", auth(s.createUserProviderAccount))
-		mux.HandleFunc("PUT /api/users/{id}/provider-accounts/{account_id}", auth(s.updateUserProviderAccount))
-		mux.HandleFunc("DELETE /api/users/{id}/provider-accounts/{account_id}", auth(s.deleteUserProviderAccount))
+	// Per-user provider accounts (Exotel/Twilio) — callers manage their own,
+	// Team Leaders manage their agents, Admins manage anyone. The handlers
+	// enforce the RBAC rules internally so we can use auth() here.
+	mux.HandleFunc("GET /api/users/me/provider-accounts", auth(s.listMyProviderAccounts))
+	mux.HandleFunc("POST /api/users/me/provider-accounts", auth(s.createMyProviderAccount))
+	mux.HandleFunc("GET /api/users/{id}/provider-accounts", auth(s.listUserProviderAccounts))
+	mux.HandleFunc("POST /api/users/{id}/provider-accounts", auth(s.createUserProviderAccount))
+	mux.HandleFunc("PUT /api/users/{id}/provider-accounts/{account_id}", auth(s.updateUserProviderAccount))
+	mux.HandleFunc("DELETE /api/users/{id}/provider-accounts/{account_id}", auth(s.deleteUserProviderAccount))
 
 	// ── Executives ────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/executives", adminAuth(s.listExecutives))
+	mux.HandleFunc("GET /api/executives", adminOrAgent(s.listExecutives))
 	mux.HandleFunc("POST /api/executives", adminAuth(s.createExecutive))
 	mux.HandleFunc("PUT /api/executives/{id}", adminAuth(s.updateExecutive))
 	mux.HandleFunc("DELETE /api/executives/{id}", adminAuth(s.deleteExecutive))

@@ -2094,7 +2094,7 @@ export default function CampaignDetail({
                             await apiFetch(`${API_URL}/leads/${lead.id}/executive`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ executive_id: execId })
+                              body: JSON.stringify({ executive_id: execId, campaign_id: selectedCampaign.id })
                             });
                             fetchCampaignLeads(selectedCampaign.id);
                           } catch (err) { toast('Failed to assign executive'); }

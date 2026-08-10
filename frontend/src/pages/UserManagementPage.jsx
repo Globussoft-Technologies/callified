@@ -337,10 +337,11 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
               <>
                 <Select label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })} options={[
                   { value: ROLES.AGENT, label: 'Agent' },
+                  { value: ROLES.EXECUTIVE, label: 'Executive' },
                   { value: ROLES.TEAM_LEADER, label: 'Team Leader' },
                   { value: ROLES.ADMIN, label: 'Admin' },
                 ]} />
-                {form.role === ROLES.AGENT && (
+                {(form.role === ROLES.AGENT || form.role === ROLES.EXECUTIVE) && (
                   <Select label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
                     { value: '', label: 'None' },
                     ...managerOptions.map(m => ({ value: String(m.id), label: m.full_name || m.email })),
@@ -405,10 +406,11 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
               <>
                 <Select label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })} options={[
                   { value: ROLES.AGENT, label: 'Agent' },
+                  { value: ROLES.EXECUTIVE, label: 'Executive' },
                   { value: ROLES.TEAM_LEADER, label: 'Team Leader' },
                   { value: ROLES.ADMIN, label: 'Admin' },
                 ]} />
-                {form.role === ROLES.AGENT && (
+                {(form.role === ROLES.AGENT || form.role === ROLES.EXECUTIVE) && (
                   <Select label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
                     { value: '', label: 'None' },
                     ...managerOptions.map(m => ({ value: String(m.id), label: m.full_name || m.email })),

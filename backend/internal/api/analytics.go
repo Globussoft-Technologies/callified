@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -264,8 +265,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 
 	userIDStr := r.URL.Query().Get("user_id")
 	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
-	// Agents may only view their own report.
-	if ac.Role == "Agent" {
+	// Agents/Executives may only view their own report.
+	if db.IsAgentLikeRole(ac.Role) {
 		if userID != 0 && userID != ac.UserID {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
@@ -412,8 +413,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Status Updates", Categories: rangeRef("Summary", "A", "A", 2, lastRow), Values: rangeRef("Summary", "M", "M", 2, lastRow)},
 				{Name: "Notes Added", Categories: rangeRef("Summary", "A", "A", 2, lastRow), Values: rangeRef("Summary", "N", "N", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Agent Activity Summary"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Agent Activity Summary"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -427,8 +428,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Busy", Categories: rangeRef("Call Activity", "A", "A", 2, lastRow), Values: rangeRef("Call Activity", "F", "F", 2, lastRow)},
 				{Name: "Failed", Categories: rangeRef("Call Activity", "A", "A", 2, lastRow), Values: rangeRef("Call Activity", "G", "G", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Call Outcome Breakdown"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Call Outcome Breakdown"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -439,8 +440,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Talk Time (s)", Categories: rangeRef("Efficiency", "A", "A", 2, lastRow), Values: rangeRef("Efficiency", "C", "C", 2, lastRow)},
 				{Name: "Idle Time (s)", Categories: rangeRef("Efficiency", "A", "A", 2, lastRow), Values: rangeRef("Efficiency", "G", "G", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Talk Time vs Idle Time"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Talk Time vs Idle Time"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -450,10 +451,10 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 			Series: []excelize.ChartSeries{
 				{Name: "Outcomes", Categories: "'Outcomes'!$G$2:$G$5", Values: "'Outcomes'!$H$2:$H$5"},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Total Outcomes"}}},
-			Legend: excelize.ChartLegend{Position: "right"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Total Outcomes"}}},
+			Legend:    excelize.ChartLegend{Position: "right"},
 			Dimension: excelize.ChartDimension{Width: 480, Height: 320},
-			PlotArea: excelize.ChartPlotArea{ShowPercent: true, ShowCatName: false, ShowSerName: false, ShowVal: false},
+			PlotArea:  excelize.ChartPlotArea{ShowPercent: true, ShowCatName: false, ShowSerName: false, ShowVal: false},
 		})
 	}
 

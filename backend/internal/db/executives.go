@@ -38,6 +38,8 @@ func (d *DB) EnsureExecutivesTable() error {
 	}
 	_, _ = d.pool.Exec(`ALTER TABLE leads ADD COLUMN executive_id BIGINT DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE leads ADD INDEX idx_executive_id (executive_id)`)
+	_, _ = d.pool.Exec(`ALTER TABLE campaign_leads ADD COLUMN executive_id BIGINT DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE campaign_leads ADD INDEX idx_campaign_leads_executive_id (executive_id)`)
 	return nil
 }
 
@@ -88,8 +90,11 @@ func (d *DB) UnassignExecutiveFromLeads(executiveID, orgID int64) error {
 // GetExecutivesByOrg returns all executives for an org.
 func (d *DB) GetExecutivesByOrg(orgID int64) ([]Executive, error) {
 	rows, err := d.pool.Query(
-		`SELECT id, org_id, name, email, phone, DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
-		 FROM executives WHERE org_id=? ORDER BY name ASC`, orgID)
+		`SELECT e.id, e.org_id, e.name, e.email, e.phone, DATE_FORMAT(e.created_at,'%Y-%m-%d %H:%i:%s')
+		 FROM executives e
+		 LEFT JOIN users u ON LOWER(u.email)=LOWER(e.email) AND u.org_id=e.org_id
+		 WHERE e.org_id=? AND (u.id IS NULL OR u.role='Executive')
+		 ORDER BY e.name ASC`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +108,44 @@ func (d *DB) GetExecutivesByOrg(orgID int64) ([]Executive, error) {
 		list = append(list, e)
 	}
 	return list, rows.Err()
+}
+
+// GetExecutiveByEmail returns the executive row linked to a dashboard user email.
+func (d *DB) GetExecutiveByEmail(orgID int64, email string) (*Executive, error) {
+	var e Executive
+	err := d.pool.QueryRow(
+		`SELECT id, org_id, name, email, phone, DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		 FROM executives
+		 WHERE org_id=? AND LOWER(email)=LOWER(?)
+		 ORDER BY id ASC LIMIT 1`, orgID, strings.TrimSpace(email)).
+		Scan(&e.ID, &e.OrgID, &e.Name, &e.Email, &e.Phone, &e.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return &e, err
+}
+
+// EnsureExecutiveForUser creates or updates the executive row for a dashboard
+// user with role Executive.
+func (d *DB) EnsureExecutiveForUser(orgID int64, name, email string) error {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = email
+	}
+	existing, err := d.GetExecutiveByEmail(orgID, email)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		_, err = d.pool.Exec(`UPDATE executives SET name=? WHERE id=? AND org_id=?`, name, existing.ID, orgID)
+		return err
+	}
+	_, err = d.CreateExecutive(orgID, name, email, "")
+	return err
 }
 
 // GetExecutiveByID fetches one executive scoped to org.
@@ -180,6 +223,65 @@ func (d *DB) GetCampaignExecutiveIDs(campaignID int64) ([]int64, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// GetCampaignsForExecutive returns campaign IDs assigned to an executive, either
+// directly at campaign level or via campaign-specific lead assignment.
+func (d *DB) GetCampaignsForExecutive(execID int64) ([]int64, error) {
+	rows, err := d.pool.Query(`
+		SELECT DISTINCT campaign_id FROM (
+			SELECT campaign_id FROM campaign_executives WHERE executive_id=?
+			UNION
+			SELECT campaign_id FROM campaign_leads WHERE executive_id=?
+		) x ORDER BY campaign_id`, execID, execID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// IsCampaignAssignedToExecutive reports whether this campaign has work assigned
+// to the executive.
+func (d *DB) IsCampaignAssignedToExecutive(campaignID, execID int64) (bool, error) {
+	var n int
+	err := d.pool.QueryRow(`
+		SELECT COUNT(*) FROM (
+			SELECT campaign_id FROM campaign_executives WHERE campaign_id=? AND executive_id=?
+			UNION ALL
+			SELECT campaign_id FROM campaign_leads WHERE campaign_id=? AND executive_id=?
+		) x`, campaignID, execID, campaignID, execID).Scan(&n)
+	return n > 0, err
+}
+
+// UpdateCampaignLeadExecutive assigns an executive only for one campaign-lead row.
+func (d *DB) UpdateCampaignLeadExecutive(campaignID, leadID, orgID, execID int64) error {
+	var exec any = nil
+	if execID > 0 {
+		exec = execID
+	}
+	res, err := d.pool.Exec(`
+		UPDATE campaign_leads cl
+		JOIN leads l ON l.id=cl.lead_id
+		SET cl.executive_id=?
+		WHERE cl.campaign_id=? AND cl.lead_id=? AND (l.org_id=? OR l.org_id IS NULL)`,
+		exec, campaignID, leadID, orgID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("lead not found")
+	}
+	return nil
 }
 
 // UpdateLeadExecutive assigns or unassigns (execID=0) an executive to a lead.

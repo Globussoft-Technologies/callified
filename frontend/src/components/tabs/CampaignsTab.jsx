@@ -477,7 +477,7 @@ export default function CampaignsTab({
       let users = [];
       if (usersRes.ok) {
         const allUsers = await usersRes.json();
-        users = (allUsers || []).filter(u => u.role === 'Agent' || u.role === 'TeamLeader');
+        users = (allUsers || []).filter(u => u.role === 'Agent' || u.role === 'Executive' || u.role === 'TeamLeader');
       }
       setAssignableUsers(users);
       if (assignedRes.ok) {
@@ -1019,7 +1019,7 @@ export default function CampaignsTab({
                       onChange={() => toggleUserSelection(u.id)}
                     />
                     <span style={{ flex: 1 }}>{u.full_name || u.email}</span>
-                    <span style={{ fontSize: 11, color: '#9ca3af' }}>{u.role === 'TeamLeader' ? 'Team Leader' : 'Agent'}</span>
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>{u.role === 'TeamLeader' ? 'Team Leader' : u.role}</span>
                   </label>
                 ))}
               </div>

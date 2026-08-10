@@ -12,7 +12,12 @@ const (
 	RoleAdmin      = "Admin"
 	RoleTeamLeader = "TeamLeader"
 	RoleAgent      = "Agent"
+	RoleExecutive  = "Executive"
 )
+
+func IsAgentLikeRole(role string) bool {
+	return role == RoleAgent || role == RoleExecutive
+}
 
 // EnsureRBACTables creates/extends tables needed for role-based access and
 // campaign-user assignments. It follows the same defensive pattern as the
@@ -71,9 +76,14 @@ func (d *DB) EnsureRBACTables() error {
 		return fmt.Errorf("create notifications: %w", err)
 	}
 
+	// Viewer has been retired; Executive is the assigned-lead/campaign role.
+	if _, err = d.pool.Exec(`UPDATE users SET role='Executive' WHERE role='Viewer'`); err != nil {
+		return fmt.Errorf("migrate viewer roles: %w", err)
+	}
+
 	// Backfill users that don't have a recognized admin role so existing
 	// accounts default to Agent (the lowest-privilege dashboard role).
-	_, err = d.pool.Exec(`UPDATE users SET role='Agent' WHERE role IS NULL OR role NOT IN ('Admin','SuperAdmin','TeamLeader','Agent')`)
+	_, err = d.pool.Exec(`UPDATE users SET role='Agent' WHERE role IS NULL OR role NOT IN ('Admin','SuperAdmin','TeamLeader','Agent','Executive')`)
 	if err != nil {
 		return fmt.Errorf("backfill default roles: %w", err)
 	}
@@ -165,9 +175,9 @@ func (d *DB) SetUserManager(userID int64, managerID *int64) error {
 	return err
 }
 
-// GetManagedUserIDs returns the user IDs of active Agents under a manager.
+// GetManagedUserIDs returns the user IDs of active Agents/Executives under a manager.
 func (d *DB) GetManagedUserIDs(managerID int64) ([]int64, error) {
-	rows, err := d.pool.Query(`SELECT id FROM users WHERE manager_id=? AND role='Agent' AND is_active=1`, managerID)
+	rows, err := d.pool.Query(`SELECT id FROM users WHERE manager_id=? AND role IN ('Agent','Executive') AND is_active=1`, managerID)
 	if err != nil {
 		return nil, err
 	}

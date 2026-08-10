@@ -305,7 +305,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
     const colors = {
       Admin:  { bg: 'rgba(99,102,241,0.1)',  color: T.accent, border: 'rgba(99,102,241,0.3)' },
       Agent:  { bg: 'rgba(16,185,129,0.1)',  color: T.green,  border: 'rgba(16,185,129,0.3)' },
-      Viewer: { bg: 'rgba(245,158,11,0.1)',  color: T.amber,  border: 'rgba(245,158,11,0.3)' },
+      Executive: { bg: 'rgba(245,158,11,0.1)',  color: T.amber,  border: 'rgba(245,158,11,0.3)' },
     };
     const c = colors[role] || colors.Agent;
     return (
@@ -370,7 +370,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 >
                   <option value="Admin">Admin</option>
                   <option value="Agent">Agent</option>
-                  <option value="Viewer">Viewer</option>
+                  <option value="Executive">Executive</option>
                 </select>
                 {inviteError && (
                   <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
@@ -542,7 +542,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       >
                         <option value="Admin">Admin</option>
                         <option value="Agent">Agent</option>
-                        <option value="Viewer">Viewer</option>
+                        <option value="Executive">Executive</option>
                       </select>
                     </td>
                     <td style={{ ...rowTd, color: T.muted }}>
@@ -550,7 +550,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     </td>
                     <td style={rowTd}>
                       {!isAdminMember(m) ? (
-                        // API keys are Admin-only — Agents/Viewers shouldn't mint
+                        // API keys are Admin-only — Agents/Executives shouldn't mint
                         // org-scoped keys that bypass their role restrictions.
                         <span style={{ color: T.muted }}>—</span>
                       ) : !key ? (

@@ -576,12 +576,18 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		ExecutiveID int64 `json:"executive_id"`
+		CampaignID  int64 `json:"campaign_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.UpdateLeadExecutive(id, ac.OrgID, body.ExecutiveID); err != nil {
+	if body.CampaignID > 0 {
+		err = s.db.UpdateCampaignLeadExecutive(body.CampaignID, id, ac.OrgID, body.ExecutiveID)
+	} else {
+		err = s.db.UpdateLeadExecutive(id, ac.OrgID, body.ExecutiveID)
+	}
+	if err != nil {
 		s.logger.Sugar().Errorw("updateLeadExecutive", "err", err)
 		if err.Error() == "lead not found" {
 			writeError(w, http.StatusNotFound, "lead not found")

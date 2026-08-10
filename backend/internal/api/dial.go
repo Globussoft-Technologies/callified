@@ -36,7 +36,7 @@ func userIDForDial(ac AuthClaims) int64 {
 	if ac.UserID == 0 {
 		return 0
 	}
-	if ac.Role == db.RoleAgent || ac.Role == db.RoleTeamLeader {
+	if db.IsAgentLikeRole(ac.Role) || ac.Role == db.RoleTeamLeader {
 		return ac.UserID
 	}
 	return 0
@@ -72,10 +72,6 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := getAuth(r)
-	if !s.canAccessLead(ac, lead.ID) {
-		writeError(w, http.StatusNotFound, "lead not found")
-		return
-	}
 
 	var body struct {
 		CampaignID int64 `json:"campaign_id"`
@@ -84,6 +80,15 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 
 	if body.CampaignID > 0 && !s.canViewCampaign(ac, body.CampaignID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if body.CampaignID > 0 {
+		if !s.canAccessCampaignLead(ac, body.CampaignID, lead.ID) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
 
@@ -146,7 +151,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
-	if !s.canAccessLead(ac, lead.ID) {
+	if !s.canAccessCampaignLead(ac, campaignID, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}

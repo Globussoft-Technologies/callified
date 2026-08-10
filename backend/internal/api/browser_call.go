@@ -68,7 +68,7 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
-	if !s.canAccessLead(ac, lead.ID) {
+	if !s.canAccessCampaignLead(ac, campaignID, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}

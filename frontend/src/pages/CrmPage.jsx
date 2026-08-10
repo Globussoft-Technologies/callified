@@ -55,7 +55,7 @@ export default function CrmPage({
   const [transcripts, setTranscripts] = useState([]);
 
   // Org-wide dashboard summary (5 numbers). Fetched separately from /api/campaigns
-  // because that route is admin-only — Viewers / Agents need this aggregate
+  // because that route is admin-only — Agents / Executives need this aggregate
   // endpoint to see real numbers on the CRM landing dashboard.
   const [dashSummary, setDashSummary] = useState(null);
 
