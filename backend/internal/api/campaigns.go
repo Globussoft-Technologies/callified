@@ -766,7 +766,7 @@ func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request
 // ── PUT /api/campaigns/{id}/voice-settings ────────────────────────────────────
 
 // @Summary     Save campaign voice settings
-// @Description Updates TTS provider, voice ID and language for a campaign. Also invalidates Redis voice cache. Requires Admin role.
+// @Description Updates TTS provider, voice ID and language for a campaign. Also invalidates Redis voice cache for users who can view the campaign.
 // @Tags        campaigns
 // @Accept      json
 // @Produce     json

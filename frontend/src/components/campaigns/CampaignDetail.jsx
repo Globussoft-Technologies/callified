@@ -8,6 +8,7 @@ import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
+import { isAdmin } from '../../utils/roles';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -366,6 +367,7 @@ export default function CampaignDetail({
   apiFetch, API_URL, orgTimezone,
   handleEditCampaign,
   executives,
+  agents = [],
   detailExecutiveFilter, setDetailExecutiveFilter
 }) {
   const stats = getCampaignStats(selectedCampaign);
@@ -373,6 +375,7 @@ export default function CampaignDetail({
   const confirm = useConfirm();
   const { currentUser } = useAuth();
   const isExecutiveUser = currentUser?.role === 'Executive';
+  const canShowAgentFilter = isAdmin(currentUser?.role);
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -1572,7 +1575,7 @@ export default function CampaignDetail({
       )}
 
       {/* Agent filter for detail tabs */}
-      {!autoDialEnabled && detailExecutiveFilter && (
+      {!autoDialEnabled && canShowAgentFilter && detailExecutiveFilter && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Filter by agent</span>
           <div style={{ position: 'relative' }}>
@@ -1615,7 +1618,7 @@ export default function CampaignDetail({
                 </div>
                 {(() => {
                   const q = detailExecSearch.trim().toLowerCase();
-                  const filtered = q ? (executives || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (executives || []);
+                  const filtered = q ? (agents || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (agents || []);
                   if (filtered.length === 0) {
                     return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No agents found.</div>;
                   }

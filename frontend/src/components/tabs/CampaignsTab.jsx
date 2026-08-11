@@ -37,6 +37,7 @@ export default function CampaignsTab({
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [detailExecutiveFilter, setDetailExecutiveFilter] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [addLeadsSearch, setAddLeadsSearch] = useState('');
@@ -76,6 +77,21 @@ export default function CampaignsTab({
       .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin(currentUser?.role)) {
+      setAgents([]);
+      setDetailExecutiveFilter([]);
+      return;
+    }
+    apiFetch(`${API_URL}/team`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => {
+        const team = Array.isArray(d) ? d : [];
+        setAgents(team.filter(u => u.role === 'Agent'));
+      })
+      .catch(() => setAgents([]));
+  }, [apiFetch, API_URL, currentUser?.role]);
 
   // Open a specific campaign's detail directly when ?id=N is in the URL —
   // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
@@ -757,6 +773,7 @@ export default function CampaignsTab({
           orgTimezone={orgTimezone}
           handleEditCampaign={handleEditCampaign}
           executives={executives}
+          agents={agents}
           detailExecutiveFilter={detailExecutiveFilter}
           setDetailExecutiveFilter={setDetailExecutiveFilter}
         />

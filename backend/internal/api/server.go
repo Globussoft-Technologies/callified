@@ -218,8 +218,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// Read endpoints are open to Admin + TeamLeader + Agent + Executive so
 	// assigned users can see campaigns + dial leads.
 	// Write endpoints (create/edit/delete/import, remove-lead) stay Admin-only.
-	// Voice-settings save is open to Admin + assigned Executive users so
-	// executives can tune the campaign they are calling from.
+	// Voice-settings save follows campaign view access so assigned callers can
+	// tune the campaign they are calling from.
 	mux.HandleFunc("GET /api/campaigns", adminOrAgent(s.listCampaigns))
 	mux.HandleFunc("POST /api/campaigns", adminAuth(s.createCampaign))
 	mux.HandleFunc("GET /api/campaigns/{id}", adminOrAgent(s.getCampaign))
@@ -234,7 +234,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/campaigns/{id}/export-recordings", adminOrAgent(s.exportRecordings))
 	mux.HandleFunc("GET /api/campaigns/{id}/export-leads", adminOrAgent(s.exportCampaignLeads))
 	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminOrAgent(s.getCampaignVoiceSettings))
-	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", s.requireRole("Admin", "Executive")(s.saveCampaignVoiceSettings))
+	mux.HandleFunc("PUT /api/campaigns/{id}/voice-settings", adminOrAgent(s.saveCampaignVoiceSettings))
 	mux.HandleFunc("GET /api/campaigns/{id}/exotel-creds", adminAuth(s.getCampaignExotelCreds))
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-creds", adminAuth(s.saveCampaignExotelCreds))
 	mux.HandleFunc("GET /api/campaigns/{id}/exotel-account", adminOrAgent(s.getCampaignExotelAccount))
