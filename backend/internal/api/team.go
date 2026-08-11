@@ -30,9 +30,6 @@ import (
 // @Router      /api/dashboard/summary [get]
 func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
-	if !s.requirePermission(w, r, "dashboard.view") {
-		return
-	}
 	var summary db.OrgDashboardSummary
 	var err error
 	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
@@ -90,6 +87,9 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team [get]
 func (s *Server) listTeam(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.view") {
+		return
+	}
 	ac := getAuth(r)
 	members, err := s.db.GetTeamMembers(ac.OrgID)
 	if err != nil {
@@ -110,7 +110,7 @@ type permissionDefinition struct {
 }
 
 var permissionCatalog = []permissionDefinition{
-	{Key: "dashboard.view", Module: "Dashboard", Label: "View dashboard", Action: "Can see", Description: "See dashboard summary and KPIs.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "dashboard.view", Module: "Dashboard", Label: "View dashboard", Action: "Can see", Description: "See dashboard summary and KPIs.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive, db.RoleTeamLeader}},
 	{Key: "crm.view", Module: "CRM Leads", Label: "View leads", Action: "Can see", Description: "See leads within the user's allowed scope.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "crm.create", Module: "CRM Leads", Label: "Create leads", Action: "Can create", Description: "Add new leads within allowed campaigns.", Roles: []string{db.RoleAdmin, db.RoleAgent}},
 	{Key: "crm.edit", Module: "CRM Leads", Label: "Edit leads", Action: "Can edit", Description: "Update lead fields, status, notes, and follow-ups.", Roles: []string{db.RoleAdmin, db.RoleAgent}},
@@ -286,6 +286,9 @@ func (s *Server) getMyPermissions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getTeamMemberPermissions(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.permissions") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -323,6 +326,9 @@ func (s *Server) getTeamMemberPermissions(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) updateTeamMemberPermissions(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.permissions") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -367,6 +373,9 @@ func (s *Server) teamMembersTemplateCSV(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (s *Server) importTeamMembersCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.add") {
+		return
+	}
 	ac := getAuth(r)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart form")
@@ -493,6 +502,9 @@ func (s *Server) importTeamMembersCSV(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/team/invite [post]
 func (s *Server) inviteTeamMember(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.add") {
+		return
+	}
 	ac := getAuth(r)
 	var body struct {
 		Email    string `json:"email"`
@@ -706,6 +718,9 @@ func (s *Server) acceptInvite(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/invites [get]
 func (s *Server) listPendingInvites(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.view") {
+		return
+	}
 	ac := getAuth(r)
 	invites, err := s.db.ListPendingInvites(ac.OrgID)
 	if err != nil {
@@ -738,6 +753,9 @@ func (s *Server) listPendingInvites(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/invites/{id}/link [get]
 func (s *Server) getInviteLink(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.view") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -775,6 +793,9 @@ func (s *Server) getInviteLink(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/invites/{id} [delete]
 func (s *Server) cancelInvite(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.remove") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -883,6 +904,9 @@ var commonPasswords = map[string]struct{}{
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/{id}/role [put]
 func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.edit_role") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -954,6 +978,9 @@ func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/{id}/reset-password [post]
 func (s *Server) resetTeamMemberPassword(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.reset_password") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -1011,6 +1038,9 @@ func (s *Server) resetTeamMemberPassword(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/team/{id} [delete]
 func (s *Server) deleteTeamMember(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.remove") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {

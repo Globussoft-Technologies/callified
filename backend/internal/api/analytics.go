@@ -56,6 +56,9 @@ func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/languages [get]
 func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {

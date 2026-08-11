@@ -20,6 +20,9 @@ import (
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/api-keys [get]
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.api_keys") {
+		return
+	}
 	ac := getAuth(r)
 	keys, err := s.db.GetAPIKeysByOrg(ac.OrgID)
 	if err != nil {
@@ -46,6 +49,9 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/api-keys [post]
 func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.api_keys") {
+		return
+	}
 	ac := getAuth(r)
 	var body struct {
 		Name string `json:"name"`
@@ -94,6 +100,9 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/api-keys/{id} [patch]
 func (s *Server) patchAPIKey(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.api_keys") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -136,6 +145,9 @@ func (s *Server) patchAPIKey(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/api-keys/{id} [delete]
 func (s *Server) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.api_keys") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {

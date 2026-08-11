@@ -492,6 +492,9 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads [post]
 func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "campaigns.edit") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -548,7 +551,7 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads/{lead_id} [delete]
 func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "crm.delete") {
+	if !s.requirePermission(w, r, "campaigns.edit") {
 		return
 	}
 	campaign := s.requireCampaignView(w, r)
@@ -1182,6 +1185,9 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/retries [get]
 func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -1265,6 +1271,9 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/human-call/{lead_id} [post]
 func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -1564,6 +1573,9 @@ func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 // the campaign on success; on failure it writes an HTTP error and returns nil.
 // Super-admins bypass the org scoping check so they can inspect any campaign.
 func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db.Campaign {
+	if !s.requirePermission(w, r, "campaigns.view") {
+		return nil
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -1820,6 +1832,9 @@ func (s *Server) requireTranscriptAccess(w http.ResponseWriter, r *http.Request,
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/assign-users [post]
 func (s *Server) assignCampaignUsers(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "campaigns.assign_users") {
+		return
+	}
 	ac := getAuth(r)
 	campaignID, err := parseID(r, "id")
 	if err != nil {

@@ -22,6 +22,9 @@ type exotelAccountOption struct {
 // ── GET /api/exotel-accounts ─────────────────────────────────────────────────
 
 func (s *Server) listExotelAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	accounts, err := s.db.GetOrgExotelAccounts(ac.OrgID)
 	if err != nil {
@@ -77,6 +80,9 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 // ── POST /api/exotel-accounts ────────────────────────────────────────────────
 
 func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	var req struct {
 		Provider   string `json:"provider"`
@@ -123,6 +129,9 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/exotel-accounts/{id} ────────────────────────────────────────────
 
 func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -173,6 +182,9 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 // ── DELETE /api/exotel-accounts/{id} ─────────────────────────────────────────
 
 func (s *Server) deleteExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {

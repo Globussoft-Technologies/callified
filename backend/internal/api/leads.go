@@ -403,6 +403,9 @@ func isDuplicateEntryError(err error) bool {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id} [get]
 func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -882,6 +885,9 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/import-csv [post]
 func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.import") {
+		return
+	}
 	ac := getAuth(r)
 	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
 		writeError(w, http.StatusBadRequest, "failed to parse form")
@@ -972,6 +978,9 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/documents [get]
 func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1005,6 +1014,9 @@ func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/documents [post]
 func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1065,6 +1077,9 @@ func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/transcripts/{id}/review [get]
 func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1100,6 +1115,9 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/transcripts [get]
 func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1154,6 +1172,9 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/interactions [get]
 func (s *Server) getLeadInteractions(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -1217,6 +1238,9 @@ func (s *Server) getLeadInteractions(w http.ResponseWriter, r *http.Request) {
 // @Failure     500    {object}  ErrorResponse
 // @Router      /api/leads/by-phone/{phone}/calls [get]
 func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	phone := normalizePhone(strings.TrimSpace(r.PathValue("phone")))
 	if phone == "" {
 		writeError(w, http.StatusBadRequest, "phone required")
@@ -1413,6 +1437,9 @@ Return ONLY the note text, no labels or headers.`, name, lead.Phone, lead.Intere
 // with prose it is returned as-is unless ?force=1 is passed.
 // Returns 204 when the transcript has no turns to analyse.
 func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

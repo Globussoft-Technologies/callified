@@ -23,6 +23,9 @@ type executiveUpdateRequest struct {
 
 // listExecutives returns all executives for the authenticated org.
 func (s *Server) listExecutives(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "executives.manage") {
+		return
+	}
 	ac := getAuth(r)
 	list, err := s.db.GetExecutivesByOrg(ac.OrgID)
 	if err != nil {
@@ -35,6 +38,9 @@ func (s *Server) listExecutives(w http.ResponseWriter, r *http.Request) {
 
 // createExecutive creates a new executive under the authenticated org.
 func (s *Server) createExecutive(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "executives.manage") {
+		return
+	}
 	ac := getAuth(r)
 	var req executiveCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -85,6 +91,9 @@ func (s *Server) createExecutive(w http.ResponseWriter, r *http.Request) {
 
 // updateExecutive updates an existing executive scoped to the authenticated org.
 func (s *Server) updateExecutive(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "executives.manage") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -127,6 +136,9 @@ func (s *Server) updateExecutive(w http.ResponseWriter, r *http.Request) {
 // deleteExecutive removes an executive from the authenticated org and unassigns
 // any leads that referenced it.
 func (s *Server) deleteExecutive(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "executives.manage") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -193,6 +205,9 @@ func (s *Server) deleteExecutive(w http.ResponseWriter, r *http.Request) {
 
 // setCampaignExecutives replaces the executives assigned to a campaign.
 func (s *Server) setCampaignExecutives(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "campaigns.assign_users") {
+		return
+	}
 	ac := getAuth(r)
 	campaignID, err := parseID(r, "id")
 	if err != nil {

@@ -141,7 +141,6 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   // Super admins see the same navigation as admins, plus the super-admin-only tabs.
   const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
   const isTeamLeader = userRole === 'TeamLeader';
-  const canViewDashboard = hasPermission('dashboard.view');
   const canViewCampaigns = hasPermission('campaigns.view');
   const allowedTab = (tab) => {
     const key = TAB_PERMISSION[tab.id];
@@ -197,7 +196,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
       {/* Tabs */}
       <nav style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'nowrap', overflow: 'visible' }}>
-        {canViewDashboard && tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
+        {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
         {(userRole === 'Agent' || userRole === 'Executive') && canViewCampaigns && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
         {isTeamLeader && TEAM_LEADER_PRIMARY_TABS

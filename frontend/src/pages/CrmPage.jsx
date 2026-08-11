@@ -25,7 +25,7 @@ export default function CrmPage({
   const toast = useToast();
   const confirm = useConfirm();
   const { hasPermission } = useAuth();
-  const canViewDashboard = hasPermission('dashboard.view');
+  const canViewDashboard = true;
   const canViewLeads = hasPermission('crm.view');
   // Lead State
   const [leads, setLeads] = useState([]);

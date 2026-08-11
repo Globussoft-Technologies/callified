@@ -153,6 +153,26 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 	}
 }
 
+// requireAdminPermission returns middleware that requires the caller to be
+// an Admin (or SuperAdmin) AND to hold the given permission key. It wires the
+// permission-catalog keys shown in the UI to the actual backend endpoints so
+// unchecking an Admin permission blocks the corresponding API surface.
+func (s *Server) requireAdminPermission(key string) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			ac := getAuth(r)
+			if !s.isAdminLike(ac.Email) && !s.isSuperAdmin(ac.Email) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			if !s.requirePermission(w, r, key) {
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // bearerToken extracts the token string from "Authorization: Bearer <token>".
 // Query-string fallback was removed — the long-lived auth JWT must never
 // appear in URLs because reverse proxies, browser history, and Referer
