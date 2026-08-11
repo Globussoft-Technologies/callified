@@ -5,6 +5,7 @@ import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
 import { formatDateTime } from '../utils/dateFormat';
 import { Popover, PopoverTrigger, PopoverContent, PopoverClose } from './ui/popover';
+import { Menu, X } from 'lucide-react';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
@@ -64,7 +65,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const [callingStatus, setCallingStatus] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const notifRef = useRef(null);
+  const headerRef = useRef(null);
 
   const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls, manualPresenceStatus, setManualPresenceStatus } = useCall();
   const notifCount = dueScheduledCalls.length;
@@ -99,16 +102,52 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const visibleMoreTabs = hideAiFeatures
     ? MORE_ADMIN_TABS.filter(t => !AI_TAB_IDS.has(t.id))
     : MORE_ADMIN_TABS;
-  const moreActive = visibleMoreTabs.some(t => t.id === activeTab);
   const goTo = (path) => navigate(path);
 
   // Super admins see the same navigation as admins, plus the super-admin-only tabs.
   const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
   const isTeamLeader = userRole === 'TeamLeader';
+  const primaryTabs = userRole === 'Agent'
+    ? AGENT_TABS
+    : isTeamLeader
+      ? TEAM_LEADER_PRIMARY_TABS.filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
+      : isAdminLike
+        ? PRIMARY_ADMIN_TABS.filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
+        : [];
+  const roleFilteredMoreTabs = isTeamLeader
+    ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id))
+    : visibleMoreTabs;
+  const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
+  const allMoreTabs = (isAdminLike || isTeamLeader) ? [...roleFilteredMoreTabs, ...superAdminTabs] : [];
+  const mobileTabs = [
+    { id: 'crm', label: 'CRM', path: '/crm', testid: 'tab-crm' },
+    ...primaryTabs,
+    ...allMoreTabs,
+  ];
+  const moreActive = allMoreTabs.some(t => t.id === activeTab);
 
   const userName = currentUser?.full_name || currentUser?.email || '';
   const userInitial = userName.charAt(0).toUpperCase();
   const orgName = currentUser?.org_name || '';
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const closeMobileMenu = (event) => {
+      if (event.key === 'Escape' || (event.type === 'mousedown' && headerRef.current && !headerRef.current.contains(event.target))) {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeMobileMenu);
+    document.addEventListener('keydown', closeMobileMenu);
+    return () => {
+      document.removeEventListener('mousedown', closeMobileMenu);
+      document.removeEventListener('keydown', closeMobileMenu);
+    };
+  }, [mobileMenuOpen]);
 
   const tabBtn = (id, label, path, testid) => {
     const isActive = activeTab === id;
@@ -136,7 +175,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   };
 
   return (
-    <header style={{
+    <header ref={headerRef} className="top-header" style={{
       display: 'flex', flexWrap: 'nowrap', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
       padding: '0 24px', height: 72,
       background: '#ffffff', borderBottom: '1px solid #e5e7eb',
@@ -147,10 +186,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
       {/* Logo */}
       <div
+        className="top-header-logo"
         onClick={() => navigate('/crm')}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0, marginRight: 12 }}>
         <img src={navLogo} alt="Callified" style={{ height: 50, width: 50, objectFit: 'contain', borderRadius: 10 }} />
-        <span style={{
+        <span className="top-header-brand" style={{
           fontSize: 25,
           fontWeight: 900,
           fontFamily: font,
@@ -166,24 +206,13 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       </div>
 
       {/* Tabs */}
-      <nav style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'visible', padding: '4px 0' }}>
+      <nav className="top-header-desktop-nav" style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'visible', padding: '4px 0' }}>
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
-        {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
-        {isTeamLeader && TEAM_LEADER_PRIMARY_TABS
-          .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
-          .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
-        {isAdminLike && PRIMARY_ADMIN_TABS
-          .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
-          .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {primaryTabs.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
         {(isAdminLike || isTeamLeader) && (
           (() => {
-            const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
-            const roleFilteredMoreTabs = isTeamLeader
-              ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id))
-              : visibleMoreTabs;
-            const allMoreTabs = [...roleFilteredMoreTabs, ...superAdminTabs];
             if (allMoreTabs.length === 1) {
               const t = allMoreTabs[0];
               return tabBtn(t.id, t.label, t.path, t.testid);
@@ -230,10 +259,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       </nav>
 
       {/* Right side */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0, marginLeft: 12 }}>
+      <div className="top-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0, marginLeft: 12 }}>
 
         {/* Agent presence toggle */}
         <button
+          className="top-header-desktop-account"
           onClick={toggleBreak}
           title="Toggle break status"
           style={{
@@ -349,7 +379,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
         {/* User avatar + name */}
         {currentUser && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <div className="top-header-desktop-account" style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
             <div style={{
               width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
               background: 'linear-gradient(135deg, #6366f1, #a855f7)',
@@ -366,7 +396,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
 
         {/* Logout */}
         {confirmLogout ? (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <div className="top-header-desktop-account" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span style={{ color: '#f59e0b', fontSize: 13, whiteSpace: 'nowrap', fontFamily: font }}>Log out?</span>
             <button data-testid="logout-confirm-btn"
               onClick={() => { setConfirmLogout(false); handleLogout(); }}
@@ -383,7 +413,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
               }}>Cancel</button>
           </div>
         ) : (
-          <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
+          <button className="top-header-desktop-account" data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
             style={{
               background: 'transparent', border: '1px solid #e5e7eb',
               borderRadius: 8, padding: '6px 14px',
@@ -393,7 +423,62 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             Logout
           </button>
         )}
+
+        <button
+          type="button"
+          className="top-header-mobile-menu-button"
+          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen(open => !open)}
+        >
+          {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
+        </button>
       </div>
+
+      {mobileMenuOpen && (
+        <div className="top-header-mobile-menu">
+          {currentUser && (
+            <div className="top-header-mobile-user">
+              <div className="top-header-mobile-avatar">{userInitial}</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="top-header-mobile-user-name">{userName}</div>
+                {orgName && <div className="top-header-mobile-org">{orgName}</div>}
+              </div>
+            </div>
+          )}
+
+          <nav className="top-header-mobile-nav" aria-label="Mobile navigation">
+            {mobileTabs.map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                data-testid={`mobile-${tab.testid}`}
+                className={activeTab === tab.id ? 'active' : ''}
+                onClick={() => goTo(tab.path)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="top-header-mobile-footer">
+            <button type="button" className="top-header-mobile-status" onClick={toggleBreak}>
+              <span style={{ background: statusColor }} />
+              Status: {statusLabel}
+            </button>
+            {confirmLogout ? (
+              <div className="top-header-mobile-logout-confirm">
+                <button type="button" onClick={() => { setConfirmLogout(false); handleLogout(); }}>Confirm logout</button>
+                <button type="button" onClick={() => setConfirmLogout(false)}>Cancel</button>
+              </div>
+            ) : (
+              <button type="button" className="top-header-mobile-logout" onClick={() => setConfirmLogout(true)}>
+                Logout
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

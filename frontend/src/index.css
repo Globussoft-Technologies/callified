@@ -209,6 +209,196 @@ body {
   margin-bottom: 0;
   min-width: 0;
 }
+.top-header-mobile-menu-button,
+.top-header-mobile-menu {
+  display: none;
+}
+@media (max-width: 900px) {
+  .top-header {
+    height: 64px !important;
+    padding: 0 14px !important;
+    gap: 8px !important;
+  }
+  .top-header-logo {
+    gap: 6px !important;
+    margin-right: 0 !important;
+    min-width: 0;
+  }
+  .top-header-logo img {
+    width: 42px !important;
+    height: 42px !important;
+  }
+  .top-header-brand {
+    font-size: 20px !important;
+  }
+  .top-header-desktop-nav,
+  .top-header-desktop-account {
+    display: none !important;
+  }
+  .top-header-actions {
+    gap: 10px !important;
+    margin-left: auto !important;
+  }
+  .top-header-mobile-menu-button {
+    width: 38px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: #334155;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .top-header-mobile-menu {
+    position: absolute;
+    top: calc(100% + 1px);
+    right: 10px;
+    left: 10px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100svh - 76px);
+    overflow: hidden;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
+  }
+  .top-header-mobile-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .top-header-mobile-avatar {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    display: grid;
+    place-items: center;
+    color: #ffffff;
+    background: linear-gradient(135deg, #4f46e5, #9333ea);
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .top-header-mobile-user-name {
+    overflow: hidden;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-header-mobile-org {
+    overflow: hidden;
+    margin-top: 2px; 
+    color: #475569;
+    font-size: 12px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-header-mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: calc(100svh - 230px);
+    padding: 10px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: #a5b4fc #f1f5f9;
+    scrollbar-width: thin;
+  }
+  .top-header-mobile-nav::-webkit-scrollbar {
+    width: 6px;
+  }
+  .top-header-mobile-nav::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 999px;
+  }
+  .top-header-mobile-nav::-webkit-scrollbar-thumb {
+    background: #a5b4fc;
+    border-radius: 999px;
+  }
+  .top-header-mobile-nav button {
+    min-width: 0;
+    padding: 10px 12px;
+    overflow: hidden;
+    color: #334155;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 9px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .top-header-mobile-nav button.active {
+    color: #3730a3;
+    background: #eef2ff;
+    border-color: #a5b4fc;
+    font-weight: 700;
+  }
+  .top-header-mobile-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+  }
+  .top-header-mobile-status,
+  .top-header-mobile-logout,
+  .top-header-mobile-logout-confirm button {
+    padding: 8px 11px;
+    color: #334155;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .top-header-mobile-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .top-header-mobile-status span {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .top-header-mobile-logout {
+    color: #b91c1c;
+    border-color: #fecaca;
+  }
+  .top-header-mobile-logout-confirm {
+    display: flex;
+    gap: 6px;
+  }
+  .top-header-mobile-logout-confirm button:first-child {
+    color: #b91c1c;
+    border-color: #fecaca;
+  }
+}
+@media (max-width: 420px) {
+  .top-header-mobile-nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 /* Brand block: shrink its content rather than push tabs to a second row.
    The tab-bar to its right takes priority for the available space. */
 .logo {
