@@ -60,7 +60,11 @@ func (s *Server) dashboardSummary(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		summary, err = s.db.GetDashboardSummaryForCampaigns(ac.OrgID, campaignIDs, execIDs, applyExecFilter)
+		if db.IsAgentLikeRole(user.Role) {
+			summary, err = s.db.GetDashboardSummaryForCampaignsByUser(ac.OrgID, campaignIDs, execIDs, applyExecFilter, user.ID)
+		} else {
+			summary, err = s.db.GetDashboardSummaryForCampaigns(ac.OrgID, campaignIDs, execIDs, applyExecFilter)
+		}
 	}
 	if err != nil {
 		s.logger.Sugar().Errorw("dashboardSummary", "err", err)

@@ -747,6 +747,62 @@ func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, appl
 	return s, rows.Err()
 }
 
+// GetCampaignCallOutcomeStatsForUser returns call outcomes for one campaign
+// attributed to the user who placed each call.
+func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallOutcomeStats, error) {
+	var s CallOutcomeStats
+	rows, err := d.pool.Query(`
+		SELECT outcome, COUNT(*)
+		FROM (
+			SELECT
+				CASE
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 'completed'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 'connected'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+						AND cl.status IN ('completed','answered','connected') THEN 'connected'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 'busy'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled')
+						OR cl.status IN ('failed','cancelled') THEN 'failed'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+						OR cl.status IN ('no-answer','no_answer') THEN 'unanswered'
+					ELSE ''
+				END AS outcome
+			FROM agent_activities aa
+			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
+				AND cl.call_sid=JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid'))
+			WHERE aa.campaign_id=?
+				AND aa.user_id=?
+				AND aa.activity_type='call'
+		) outcomes
+		WHERE outcome != ''
+		GROUP BY outcome`, campaignID, userID)
+	if err != nil {
+		return s, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var outcome string
+		var count int64
+		if err := rows.Scan(&outcome, &count); err != nil {
+			return s, err
+		}
+		s.Total += count
+		switch outcome {
+		case "completed":
+			s.Completed += count
+		case "connected":
+			s.Connected += count
+		case "busy":
+			s.Busy += count
+		case "failed":
+			s.Failed += count
+		default:
+			s.Unanswered += count
+		}
+	}
+	return s, rows.Err()
+}
+
 // OrgDashboardSummary is the org-wide top-of-page card row for /crm. Visible
 // to all authenticated roles (Admin / Agent / Executive) without exposing full
 // campaign objects — that's how non-Admins see meaningful numbers even
@@ -771,7 +827,7 @@ func (d *DB) GetOrgDashboardSummary(orgID int64) (OrgDashboardSummary, error) {
 	}
 	err := d.pool.QueryRow(`
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT l.phone) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -794,7 +850,7 @@ func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
 	}
 	err := d.pool.QueryRow(`
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT CONCAT(l.org_id, ':', l.phone)) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -831,7 +887,7 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 
 	leadQuery := `
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT l.phone) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -846,6 +902,29 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 	}
 
 	err := d.pool.QueryRow(leadQuery, leadArgs...).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
+	return s, err
+}
+
+// GetDashboardSummaryForCampaignsByUser returns visible campaign/lead totals
+// but attributes call counts to the user who actually placed the calls.
+func (d *DB) GetDashboardSummaryForCampaignsByUser(orgID int64, campaignIDs, execIDs []int64, applyExecFilter bool, userID int64) (OrgDashboardSummary, error) {
+	s, err := d.GetDashboardSummaryForCampaigns(orgID, campaignIDs, execIDs, applyExecFilter)
+	if err != nil || len(campaignIDs) == 0 || userID <= 0 {
+		return s, err
+	}
+	campaignPlaceholders := strings.Repeat("?,", len(campaignIDs)-1) + "?"
+	args := make([]any, 0, 2+len(campaignIDs))
+	args = append(args, orgID, userID)
+	for _, id := range campaignIDs {
+		args = append(args, id)
+	}
+	err = d.pool.QueryRow(`
+		SELECT COUNT(DISTINCT aa.lead_id)
+		FROM agent_activities aa
+		WHERE aa.org_id=?
+			AND aa.user_id=?
+			AND aa.activity_type='call'
+			AND aa.campaign_id IN (`+campaignPlaceholders+`)`, args...).Scan(&s.Called)
 	return s, err
 }
 
@@ -878,6 +957,22 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 		return s, err
 	}
 	err := d.pool.QueryRow(statusQ+` AND l.status IN ('Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Appointments)
+	return s, err
+}
+
+// GetCampaignStatsForUser returns campaign lead totals scoped by normal lead
+// visibility, while counting called leads only for the user who placed calls.
+func (d *DB) GetCampaignStatsForUser(campaignID, userID int64, execIDs []int64, applyExecFilter bool) (CampaignStats, error) {
+	s, err := d.GetCampaignStats(campaignID, execIDs, applyExecFilter)
+	if err != nil || userID <= 0 {
+		return s, err
+	}
+	err = d.pool.QueryRow(`
+		SELECT COUNT(DISTINCT aa.lead_id)
+		FROM agent_activities aa
+		WHERE aa.campaign_id=?
+			AND aa.user_id=?
+			AND aa.activity_type='call'`, campaignID, userID).Scan(&s.Called)
 	return s, err
 }
 

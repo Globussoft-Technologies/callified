@@ -582,7 +582,12 @@ func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	stats, err := s.db.GetCampaignStats(campaign.ID, execIDs, apply)
+	var stats db.CampaignStats
+	if db.IsAgentLikeRole(ac.Role) {
+		stats, err = s.db.GetCampaignStatsForUser(campaign.ID, ac.UserID, execIDs, apply)
+	} else {
+		stats, err = s.db.GetCampaignStats(campaign.ID, execIDs, apply)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignStats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -617,7 +622,12 @@ func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	stats, err := s.db.GetCampaignCallOutcomeStats(campaign.ID, execIDs, apply)
+	var stats db.CallOutcomeStats
+	if db.IsAgentLikeRole(ac.Role) {
+		stats, err = s.db.GetCampaignCallOutcomeStatsForUser(campaign.ID, ac.UserID)
+	} else {
+		stats, err = s.db.GetCampaignCallOutcomeStats(campaign.ID, execIDs, apply)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallOutcomeStats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

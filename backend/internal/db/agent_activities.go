@@ -143,9 +143,14 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 			SELECT
 				aa.user_id,
 				COUNT(*) AS total_calls,
-				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 1 ELSE 0 END) AS connected,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected'
+					OR (
+						JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+						AND cl.status IN ('completed','answered','connected')
+					) THEN 1 ELSE 0 END) AS connected,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END) AS completed,
-				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer') THEN 1 ELSE 0 END) AS unanswered,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+					AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled') THEN 1 ELSE 0 END) AS unanswered,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 1 ELSE 0 END) AS busy,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled') OR cl.status IN ('failed','cancelled') THEN 1 ELSE 0 END) AS failed,
 				SUM(CASE WHEN cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings
@@ -235,11 +240,19 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			COALESCE(u.full_name,''),
 			COALESCE(u.role,'Agent'),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND (
+				JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected'
+				OR (
+					JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+					AND cl.status IN ('completed','answered','connected')
+				)
+			) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer') THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call'
+				AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+				AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND (JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND (JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='failed' OR cl.status IN ('failed','cancelled')) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
 			COALESCE((SELECT p.total_idle_time_s FROM agent_presence p WHERE p.user_id=u.id LIMIT 1), 0) AS idle_time_s,
 			COALESCE(SUM(CASE WHEN aa.activity_type='break' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
@@ -254,6 +267,8 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			AND aa.created_at <= ?
 			%s
 			%s
+		LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
+			AND cl.call_sid=JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid'))
 		WHERE u.org_id=?
 			%s
 		GROUP BY u.id, u.email, u.full_name, u.role

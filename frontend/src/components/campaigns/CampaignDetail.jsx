@@ -1670,7 +1670,7 @@ export default function CampaignDetail({
             outline: 'none', minWidth: 260,
           }}
         />
-        {executives && executives.length > 0 && (
+        {!isExecutiveUser && executives && executives.length > 0 && (
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowExecFilter(v => !v)}
@@ -2217,7 +2217,7 @@ export default function CampaignDetail({
                           </span>
                         )}
                         <button
-                          onClick={() => handleViewTranscripts(lead)}
+                          onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
                             color: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '#065f46' : T.muted,

@@ -1069,7 +1069,20 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 {
+		ac := getAuth(r)
+		campaign, err := s.db.GetCampaignByID(campaignID)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLeadTranscripts: campaign", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if campaign == nil || campaign.OrgID != ac.OrgID || !s.canAccessCampaignLead(ac, campaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	transcripts, err := s.db.GetTranscriptsByLead(id)
@@ -1077,6 +1090,15 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("getLeadTranscripts", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if campaignID > 0 {
+		filtered := transcripts[:0]
+		for _, t := range transcripts {
+			if t.CampaignID == campaignID {
+				filtered = append(filtered, t)
+			}
+		}
+		transcripts = filtered
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(transcripts))
 }
