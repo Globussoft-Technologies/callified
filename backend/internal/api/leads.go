@@ -95,6 +95,9 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/export [get]
 func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.export") {
+		return
+	}
 	ac := getAuth(r)
 	execIDs, apply, err := s.leadAccessExecIDs(ac)
 	if err != nil {
@@ -148,6 +151,9 @@ type PaginatedLeadsResponse struct {
 // @Router      /api/leads [get]
 func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	page, limit := parsePagination(r, 100, 500)
 	offset := (page - 1) * limit
 
@@ -200,6 +206,9 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/leads/search [get]
 func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, http.StatusBadRequest, "q query param required")
@@ -244,6 +253,9 @@ func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/leads/search-campaigns [get]
 func (s *Server) searchLeadsWithCampaigns(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, http.StatusBadRequest, "q query param required")
@@ -299,6 +311,9 @@ type leadCreateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads [post]
 func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.create") {
+		return
+	}
 	ac := getAuth(r)
 	var req leadCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -427,6 +442,9 @@ type leadUpdateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id} [put]
 func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -479,6 +497,9 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id} [delete]
 func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.delete") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -517,6 +538,9 @@ func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/status [put]
 func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -566,6 +590,9 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/executive [put]
 func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.assign") {
+		return
+	}
 	ac := getAuth(r)
 	if !s.isSuperAdmin(ac.Email) {
 		user, err := s.db.GetUserByEmail(ac.Email)
@@ -691,6 +718,9 @@ func campaignIDFromReferer(r *http.Request) int64 {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/source [put]
 func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -736,6 +766,9 @@ func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/notes [post]
 func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -800,6 +833,9 @@ type leadDispositionRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/disposition [put]
 func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

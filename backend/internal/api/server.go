@@ -340,6 +340,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	// ── Team ──────────────────────────────────────────────────────────────────
 	// Team management (invite, role change, delete) is strictly Admin.
+	mux.HandleFunc("GET /api/users/me/permissions", auth(s.getMyPermissions))
 	mux.HandleFunc("GET /api/team", adminAuth(s.listTeam))
 	mux.HandleFunc("GET /api/team/template-csv", adminAuth(s.teamMembersTemplateCSV))
 	mux.HandleFunc("POST /api/team/import-csv", adminAuth(s.importTeamMembersCSV))
@@ -348,6 +349,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/team/invites/{id}/link", adminAuth(s.getInviteLink))
 	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
+	mux.HandleFunc("GET /api/team/{id}/permissions", adminAuth(s.getTeamMemberPermissions))
+	mux.HandleFunc("PUT /api/team/{id}/permissions", adminAuth(s.updateTeamMemberPermissions))
 	mux.HandleFunc("POST /api/team/{id}/reset-password", adminAuth(s.resetTeamMemberPassword))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
 

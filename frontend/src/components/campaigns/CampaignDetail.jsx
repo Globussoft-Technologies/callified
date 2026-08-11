@@ -373,9 +373,22 @@ export default function CampaignDetail({
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
-  const { currentUser } = useAuth();
-  const isExecutiveUser = currentUser?.role === 'Executive';
+  const { currentUser, hasPermission } = useAuth();
+  const hideAiFeatures = useHideAiFeatures();
   const canShowAgentFilter = isAdmin(currentUser?.role);
+  const canCreateLead = hasPermission('crm.create');
+  const canEditLead = hasPermission('crm.edit');
+  const canDeleteLead = hasPermission('crm.delete');
+  const canImportLeads = hasPermission('crm.import');
+  const canExportLeads = hasPermission('crm.export');
+  const canAssignLeads = hasPermission('crm.assign');
+  const canEditCampaign = hasPermission('campaigns.edit');
+  const canMakeCalls = hasPermission('calls.make');
+  const canScheduleCalls = hasPermission('calls.schedule');
+  const canViewTranscripts = hasPermission('calls.transcripts');
+  const canViewRecordings = hasPermission('calls.recordings');
+  const canViewReports = hasPermission('reports.view');
+  const canSaveVoiceSettings = hasPermission('voice_settings.save');
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -478,6 +491,11 @@ export default function CampaignDetail({
     setScheduleTo('');
     setCurrentPage(1);
   }, [selectedCampaign?.id, setDetailExecutiveFilter]);
+
+  useEffect(() => {
+    if (detailTab === 'calllog' && !canViewTranscripts && !canViewRecordings) setDetailTab('leads');
+    if ((detailTab === 'insights' || detailTab === 'retries') && (!canViewReports || hideAiFeatures)) setDetailTab('leads');
+  }, [detailTab, canViewTranscripts, canViewRecordings, canViewReports, hideAiFeatures, setDetailTab]);
 
   // Server-side pagination: fetch the current page with active filters.
   const loadCampaignLeads = useCallback(() => {
@@ -1047,8 +1065,6 @@ export default function CampaignDetail({
 
   // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
 
-  const hideAiFeatures = useHideAiFeatures();
-
   // Call-action visibility from Settings page (localStorage).
   const [visibleCallActions, setVisibleCallActions] = useState({
     dial: true,
@@ -1165,29 +1181,33 @@ export default function CampaignDetail({
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
-        <button onClick={() => handleEditCampaign(selectedCampaign)}
-          style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
-          Edit Campaign
-        </button>
-        <select className="form-input" value={selectedCampaign.lead_source || ''}
-          onChange={async (e) => {
-            const src = e.target.value;
-            await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
-              method: 'PUT', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ lead_source: src })
-            });
-            setSelectedCampaign({...selectedCampaign, lead_source: src});
-          }}
-          style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
-          <option value="">No Source</option>
-          <option value="facebook">Facebook / Meta</option>
-          <option value="google">Google Ads</option>
-          <option value="instagram">Instagram</option>
-          <option value="linkedin">LinkedIn</option>
-          <option value="website">Website</option>
-          <option value="referral">Referral</option>
-          <option value="cold">Cold Outreach</option>
-        </select>
+        {canEditCampaign && (
+          <button onClick={() => handleEditCampaign(selectedCampaign)}
+            style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
+            Edit Campaign
+          </button>
+        )}
+        {canEditCampaign && (
+          <select className="form-input" value={selectedCampaign.lead_source || ''}
+            onChange={async (e) => {
+              const src = e.target.value;
+              await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lead_source: src })
+              });
+              setSelectedCampaign({...selectedCampaign, lead_source: src});
+            }}
+            style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
+            <option value="">No Source</option>
+            <option value="facebook">Facebook / Meta</option>
+            <option value="google">Google Ads</option>
+            <option value="instagram">Instagram</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="website">Website</option>
+            <option value="referral">Referral</option>
+            <option value="cold">Cold Outreach</option>
+          </select>
+        )}
       </div>
 
       {/* Metrics grid */}
@@ -1266,7 +1286,7 @@ export default function CampaignDetail({
                 <option key={l.code} value={l.code}>{l.name}</option>
               ))}
             </select>
-            <button style={{
+            {canSaveVoiceSettings && <button style={{
                 background: campVoiceSaveStatus === 'saved' ? T.green
                   : campVoiceSaveStatus === 'error' ? T.red
                   : T.accent,
@@ -1280,8 +1300,8 @@ export default function CampaignDetail({
                 : campVoiceSaveStatus === 'saved' ? '✓ Saved'
                 : campVoiceSaveStatus === 'error' ? '✗ Failed'
                 : 'Save'}
-            </button>
-            <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>
+            </button>}
+            {canSaveVoiceSettings && <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>}
           </div>
           <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>
             {campVoice.tts_provider
@@ -1394,7 +1414,7 @@ export default function CampaignDetail({
       </div>}
 
       {/* Quick Add Lead Form */}
-      <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {canCreateLead && <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
@@ -1470,7 +1490,7 @@ export default function CampaignDetail({
             } catch(e) { setQaApiErr('Failed: ' + (e?.message || 'network error')); }
           }}>Add & Assign</button>
         {qaApiErr && <span style={{ color: T.red, fontSize: '0.75rem', width: '100%', marginTop: 4 }}>{qaApiErr}</span>}
-      </div>
+      </div>}
 
       {selectedCampaign.channel === 'whatsapp' && !hideAiFeatures && (
         <div style={{ marginBottom: 14 }}>
@@ -1480,10 +1500,10 @@ export default function CampaignDetail({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
-        <button style={{ ...btnPrimary, background: '#0891b2' }}
-          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
-        <button
+        {canAssignLeads && <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>}
+        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2' }}
+          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>}
+        {canExportLeads && <button
           style={{ ...btnPrimary, background: T.green }}
           onClick={() => {
             downloadCSV({
@@ -1494,8 +1514,8 @@ export default function CampaignDetail({
             });
           }}>
           ⬇ Export
-        </button>
-        {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+        </button>}
+        {!hideAiFeatures && canMakeCalls && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               if (!requireSelectedDialAccount()) return;
@@ -1512,7 +1532,7 @@ export default function CampaignDetail({
             📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && canMakeCalls && <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
@@ -1526,7 +1546,7 @@ export default function CampaignDetail({
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>}
-        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+        {selectedCampaign.channel !== 'whatsapp' && canMakeCalls && visibleCallActions.browserCall && (
           <button
             style={{
               ...btnPrimary,
@@ -1644,10 +1664,10 @@ export default function CampaignDetail({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent },
-          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
-          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
-          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
+            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent, hidden: !hasPermission('crm.view') },
+          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
+          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
+          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures || !canViewReports },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
               onClick={() => setDetailTab(tab.id)}
@@ -1673,7 +1693,7 @@ export default function CampaignDetail({
             outline: 'none', minWidth: 260,
           }}
         />
-        {!isExecutiveUser && executives && executives.length > 0 && (
+        {canShowAgentFilter && executives && executives.length > 0 && (
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowExecFilter(v => !v)}
@@ -1772,7 +1792,7 @@ export default function CampaignDetail({
       {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 16px 0' }}>
-            <a
+            {canViewRecordings && <a
               href={(() => {
                 const params = new URLSearchParams();
                 if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
@@ -1797,7 +1817,7 @@ export default function CampaignDetail({
                 fontFamily: T.font, textDecoration: 'none', cursor: 'pointer',
               }}>
               ⬇ Export CSV
-            </a>
+            </a>}
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -2074,7 +2094,7 @@ export default function CampaignDetail({
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>{lead.company || '-'}</td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.source || ''}
+                      {canEditLead ? <select className="form-input" value={lead.source || ''}
                         onChange={async e => {
                           const src = e.target.value;
                           try {
@@ -2091,13 +2111,11 @@ export default function CampaignDetail({
                         {['facebook','google','instagram','linkedin','website','referral','cold'].map(s => (
                           <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>
                         ))}
-                      </select>
+                      </select> : (lead.source || 'No Source')}
                     </td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.executive_id || ''}
-                        disabled={isExecutiveUser}
+                      {canAssignLeads ? <select className="form-input" value={lead.executive_id || ''}
                         onChange={async e => {
-                          if (isExecutiveUser) return;
                           const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
                           if (!currentCampaignId) {
                             toast('Campaign is still loading. Please try again.');
@@ -2116,26 +2134,28 @@ export default function CampaignDetail({
                             fetchCampaignLeads(currentCampaignId);
                           } catch (err) { toast(err.message || 'Failed to assign executive'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120, opacity: isExecutiveUser ? 0.7 : 1, cursor: isExecutiveUser ? 'not-allowed' : 'pointer' }}>
+                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
                         <option value="">— Unassigned —</option>
                         {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                      </select>
+                      </select> : (
+                        executives.find(e => String(e.id) === String(lead.executive_id))?.name || '— Unassigned —'
+                      )}
                     </td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.status || 'New'}
+                      {canEditLead ? <select className="form-input" value={lead.status || 'New'}
                         onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
                         {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      </select> : (lead.status || 'New')}
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <button
+                        {canEditLead && <button
                           onClick={() => handleEditLead(lead)}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           ✏️ Edit
-                        </button>
-                        {visibleCallActions.dial && (
+                        </button>}
+                        {canMakeCalls && visibleCallActions.dial && (
                           <button
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
@@ -2162,7 +2182,7 @@ export default function CampaignDetail({
                             📲 Manual Call
                           </button>
                         )} */}
-                        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+                        {canMakeCalls && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
                           <button
                             onClick={() => startBrowserCallWithAutoDial(lead)}
                             disabled={browserCallDialing || browserCallLead != null}
@@ -2178,7 +2198,7 @@ export default function CampaignDetail({
                             {autoDialEnabled ? '⏩ Browser Call' : '🎙 Browser Call'}
                           </button>
                         )}
-                        {selectedCampaign.channel === 'whatsapp' && (
+                        {canMakeCalls && selectedCampaign.channel === 'whatsapp' && (
                           <button
                             onClick={() => handleSendWA(lead)}
                             disabled={waSendingId === lead.id}
@@ -2194,7 +2214,7 @@ export default function CampaignDetail({
                             {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
                           </button>
                         )}
-                        {visibleCallActions.simWebCall && (
+                        {canMakeCalls && visibleCallActions.simWebCall && (
                           <button
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}
@@ -2219,7 +2239,7 @@ export default function CampaignDetail({
                             🚫 DND — number blocked
                           </span>
                         )}
-                        <button
+                        {canViewTranscripts && <button
                           onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
@@ -2231,20 +2251,20 @@ export default function CampaignDetail({
                             : (lead.recording_count > 0 || lead.dial_attempts > 0) ? '📋 Call History' : '📋 No Calls'}
                           {lead.recording_count > 0 && ' 🔊'}
                           {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
-                        </button>
-                        <button
+                        </button>}
+                        {canEditLead && <button
                           onClick={() => openNoteModal(lead)}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📝 Note
-                        </button>
-                        <button
+                        </button>}
+                        {canScheduleCalls && <button
                           onClick={() => {
                             openScheduleModal(lead, false);
                           }}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📅 Schedule
-                        </button>
-                        <button onClick={async () => {
+                        </button>}
+                        {canDeleteLead && <button onClick={async () => {
                             const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
                             const ok = await confirm({
                               title: 'Remove Lead',
@@ -2259,8 +2279,8 @@ export default function CampaignDetail({
                             background: '#fee2e2', border: '1px solid #fca5a5',
                             color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           Remove
-                        </button>
-                        {lead.has_pending_scheduled_call && lead.next_scheduled_at && (
+                        </button>}
+                        {canScheduleCalls && lead.has_pending_scheduled_call && lead.next_scheduled_at && (
                           <div style={{ position: 'relative', display: 'inline-flex' }}>
                             <button
                               onClick={(e) => {

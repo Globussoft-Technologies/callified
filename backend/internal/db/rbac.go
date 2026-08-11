@@ -76,6 +76,20 @@ func (d *DB) EnsureRBACTables() error {
 		return fmt.Errorf("create notifications: %w", err)
 	}
 
+	_, err = d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS user_permissions (
+			user_id INT NOT NULL,
+			org_id INT NOT NULL,
+			permissions JSON NOT NULL,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id),
+			INDEX idx_org_id (org_id),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+	if err != nil {
+		return fmt.Errorf("create user_permissions: %w", err)
+	}
+
 	// Viewer has been retired; Executive is the assigned-lead/campaign role.
 	if _, err = d.pool.Exec(`UPDATE users SET role='Executive' WHERE role='Viewer'`); err != nil {
 		return fmt.Errorf("migrate viewer roles: %w", err)

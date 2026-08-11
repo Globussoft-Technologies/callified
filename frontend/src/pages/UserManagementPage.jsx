@@ -61,9 +61,10 @@ const badge = (color, bg) => ({
 });
 
 export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
-  const { currentUser: authUser } = useAuth();
+  const { currentUser: authUser, hasPermission } = useAuth();
   const user = currentUser || authUser;
   const userRole = user?.role || 'Agent';
+  const canManageProviderAccounts = hasPermission('provider_accounts.own');
   const toast = useToast();
   const confirmDialog = useConfirm();
 
@@ -292,7 +293,9 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
               <td style={tdStyle}>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button style={btnSecondary} onClick={() => openEdit(u)}>Edit</button>
-                  <button style={btnSecondary} onClick={() => setProviderAccountsUser(u)}>Provider Accounts</button>
+                  {canManageProviderAccounts && (
+                    <button style={btnSecondary} onClick={() => setProviderAccountsUser(u)}>Provider Accounts</button>
+                  )}
                   <button style={btnSecondary} onClick={() => handleToggleActive(u)}>
                     {u.is_active !== false ? 'Disable' : 'Enable'}
                   </button>

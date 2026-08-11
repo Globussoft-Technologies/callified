@@ -101,6 +101,9 @@ func (s *Server) loadCallerAndTarget(w http.ResponseWriter, r *http.Request) (*d
 // List provider accounts owned by the target user. Admins and TeamLeaders can
 // also view their reports' accounts; users can always view their own.
 func (s *Server) listUserProviderAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	_, target := s.loadCallerAndTarget(w, r)
 	if target == nil {
 		return
@@ -117,6 +120,9 @@ func (s *Server) listUserProviderAccounts(w http.ResponseWriter, r *http.Request
 // ── POST /api/users/{id}/provider-accounts ─────────────────────────────────────
 // Create a provider account owned by the target user.
 func (s *Server) createUserProviderAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	_, target := s.loadCallerAndTarget(w, r)
 	if target == nil {
 		return
@@ -150,6 +156,9 @@ func (s *Server) createUserProviderAccount(w http.ResponseWriter, r *http.Reques
 // ── PUT /api/users/{id}/provider-accounts/{account_id} ─────────────────────────
 // Update a provider account owned by the target user.
 func (s *Server) updateUserProviderAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	_, target := s.loadCallerAndTarget(w, r)
 	if target == nil {
 		return
@@ -187,6 +196,9 @@ func (s *Server) updateUserProviderAccount(w http.ResponseWriter, r *http.Reques
 // ── DELETE /api/users/{id}/provider-accounts/{account_id} ──────────────────────
 // Remove a provider account owned by the target user.
 func (s *Server) deleteUserProviderAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	_, target := s.loadCallerAndTarget(w, r)
 	if target == nil {
 		return
@@ -209,6 +221,9 @@ func (s *Server) deleteUserProviderAccount(w http.ResponseWriter, r *http.Reques
 // without needing to know their user ID.
 func (s *Server) listMyProviderAccounts(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	if ac.UserID == 0 {
 		writeError(w, http.StatusUnauthorized, "invalid user")
 		return
@@ -226,6 +241,9 @@ func (s *Server) listMyProviderAccounts(w http.ResponseWriter, r *http.Request) 
 // Convenience endpoint for the authenticated user to create their own account.
 func (s *Server) createMyProviderAccount(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "provider_accounts.own") {
+		return
+	}
 	if ac.UserID == 0 {
 		writeError(w, http.StatusUnauthorized, "invalid user")
 		return

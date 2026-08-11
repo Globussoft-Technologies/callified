@@ -134,6 +134,9 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     502  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial/{lead_id} [post]
 func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -209,6 +212,9 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial-all [post]
 func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -335,6 +341,9 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/redial-failed [post]
 func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return

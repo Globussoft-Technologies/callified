@@ -51,6 +51,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
   const [resetError, setResetError] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [permissionMember, setPermissionMember] = useState(null);
+  const [permissionDefs, setPermissionDefs] = useState([]);
+  const [permissionValues, setPermissionValues] = useState([]);
+  const [permissionCustom, setPermissionCustom] = useState(false);
+  const [permissionLoading, setPermissionLoading] = useState(false);
+  const [permissionSaving, setPermissionSaving] = useState(false);
+  const [permissionError, setPermissionError] = useState('');
   const fileInputRef = useRef(null);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
@@ -333,6 +340,78 @@ export default function TeamPage({ apiFetch, API_URL }) {
     } catch { toast('Network error', 'error');  }
   };
 
+  const openPermissions = async (member) => {
+    setPermissionMember(member);
+    setPermissionDefs([]);
+    setPermissionValues([]);
+    setPermissionCustom(false);
+    setPermissionError('');
+    setPermissionLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/team/${member.id}/permissions`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPermissionError(data.error || data.detail || 'Failed to load permissions.');
+      } else {
+        setPermissionDefs(Array.isArray(data.available) ? data.available : []);
+        setPermissionValues(Array.isArray(data.permissions) ? data.permissions : []);
+        setPermissionCustom(Boolean(data.is_custom));
+      }
+    } catch {
+      setPermissionError('Network error');
+    }
+    setPermissionLoading(false);
+  };
+
+  const closePermissions = () => {
+    if (permissionSaving) return;
+    setPermissionMember(null);
+    setPermissionDefs([]);
+    setPermissionValues([]);
+    setPermissionCustom(false);
+    setPermissionError('');
+  };
+
+  const togglePermission = (key) => {
+    setPermissionValues(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+
+  const savePermissions = async () => {
+    if (!permissionMember) return;
+    setPermissionSaving(true);
+    setPermissionError('');
+    try {
+      const res = await apiFetch(`${API_URL}/team/${permissionMember.id}/permissions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions: permissionValues }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPermissionError(data.error || data.detail || 'Failed to save permissions.');
+      } else {
+        toast(`Permissions saved for ${permissionMember.full_name || permissionMember.email}`, 'success');
+        setPermissionSaving(false);
+        closePermissions();
+        return;
+      }
+    } catch {
+      setPermissionError('Network error');
+    }
+    setPermissionSaving(false);
+  };
+
+  const resetPermissionsToRole = () => {
+    setPermissionValues(permissionDefs.map(p => p.key));
+    setPermissionCustom(false);
+  };
+
+  const groupedPermissions = permissionDefs.reduce((acc, p) => {
+    if (!acc[p.module]) acc[p.module] = [];
+    acc[p.module].push(p);
+    return acc;
+  }, {});
+
   const handleDelete = async (member) => {
     const label = member.full_name || member.email;
     const ok = await confirmDialog({
@@ -580,6 +659,102 @@ export default function TeamPage({ apiFetch, API_URL }) {
         </div>
       )}
 
+      {/* Permissions Modal */}
+      {permissionMember && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={closePermissions} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 760, maxWidth: '94vw', maxHeight: '86vh', overflow: 'hidden', padding: 0 }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <div style={{ padding: '22px 26px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: T.text }}>Permissions</h3>
+                <p style={{ margin: '6px 0 0', color: T.muted, fontSize: 13 }}>
+                  {permissionMember.full_name || permissionMember.email} · {permissionMember.role}
+                </p>
+              </div>
+              <button onClick={closePermissions}
+                style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, width: 34, height: 34, cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
+                ×
+              </button>
+            </div>
+            <div style={{ padding: '18px 26px', maxHeight: '58vh', overflowY: 'auto' }}>
+              {permissionLoading ? (
+                <div style={{ color: T.muted, padding: '28px 0', textAlign: 'center' }}>Loading permissions...</div>
+              ) : permissionError ? (
+                <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 12px' }}>
+                  {permissionError}
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 14, color: T.muted, fontSize: 13 }}>
+                    Role boundary is enforced automatically. Permissions outside <strong>{permissionMember.role}</strong> are not available here.
+                    {permissionCustom && <span style={{ color: T.accent, fontWeight: 700 }}> Custom permissions are active.</span>}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                    {Object.entries(groupedPermissions).map(([module, items]) => (
+                      <div key={module} style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: `1px solid ${T.border}`, color: T.text, fontWeight: 800, fontSize: 13 }}>
+                          {module}
+                        </div>
+                        <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {items.map(p => {
+                            const checked = permissionValues.includes(p.key);
+                            return (
+                              <label key={p.key} style={{
+                                display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
+                                alignItems: 'flex-start', padding: '7px 6px', borderRadius: 6,
+                                cursor: 'pointer', background: checked ? 'rgba(99,102,241,0.06)' : 'transparent',
+                              }}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePermission(p.key)}
+                                  style={{ marginTop: 2 }}
+                                />
+                                <span>
+                                  <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{p.label}</span>
+                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{p.action}</span>
+                                  </span>
+                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{p.description}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            <div style={{ padding: '14px 26px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={resetPermissionsToRole} disabled={permissionLoading || permissionSaving}
+                style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '9px 14px', cursor: permissionLoading || permissionSaving ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 700, fontSize: 13 }}>
+                Reset to Role Default
+              </button>
+              <span style={{ display: 'inline-flex', gap: 10 }}>
+                <button onClick={closePermissions} disabled={permissionSaving}
+                  style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '9px 16px', cursor: permissionSaving ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 700, fontSize: 13 }}>
+                  Cancel
+                </button>
+                <button onClick={savePermissions} disabled={permissionLoading || permissionSaving || Boolean(permissionError)}
+                  style={{
+                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                    borderRadius: 8, color: '#fff', padding: '9px 18px',
+                    cursor: permissionLoading || permissionSaving || permissionError ? 'not-allowed' : 'pointer',
+                    fontWeight: 800, fontSize: 13, fontFamily: T.font,
+                    opacity: permissionLoading || permissionSaving || permissionError ? 0.65 : 1,
+                  }}>
+                  {permissionSaving ? 'Saving...' : 'Save Permissions'}
+                </button>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Newly-generated key modal — shown once only */}
       {newKey && (
         <div style={{
@@ -683,6 +858,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
+                <th style={thStyle}>Permissions</th>
                 <th style={thStyle}>Joined</th>
                 <th style={thStyle}>API Key</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
@@ -722,6 +898,22 @@ export default function TeamPage({ apiFetch, API_URL }) {
                         <option value="Agent">Agent</option>
                         <option value="Executive">Executive</option>
                       </select>
+                    </td>
+                    <td style={rowTd}>
+                      <button
+                        onClick={() => openPermissions(m)}
+                        disabled={isSelf}
+                        title={isSelf ? 'You cannot edit your own permissions' : `Edit permissions for ${m.full_name || m.email}`}
+                        style={{
+                          background: isSelf ? '#f9fafb' : 'rgba(99,102,241,0.08)',
+                          border: `1px solid ${isSelf ? T.border : 'rgba(99,102,241,0.25)'}`,
+                          borderRadius: 7, color: isSelf ? T.muted : T.accent,
+                          width: 32, height: 30, cursor: isSelf ? 'not-allowed' : 'pointer',
+                          fontSize: 14, fontFamily: T.font, fontWeight: 700,
+                        }}
+                      >
+                        🛡
+                      </button>
                     </td>
                     <td style={{ ...rowTd, color: T.muted }}>
                       {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}

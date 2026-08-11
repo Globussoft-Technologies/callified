@@ -65,7 +65,7 @@ function makeSpark(val, len = 10) {
 export default function CrmTab({
   userRole, API_URL,
   apiFetch,
-  campaigns, dashSummary, onCampaignClick
+  campaigns, dashSummary, onCampaignClick, canViewDashboard = true
 }) {
   const activeCampaigns   = (campaigns || []).filter(c => c.status === 'active');
   const campaignsCount    = dashSummary?.campaigns     ?? activeCampaigns.length;
@@ -145,6 +145,16 @@ export default function CrmTab({
     qualified:    { title: 'Qualified Leads',      subtitle: `${totalQualified.toLocaleString()} qualified · ${qualPct}% qual rate` },
     appointments: { title: 'Appointments Booked',  subtitle: `${totalAppointments.toLocaleString()} appointments total` },
   };
+
+  if (!canViewDashboard) {
+    return (
+      <div style={{ padding: '24px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+        <div style={{ ...card, padding: '3rem', textAlign: 'center', color: T.muted }}>
+          You do not have permission to view the dashboard.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: '24px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>

@@ -24,6 +24,9 @@ import (
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/dashboard [get]
 func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
@@ -83,6 +86,9 @@ func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/export [get]
 func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -136,6 +142,9 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/report [get]
 func (s *Server) analyticsExportReport(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -224,6 +233,9 @@ func (s *Server) scoredLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object} ErrorResponse
 // @Router      /api/analytics/agent-lead-summary [get]
 func (s *Server) agentLeadSummary(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
@@ -300,6 +312,9 @@ func formatSeconds(sec int64) string {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/agent-report [get]
 func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 
 	fromStr := r.URL.Query().Get("from")

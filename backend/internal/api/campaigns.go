@@ -44,6 +44,9 @@ type ImportRejection struct {
 // @Router      /api/campaigns [get]
 func (s *Server) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "campaigns.view") {
+		return
+	}
 	var campaigns []db.Campaign
 	var err error
 	if s.isSuperAdmin(ac.Email) && ac.OrgID <= 0 {
@@ -168,6 +171,9 @@ func validateCampaignName(name string) string {
 // @Router      /api/campaigns [post]
 func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "campaigns.create") {
+		return
+	}
 	var req campaignCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProductID == 0 {
 		writeError(w, http.StatusBadRequest, "name and product_id required")
@@ -221,6 +227,9 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/campaigns/{id} [get]
 func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "campaigns.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -304,6 +313,9 @@ type campaignUpdateRequest struct {
 // @Router      /api/campaigns/{id} [put]
 func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "campaigns.edit") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -359,6 +371,9 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/campaigns/{id} [delete]
 func (s *Server) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "campaigns.delete") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -533,6 +548,9 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads/{lead_id} [delete]
 func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.delete") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -674,6 +692,9 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 // ── GET /api/campaigns/{id}/export-recordings ────────────────────────────────
 // Downloads a CSV of all calls in the campaign that have a recording URL.
 func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.recordings") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -713,6 +734,9 @@ func (s *Server) exportRecordings(w http.ResponseWriter, r *http.Request) {
 // Unlike exportRecordings, this exports the lead list (not call recordings)
 // and is designed to handle 100k+ rows without loading them into memory.
 func (s *Server) exportCampaignLeads(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.export") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -780,6 +804,9 @@ func (s *Server) getCampaignVoiceSettings(w http.ResponseWriter, r *http.Request
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/voice-settings [put]
 func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "voice_settings.save") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -837,6 +864,9 @@ func (s *Server) saveCampaignVoiceSettings(w http.ResponseWriter, r *http.Reques
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/import-csv [post]
 func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.import") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -1110,6 +1140,9 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-reviews [get]
 func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -1189,6 +1222,9 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/call-insights [get]
 func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -1482,6 +1518,10 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 // themselves or their managed Agents; Agents see only their own assignments.
 // Super-admins bypass org scoping and see every campaign.
 func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
+	ok, err := s.authHasPermission(ac, "campaigns.view")
+	if err != nil || !ok {
+		return false
+	}
 	campaign, err := s.db.GetCampaignByID(campaignID)
 	if err != nil || campaign == nil {
 		return false

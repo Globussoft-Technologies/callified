@@ -16,7 +16,7 @@ export default function CampaignsTab({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
-  const { fetchSseTicket, currentUser } = useAuth();
+  const { fetchSseTicket, currentUser, hasPermission } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
   const location = useLocation();
@@ -463,6 +463,10 @@ export default function CampaignsTab({
 
   // ── Campaign-user assignment (Admin only) ─────────────────────────────────
   const userRole = currentUser?.role || 'Agent';
+  const canViewCampaigns = hasPermission('campaigns.view');
+  const canCreateCampaigns = hasPermission('campaigns.create');
+  const canEditCampaigns = hasPermission('campaigns.edit');
+  const canDeleteCampaigns = hasPermission('campaigns.delete');
 
   const openAssignModal = async (campaign) => {
     setAssignCampaign(campaign);
@@ -856,6 +860,16 @@ export default function CampaignsTab({
     return `${provider} · ${name}${account.caller_id ? ` · ${account.caller_id}` : ''}`;
   };
 
+  if (!canViewCampaigns) {
+    return (
+      <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+          You do not have permission to view campaigns.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -863,11 +877,13 @@ export default function CampaignsTab({
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
           Campaigns
         </h2>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-          + Create Campaign
-        </button>
+        {canCreateCampaigns && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Create Campaign
+          </button>
+        )}
       </div>
 
       {campaigns.length === 0 ? (
@@ -888,21 +904,25 @@ export default function CampaignsTab({
                     {campaign.name}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    {isAdmin(userRole) && (
+                    {isAdmin(userRole) && canEditCampaigns && (
                       <button onClick={(e) => { e.stopPropagation(); openAssignModal(campaign); }}
                         style={smallBtn('#eff6ff', '#2563eb', '#bfdbfe')}>
                         Assign Users
                       </button>
                     )}
-                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                      style={smallBtn('#fff', '#374151', '#e5e7eb')}>
-                      Edit
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
-                      disabled={deleting}
-                      style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
-                      {deleting ? '…' : 'Delete'}
-                    </button>
+                    {canEditCampaigns && (
+                      <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                        style={smallBtn('#fff', '#374151', '#e5e7eb')}>
+                        Edit
+                      </button>
+                    )}
+                    {canDeleteCampaigns && (
+                      <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
+                        disabled={deleting}
+                        style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
+                        {deleting ? '…' : 'Delete'}
+                      </button>
+                    )}
                   </div>
                 </div>
 

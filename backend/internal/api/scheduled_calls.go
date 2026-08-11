@@ -12,7 +12,9 @@ import (
 
 // @Summary     List scheduled calls
 // @Description Returns scheduled calls for the org. Supports filtering by mode,
-//              status and due time. Requires Admin role.
+//
+//	status and due time. Requires Admin role.
+//
 // @Tags        scheduled-calls
 // @Produce     json
 // @Security    BearerAuth
@@ -88,15 +90,18 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/scheduled-calls [post]
 func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.schedule") {
+		return
+	}
 	ac := getAuth(r)
 	var body struct {
-		LeadID          int64  `json:"lead_id"`
-		CampaignID      int64  `json:"campaign_id"`
-		ScheduledAt     string `json:"scheduled_at"`
-		Notes           string `json:"notes"`
-		Mode            string `json:"mode"`
-		ExecutiveID     int64  `json:"executive_id"`
-		ScheduledByUserID int64 `json:"scheduled_by_user_id"`
+		LeadID            int64  `json:"lead_id"`
+		CampaignID        int64  `json:"campaign_id"`
+		ScheduledAt       string `json:"scheduled_at"`
+		Notes             string `json:"notes"`
+		Mode              string `json:"mode"`
+		ExecutiveID       int64  `json:"executive_id"`
+		ScheduledByUserID int64  `json:"scheduled_by_user_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.LeadID == 0 || body.ScheduledAt == "" {
 		writeError(w, http.StatusBadRequest, "lead_id and scheduled_at required")
@@ -207,6 +212,9 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/scheduled-calls/{id} [delete]
 func (s *Server) cancelScheduledCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.schedule") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
