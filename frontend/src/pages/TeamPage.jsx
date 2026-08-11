@@ -47,6 +47,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [resetMember, setResetMember] = useState(null);
+  const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [resetError, setResetError] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
   const fileInputRef = useRef(null);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
@@ -323,8 +327,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
       });
       if (res.ok) fetchTeam();
       else {
-        const data = await res.json();
-        toast(data.detail || 'Failed to update role', 'error');
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || data.detail || `Failed to update role (HTTP ${res.status})`, 'error');
       }
     } catch { toast('Network error', 'error');  }
   };
@@ -348,6 +352,54 @@ export default function TeamPage({ apiFetch, API_URL }) {
         toast(msg, 'error');
       }
     } catch { toast('Network error', 'error');  }
+  };
+
+  const openResetPassword = (member) => {
+    setResetMember(member);
+    setResetForm({ password: '', confirm: '' });
+    setResetError('');
+  };
+
+  const closeResetPassword = () => {
+    if (resetLoading) return;
+    setResetMember(null);
+    setResetForm({ password: '', confirm: '' });
+    setResetError('');
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!resetMember) return;
+    const password = resetForm.password;
+    if (!password.trim()) {
+      setResetError('Password is required.');
+      return;
+    }
+    if (password !== resetForm.confirm) {
+      setResetError('Passwords do not match.');
+      return;
+    }
+    setResetError('');
+    setResetLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/team/${resetMember.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResetError(data.error || data.detail || 'Failed to reset password.');
+      } else {
+        toast(`Password reset for ${resetMember.email}`, 'success');
+        setResetLoading(false);
+        closeResetPassword();
+        return;
+      }
+    } catch {
+      setResetError('Network error');
+    }
+    setResetLoading(false);
   };
 
   const roleBadge = (role) => {
@@ -471,6 +523,55 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: inviteLoading ? 0.7 : 1,
                     }}>
                     {inviteLoading ? 'Creating...' : 'Create Member'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetMember && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={closeResetPassword} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 420, maxWidth: '90vw' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Reset Password</h3>
+            <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
+              Set a new password for {resetMember.full_name || resetMember.email}.
+            </p>
+            <form onSubmit={handleResetPassword}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <input
+                  placeholder="New password" type="password" required value={resetForm.password}
+                  onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
+                  style={inputStyle}
+                  autoFocus
+                />
+                <input
+                  placeholder="Confirm password" type="password" required value={resetForm.confirm}
+                  onChange={e => setResetForm({ ...resetForm, confirm: e.target.value })}
+                  style={inputStyle}
+                />
+                {resetError && (
+                  <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                    {resetError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={closeResetPassword} disabled={resetLoading}
+                    style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '8px 16px', cursor: resetLoading ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 600, fontSize: 13 }}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={resetLoading}
+                    style={{
+                      background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                      borderRadius: 8, color: '#fff', padding: '8px 20px', cursor: resetLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: resetLoading ? 0.7 : 1,
+                    }}>
+                    {resetLoading ? 'Resetting...' : 'Reset Password'}
                   </button>
                 </div>
               </div>
@@ -699,10 +800,16 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       {isSelf ? (
                         <span style={{ color: T.muted, fontSize: 13 }}>—</span>
                       ) : (
-                        <button onClick={() => handleDelete(m)}
-                          style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
-                          Remove
-                        </button>
+                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          <button onClick={() => openResetPassword(m)}
+                            style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 6, color: T.accent, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
+                            Reset Password
+                          </button>
+                          <button onClick={() => handleDelete(m)}
+                            style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
+                            Remove
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>

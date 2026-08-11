@@ -57,19 +57,20 @@ func (d *DB) EnsureCampaignsTable() error {
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
 // nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID          int64          `json:"id"`
-	OrgID       int64          `json:"org_id"`
-	ProductID   int64          `json:"product_id"`
-	Name        string         `json:"name"`
-	Status      string         `json:"status"`
-	TTSProvider string         `json:"tts_provider"`
-	TTSVoiceID  string         `json:"tts_voice_id"`
-	TTSLanguage string         `json:"tts_language"`
-	LeadSource  string         `json:"lead_source"`
-	Channel     string         `json:"channel"`
-	ProductName string         `json:"product_name"`
-	CreatedAt   string         `json:"created_at"`
-	Stats       *CampaignStats `json:"stats,omitempty"`
+	ID              int64          `json:"id"`
+	OrgID           int64          `json:"org_id"`
+	ProductID       int64          `json:"product_id"`
+	Name            string         `json:"name"`
+	Status          string         `json:"status"`
+	TTSProvider     string         `json:"tts_provider"`
+	TTSVoiceID      string         `json:"tts_voice_id"`
+	TTSLanguage     string         `json:"tts_language"`
+	LeadSource      string         `json:"lead_source"`
+	Channel         string         `json:"channel"`
+	ExotelAccountID int64          `json:"exotel_account_id"`
+	ProductName     string         `json:"product_name"`
+	CreatedAt       string         `json:"created_at"`
+	Stats           *CampaignStats `json:"stats,omitempty"`
 }
 
 // COALESCE on product_id because campaigns can legitimately have a NULL
@@ -81,13 +82,14 @@ const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.status,'active'), COALESCE(c.tts_provider,''), COALESCE(c.tts_voice_id,''),
 	COALESCE(c.tts_language,''), COALESCE(c.lead_source,''),
 	COALESCE(c.channel,'voice'),
+	COALESCE(c.exotel_account_id,0),
 	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s')`
 
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
 	err := row.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 		&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-		&c.Channel, &c.ProductName, &c.CreatedAt)
+		&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt)
 	return c, err
 }
 
@@ -130,7 +132,7 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -182,7 +184,7 @@ func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -225,7 +227,7 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -583,6 +585,26 @@ func campaignExecFilterClause(execIDs []int64, applyExecFilter bool) (string, []
 		args = append(args, id)
 	}
 	return `COALESCE(cl.executive_id,0) IN (` + placeholders + `)`, args
+}
+
+// CampaignLeadMatchesAccess reports whether a campaign-lead row exists in the
+// org and matches the optional executive restriction.
+func (d *DB) CampaignLeadMatchesAccess(orgID, campaignID, leadID int64, execIDs []int64, applyExecFilter bool) (bool, error) {
+	q := `
+		SELECT COUNT(*)
+		FROM campaign_leads cl
+		JOIN campaigns c ON c.id=cl.campaign_id
+		WHERE c.org_id=? AND cl.campaign_id=? AND cl.lead_id=?`
+	args := []any{orgID, campaignID, leadID}
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	var n int64
+	if err := d.pool.QueryRow(q, args...).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error) {

@@ -91,18 +91,38 @@ func (s *Server) listCampaignsForUser(ac AuthClaims) ([]db.Campaign, error) {
 		}
 		return s.db.GetCampaignsByIDs(ids)
 	case db.RoleExecutive:
-		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
-		if err != nil || exec == nil {
-			return []db.Campaign{}, err
-		}
-		ids, err := s.db.GetCampaignsForExecutive(exec.ID)
+		userCampaignIDs, err := s.db.GetCampaignsForUser(user.ID)
 		if err != nil {
 			return nil, err
 		}
-		return s.db.GetCampaignsByIDs(ids)
+		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
+		if err != nil || exec == nil {
+			return s.db.GetCampaignsByIDs(userCampaignIDs)
+		}
+		execCampaignIDs, err := s.db.GetCampaignsForExecutive(exec.ID)
+		if err != nil {
+			return nil, err
+		}
+		return s.db.GetCampaignsByIDs(uniqueInt64s(append(userCampaignIDs, execCampaignIDs...)))
 	default:
 		return []db.Campaign{}, nil
 	}
+}
+
+func uniqueInt64s(ids []int64) []int64 {
+	seen := make(map[int64]struct{}, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // ── POST /api/campaigns ──────────────────────────────────────────────────────
@@ -222,7 +242,7 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	}
 	// Attach fresh stats — best-effort; we don't fail the whole response if
 	// the stats query breaks. Stats are filtered by lead access for non-Admins.
-	execIDs, apply, _ := s.leadAccessExecIDs(ac)
+	execIDs, apply, _ := s.campaignLeadAccessExecIDs(ac, id)
 	if stats, err := s.db.GetCampaignStats(id, execIDs, apply); err == nil {
 		c.Stats = &stats
 	} else {
@@ -410,7 +430,7 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	}
 	// Enforce per-lead isolation for Agents and Team Leaders; allow Admins to
 	// filter by specific agents via ?executive_ids=.
-	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
+	execIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("listCampaignLeads", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -486,6 +506,13 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if execID, err := s.singleAssignedCampaignExecutiveID(ac.OrgID, campaign.ID); err != nil {
+		s.logger.Sugar().Warnw("addCampaignLeads: resolve assigned executive", "err", err, "campaign_id", campaign.ID)
+	} else if execID > 0 {
+		if err := s.db.UpdateAllCampaignLeadsExecutive(campaign.ID, campaign.OrgID, execID); err != nil {
+			s.logger.Sugar().Warnw("addCampaignLeads: assign new leads", "err", err, "campaign_id", campaign.ID)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]int{"added": added})
 }
 
@@ -549,7 +576,7 @@ func (s *Server) getCampaignStats(w http.ResponseWriter, r *http.Request) {
 	if campaign == nil {
 		return
 	}
-	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	execIDs, apply, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignStats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -584,7 +611,7 @@ func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Requ
 	if campaign == nil {
 		return
 	}
-	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	execIDs, apply, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallOutcomeStats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -619,7 +646,7 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ac := getAuth(r)
-	execIDs, _, err := s.resolveExecutiveIDs(r, ac)
+	execIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -970,6 +997,13 @@ func (s *Server) importCampaignLeadsCSV(w http.ResponseWriter, r *http.Request) 
 	var addedToCampaign int
 	if len(addIDs) > 0 {
 		addedToCampaign, _ = s.db.AddLeadsToCampaign(campaignID, addIDs)
+		if execID, err := s.singleAssignedCampaignExecutiveID(ac.OrgID, campaignID); err != nil {
+			s.logger.Sugar().Warnw("importCampaignLeadsCSV: resolve assigned executive", "err", err, "campaign_id", campaignID)
+		} else if execID > 0 {
+			if err := s.db.UpdateAllCampaignLeadsExecutive(campaignID, ac.OrgID, execID); err != nil {
+				s.logger.Sugar().Warnw("importCampaignLeadsCSV: assign imported leads", "err", err, "campaign_id", campaignID)
+			}
+		}
 	}
 
 	const maxReturnedRejected = 500
@@ -1461,11 +1495,15 @@ func (s *Server) canViewCampaign(ac AuthClaims, campaignID int64) bool {
 		return err == nil && ok
 	}
 	if user.Role == db.RoleExecutive {
+		ok, err := s.db.IsCampaignAssignedToUser(campaignID, user.ID)
+		if err == nil && ok {
+			return true
+		}
 		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
 		if err != nil || exec == nil {
 			return false
 		}
-		ok, err := s.db.IsCampaignAssignedToExecutive(campaignID, exec.ID)
+		ok, err = s.db.IsCampaignAssignedToExecutive(campaignID, exec.ID)
 		return err == nil && ok
 	}
 	return false
@@ -1500,9 +1538,9 @@ func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db
 }
 
 // leadAccessExecIDs returns the executive_id values a user may access inside a
-// campaign. Admins see all leads (apply=false). Agents see unassigned leads
-// (executive_id 0/NULL) plus leads assigned to them. Team Leaders see
-// unassigned leads plus leads assigned to themselves or their managed Agents.
+// campaign. Admins, Agents, and Team Leaders are already scoped by campaign
+// visibility, so they do not get an executive_id filter here. Executives see
+// only campaign-lead rows assigned to their executive record.
 func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 	if s.isSuperAdmin(ac.Email) {
 		return nil, false, nil
@@ -1515,17 +1553,9 @@ func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 		return nil, false, nil
 	}
 
-	ids := []int64{0}
 	switch user.Role {
-	case db.RoleTeamLeader:
-		managed, err := s.db.GetManagedUserIDs(user.ID)
-		if err != nil {
-			return nil, true, err
-		}
-		ids = append(ids, user.ID)
-		ids = append(ids, managed...)
-	case db.RoleAgent:
-		ids = append(ids, user.ID)
+	case db.RoleTeamLeader, db.RoleAgent:
+		return nil, false, nil
 	case db.RoleExecutive:
 		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
 		if err != nil {
@@ -1536,28 +1566,48 @@ func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 		}
 		return []int64{exec.ID}, true, nil
 	}
-	return ids, true, nil
+	return nil, false, nil
+}
+
+func (s *Server) campaignLeadAccessExecIDs(ac AuthClaims, _ int64) ([]int64, bool, error) {
+	return s.leadAccessExecIDs(ac)
 }
 
 func (s *Server) canAccessCampaignLead(ac AuthClaims, campaignID, leadID int64) bool {
-	lead, err := s.db.GetLeadByID(leadID)
-	if err != nil || lead == nil || lead.OrgID != ac.OrgID {
-		return false
-	}
-	allowed, apply, err := s.leadAccessExecIDs(ac)
+	allowed, apply, err := s.campaignLeadAccessExecIDs(ac, campaignID)
 	if err != nil || !apply {
 		return !apply
 	}
-	rows, err := s.db.GetCampaignLeadsPaginated(db.CampaignLeadsFilter{CampaignID: campaignID, ExecIDs: allowed}, 0, 0)
+	ok, err := s.db.CampaignLeadMatchesAccess(ac.OrgID, campaignID, leadID, allowed, apply)
 	if err != nil {
 		return false
 	}
-	for _, row := range rows {
-		if row.ID == leadID {
-			return true
+	return ok
+}
+
+func (s *Server) resolveCampaignExecutiveIDs(r *http.Request, ac AuthClaims, campaignID int64) ([]int64, bool, error) {
+	allowed, apply, err := s.campaignLeadAccessExecIDs(ac, campaignID)
+	if err != nil {
+		return nil, false, err
+	}
+	requested := parseExecutiveIDs(r.URL.Query().Get("executive_ids"))
+	if !apply {
+		return requested, false, nil
+	}
+	if len(requested) == 0 {
+		return allowed, true, nil
+	}
+	allowedSet := make(map[int64]struct{}, len(allowed))
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+	var out []int64
+	for _, id := range requested {
+		if _, ok := allowedSet[id]; ok {
+			out = append(out, id)
 		}
 	}
-	return false
+	return out, true, nil
 }
 
 // canAccessLead checks whether the authenticated user may view/dial a specific
@@ -1609,6 +1659,35 @@ func (s *Server) resolveExecutiveIDs(r *http.Request, ac AuthClaims) ([]int64, b
 		}
 	}
 	return out, true, nil
+}
+
+func (s *Server) singleAssignedCampaignExecutiveID(orgID, campaignID int64) (int64, error) {
+	userIDs, err := s.db.GetAssignedUserIDsForCampaign(campaignID)
+	if err != nil {
+		return 0, err
+	}
+	var execID int64
+	for _, uid := range userIDs {
+		u, err := s.db.GetUserByIDInOrgWithRole(uid, orgID)
+		if err != nil {
+			return 0, err
+		}
+		if u == nil || u.Role != db.RoleExecutive {
+			continue
+		}
+		id, err := s.db.ResolveExecutiveID(orgID, uid)
+		if err != nil {
+			return 0, err
+		}
+		if id <= 0 {
+			continue
+		}
+		if execID > 0 && execID != id {
+			return 0, nil
+		}
+		execID = id
+	}
+	return execID, nil
 }
 
 // executive_id). It returns the lead on success, or writes a 404 and returns nil.
@@ -1747,11 +1826,44 @@ func (s *Server) assignCampaignUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	executiveIDs := make([]int64, 0, len(body.UserIDs))
+	for _, uid := range body.UserIDs {
+		u, err := s.db.GetUserByIDInOrgWithRole(uid, ac.OrgID)
+		if err != nil {
+			s.logger.Sugar().Errorw("assignCampaignUsers: user lookup", "err", err, "user_id", uid)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if u == nil || u.Role != db.RoleExecutive {
+			continue
+		}
+		execID, err := s.db.ResolveExecutiveID(ac.OrgID, uid)
+		if err != nil {
+			s.logger.Sugar().Errorw("assignCampaignUsers: executive lookup", "err", err, "user_id", uid)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if execID > 0 {
+			executiveIDs = append(executiveIDs, execID)
+		}
+	}
+	if len(executiveIDs) > 1 {
+		writeError(w, http.StatusBadRequest, "assign only one executive to a campaign")
+		return
+	}
+
 	// Persist the assignment replacement.
 	if err := s.db.AssignCampaignToUsers(campaignID, body.UserIDs, caller.ID); err != nil {
 		s.logger.Sugar().Errorw("assignCampaignUsers", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if len(executiveIDs) == 1 {
+		if err := s.db.UpdateAllCampaignLeadsExecutive(campaignID, campaign.OrgID, executiveIDs[0]); err != nil {
+			s.logger.Sugar().Errorw("assignCampaignUsers: assign leads", "err", err, "campaign_id", campaignID)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 	}
 
 	// Notify newly assigned users in real time.

@@ -646,13 +646,81 @@ func (s *Server) updateTeamRole(w http.ResponseWriter, r *http.Request) {
 		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 		return
 	}
-	if err := s.db.UpdateUser(id, ac.OrgID, target.FullName, role, target.ManagerID, target.IsActive); err != nil {
+	if err := s.db.UpdateUserRoleInOrg(id, ac.OrgID, role); err != nil {
 		s.logger.Sugar().Errorw("updateTeamRole", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	if role == db.RoleExecutive {
 		_ = s.db.EnsureExecutiveForUser(ac.OrgID, target.FullName, target.Email)
+	} else if exec, err := s.db.GetExecutiveByEmail(ac.OrgID, target.Email); err == nil && exec != nil {
+		if err := s.db.DeleteExecutive(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("updateTeamRole: linked executive delete failed", "err", err)
+		}
+		if err := s.db.UnassignExecutiveFromLeads(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("updateTeamRole: linked executive unassign failed", "err", err)
+		}
+	} else if err != nil {
+		s.logger.Sugar().Warnw("updateTeamRole: linked executive lookup failed", "err", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+// ── POST /api/team/{id}/reset-password ───────────────────────────────────────
+
+// @Summary     Reset team member password
+// @Description Sets a new password for a team member in the same org. Requires Admin role.
+// @Tags        team
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id    path  int64                    true  "User ID"
+// @Param       body  body  object{password=string}  true  "New password"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/team/{id}/reset-password [post]
+func (s *Server) resetTeamMemberPassword(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if strings.TrimSpace(body.Password) == "" {
+		writeFieldError(w, http.StatusBadRequest, "Password is required.", map[string]string{"password": "Password is required"})
+		return
+	}
+	target, err := s.db.GetUserByIDInOrg(id, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("resetTeamMemberPassword: lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	hash, err := db.HashPassword(body.Password)
+	if err != nil {
+		s.logger.Sugar().Errorw("resetTeamMemberPassword: hash", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := s.db.UpdateUserPassword(id, hash); err != nil {
+		s.logger.Sugar().Errorw("resetTeamMemberPassword: update", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
@@ -715,6 +783,16 @@ func (s *Server) deleteTeamMember(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("deleteTeamMember", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if exec, err := s.db.GetExecutiveByEmail(ac.OrgID, target.Email); err == nil && exec != nil {
+		if err := s.db.DeleteExecutive(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteTeamMember: linked executive delete failed", "err", err)
+		}
+		if err := s.db.UnassignExecutiveFromLeads(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteTeamMember: linked executive unassign failed", "err", err)
+		}
+	} else if err != nil {
+		s.logger.Sugar().Warnw("deleteTeamMember: linked executive lookup failed", "err", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }

@@ -372,6 +372,7 @@ export default function CampaignDetail({
   const toast = useToast();
   const confirm = useConfirm();
   const { currentUser } = useAuth();
+  const isExecutiveUser = currentUser?.role === 'Executive';
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -399,6 +400,9 @@ export default function CampaignDetail({
   const [detailExecSearch, setDetailExecSearch] = useState('');
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
+  const currentCampaignId = Number(
+    selectedCampaign?.id || selectedCampaign?.campaign_id || selectedCampaign?.campaignId || 0
+  );
 
   // ── Lead-table pagination ───────────────────────────────────────────────────
   const PAGE_SIZE = 100;
@@ -427,6 +431,10 @@ export default function CampaignDetail({
   // the campaign default used by AI/server calls.
   const [browserAccountId, setBrowserAccountId] = useState('');
   const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
+  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
+  const effectiveBrowserAccountId = browserAccountId || selectedExotelAccountId;
+  const effectiveBrowserAccount = orgExotelAccounts.find(a => String(a.id) === String(effectiveBrowserAccountId));
 
   const openScheduleModal = useCallback((lead, editing = false) => {
     setScheduleEditingCallId(editing ? Number(lead?.scheduled_call_id || 0) : 0);
@@ -637,11 +645,11 @@ export default function CampaignDetail({
 
   const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
   const requireSelectedDialAccount = useCallback(() => {
-    const selected = String(browserAccountId || '').trim();
+    const selected = String(effectiveBrowserAccountId || '').trim();
     if (selected) return true;
     toast('Select a browser call account before dialing');
     return false;
-  }, [browserAccountId, toast]);
+  }, [effectiveBrowserAccountId, toast]);
 
   const handleDialClick = async (lead) => {
     if (!requireSelectedDialAccount()) return;
@@ -742,7 +750,7 @@ export default function CampaignDetail({
             const id = autoDialQueueRef.current[i];
             const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
             if (!lead) continue;
-            const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+            const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
             if (started) {
               setAutoDialActiveId(lead.id);
               return;
@@ -775,7 +783,7 @@ export default function CampaignDetail({
     setDispositionRemarks(finishedLead.follow_up_note || '');
     setDispositionFollowUpAt(finishedLead.follow_up_at ? finishedLead.follow_up_at.slice(0, 16) : '');
     setShowDispositionModal(true);
-  }, [toast, triggerBrowserCall, selectedCampaign.id, browserAccountId]);
+  }, [toast, triggerBrowserCall, selectedCampaign.id, effectiveBrowserAccountId]);
 
   const saveDispositionAndAdvance = useCallback(async (stopAfterSave) => {
     if (!dispositionLead) return;
@@ -823,16 +831,16 @@ export default function CampaignDetail({
 
     // Advance to the next lead only after the browser can place the call.
     setTimeout(async () => {
-      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
       if (started) {
         setAutoDialActiveId(dispositionNextLead.id);
       }
     }, 400);
-  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, browserAccountId, toast]);
+  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, effectiveBrowserAccountId, toast]);
 
   const startBrowserCallWithAutoDial = async (lead) => {
     if (!requireSelectedDialAccount()) return;
-    const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
+    const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, effectiveBrowserAccountId);
     if (started && autoDialEnabled) {
       setAutoDialActiveId(lead.id);
       const ids = paginatedLeads.map(l => l.id);
@@ -1027,8 +1035,6 @@ export default function CampaignDetail({
   }, []);
 
   // ── Exotel account selector state ─────────────────────────────────────────
-  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
-  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
   const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
 
   const [humanCallLead, setHumanCallLead] = useState(null); // lead being human-called
@@ -1307,12 +1313,13 @@ export default function CampaignDetail({
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
               className="form-input"
-              value={browserAccountId}
+              value={effectiveBrowserAccountId}
               onChange={e => {
                 const v = e.target.value;
-                setBrowserAccountId(v);
+                const override = v === selectedExotelAccountId ? '' : v;
+                setBrowserAccountId(override);
                 try {
-                  localStorage.setItem(browserAccountKey(selectedCampaign.id), v);
+                  localStorage.setItem(browserAccountKey(selectedCampaign.id), override);
                 } catch { /* ignore */ }
               }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
@@ -1325,11 +1332,8 @@ export default function CampaignDetail({
             </select>
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
-            {browserAccountId
-              ? (() => {
-                  const a = orgExotelAccounts.find(x => String(x.id) === browserAccountId);
-                  return a ? `Dialing from: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
-                })()
+            {effectiveBrowserAccount
+              ? `Dialing from: ${effectiveBrowserAccount.name || effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.caller_id || 'no caller ID'}${browserAccountId ? '' : ' (campaign default)'}`
               : orgExotelAccounts.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
                 : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
@@ -2088,18 +2092,28 @@ export default function CampaignDetail({
                     </td>
                     <td style={tdStyle}>
                       <select className="form-input" value={lead.executive_id || ''}
+                        disabled={isExecutiveUser}
                         onChange={async e => {
+                          if (isExecutiveUser) return;
                           const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
+                          if (!currentCampaignId) {
+                            toast('Campaign is still loading. Please try again.');
+                            return;
+                          }
                           try {
-                            await apiFetch(`${API_URL}/leads/${lead.id}/executive`, {
+                            const res = await apiFetch(`${API_URL}/leads/${lead.id}/executive`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ executive_id: execId, campaign_id: selectedCampaign.id })
+                              body: JSON.stringify({ executive_id: execId, campaign_id: currentCampaignId })
                             });
-                            fetchCampaignLeads(selectedCampaign.id);
-                          } catch (err) { toast('Failed to assign executive'); }
+                            if (!res.ok) {
+                              const data = await res.json().catch(() => ({}));
+                              throw new Error(data.error || 'Failed to assign executive');
+                            }
+                            fetchCampaignLeads(currentCampaignId);
+                          } catch (err) { toast(err.message || 'Failed to assign executive'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
+                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120, opacity: isExecutiveUser ? 0.7 : 1, cursor: isExecutiveUser ? 'not-allowed' : 'pointer' }}>
                         <option value="">— Unassigned —</option>
                         {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                       </select>

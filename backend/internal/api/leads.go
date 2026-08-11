@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -551,13 +552,13 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/leads/{id}/executive ─────────────────────────────────────────────
 
 // @Summary     Update lead executive
-// @Description Assigns or unassigns an executive for a lead without re-validating name/phone.
+// @Description Assigns or unassigns an executive for a lead in one campaign without re-validating name/phone.
 // @Tags        leads
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id    path      int64                       true  "Lead ID"
-// @Param       body  body      object{executive_id=int64}  true  "Executive ID (0 to unassign)"
+// @Param       body  body      object{executive_id=int64,campaign_id=int64}  true  "Executive ID (0 to unassign) and campaign ID"
 // @Success     200   {object}  BoolResponse
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
@@ -566,12 +567,21 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/leads/{id}/executive [put]
 func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.isSuperAdmin(ac.Email) {
+		user, err := s.db.GetUserByEmail(ac.Email)
+		if err != nil {
+			s.logger.Sugar().Errorw("updateLeadExecutive: user lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if user != nil && user.Role == db.RoleExecutive {
+			writeError(w, http.StatusForbidden, "executives cannot reassign leads")
+			return
+		}
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	var body struct {
@@ -582,11 +592,51 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if body.CampaignID > 0 {
-		err = s.db.UpdateCampaignLeadExecutive(body.CampaignID, id, ac.OrgID, body.ExecutiveID)
-	} else {
-		err = s.db.UpdateLeadExecutive(id, ac.OrgID, body.ExecutiveID)
+	if body.CampaignID <= 0 {
+		body.CampaignID = campaignIDFromReferer(r)
+		if body.CampaignID <= 0 {
+			writeError(w, http.StatusBadRequest, "campaign_id is required")
+			return
+		}
 	}
+	campaign, err := s.db.GetCampaignByID(body.CampaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateLeadExecutive: campaign lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil || (campaign.OrgID != ac.OrgID && !s.isSuperAdmin(ac.Email)) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if !s.canViewCampaign(ac, body.CampaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	lead, err := s.db.GetLeadByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateLeadExecutive: lead lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if lead == nil || (lead.OrgID != 0 && lead.OrgID != campaign.OrgID && !s.isSuperAdmin(ac.Email)) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	executiveID := body.ExecutiveID
+	if body.ExecutiveID > 0 {
+		executiveID, err = s.db.ResolveExecutiveID(campaign.OrgID, body.ExecutiveID)
+		if err != nil {
+			s.logger.Sugar().Errorw("updateLeadExecutive: executive lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if executiveID == 0 {
+			writeError(w, http.StatusBadRequest, "executive not found")
+			return
+		}
+	}
+	err = s.db.UpdateCampaignLeadExecutive(body.CampaignID, id, campaign.OrgID, executiveID)
 	if err != nil {
 		s.logger.Sugar().Errorw("updateLeadExecutive", "err", err)
 		if err.Error() == "lead not found" {
@@ -596,7 +646,32 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if err := s.db.UpdateLeadExecutive(id, campaign.OrgID, 0); err != nil {
+		s.logger.Sugar().Warnw("updateLeadExecutive: clear legacy lead executive failed", "err", err, "lead_id", id)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func campaignIDFromReferer(r *http.Request) int64 {
+	ref := r.Header.Get("Referer")
+	if ref == "" {
+		return 0
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return 0
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] != "campaigns" {
+			continue
+		}
+		id, err := strconv.ParseInt(parts[i+1], 10, 64)
+		if err == nil && id > 0 {
+			return id
+		}
+	}
+	return 0
 }
 
 // ── PUT /api/leads/{id}/source ────────────────────────────────────────────────

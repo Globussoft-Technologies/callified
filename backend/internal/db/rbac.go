@@ -162,6 +162,12 @@ func (d *DB) UpdateUser(userID, orgID int64, fullName, role string, managerID *i
 	return err
 }
 
+// UpdateUserRoleInOrg changes only the dashboard role for a user scoped to an org.
+func (d *DB) UpdateUserRoleInOrg(userID, orgID int64, role string) error {
+	_, err := d.pool.Exec(`UPDATE users SET role=? WHERE id=? AND org_id=?`, role, userID, orgID)
+	return err
+}
+
 // UpdateUserActive toggles the is_active flag for a user. Used by Admin or a
 // Team Leader for their own reports.
 func (d *DB) UpdateUserActive(userID int64, isActive bool) error {

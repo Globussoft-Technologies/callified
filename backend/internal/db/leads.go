@@ -11,21 +11,21 @@ import (
 
 // Lead mirrors the leads table.
 type Lead struct {
-	ID           int64   `json:"id"`
-	OrgID        int64   `json:"org_id"`
-	FirstName    string  `json:"first_name"`
-	LastName     string  `json:"last_name"`
-	Phone        string  `json:"phone"`
-	Source       string  `json:"source"`
-	Status       string  `json:"status"`
-	FollowUpNote string  `json:"follow_up_note"`
-	FollowUpAt   string  `json:"follow_up_at"`
-	Interest     string  `json:"interest"`
-	Company      string  `json:"company"`
-	ExternalID   string  `json:"external_id"`
-	CRMProvider  string  `json:"crm_provider"`
-	ExecutiveID  int64   `json:"executive_id"`
-	CreatedAt    string  `json:"created_at"`
+	ID           int64  `json:"id"`
+	OrgID        int64  `json:"org_id"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
+	Phone        string `json:"phone"`
+	Source       string `json:"source"`
+	Status       string `json:"status"`
+	FollowUpNote string `json:"follow_up_note"`
+	FollowUpAt   string `json:"follow_up_at"`
+	Interest     string `json:"interest"`
+	Company      string `json:"company"`
+	ExternalID   string `json:"external_id"`
+	CRMProvider  string `json:"crm_provider"`
+	ExecutiveID  int64  `json:"executive_id"`
+	CreatedAt    string `json:"created_at"`
 }
 
 func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
@@ -72,6 +72,10 @@ const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.pho
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
 func execFilterClause(execIDs []int64, apply bool) (string, []any) {
+	return execFilterClauseForAlias("l", execIDs, apply)
+}
+
+func execFilterClauseForAlias(alias string, execIDs []int64, apply bool) (string, []any) {
 	_ = apply
 	if len(execIDs) == 0 {
 		return "", nil
@@ -82,7 +86,7 @@ func execFilterClause(execIDs []int64, apply bool) (string, []any) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	return fmt.Sprintf("COALESCE(l.executive_id, 0) IN (%s)", strings.Join(placeholders, ",")), args
+	return fmt.Sprintf("COALESCE(%s.executive_id, 0) IN (%s)", alias, strings.Join(placeholders, ",")), args
 }
 
 // GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
@@ -204,10 +208,10 @@ type LeadWithCampaign struct {
 // SearchLeadsWithCampaigns searches leads by name/phone in the org and returns
 // one row per campaign membership. If statuses is provided, only leads whose
 // status matches one of the values are returned.
-// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+// When applyExecFilter is true, only campaign-lead rows whose executive_id is in execIDs are returned.
 func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string, execIDs []int64, applyExecFilter bool) ([]LeadWithCampaign, error) {
 	like := "%" + query + "%"
-	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.executive_id,0), c.id, c.name
+	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(cl.executive_id,0), c.id, c.name
 		FROM leads l
 		LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
 		LEFT JOIN campaigns c ON c.id = cl.campaign_id
@@ -221,7 +225,7 @@ func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []stri
 		}
 		q += ` AND l.status IN (` + strings.Join(placeholders, ",") + `)`
 	}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := execFilterClauseForAlias("cl", execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}

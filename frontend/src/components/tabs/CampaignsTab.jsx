@@ -67,7 +67,8 @@ export default function CampaignsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchCampaigns();
-    apiFetch(`${API_URL}/exotel-accounts`)
+    apiFetch(`${API_URL}/exotel-accounts/options`)
+      .then(r => r.ok ? r.json() : [])
       .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
       .catch(() => {});
     apiFetch(`${API_URL}/executives`)
@@ -367,19 +368,10 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
+      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
-      if (createForm.executive_ids?.length > 0 && newCampaign?.id) {
-        try {
-          await apiFetch(`${API_URL}/campaigns/${newCampaign.id}/executives`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ executive_ids: createForm.executive_ids })
-          });
-        } catch (e) { console.error('assign executives failed', e); }
-      }
       fetchCampaigns();
     } catch (err) {
       console.error(err);
@@ -437,15 +429,6 @@ export default function CampaignsTab({
           channel: editCampaignForm.channel || 'voice'
         })
       });
-      try {
-        await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}/executives`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            executive_ids: (editCampaignForm.executive_ids || []).map(id => parseInt(id, 10)).filter(id => id > 0)
-          })
-        });
-      } catch (e) { console.error('assign executives failed', e); }
       setShowEditCampaignModal(false);
       fetchCampaigns();
       if (selectedCampaign?.id === editCampaignForm.id) {
@@ -844,6 +827,17 @@ export default function CampaignsTab({
     background: bg, color, fontSize: 12, fontWeight: 600,
     cursor: 'pointer', fontFamily: 'inherit',
   });
+  const browserProviderLabel = (campaign) => {
+    if (campaign.channel === 'whatsapp') return 'WhatsApp';
+    const accountId = campaign.exotel_account_id || campaign.exotelAccountId;
+    if (!accountId) return 'Org default';
+    const account = orgExotelAccounts.find(a => String(a.id) === String(accountId));
+    if (!account) return `Account #${accountId}`;
+    const rawProvider = account.provider || 'Exotel';
+    const provider = String(rawProvider).charAt(0).toUpperCase() + String(rawProvider).slice(1);
+    const name = account.name || account.account_sid || `Account #${account.id}`;
+    return `${provider} · ${name}${account.caller_id ? ` · ${account.caller_id}` : ''}`;
+  };
 
   return (
     <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
@@ -910,6 +904,10 @@ export default function CampaignsTab({
                     </span>
                   )}
                   {statusBadge(campaign.status || 'active')}
+                </div>
+
+                <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.35 }}>
+                  <span style={{ fontWeight: 700, color: '#374151' }}>Browser Provider:</span> {browserProviderLabel(campaign)}
                 </div>
 
                 {/* Stats */}

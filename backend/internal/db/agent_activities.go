@@ -83,6 +83,132 @@ type AgentActivitySummary struct {
 	Conversions   int64  `json:"conversions"`
 }
 
+// AgentLeadSummary is the on-screen lead/call summary for one agent/executive.
+type AgentLeadSummary struct {
+	UserID        int64  `json:"user_id"`
+	Email         string `json:"email"`
+	FullName      string `json:"full_name"`
+	Role          string `json:"role"`
+	AssignedLeads int64  `json:"assigned_leads"`
+	NewLeads      int64  `json:"new_leads"`
+	CalledLeads   int64  `json:"called_leads"`
+	Qualified     int64  `json:"qualified"`
+	Appointments  int64  `json:"appointments"`
+	TotalCalls    int64  `json:"total_calls"`
+	Connected     int64  `json:"connected"`
+	Completed     int64  `json:"completed"`
+	Unanswered    int64  `json:"unanswered"`
+	Busy          int64  `json:"busy"`
+	Failed        int64  `json:"failed"`
+	Recordings    int64  `json:"recordings"`
+	NotesAdded    int64  `json:"notes_added"`
+}
+
+// GetAgentLeadSummary returns on-screen performance rows scoped by org,
+// optional campaign, user, and date range. Call metrics are attributed to the
+// user who made the call, regardless of who the lead is assigned to.
+func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, userID int64) ([]AgentLeadSummary, error) {
+	callCampaignFilter := ""
+	outcomeCampaignFilter := ""
+	if campaignID > 0 {
+		callCampaignFilter = "AND aa.campaign_id=?"
+		outcomeCampaignFilter = "AND aa.campaign_id=?"
+	}
+	userFilter := ""
+	if userID > 0 {
+		userFilter = "AND u.id=?"
+	}
+
+	q := fmt.Sprintf(`
+		SELECT
+			u.id,
+			u.email,
+			COALESCE(u.full_name,''),
+			COALESCE(u.role,'Agent'),
+			0 AS assigned_leads,
+			0 AS new_leads,
+			0 AS called_leads,
+			0 AS qualified,
+			COALESCE(outcomes.appointments, 0) AS appointments,
+			COALESCE(calls.total_calls, 0) AS total_calls,
+			COALESCE(calls.connected, 0) AS connected,
+			COALESCE(calls.completed, 0) AS completed,
+			COALESCE(calls.unanswered, 0) AS unanswered,
+			COALESCE(calls.busy, 0) AS busy,
+			COALESCE(calls.failed, 0) AS failed,
+			COALESCE(calls.recordings, 0) AS recordings,
+			COALESCE(outcomes.notes_added, 0) AS notes_added
+		FROM users u
+		LEFT JOIN (
+			SELECT
+				aa.user_id,
+				COUNT(*) AS total_calls,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 1 ELSE 0 END) AS connected,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END) AS completed,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer') THEN 1 ELSE 0 END) AS unanswered,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 1 ELSE 0 END) AS busy,
+				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled') OR cl.status IN ('failed','cancelled') THEN 1 ELSE 0 END) AS failed,
+				SUM(CASE WHEN cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings
+			FROM agent_activities aa
+			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
+				AND cl.call_sid=JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid'))
+			WHERE aa.org_id=?
+				AND aa.activity_type='call'
+				AND aa.created_at >= ?
+				AND aa.created_at <= ?
+				%s
+			GROUP BY aa.user_id
+		) calls ON calls.user_id=u.id
+		LEFT JOIN (
+			SELECT
+				aa.user_id,
+				SUM(CASE WHEN aa.activity_type='status_update' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.new_status'))='Appointment Set' THEN 1 ELSE 0 END) AS appointments,
+				SUM(CASE WHEN aa.activity_type='note' THEN 1 ELSE 0 END) AS notes_added
+			FROM agent_activities aa
+			WHERE aa.org_id=?
+				AND aa.created_at >= ?
+				AND aa.created_at <= ?
+				AND aa.activity_type IN ('status_update','note')
+				%s
+			GROUP BY aa.user_id
+		) outcomes ON outcomes.user_id=u.id
+		WHERE u.org_id=?
+			AND u.role IN ('Agent','Executive','TeamLeader')
+			%s
+		ORDER BY u.full_name, u.email`, callCampaignFilter, outcomeCampaignFilter, userFilter)
+
+	finalArgs := []any{orgID, from, to}
+	if campaignID > 0 {
+		finalArgs = append(finalArgs, campaignID)
+	}
+	finalArgs = append(finalArgs, orgID, from, to)
+	if campaignID > 0 {
+		finalArgs = append(finalArgs, campaignID)
+	}
+	finalArgs = append(finalArgs, orgID)
+	if userID > 0 {
+		finalArgs = append(finalArgs, userID)
+	}
+
+	rows, err := d.pool.Query(q, finalArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []AgentLeadSummary
+	for rows.Next() {
+		var s AgentLeadSummary
+		err := rows.Scan(&s.UserID, &s.Email, &s.FullName, &s.Role, &s.AssignedLeads, &s.NewLeads,
+			&s.CalledLeads, &s.Qualified, &s.Appointments, &s.TotalCalls, &s.Connected, &s.Completed,
+			&s.Unanswered, &s.Busy, &s.Failed, &s.Recordings, &s.NotesAdded)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, s)
+	}
+	return list, rows.Err()
+}
+
 // GetAgentActivitySummary returns aggregated agent productivity metrics for a date range.
 func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID, userID int64) ([]AgentActivitySummary, error) {
 	campaignFilter := ""
@@ -91,10 +217,15 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 		campaignFilter = "AND aa.campaign_id=?"
 		args = append(args, campaignID)
 	}
-	userFilter := ""
+	userJoinFilter := ""
+	userWhereFilter := ""
 	if userID > 0 {
-		userFilter = "AND aa.user_id=?"
-		args = append(args, userID)
+		userWhereFilter = "AND u.id=?"
+	}
+
+	finalArgs := append(args, orgID)
+	if userID > 0 {
+		finalArgs = append(finalArgs, userID)
 	}
 
 	rows, err := d.pool.Query(fmt.Sprintf(`
@@ -106,11 +237,11 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='unanswered' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer') THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='failed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
-			(SELECT COALESCE(p.total_idle_time_s,0) FROM agent_presence p WHERE p.user_id=u.id) AS idle_time_s,
+			COALESCE((SELECT p.total_idle_time_s FROM agent_presence p WHERE p.user_id=u.id LIMIT 1), 0) AS idle_time_s,
 			COALESCE(SUM(CASE WHEN aa.activity_type='break' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='status_update' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='note' THEN 1 ELSE 0 END), 0),
@@ -124,8 +255,9 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			%s
 			%s
 		WHERE u.org_id=?
+			%s
 		GROUP BY u.id, u.email, u.full_name, u.role
-		ORDER BY u.full_name, u.email`, campaignFilter, userFilter), append(args, orgID)...)
+		ORDER BY u.full_name, u.email`, campaignFilter, userJoinFilter, userWhereFilter), finalArgs...)
 	if err != nil {
 		return nil, err
 	}

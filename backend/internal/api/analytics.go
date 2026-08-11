@@ -207,6 +207,68 @@ func (s *Server) scoredLeads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(leads))
 }
 
+// GET /api/analytics/agent-lead-summary
+// @Summary     Agent lead summary
+// @Description Returns assigned lead and call outcome summaries by agent/executive for the selected date range.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
+// @Param       to           query  string  false  "End date (YYYY-MM-DD)"
+// @Param       campaign_id  query  int64   false  "Campaign ID (0 = all)"
+// @Param       user_id      query  int64   false  "Agent/user ID"
+// @Success     200  {array} db.AgentLeadSummary
+// @Failure     400  {object} ErrorResponse
+// @Failure     401  {object} ErrorResponse
+// @Failure     403  {object} ErrorResponse
+// @Failure     500  {object} ErrorResponse
+// @Router      /api/analytics/agent-lead-summary [get]
+func (s *Server) agentLeadSummary(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	if fromStr == "" {
+		fromStr = time.Now().UTC().Format("2006-01-02")
+	}
+	if toStr == "" {
+		toStr = fromStr
+	}
+	from, err := time.Parse("2006-01-02", fromStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid from date")
+		return
+	}
+	to, err := time.Parse("2006-01-02", toStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid to date")
+		return
+	}
+	to = to.Add(24*time.Hour - time.Second)
+
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
+	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	if db.IsAgentLikeRole(ac.Role) {
+		if userID != 0 && userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		userID = ac.UserID
+	}
+
+	rows, err := s.db.GetAgentLeadSummary(ac.OrgID, from, to, campaignID, userID)
+	if err != nil {
+		s.logger.Sugar().Errorw("agentLeadSummary", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(rows))
+}
+
 func formatSeconds(sec int64) string {
 	if sec <= 0 {
 		return "0s"

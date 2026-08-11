@@ -253,6 +253,16 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if exec, err := s.db.GetExecutiveByEmail(ac.OrgID, target.Email); err == nil && exec != nil {
+		if err := s.db.DeleteExecutive(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteUser: linked executive delete failed", "err", err)
+		}
+		if err := s.db.UnassignExecutiveFromLeads(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteUser: linked executive unassign failed", "err", err)
+		}
+	} else if err != nil {
+		s.logger.Sugar().Warnw("deleteUser: linked executive lookup failed", "err", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
 

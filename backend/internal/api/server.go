@@ -348,6 +348,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/team/invites/{id}/link", adminAuth(s.getInviteLink))
 	mux.HandleFunc("DELETE /api/team/invites/{id}", adminAuth(s.cancelInvite))
 	mux.HandleFunc("PUT /api/team/{id}/role", adminAuth(s.updateTeamRole))
+	mux.HandleFunc("POST /api/team/{id}/reset-password", adminAuth(s.resetTeamMemberPassword))
 	mux.HandleFunc("DELETE /api/team/{id}", adminAuth(s.deleteTeamMember))
 
 	// ── User Management (RBAC) ────────────────────────────────────────────────
@@ -468,6 +469,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/analytics/export", adminAuth(s.analyticsExportCSV))
 	mux.HandleFunc("GET /api/analytics/report", adminAuth(s.analyticsExportReport))
 	mux.HandleFunc("GET /api/analytics/scored-leads", adminAuth(s.scoredLeads))
+	mux.HandleFunc("GET /api/analytics/agent-lead-summary", adminAuth(s.agentLeadSummary))
 	mux.HandleFunc("GET /api/analytics/agent-report", adminAuth(s.agentReportXLSX))
 
 	// ── Billing (Phase 3B) ────────────────────────────────────────────────────
