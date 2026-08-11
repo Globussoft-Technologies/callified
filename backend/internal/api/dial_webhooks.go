@@ -435,6 +435,97 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// ── POST /webhook/tata/status ────────────────────────────────────────────────
+// Tata Smartflo/CloudPhone posts call lifecycle updates here.
+func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.Contains(contentType, "json") && r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
+	} else if err := r.ParseMultipartForm(32 << 20); err != nil {
+		_ = r.ParseForm()
+	}
+
+	value := func(keys ...string) string {
+		for _, k := range keys {
+			if v := r.FormValue(k); v != "" {
+				return v
+			}
+			if body != nil {
+				if v, ok := body[k].(string); ok && v != "" {
+					return v
+				}
+				if v, ok := body[k].(float64); ok && v != 0 {
+					return fmt.Sprintf("%.0f", v)
+				}
+			}
+		}
+		return ""
+	}
+
+	callSid := value("CallSid", "call_sid", "callSid", "ref_id", "refId", "call_id", "callId", "uuid", "id")
+	callStatus := value("Status", "status", "CallStatus", "call_status", "callStatus", "DetailedStatus", "detailed_status")
+	recordingURL := value("RecordingUrl", "recording_url", "recordingUrl")
+	var callDurationS float64
+	if d := value("CallDuration", "Duration", "call_duration", "duration"); d != "" {
+		fmt.Sscanf(d, "%f", &callDurationS)
+	}
+
+	s.logger.Info("tataStatus: received",
+		zap.String("call_sid", callSid),
+		zap.String("raw_status", callStatus),
+		zap.String("content_type", r.Header.Get("Content-Type")),
+		zap.String("all_form", r.Form.Encode()),
+		zap.Any("json_body", body),
+	)
+
+	if callSid == "" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	status := mapTataStatus(callStatus)
+	rawLower := strings.ToLower(callStatus)
+	if status == "in-progress" || rawLower == "answered" || rawLower == "connected" || rawLower == "in-progress" || rawLower == "inprogress" {
+		s.store.MarkBridgeAnswered(r.Context(), callSid)
+		if internalCallSid := value("call_id", "callId", "CallSid", "call_sid"); internalCallSid != "" && internalCallSid != callSid {
+			s.store.MarkBridgeAnswered(r.Context(), internalCallSid)
+		}
+	}
+	if err := s.db.UpdateCallLogStatus(callSid, status); err != nil {
+		s.logger.Warn("tataStatus: UpdateCallLogStatus",
+			zap.String("call_sid", callSid), zap.Error(err))
+	}
+	if callDurationS > 0 {
+		_ = s.db.UpdateHumanCallTranscriptDuration(callSid, callDurationS)
+	}
+	if recordingURL != "" {
+		go s.fetchAndSaveRecording(callSid, recordingURL)
+	}
+
+	if status == "completed" || status == "failed" || status == "no-answer" || status == "busy" {
+		cl, _ := s.db.GetCallLogByCallSid(callSid)
+		if cl != nil {
+			var leadName string
+			if lead, err := s.db.GetLeadByID(cl.LeadID); err == nil && lead != nil {
+				leadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+			}
+			s.store.EmitCampaignEvent(r.Context(), cl.CampaignID, leadName, cl.Phone, status,
+				fmt.Sprintf("Tata: %s", callStatus))
+			s.dispatcher.Dispatch(r.Context(), cl.OrgID, "call.completed", map[string]any{
+				"call_sid":    callSid,
+				"status":      status,
+				"lead_id":     cl.LeadID,
+				"campaign_id": cl.CampaignID,
+			})
+			s.completeRetryIfAnswered(cl.LeadID, cl.CampaignID, cl.OrgID, status)
+			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 // ── GET|POST /exotel/recording-ready ─────────────────────────────────────────
 // Exotel calls this when a recording is ready for download.
 
@@ -526,6 +617,27 @@ func mapExotelStatus(s string) string {
 	case "busy":
 		return "busy"
 	case "no-answer", "noanswer":
+		return "no-answer"
+	default:
+		return s
+	}
+}
+
+func mapTataStatus(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "queued", "initiated", "new":
+		return "initiated"
+	case "ringing", "dialing":
+		return "ringing"
+	case "answered", "answer", "connected", "in-progress", "inprogress", "live":
+		return "in-progress"
+	case "completed", "complete", "ended", "hangup", "hangup_by_agent", "hangup_by_customer":
+		return "completed"
+	case "failed", "fail", "error", "rejected":
+		return "failed"
+	case "busy", "user_busy":
+		return "busy"
+	case "no-answer", "noanswer", "no_answer", "missed", "not_answered", "unanswered", "cancelled", "canceled":
 		return "no-answer"
 	default:
 		return s

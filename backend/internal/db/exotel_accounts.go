@@ -20,6 +20,7 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 			caller_id VARCHAR(50) NOT NULL,
 			app_id VARCHAR(255) DEFAULT '',
 			app_type VARCHAR(20) DEFAULT 'exoml',
+			direction VARCHAR(20) DEFAULT 'outbound',
 			region VARCHAR(50) DEFAULT '',
 			subdomain VARCHAR(255) DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -32,6 +33,7 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 	// Backward-compat: existing rows created before these columns were added
 	// default to the legacy ExoML XML behaviour and the global Exotel cluster.
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN app_type VARCHAR(20) DEFAULT 'exoml'`)
+	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN direction VARCHAR(20) DEFAULT 'outbound'`)
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN region VARCHAR(50) DEFAULT ''`)
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN subdomain VARCHAR(255) DEFAULT ''`)
 	return nil
@@ -49,11 +51,12 @@ type OrgExotelAccount struct {
 	APIToken   string `json:"api_token"`  // Exotel: API Token | Twilio: API Key SID (SK…)
 	APISecret  string `json:"api_secret"` // Twilio only: API Secret
 	AccountSID string `json:"account_sid"`
-	CallerID   string `json:"caller_id"`  // Exotel: Caller ID | Twilio: Phone Number
-	AppID      string `json:"app_id"`     // Exotel: App ID    | Twilio: TwiML App SID
-	AppType    string `json:"app_type"`   // Exotel: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON)
-	Region     string `json:"region"`     // Exotel region: in, us, sg, etc.
-	Subdomain  string `json:"subdomain"`  // Exotel account subdomain override
+	CallerID   string `json:"caller_id"` // Exotel: Caller ID | Twilio: Phone Number
+	AppID      string `json:"app_id"`    // Exotel: App ID    | Twilio: TwiML App SID
+	AppType    string `json:"app_type"`  // Exotel: 'exoml' (legacy XML) or 'voicebot' (AgentStream JSON)
+	Direction  string `json:"direction"` // "outbound" or "inbound"
+	Region     string `json:"region"`    // Exotel region: in, us, sg, etc.
+	Subdomain  string `json:"subdomain"` // Exotel account subdomain override
 	CreatedAt  string `json:"created_at"`
 }
 
@@ -62,7 +65,7 @@ func (d *DB) GetOrgExotelAccounts(orgID int64) ([]OrgExotelAccount, error) {
 	rows, err := d.pool.Query(`
 		SELECT id, org_id, COALESCE(provider,'exotel'), name, api_key, api_token,
 		       COALESCE(api_secret,''), account_sid, caller_id,
-		       COALESCE(app_id,''), COALESCE(app_type,'exoml'),
+		       COALESCE(app_id,''), COALESCE(app_type,'exoml'), COALESCE(direction,'outbound'),
 		       COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM org_exotel_accounts WHERE org_id=? ORDER BY id ASC`, orgID)
 	if err != nil {
@@ -73,7 +76,7 @@ func (d *DB) GetOrgExotelAccounts(orgID int64) ([]OrgExotelAccount, error) {
 	for rows.Next() {
 		var a OrgExotelAccount
 		if err := rows.Scan(&a.ID, &a.OrgID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
-			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
+			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType, &a.Direction,
 			&a.Region, &a.Subdomain, &a.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -88,11 +91,11 @@ func (d *DB) GetOrgExotelAccountByID(id, orgID int64) (*OrgExotelAccount, error)
 	err := d.pool.QueryRow(`
 		SELECT id, org_id, COALESCE(provider,'exotel'), name, api_key, api_token,
 		       COALESCE(api_secret,''), account_sid, caller_id,
-		       COALESCE(app_id,''), COALESCE(app_type,'exoml'),
+		       COALESCE(app_id,''), COALESCE(app_type,'exoml'), COALESCE(direction,'outbound'),
 		       COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM org_exotel_accounts WHERE id=? AND org_id=?`, id, orgID).
 		Scan(&a.ID, &a.OrgID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
-			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType,
+			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType, &a.Direction,
 			&a.Region, &a.Subdomain, &a.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -101,14 +104,17 @@ func (d *DB) GetOrgExotelAccountByID(id, orgID int64) (*OrgExotelAccount, error)
 }
 
 // CreateOrgExotelAccount inserts a new account and returns its ID.
-func (d *DB) CreateOrgExotelAccount(orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) (int64, error) {
+func (d *DB) CreateOrgExotelAccount(orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain string) (int64, error) {
 	if appType == "" {
 		appType = "exoml"
 	}
+	if direction == "" {
+		direction = "outbound"
+	}
 	res, err := d.pool.Exec(`
-		INSERT INTO org_exotel_accounts (org_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, region, subdomain)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-		orgID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain)
+		INSERT INTO org_exotel_accounts (org_id, provider, name, api_key, api_token, api_secret, account_sid, caller_id, app_id, app_type, direction, region, subdomain)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		orgID, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain)
 	if err != nil {
 		return 0, err
 	}
@@ -116,15 +122,18 @@ func (d *DB) CreateOrgExotelAccount(orgID int64, provider, name, apiKey, apiToke
 }
 
 // UpdateOrgExotelAccount updates all mutable fields on an existing account.
-func (d *DB) UpdateOrgExotelAccount(id, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) error {
+func (d *DB) UpdateOrgExotelAccount(id, orgID int64, provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain string) error {
 	if appType == "" {
 		appType = "exoml"
 	}
+	if direction == "" {
+		direction = "outbound"
+	}
 	_, err := d.pool.Exec(`
 		UPDATE org_exotel_accounts
-		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, region=?, subdomain=?
+		SET provider=?, name=?, api_key=?, api_token=?, api_secret=?, account_sid=?, caller_id=?, app_id=?, app_type=?, direction=?, region=?, subdomain=?
 		WHERE id=? AND org_id=?`,
-		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain, id, orgID)
+		provider, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, direction, region, subdomain, id, orgID)
 	return err
 }
 
@@ -152,6 +161,29 @@ func (d *DB) GetExotelAppTypeByAppID(appID string) string {
 	return appType
 }
 
+// GetInboundTataAccountByDID returns the inbound Tata account that owns a DID.
+func (d *DB) GetInboundTataAccountByDID(did string) (*OrgExotelAccount, error) {
+	a := &OrgExotelAccount{}
+	err := d.pool.QueryRow(`
+		SELECT id, org_id, COALESCE(provider,'tata'), name, api_key, api_token,
+		       COALESCE(api_secret,''), account_sid, caller_id,
+		       COALESCE(app_id,''), COALESCE(app_type,'exoml'), COALESCE(direction,'inbound'),
+		       COALESCE(region,''), COALESCE(subdomain,''), DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM org_exotel_accounts
+		WHERE provider IN ('tata','smartflo','tata_tele')
+		  AND COALESCE(direction,'outbound')='inbound'
+		  AND REPLACE(REPLACE(caller_id,'+',''),' ','')=REPLACE(REPLACE(?,'+',''),' ','')
+		ORDER BY id DESC
+		LIMIT 1`, did).
+		Scan(&a.ID, &a.OrgID, &a.Provider, &a.Name, &a.APIKey, &a.APIToken,
+			&a.APISecret, &a.AccountSID, &a.CallerID, &a.AppID, &a.AppType, &a.Direction,
+			&a.Region, &a.Subdomain, &a.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return a, err
+}
+
 // GetOrgExotelAccountCreds returns an ExotelCreds from an org-level account.
 // Returns zero-value ExotelCreds (IsSet()=false) when the ID is 0 or not found.
 func (d *DB) GetOrgExotelAccountCreds(accountID, orgID int64) (ExotelCreds, error) {
@@ -171,6 +203,7 @@ func (d *DB) GetOrgExotelAccountCreds(accountID, orgID int64) (ExotelCreds, erro
 		CallerID:   a.CallerID,
 		AppID:      a.AppID,
 		AppType:    a.AppType,
+		Direction:  a.Direction,
 		Region:     a.Region,
 		Subdomain:  a.Subdomain,
 	}, nil

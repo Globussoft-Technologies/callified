@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -40,24 +42,24 @@ type CallData struct {
 // Initiator orchestrates the full dial sequence:
 // DND check → TRAI hours → Redis pending call → provider dial → DB log.
 type Initiator struct {
-	cfg     *config.Config
-	store   *rstore.Store
-	db      *db.DB
-	disp    *webhook.Dispatcher
-	twilio  *TwilioClient
-	exotel  *ExotelClient
-	log     *zap.Logger
+	cfg    *config.Config
+	store  *rstore.Store
+	db     *db.DB
+	disp   *webhook.Dispatcher
+	exotel *ExotelClient
+	tata   *TataClient
+	log    *zap.Logger
 }
 
-// New creates an Initiator wired to both telephony providers.
+// New creates an Initiator wired to the supported telephony providers.
 func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook.Dispatcher, log *zap.Logger) *Initiator {
 	return &Initiator{
 		cfg:    cfg,
 		store:  store,
 		db:     database,
 		disp:   disp,
-		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
 		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, "", cfg.ExotelRegion, cfg.ExotelSubdomain),
+		tata:   NewTataClient(cfg.TataAPIToken, cfg.TataCallerID, cfg.TataAgentNumber, cfg.TataAPIEndpoint),
 		log:    log,
 	}
 }
@@ -176,7 +178,11 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		} else {
 			return "", fmt.Errorf("provider account not found or incomplete")
 		}
-		if data.IsBridge && creds.AppType != "voicebot" {
+		if creds.Direction == "inbound" {
+			return "", fmt.Errorf("selected provider account is inbound-only; choose an outbound account")
+		}
+		isTataProvider := creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele"
+		if data.IsBridge && !isTataProvider && creds.AppType != "voicebot" {
 			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
 		}
 	}
@@ -184,6 +190,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
+	}
+	if creds.Direction == "inbound" {
+		return "", fmt.Errorf("campaign provider account is inbound-only; choose an outbound account")
 	}
 	provider := creds.Provider
 	if provider == "" {
@@ -197,17 +206,18 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 
 	switch provider {
 	case "twilio":
-		var twilioClient *TwilioClient
+		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
+	case "tata", "smartflo", "tata_tele":
+		var tataClient *TataClient
 		if creds.IsSet() {
-			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
-			twilioClient = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
-			twilioClient = i.twilio // global fallback
+			tataClient = i.tata
 		}
-		twimlURL := fmt.Sprintf("%s/webhook/twilio?lead_id=%d&campaign_id=%d",
+		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
-		callSid, err = twilioClient.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
+		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
+		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
@@ -269,6 +279,33 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	return callSid, nil
 }
 
+func tataStreamURL(publicURL string, leadID, campaignID, orgID int64) string {
+	base := strings.TrimRight(publicURL, "/")
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		base = "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		base = "ws://" + strings.TrimPrefix(base, "http://")
+	}
+	u, err := url.Parse(base + "/media-stream/tata")
+	if err != nil {
+		return base + "/media-stream/tata"
+	}
+	q := u.Query()
+	q.Set("provider", "tata")
+	if leadID > 0 {
+		q.Set("lead_id", fmt.Sprint(leadID))
+	}
+	if campaignID > 0 {
+		q.Set("campaign_id", fmt.Sprint(campaignID))
+	}
+	if orgID > 0 {
+		q.Set("org_id", fmt.Sprint(orgID))
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // Hangup ends an in-progress carrier call. It first tries to use the same
 // provider account that placed the call (stored in Redis under the call SID),
 // then falls back to the campaign-linked account. This keeps per-machine
@@ -297,12 +334,13 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 
 	switch provider {
 	case "twilio":
-		var client *TwilioClient
+		return fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
+	case "tata", "smartflo", "tata_tele":
+		var client *TataClient
 		if creds.IsSet() {
-			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
-			client = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+			client = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
-			client = i.twilio
+			client = i.tata
 		}
 		return client.Hangup(ctx, callSid)
 	default: // exotel

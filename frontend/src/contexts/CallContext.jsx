@@ -261,10 +261,26 @@ export function CallProvider({ children }) {
     }
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
-  const handleCampaignDial = useCallback(async (lead, campaignId) => {
+  const getBrowserAccountId = useCallback((campaignId) => {
+    if (!campaignId) return 0;
+    try {
+      const raw = localStorage.getItem(`callified_browser_account_campaign_${campaignId}`);
+      const id = raw ? parseInt(raw, 10) : 0;
+      return isNaN(id) ? 0 : id;
+    } catch {
+      return 0;
+    }
+  }, []);
+
+  const handleCampaignDial = useCallback(async (lead, campaignId, exotelAccountId) => {
     setDialingId(lead.id);
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, { method: "POST" });
+      const accountId = exotelAccountId && !isNaN(exotelAccountId) ? parseInt(exotelAccountId, 10) : getBrowserAccountId(campaignId);
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/dial/${lead.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ exotel_account_id: accountId || 0 }),
+      });
       if (!res.ok) {
         // Surface the backend error so silent failures (especially the
         // 402 "insufficient credits" gate) don't look like nothing happened.
@@ -282,18 +298,7 @@ export function CallProvider({ children }) {
       alert('Network error: ' + (e?.message || 'unknown'));
     }
     setTimeout(() => setDialingId(null), 10000);
-  }, [apiFetch]);
-
-  const getBrowserAccountId = useCallback((campaignId) => {
-    if (!campaignId) return 0;
-    try {
-      const raw = localStorage.getItem(`callified_browser_account_campaign_${campaignId}`);
-      const id = raw ? parseInt(raw, 10) : 0;
-      return isNaN(id) ? 0 : id;
-    } catch {
-      return 0;
-    }
-  }, []);
+  }, [apiFetch, getBrowserAccountId]);
 
   const ensureMicrophoneAvailable = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {

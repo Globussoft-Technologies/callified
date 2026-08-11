@@ -131,11 +131,12 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	var err error
 	if provider != nil {
 		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
-			Transcript:   transcript,
-			SystemPrompt: sess.SystemPrompt,
-			History:      history[:max(0, len(history)-1)], // exclude the turn we just added
-			Language:     sess.Language,
-			MaxTokens:    sess.MaxTokens(transcript),
+			Transcript:              transcript,
+			SystemPrompt:            sess.SystemPrompt,
+			History:                 history[:max(0, len(history)-1)], // exclude the turn we just added
+			Language:                sess.Language,
+			MaxTokens:               sess.MaxTokens(transcript),
+			DropIncompleteRemainder: sess.IsInbound,
 		}, func(chunk llm.SentenceChunk) {
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk
@@ -317,11 +318,21 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	}
 
 	payloadB64 := base64.StdEncoding.EncodeToString(audioBytes)
-	frame, _ := json.Marshal(map[string]interface{}{
-		"event":   "media",
-		frameKey:  sess.StreamSid,
-		"media":   map[string]string{"payload": payloadB64},
-	})
+	frameData := map[string]interface{}{
+		"event":  "media",
+		frameKey: sess.StreamSid,
+		"media":  map[string]string{"payload": payloadB64},
+	}
+	if sess.Provider == "tata" {
+		seq := sess.outboundSeq.Add(1)
+		frameData["streamSid"] = sess.StreamSid
+		frameData["sequenceNumber"] = seq
+		frameData["stream_id"] = sess.StreamSid
+		frameData["stream_sid"] = sess.StreamSid
+		frameData["payload"] = payloadB64
+		frameData["audio"] = payloadB64
+	}
+	frame, _ := json.Marshal(frameData)
 	_ = sess.SendText(frame)
 
 	// Relay a copy of the agent's outbound audio to any attached monitors so

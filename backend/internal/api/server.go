@@ -287,6 +287,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// 8kHz server-side WAV survived. That was the "recording not clear"
 	// symptom reported after Quick-Add + Sim Web Call.
 	mux.HandleFunc("POST /api/upload-recording", auth(s.uploadRecording))
+	mux.HandleFunc("GET /api/receptionist/calls", auth(s.listReceptionistCalls))
+	mux.HandleFunc("PATCH /api/receptionist/calls/{id}", auth(s.updateReceptionistCall))
 
 	// ── WhatsApp Campaign Blast ────────────────────────────────────────────────
 	mux.HandleFunc("POST /api/wa/campaign-blast/{campaign_id}", adminAuth(s.campaignBlast))
@@ -446,6 +448,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhook/exotel", s.exotelXML)
 	mux.HandleFunc("GET /webhook/exotel/human-call", s.exotelHumanCallXML)
 	mux.HandleFunc("POST /webhook/exotel/status", s.exotelStatus)
+	mux.HandleFunc("POST /webhook/tata/status", s.tataStatus)
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("GET /crm-webhook", s.crmWebhook)

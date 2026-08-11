@@ -16,16 +16,16 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 	"go.uber.org/zap"
 
-	"github.com/globussoft/callified-backend/internal/api"
 	_ "github.com/globussoft/callified-backend/docs"
+	"github.com/globussoft/callified-backend/internal/api"
 	"github.com/globussoft/callified-backend/internal/config"
 	apidb "github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/prompt"
 	"github.com/globussoft/callified-backend/internal/rag"
-	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/recording"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
 	"github.com/globussoft/callified-backend/internal/workers"
@@ -74,6 +74,7 @@ func main() {
 
 	// Exotel VoiceBot WebSocket endpoint
 	mux.Handle("/media-stream", wsHandler)
+	mux.Handle("/media-stream/tata", wsHandler)
 
 	// Browser simulator WebSocket endpoint (dev/QA)
 	mux.Handle("/ws/sandbox", wsHandler)
@@ -104,7 +105,7 @@ func main() {
 		apiServer = api.New(database, cfg, store, initiator, llmProvider, logger)
 		waAgent := wa.NewAgent(database, llmProvider, ragClient, logger)
 		apiServer.SetWAAgent(waAgent)
-		apiServer.SetWSHandler(wsHandler)     // enables GET /api/active-calls
+		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
 		if recordingSvc != nil {
 			apiServer.SetRecordingService(recordingSvc) // enables POST /api/transcripts/{id}/conclusion
 			if apiServer.OCI() != nil {

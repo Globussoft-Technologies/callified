@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 )
+
+var ErrMaxTokens = errors.New("llm stopped at max output tokens")
 
 // GeminiClient calls Google Gemini via REST SSE streaming.
 type GeminiClient struct {
@@ -42,7 +45,8 @@ type geminiPart struct {
 
 type geminiStreamEvent struct {
 	Candidates []struct {
-		Content struct {
+		FinishReason string `json:"finishReason,omitempty"`
+		Content      struct {
 			Parts []struct {
 				Text string `json:"text"`
 			} `json:"parts"`
@@ -56,14 +60,14 @@ type geminiStreamEvent struct {
 // geminiTextRequest is used for non-streaming generateContent calls.
 // Supports thinkingConfig to disable reasoning for faster, complete responses.
 type geminiTextRequest struct {
-	SystemInstruction *geminiContent        `json:"system_instruction,omitempty"`
-	Contents          []geminiContent       `json:"contents"`
-	GenerationConfig  geminiTextGenConfig   `json:"generationConfig"`
+	SystemInstruction *geminiContent      `json:"system_instruction,omitempty"`
+	Contents          []geminiContent     `json:"contents"`
+	GenerationConfig  geminiTextGenConfig `json:"generationConfig"`
 }
 
 type geminiTextGenConfig struct {
-	MaxOutputTokens int                    `json:"maxOutputTokens"`
-	ThinkingConfig  *geminiThinkingConfig  `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens int                   `json:"maxOutputTokens"`
+	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiThinkingConfig struct {
@@ -199,6 +203,7 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	hitMaxTokens := false
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -219,6 +224,9 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 			return fmt.Errorf("gemini: api error: %s", event.Error.Message)
 		}
 		for _, cand := range event.Candidates {
+			if cand.FinishReason == "MAX_TOKENS" {
+				hitMaxTokens = true
+			}
 			for _, part := range cand.Content.Parts {
 				if part.Text != "" {
 					onToken(part.Text)
@@ -226,5 +234,11 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 			}
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if hitMaxTokens {
+		return ErrMaxTokens
+	}
+	return nil
 }

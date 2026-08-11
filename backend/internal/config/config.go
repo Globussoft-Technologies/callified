@@ -27,7 +27,7 @@ type Config struct {
 	JWTSecret string `env:"JWT_SECRET_KEY"`
 
 	// Subscription management
-	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""` // Email allowed to manage subscriptions
+	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""`                     // Email allowed to manage subscriptions
 	SupportEmail    string `env:"SUPPORT_EMAIL"     envDefault:"support@callified.ai"` // Shown on subscription renewal prompts
 
 	// LLM providers (Phase 0)
@@ -73,18 +73,24 @@ type Config struct {
 	KnowledgeDir string `env:"KNOWLEDGE_DIR" envDefault:"recordings/knowledge"`
 
 	// Telephony — Phase 2
-	TwilioAccountSID string `env:"TWILIO_ACCOUNT_SID"`
-	TwilioAuthToken  string `env:"TWILIO_AUTH_TOKEN"`
-	TwilioPhone      string `env:"TWILIO_PHONE_NUMBER"`
-	ExotelAPIKey     string `env:"EXOTEL_API_KEY"`
-	ExotelAPIToken   string `env:"EXOTEL_API_TOKEN"`
-	ExotelAccountSID string `env:"EXOTEL_ACCOUNT_SID"`
-	ExotelCallerID   string `env:"EXOTEL_CALLER_ID"`
-	ExotelAppID      string `env:"EXOTEL_APP_ID"     envDefault:"1210468"`
-	ExotelRegion     string `env:"EXOTEL_REGION"`
-	ExotelSubdomain  string `env:"EXOTEL_SUBDOMAIN"`
-	DefaultProvider  string `env:"DEFAULT_PROVIDER"  envDefault:"exotel"`
-	PublicServerURL  string `env:"PUBLIC_SERVER_URL" envDefault:"http://localhost:8001"`
+	TwilioAccountSID         string `env:"TWILIO_ACCOUNT_SID"`
+	TwilioAuthToken          string `env:"TWILIO_AUTH_TOKEN"`
+	TwilioPhone              string `env:"TWILIO_PHONE_NUMBER"`
+	ExotelAPIKey             string `env:"EXOTEL_API_KEY"`
+	ExotelAPIToken           string `env:"EXOTEL_API_TOKEN"`
+	ExotelAccountSID         string `env:"EXOTEL_ACCOUNT_SID"`
+	ExotelCallerID           string `env:"EXOTEL_CALLER_ID"`
+	ExotelAppID              string `env:"EXOTEL_APP_ID"     envDefault:"1210468"`
+	ExotelRegion             string `env:"EXOTEL_REGION"`
+	ExotelSubdomain          string `env:"EXOTEL_SUBDOMAIN"`
+	TataAPIEndpoint          string `env:"TATA_API_ENDPOINT" envDefault:"https://api-smartflo.tatateleservices.com/v1/click_to_call_support"`
+	TataAPIToken             string `env:"TATA_API_TOKEN"`
+	TataCallerID             string `env:"TATA_CALLER_ID"`
+	TataAgentNumber          string `env:"TATA_AGENT_NUMBER"`
+	TataDialplanTransferType string `env:"TATA_DIALPLAN_TRANSFER_TYPE"`
+	TataDialplanTransferData string `env:"TATA_DIALPLAN_TRANSFER_DATA"`
+	DefaultProvider          string `env:"DEFAULT_PROVIDER"  envDefault:"exotel"`
+	PublicServerURL          string `env:"PUBLIC_SERVER_URL" envDefault:"http://localhost:8001"`
 
 	// Billing (Phase 3B)
 	RazorpayKeyID         string `env:"RAZORPAY_KEY_ID"`

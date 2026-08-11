@@ -239,7 +239,8 @@ export default function App() {
             <UserManagementPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} />
           </RequireRole>
         } />
-        <Route path="/receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
+        <Route path="/ai-receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
+        <Route path="/receptionist" element={<Navigate to="/ai-receptionist" replace />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
         <Route path="/executives" element={<ExecutivesPage />} />
         <Route path="/subscriptions" element={

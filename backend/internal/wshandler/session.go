@@ -21,10 +21,12 @@ import (
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
 	// Identity (set on connect / start event)
-	StreamSid  string
-	CallSid    string
-	IsExotel   bool
-	IsWebSim   bool
+	StreamSid string
+	CallSid   string
+	Provider  string
+	IsExotel  bool
+	IsWebSim  bool
+	IsInbound bool
 	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
 	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
 	IsBridge bool
@@ -59,14 +61,15 @@ type CallSession struct {
 	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
-	greetingSent   atomic.Bool
-	ttsPlaying     atomic.Bool
-	hangupReq      atomic.Bool
-	dgAlive        atomic.Bool
+	greetingSent    atomic.Bool
+	ttsPlaying      atomic.Bool
+	hangupReq       atomic.Bool
+	dgAlive         atomic.Bool
 	bargeInActive   atomic.Bool  // set on SpeechStarted; cleared when new LLM response starts
 	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
-	lastTTSEndNano atomic.Int64 // UnixNano
-	lastTranscript atomic.Int64 // UnixNano — debounce timestamp
+	lastTTSEndNano  atomic.Int64 // UnixNano
+	lastTranscript  atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq     atomic.Uint64
 
 	// Serialization
 	llmMu sync.Mutex // one LLM turn at a time per session
@@ -93,12 +96,12 @@ type CallSession struct {
 	sttFirstAt atomic.Pointer[time.Time]
 
 	// Server-side stereo recording buffers
-	recMu            sync.Mutex
-	micChunks        []audio.TimedChunk
-	ttsChunks        []audio.TimedChunk
-	micRecordCursor  time.Time // virtual playback cursor for mic recording
-	ttsRecordCursor  time.Time // virtual playback cursor for TTS recording
-	ttsNewUtterance  bool      // signals AppendTTSChunk to reset cursor on next chunk
+	recMu           sync.Mutex
+	micChunks       []audio.TimedChunk
+	ttsChunks       []audio.TimedChunk
+	micRecordCursor time.Time // virtual playback cursor for mic recording
+	ttsRecordCursor time.Time // virtual playback cursor for TTS recording
+	ttsNewUtterance bool      // signals AppendTTSChunk to reset cursor on next chunk
 
 	// Chat history — populated by AppendHistory, read by pipeline
 	historyMu   sync.Mutex
@@ -507,6 +510,17 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 // MaxTokens returns a token budget based on transcript length, clamped
 // between 150 and 400. Roughly 20 tokens per word is used as a heuristic.
 func (s *CallSession) MaxTokens(transcript string) int32 {
+	if s.IsInbound {
+		words := len(strings.Fields(transcript))
+		tokens := int32(words * 34)
+		if tokens < 500 {
+			return 500
+		}
+		if tokens > 900 {
+			return 900
+		}
+		return tokens
+	}
 	words := len(strings.Fields(transcript))
 	tokens := int32(words * 20)
 	if tokens < 150 {

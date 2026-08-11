@@ -208,12 +208,12 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		GROUP BY cl.campaign_id`
 
 	rows, err := d.pool.Query(
-		`SELECT `+campaignCols+`,
+		`SELECT ` + campaignCols + `,
 			COALESCE(s.total,0), COALESCE(s.called,0),
 			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
 		FROM campaigns c
 		LEFT JOIN products p ON c.product_id = p.id
-		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		LEFT JOIN (` + statsSub + `) s ON s.campaign_id = c.id
 		ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -459,11 +459,11 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 
 // CampaignLeadsFilter holds optional filters for campaign lead listings.
 type CampaignLeadsFilter struct {
-	CampaignID     int64
-	ExecIDs        []int64
-	Search         string
-	ScheduledFrom  string // ISO datetime or empty
-	ScheduledTo    string // ISO datetime or empty
+	CampaignID    int64
+	ExecIDs       []int64
+	Search        string
+	ScheduledFrom string // ISO datetime or empty
+	ScheduledTo   string // ISO datetime or empty
 }
 
 // GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
@@ -1024,13 +1024,14 @@ func coalesceStr(s, def string) string {
 	return s
 }
 
-// ExotelCreds holds per-campaign telephony credentials (Exotel or Twilio).
+// ExotelCreds holds per-campaign telephony credentials.
 // Field mapping:
 //
 //	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
 //	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
+//	Tata: APIKey=Bearer/API Token, CallerID=DID/Caller ID, AppID=Agent Number, Subdomain=Click-to-Call endpoint override
 type ExotelCreds struct {
-	Provider   string // "exotel" or "twilio"; empty means exotel
+	Provider   string // "exotel", "twilio", "tata"/"smartflo"; empty means exotel
 	APIKey     string `json:"exotel_api_key"`
 	APIToken   string `json:"exotel_api_token"`
 	APISecret  string // Twilio only
@@ -1038,6 +1039,7 @@ type ExotelCreds struct {
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 	AppType    string `json:"exotel_app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"exotel_region"`    // Exotel region: in, us, sg, etc.
 	Subdomain  string `json:"exotel_subdomain"` // Exotel account subdomain override
 }
@@ -1046,6 +1048,12 @@ type ExotelCreds struct {
 func (e ExotelCreds) IsSet() bool {
 	if e.Provider == "twilio" {
 		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
+	}
+	if e.Provider == "tata" || e.Provider == "smartflo" || e.Provider == "tata_tele" {
+		if e.Direction == "inbound" {
+			return e.APIKey != "" && e.CallerID != ""
+		}
+		return e.APIKey != "" && e.CallerID != "" && e.AppID != ""
 	}
 	// exotel: AppID is required for voice app routing
 	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""
