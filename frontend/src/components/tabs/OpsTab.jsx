@@ -1,4 +1,5 @@
 import React from 'react';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -61,7 +62,7 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
   ];
 
   const thStyle = {
-    fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
+    fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
     letterSpacing: '0.07em', padding: '0 0 12px', textAlign: 'left', borderBottom: `1px solid ${T.border}`,
   };
   const tdStyle = {
@@ -72,22 +73,21 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>Ops &amp; Tasks</h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Internal cross-department workflows triggered by CRM events.
-        </p>
-      </div>
+      <PageHeader
+        icon="ops"
+        title="Ops & Tasks"
+        subtitle="Manage internal tasks and workflows."
+      />
 
       {/* Metric cards */}
       {reports && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }}>
           {metrics.map(m => (
             <div key={m.label} style={{ ...card, padding: '22px 28px' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
+              <div style={{ textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}  className='text-gray-800 font-bold text-[12px]'>
                 {m.label}
               </div>
-              <div style={{ fontSize: 36, fontWeight: 700, fontFamily: T.font, color: m.color, lineHeight: 1 }}>
+              <div style={{ fontSize: 30, fontWeight: 700, fontFamily: T.font, color: m.color, lineHeight: 0.8 }}>
                 {m.value}
               </div>
             </div>
@@ -111,10 +111,10 @@ export default function OpsTab({ reports, tasks, handleCompleteTask }) {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th style={{ ...thStyle, width: '38%' }}>Task</th>
-                <th style={thStyle}>Department</th>
-                <th style={thStyle}>Client</th>
-                <th style={{ ...thStyle, textAlign: 'right' }}>Status</th>
+                <th className='text-gray-700' style={{ ...thStyle, width: '38%' }}>Task</th>
+                <th className='text-gray-700' style={thStyle}>Department</th>
+                <th className='text-gray-700' style={thStyle}>Client</th>
+                <th className='text-gray-700' style={{ ...thStyle, textAlign: 'right' }}>Status</th>
               </tr>
             </thead>
             <tbody>

@@ -1,4 +1,5 @@
 import React from 'react';
+import PageHeader from '../components/PageHeader';
 
 // AI Receptionist (separate Go service running on :8000) embedded as an
 // iframe. The receptionist's browser demo (mic + TTS + REST endpoints
@@ -17,14 +18,12 @@ export default function ReceptionistPage() {
       background: '#f4f5f9', minHeight: '100%',
       display: 'flex', flexDirection: 'column',
     }}>
-      <div style={{ marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', fontFamily: "Quicksand, sans-serif" }}>
-          AI Receptionist
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#9ca3af', fontFamily: "Quicksand, sans-serif" }}>
-          Live chat &amp; voice demo powered by the AI receptionist engine.
-        </p>
-      </div>
+      <PageHeader
+        icon="receptionist"
+        title="Receptionist"
+        subtitle="Test the AI receptionist by chat or voice."
+        style={{ marginBottom: 16 }}
+      />
       <div style={{
         flex: 1, background: '#ffffff', border: '1px solid #e5e7eb',
         borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',

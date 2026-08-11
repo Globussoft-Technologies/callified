@@ -3,6 +3,7 @@ import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useConfirm } from '../contexts/UIContext';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -112,14 +113,12 @@ export default function ExecutivesPage() {
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', fontFamily: T.font, minHeight: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-        <div>
-          <h2 style={{ margin: 0, color: T.text, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            🧑‍💼 Executives
-          </h2>
-          <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
-            Create sales/ops executives and assign them to campaigns and leads.
-          </p>
-        </div>
+        <PageHeader
+          icon="executives"
+          title="Executives"
+          subtitle="Create and assign sales executives."
+          style={{ marginBottom: 0 }}
+        />
         <button onClick={openAdd}
           style={{
             background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',

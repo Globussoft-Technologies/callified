@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useToast } from '../contexts/UIContext';
 import { formatDateTime } from '../utils/dateFormat';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -97,12 +98,11 @@ export default function InteractionHistoryPage({ apiFetch, API_URL, orgTimezone 
 
   return (
     <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto', fontFamily: T.font }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>🕘 Interaction History</h1>
-        <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
-          Search any customer to see their complete timeline: calls, notes, scheduled callbacks, and WhatsApp messages.
-        </p>
-      </div>
+      <PageHeader
+        icon="history"
+        title="Interaction History"
+        subtitle="View each customer's complete activity history."
+      />
 
       <div style={{ ...card, padding: '1.25rem', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

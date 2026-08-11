@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -106,12 +107,12 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-            <span style={{ color: T.amber }}>Analytics</span> Dashboard
-          </h2>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>Real-time metrics from your AI dialer campaigns.</p>
-        </div>
+        <PageHeader
+          icon="analytics"
+          title="Analytics"
+          subtitle="Track campaign and calling performance."
+          style={{ marginBottom: 0 }}
+        />
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={handleExportCSV} style={{
             display: 'flex', alignItems: 'center', gap: 6,
@@ -136,7 +137,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
         {statCards.slice(0, 4).map(s => (
           <div key={s.label} style={{ ...card, padding: '18px 22px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
+            <div className='text-gray-700' style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
             <div style={{ fontSize: 30, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>{s.value}{s.suffix}</div>
           </div>
         ))}
@@ -144,7 +145,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
         {statCards.slice(4).map(s => (
           <div key={s.label} style={{ ...card, padding: '18px 22px' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
+            <div className='text-gray-700' style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
             <div style={{ fontSize: 30, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>{s.value}{s.suffix}</div>
           </div>
         ))}
@@ -155,7 +156,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
         {/* Daily Calls Bar Chart */}
         <div style={{ ...card, padding: '20px 24px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }} className='text-gray-700' >
             Daily Calls (Last 7 Days)
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 120 }}>
@@ -186,7 +187,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
         {/* Customer Sentiment */}
         <div style={{ ...card, padding: '20px 24px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
+          <div className='text-gray-700' style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
             Customer Sentiment
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -209,7 +210,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
               );
             })}
             {sentimentTotal <= 1 && sentimentBreakdown.positive === 0 && (
-              <p style={{ color: T.muted, fontSize: 12, marginTop: 8 }}>No sentiment data yet.</p>
+              <p className='text-gray-700 font-semibold' style={{  fontSize: 12, marginTop: 8 }}>No sentiment data yet.</p>
             )}
           </div>
         </div>
@@ -217,11 +218,11 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
       {/* Campaign Performance */}
       <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
+        <div className='text-gray-700' style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
           Campaign Performance
         </div>
         {campaignPerformance.length === 0 ? (
-          <p style={{ color: T.muted, fontSize: 13 }}>No campaigns found.</p>
+          <p className='font-medium text-gray-500' style={{ fontSize: 13 }}>No campaigns found.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -277,11 +278,11 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
       {/* Language Performance */}
       <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
+        <div className='text-gray-700' style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
           Language Performance
         </div>
         {langData.length === 0 ? (
-          <p style={{ color: T.muted, fontSize: 13 }}>No language data yet.</p>
+          <p className='text-gray-500 font-medium' style={{  fontSize: 13 }}>No language data yet.</p>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>

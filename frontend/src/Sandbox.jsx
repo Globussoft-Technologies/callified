@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import PageHeader from './components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -188,12 +189,11 @@ export default function Sandbox() {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>🎯 AI Training Sandbox</h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Roleplay and stress test the Voice Agent engine. Choose different TTS providers and voices to find the best fit.
-        </p>
-      </div>
+      <PageHeader
+        icon="sandbox"
+        title="AI Sandbox"
+        subtitle="Test your AI agent before going live."
+      />
 
     <div style={{ display: 'flex', gap: 16 }}>
 

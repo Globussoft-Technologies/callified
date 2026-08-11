@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -78,16 +79,13 @@ export default function SettingsTab({
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          {hideAiFeatures ? 'Settings' : <><span style={{ color: T.amber }}>AI Voice</span> Settings</>}
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          {hideAiFeatures
-            ? 'Configure call action visibility and other preferences.'
-            : 'Configure how the AI pronounces product names, brand names, and technical terms during calls.'}
-        </p>
-      </div>
+      <PageHeader
+        icon="settings"
+        title={hideAiFeatures ? 'Settings' : 'AI Voice Settings'}
+        subtitle={hideAiFeatures
+          ? 'Manage calling preferences.'
+          : 'Manage AI voice and pronunciation settings.'}
+      />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 

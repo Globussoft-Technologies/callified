@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../contexts/UIContext';
 import { useCall } from '../contexts/CallContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -192,12 +193,11 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
 
   return (
     <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', fontFamily: T.font }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>📞 Manual Dial</h1>
-        <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
-          Search any customer and place an AI or browser call.
-        </p>
-      </div>
+      <PageHeader
+        icon="manualDial"
+        title="Manual Dial"
+        subtitle="Search customers and place calls."
+      />
 
       <div style={{ ...card, padding: '1.25rem', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>

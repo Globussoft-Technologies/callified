@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
 import { useToast } from '../contexts/UIContext';
 import { useAuth } from '../contexts/AuthContext';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -70,14 +71,11 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
 
   return (
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          <span style={{ color: T.accent }}>Scheduled</span> Calls
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Upcoming and past scheduled calls. Schedule calls from the CRM or campaign pages.
-        </p>
-      </div>
+      <PageHeader
+        icon="scheduled"
+        title="Scheduled Calls"
+        subtitle="View upcoming and completed scheduled calls."
+      />
 
       {loading ? (
         <div style={{ ...card, padding: '2rem', textAlign: 'center', color: T.muted }}>

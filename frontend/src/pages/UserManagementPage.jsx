@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm } from '../contexts/UIContext';
 import { isAdmin, isTeamLeader, ROLES } from '../utils/roles';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -292,9 +293,12 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
   return (
     <div style={{ padding: 24, fontFamily: T.font, background: T.bg, minHeight: 'calc(100vh - 56px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 22, color: T.text }}>
-          {isTeamLeader(userRole) ? 'My Agents' : 'User Management'}
-        </h1>
+        <PageHeader
+          icon="userManagement"
+          title={isTeamLeader(userRole) ? 'My Agents' : 'User Management'}
+          subtitle={isTeamLeader(userRole) ? 'Add and manage your assigned agents.' : 'Add and manage organization users.'}
+          style={{ marginBottom: 0 }}
+        />
         <button style={btnPrimary} onClick={openAdd}>
           {isTeamLeader(userRole) ? 'Add Agent' : 'Add User'}
         </button>

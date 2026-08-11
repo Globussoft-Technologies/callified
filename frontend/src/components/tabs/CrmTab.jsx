@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -151,20 +152,18 @@ export default function CrmTab({
 
       {/* Heading + toggle */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: T.text}} >Dashboard</h2>
-          {activeCampaigns.length > 0 && (
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-              AI is running {activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}
-            </p>
-          )}
-        </div>
+        <PageHeader
+          icon="dashboard"
+          title="Dashboard"
+          subtitle="Track leads, campaigns, and call activity."
+          style={{ marginBottom: 0 }}
+        />
       </div>
 
       {/* 5 stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 15, marginBottom: 16 }}>
+      <div className="crm-stat-grid">
         {statCards.map(s => (
-          <div key={s.label}
+          <div key={s.label} className="crm-stat-card"
             onClick={() => setActiveModal(s.modal)}
             role="button"
             tabIndex={0}
@@ -174,22 +173,24 @@ export default function CrmTab({
             onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }} className='text-gray-800 font-bold' >
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }} className='text-gray-800 font-bold' >
                 {s.label}
-                <span style={{ fontSize: 11, color: s.color }}>↗</span>
+                <span style={{ fontSize: 13, color: s.color }}>↗</span>
               </div>
               <span style={{ fontSize: 10, fontWeight: 700, background: 'rgba(16,185,129,0.2)', padding: '1px 7px', borderRadius: 5 }}  className='text-emerald-700' >
                 {s.badge}
               </span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-              <div>
+            <div className="crm-stat-card-content">
+              <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color, lineHeight: 1 }}>
                   {s.value.toLocaleString()}
                 </div>
                 <div style={{ fontSize: 11, marginTop: 4 }}  className='text-gray-500 font-semibold' >{s.sub}</div>
               </div>
-              <Sparkline data={makeSpark(s.value)} color={s.color} width={64} height={28} />
+              <span className="crm-stat-sparkline">
+                <Sparkline data={makeSpark(s.value)} color={s.color} width={64} height={28} />
+              </span>
             </div>
           </div>
         ))}
@@ -345,41 +346,43 @@ export default function CrmTab({
       })()}
 
       {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px 240px', gap: 12 }}>
+      <div className="crm-charts-grid">
 
         {/* Bar chart */}
-        <div style={{ ...card, padding: '18px 20px' }}>
+        <div className="crm-chart-card-wide" style={{ ...card, padding: '18px 20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: T.sub }}>Call Volume — per Campaign</div>
-            <div style={{ fontSize: 12 }} className='text-gray-500 font-semibold' >All campaigns</div>
+            <div style={{ fontSize: 13 }} className='text-gray-500 font-semibold' >All campaigns</div>
           </div>
           {barData.length > 0 ? (
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6, height: 100 }}>
-              {barData.map((b, i) => (
-                <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                  <div title={`${b.name}: ${b.val}`} style={{
-                    width: '100%', borderRadius: '3px 3px 0 0',
-                    height: `${Math.max(4, Math.round((b.val / barMax) * 90))}px`,
-                    background: i === 0
-                      ? `linear-gradient(180deg, ${T.accent}, ${T.pink})`
-                      : 'rgba(99,102,241,0.15)',
-                    transition: 'height 0.4s',
-                  }} />
-                  <div style={{ fontSize: 8, color: T.muted, textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {b.name.split(' ')[0]}
+            <div className="crm-bar-chart-scroll">
+              <div className="crm-bar-chart">
+                {barData.map((b, i) => (
+                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, minWidth: 34 }}>
+                    <div title={`${b.name}: ${b.val}`} style={{
+                      width: '100%', borderRadius: '4px 4px 0 0',
+                      height: `${Math.max(5, Math.round((b.val / barMax) * 130))}px`,
+                      background: i === 0
+                        ? `linear-gradient(180deg, ${T.accent}, ${T.pink})`
+                        : 'rgba(99,102,241,0.18)',
+                      transition: 'height 0.4s',
+                    }} />
+                    <div title={b.name} style={{ fontSize: 10, color: T.muted, textAlign: 'center', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {b.name}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           ) : (
-            <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}  className='text-gray-400 font-medium' >
+            <div className="crm-chart-empty text-gray-500 font-medium">
               No campaign data yet
             </div>
           )}
         </div>
 
         {/* Conversion Funnel */}
-        <div style={{ ...card, padding: '18px 20px' }}>
+        <div style={{ ...card, padding: '18px 20px', minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, marginBottom: 14 }}>Conversion Funnel</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {funnel.map((f, i) => (
@@ -403,7 +406,7 @@ export default function CrmTab({
         </div>
 
         {/* Active Campaigns compact */}
-        <div style={{ ...card, padding: '18px 20px' }}>
+        <div style={{ ...card, padding: '18px 20px', minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, marginBottom: 14 }}>Active Campaigns</div>
           {canSeeCampaigns && activeCampaigns.length > 0 ? (
             activeCampaigns.slice(0, 5).map((c, i) => {

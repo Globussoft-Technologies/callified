@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -226,14 +227,12 @@ export default function LogsTab({ API_URL, apiFetch }) {
 
       {/* Page title + controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-            <span style={{ color: T.accent }}>Live</span> Logs
-          </h2>
-          <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-            Real-time campaign activity feed and verbose system log stream.
-          </p>
-        </div>
+        <PageHeader
+          icon="logs"
+          title="Live Logs"
+          subtitle="View live campaign and system activity."
+          style={{ marginBottom: 0 }}
+        />
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
 
           {/* Mode toggle */}

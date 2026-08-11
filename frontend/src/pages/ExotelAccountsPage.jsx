@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -149,14 +150,12 @@ export default function ExotelAccountsPage() {
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
-        <div>
-          <h2 style={{ margin: 0, color: T.text, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            📞 Provider Accounts
-          </h2>
-          <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
-            Save Exotel credentials and select one per campaign.
-          </p>
-        </div>
+        <PageHeader
+          icon="providerAccounts"
+          title="Provider Accounts"
+          subtitle="Manage calling provider credentials."
+          style={{ marginBottom: 0 }}
+        />
         <button onClick={openAdd}
           style={{
             background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',

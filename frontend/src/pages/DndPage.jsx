@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useToast, useConfirm } from '../contexts/UIContext';
 import { useAuth } from '../contexts/AuthContext';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -177,12 +178,11 @@ export default function DndPage({ apiFetch, API_URL }) {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>DND Management</h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Manage Do-Not-Disturb numbers to exclude from all campaigns.
-        </p>
-      </div>
+      <PageHeader
+        icon="dnd"
+        title="DND Management"
+        subtitle="Manage numbers excluded from campaigns."
+      />
 
       {/* Controls card */}
       <div style={{ ...card, padding: '24px 28px', marginBottom: 16 }}>

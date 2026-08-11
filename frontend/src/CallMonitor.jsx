@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import PageHeader from './components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -70,12 +71,11 @@ export default function CallMonitor({ apiUrl }) {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>🎙️ Live Call Monitor</h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Inject dynamic instructions into the AI's mind instantly, or take over the line if the client demands human interaction.
-        </p>
-      </div>
+      <PageHeader
+        icon="monitor"
+        title="Monitor AI Calls"
+        subtitle="Monitor live AI calls and take over when needed."
+      />
 
       <div style={{ ...card, padding: '24px 28px' }}>
         {!connected ? (

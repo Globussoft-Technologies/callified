@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -100,14 +101,11 @@ export default function IntegrationsTab({
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          <span style={{ color: T.accent }}>CRM</span> Integrations
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13 }} className='text-gray-500 font-semibold' >
-          Connect external CRM platforms to pull leads automatically and push call outcomes back.
-        </p>
-      </div>
+      <PageHeader
+        icon="integrations"
+        title="Integrations"
+        subtitle="Connect and manage external CRM platforms."
+      />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 380px) 1fr', gap: 16, alignItems: 'stretch' }}>
 

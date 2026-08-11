@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -301,9 +302,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          <span style={{ color: T.accent }}>Team</span> Members
-        </h2>
+        <PageHeader icon="team" title="Team" subtitle="Invite and manage team members." style={{ marginBottom: 0 }} />
         <button
           onClick={() => setShowInvite(true)}
           style={{

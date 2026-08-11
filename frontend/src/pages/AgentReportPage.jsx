@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useToast } from '../contexts/UIContext';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -61,12 +62,11 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
 
   return (
     <div style={{ padding: '24px', maxWidth: 800, margin: '0 auto', fontFamily: T.font }}>
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>📊 Agent Performance Report</h1>
-        <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
-          Download an Excel workbook with agent productivity, efficiency, and outcome sheets.
-        </p>
-      </div>
+      <PageHeader
+        icon="analytics"
+        title="Agent Report"
+        subtitle="Review and export agent performance."
+      />
 
       <div style={{ ...card, padding: '1.5rem' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 20 }}>

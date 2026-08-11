@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/UIContext';
+import PageHeader from '../components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -150,12 +151,12 @@ export default function CampaignProgressPage({ apiFetch, API_URL }) {
   return (
     <div style={{ padding: '24px', maxWidth: 1400, margin: '0 auto', fontFamily: T.font, background: T.bg, minHeight: 'calc(100vh - 56px)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>📊 Real-Time Campaign Progress</h1>
-          <p style={{ margin: '6px 0 0', color: T.muted, fontSize: 13 }}>
-            Live progress, outcomes, and events for every campaign.
-          </p>
-        </div>
+        <PageHeader
+          icon="progress"
+          title="Campaign Progress"
+          subtitle="Track live campaign progress and outcomes."
+          style={{ marginBottom: 0 }}
+        />
         <div style={{ fontSize: 12, color: T.muted }}>
           {campaigns.filter(c => (c.status || 'active') === 'active').length} active
         </div>

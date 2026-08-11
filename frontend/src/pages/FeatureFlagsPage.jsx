@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
+import PageHeader from '../components/PageHeader';
 
 export default function FeatureFlagsPage({ apiFetch }) {
   const { currentUser } = useAuth();
@@ -118,9 +119,11 @@ export default function FeatureFlagsPage({ apiFetch }) {
 
   return (
     <div style={{ padding: '1.5rem 2rem', maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '1.5rem', color: '#111827' }}>
-        Feature Flags
-      </h1>
+      <PageHeader
+        icon="featureFlags"
+        title="Feature Flags"
+        subtitle="Control features available to each organization."
+      />
 
       {message && (
         <div style={{

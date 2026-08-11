@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import PageHeader from './components/PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -77,14 +78,11 @@ export default function KnowledgeBase({ apiUrl }) {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          🧠 RAG Knowledge Base
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          Upload company PDFs, product sheets, and manuals. The AI will instantly search and read these during live phone calls to eliminate hallucinations.
-        </p>
-      </div>
+      <PageHeader
+        icon="knowledge"
+        title="RAG Knowledge"
+        subtitle="Manage documents used by your AI."
+      />
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
 

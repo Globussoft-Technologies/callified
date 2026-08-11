@@ -6,6 +6,7 @@ import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizePhone } from '../../utils/phone';
+import PageHeader from '../PageHeader';
 import { isAdmin } from '../../utils/roles';
 
 export default function CampaignsTab({
@@ -840,10 +841,7 @@ export default function CampaignsTab({
   return (
     <div style={{ background: '#f4f5f9', minHeight: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
-          Campaigns
-        </h2>
+        <PageHeader icon="campaigns" title="Campaigns" subtitle="Create and manage calling campaigns." style={{ marginBottom: 0 }} />
         <button
           onClick={() => setShowCreateModal(true)}
           style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -852,7 +850,7 @@ export default function CampaignsTab({
       </div>
 
       {campaigns.length === 0 ? (
-        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }} className='text-gray-500 font-semibold' >
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem' }} className='text-gray-500 font-semibold text-xs' >
           No campaigns yet. Create one to start dialing!
         </div>
       ) : (

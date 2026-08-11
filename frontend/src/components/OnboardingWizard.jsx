@@ -122,8 +122,8 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
       return (
         <div style={{ textAlign: 'center', padding: '2rem 0' }}>
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>&#10003;</div>
-          <h2 style={{ margin: '0 0 0.5rem', color: '#e2e8f0' }}>You're all set!</h2>
-          <p style={{ color: '#94a3b8', marginBottom: '2rem' }}>
+          <h2 style={{ margin: '0 0 0.5rem', color: '#0f172a' }}>You're all set!</h2>
+          <p style={{ color: '#475569', marginBottom: '2rem' }}>
             Your AI dialer is ready to make calls. Head to the dashboard to start your first campaign.
           </p>
           <button className="btn-primary" onClick={handleFinish} style={{ padding: '12px 32px', fontSize: '1rem' }}>
@@ -138,13 +138,13 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
     if (step.key === 'leads') {
       return (
         <div>
-          <h3 style={{ margin: '0 0 0.5rem', color: '#e2e8f0' }}>Upload your first leads</h3>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#0f172a' }}>Upload your first leads</h3>
+          <p style={{ color: '#475569', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
             Upload a CSV file with your leads to get started. The CSV should have columns: first_name, phone (required), last_name, company, source (optional).
           </p>
 
           {stepStatus.leads ? (
-            <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '12px 16px', color: '#34d399', marginBottom: '1rem' }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: '8px', padding: '12px 16px', color: '#047857', marginBottom: '1rem' }}>
               Leads uploaded successfully!
             </div>
           ) : (
@@ -154,7 +154,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                   ref={fileInputRef}
                   type="file" accept=".csv"
                   onChange={e => setCsvFile(e.target.files[0])}
-                  style={{ flex: 1, color: '#cbd5e1' }}
+                  style={{ flex: 1, color: '#334155' }}
                 />
                 <button
                   className="btn-primary"
@@ -169,7 +169,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
               <a
                 href={`${API_URL}/leads/sample-csv`}
                 download
-                style={{ color: '#818cf8', fontSize: '0.85rem', textDecoration: 'underline' }}
+                style={{ color: '#4f46e5', fontSize: '0.85rem', fontWeight: 600, textDecoration: 'underline' }}
               >
                 Download sample CSV
               </a>
@@ -179,7 +179,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                   marginTop: '1rem', padding: '12px 16px', borderRadius: '8px',
                   background: uploadResult.imported > 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
                   border: `1px solid ${uploadResult.imported > 0 ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
-                  color: uploadResult.imported > 0 ? '#34d399' : '#f87171',
+                  color: uploadResult.imported > 0 ? '#047857' : '#b91c1c',
                   fontSize: '0.9rem'
                 }}>
                   {uploadResult.imported > 0
@@ -197,26 +197,26 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
     if (step.key === 'voice') {
       return (
         <div>
-          <h3 style={{ margin: '0 0 0.5rem', color: '#e2e8f0' }}>Choose your AI agent's voice</h3>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#0f172a' }}>Choose your AI agent's voice</h3>
+          <p style={{ color: '#475569', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
             Select the language, provider, and voice for your AI calling agent.
           </p>
 
           {stepStatus.voice ? (
-            <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '12px 16px', color: '#34d399', marginBottom: '1rem' }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: '8px', padding: '12px 16px', color: '#047857', marginBottom: '1rem' }}>
               Voice configured successfully!
             </div>
           ) : (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '1rem' }}>
                 <div>
-                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Language</label>
+                  <label style={{ display: 'block', color: '#334155', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Language</label>
                   <select className="form-input" value={language} onChange={e => setLanguage(e.target.value)}>
                     {INDIAN_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Provider</label>
+                  <label style={{ display: 'block', color: '#334155', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Provider</label>
                   <select className="form-input" value={voiceProvider} onChange={e => { setVoiceProvider(e.target.value); setVoiceId(''); }}>
                     <option value="sarvam">Sarvam AI</option>
                     <option value="elevenlabs">ElevenLabs</option>
@@ -224,7 +224,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                   </select>
                 </div>
                 <div>
-                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Voice</label>
+                  <label style={{ display: 'block', color: '#334155', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Voice</label>
                   <select className="form-input" value={voiceId} onChange={e => setVoiceId(e.target.value)}>
                     <option value="">Select voice...</option>
                     {voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -251,24 +251,24 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
 
       return (
         <div>
-          <h3 style={{ margin: '0 0 0.5rem', color: '#e2e8f0' }}>Create your first campaign</h3>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+          <h3 style={{ margin: '0 0 0.5rem', color: '#0f172a' }}>Create your first campaign</h3>
+          <p style={{ color: '#475569', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
             A campaign groups your leads and lets you start bulk AI-powered calls.
           </p>
 
           {stepStatus.campaign ? (
-            <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '12px 16px', color: '#34d399', marginBottom: '1rem' }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #6ee7b7', borderRadius: '8px', padding: '12px 16px', color: '#047857', marginBottom: '1rem' }}>
               Campaign created successfully!
             </div>
           ) : !hasProducts ? (
-            <div style={{ background: 'rgba(250, 204, 21, 0.1)', border: '1px solid rgba(250, 204, 21, 0.3)', borderRadius: '8px', padding: '12px 16px', color: '#fbbf24', fontSize: '0.9rem' }}>
+            <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '12px 16px', color: '#92400e', fontSize: '0.9rem' }}>
               You need to create a product first. Go to Settings after onboarding to add a product.
             </div>
           ) : (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '1rem' }}>
                 <div>
-                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Campaign Name</label>
+                  <label style={{ display: 'block', color: '#334155', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Campaign Name</label>
                   <input
                     className="form-input"
                     value={campaignName}
@@ -277,7 +277,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Product</label>
+                  <label style={{ display: 'block', color: '#334155', fontSize: '0.85rem', fontWeight: 600, marginBottom: '6px' }}>Product</label>
                   <select className="form-input" value={productId} onChange={e => setProductId(e.target.value)}>
                     {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
@@ -308,14 +308,13 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <h2 style={{
             margin: '0 0 0.25rem',
-            background: 'linear-gradient(to right, #818cf8, #d8b4fe)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            fontSize: '1.5rem'
+            color: '#312e81',
+            fontSize: '1.5rem',
+            fontWeight: 700
           }}>
             Welcome to Callified AI
           </h2>
-          <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.9rem' }}>
+          <p style={{ color: '#475569', margin: 0, fontSize: '0.9rem', fontWeight: 500 }}>
             Let's get you set up in a few quick steps
           </p>
         </div>
@@ -332,10 +331,10 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                   onClick={() => setCurrentStep(i)}
                   style={{
                     flex: 1, padding: '10px 8px',
-                    background: isDone ? 'rgba(16, 185, 129, 0.15)' : isActive ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255,255,255,0.03)',
-                    border: `1px solid ${isDone ? 'rgba(16, 185, 129, 0.3)' : isActive ? 'rgba(99, 102, 241, 0.4)' : 'rgba(255,255,255,0.08)'}`,
+                    background: isDone ? '#ecfdf5' : isActive ? '#eef2ff' : '#f8fafc',
+                    border: `1px solid ${isDone ? '#6ee7b7' : isActive ? '#a5b4fc' : '#cbd5e1'}`,
                     borderRadius: '8px', cursor: 'pointer',
-                    color: isDone ? '#34d399' : isActive ? '#a5b4fc' : '#64748b',
+                    color: isDone ? '#047857' : isActive ? '#4338ca' : '#475569',
                     fontSize: '0.8rem', fontWeight: 600,
                     transition: 'all 0.2s'
                   }}
@@ -355,13 +354,13 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
 
         {/* Footer navigation */}
         {!allDone && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid #e2e8f0' }}>
             <button
               onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
               disabled={currentStep === 0}
               style={{
-                background: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
-                color: currentStep === 0 ? '#475569' : '#cbd5e1',
+                background: '#f8fafc', border: '1px solid #cbd5e1',
+                color: currentStep === 0 ? '#94a3b8' : '#334155',
                 padding: '8px 18px', borderRadius: '8px', cursor: currentStep === 0 ? 'default' : 'pointer'
               }}
             >
@@ -372,7 +371,7 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
               onClick={handleFinish}
               style={{
                 background: 'transparent', border: 'none',
-                color: '#64748b', cursor: 'pointer', fontSize: '0.85rem',
+                color: '#475569', cursor: 'pointer', fontSize: '0.85rem',
                 textDecoration: 'underline'
               }}
             >
@@ -383,8 +382,8 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
               <button
                 onClick={() => setCurrentStep(currentStep + 1)}
                 style={{
-                  background: 'rgba(99, 102, 241, 0.15)', border: '1px solid rgba(99, 102, 241, 0.3)',
-                  color: '#a5b4fc', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600
+                  background: 'linear-gradient(135deg, #4f46e5, #7c3aed)', border: '1px solid rgba(165, 180, 252, 0.55)',
+                  color: '#ffffff', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: 700
                 }}
               >
                 Next

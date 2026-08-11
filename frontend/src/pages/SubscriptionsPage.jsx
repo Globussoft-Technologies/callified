@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
+import PageHeader from '../components/PageHeader';
 
 export default function SubscriptionsPage({ apiFetch }) {
   const { currentUser } = useAuth();
@@ -135,9 +136,11 @@ export default function SubscriptionsPage({ apiFetch }) {
 
   return (
     <div style={{ padding: '1.5rem 2rem', maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '1.5rem', color: '#111827' }}>
-        🛡️ Subscription Management
-      </h1>
+      <PageHeader
+        icon="subscriptions"
+        title="Subscriptions"
+        subtitle="Manage organization plans and renewals."
+      />
 
       {message && (
         <div style={{

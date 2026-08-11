@@ -87,6 +87,111 @@ body {
   padding: 20px;
   box-shadow: var(--shadow-soft);
 }
+.page-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 24px;
+}
+.page-heading-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  display: grid;
+  place-items: center;
+  color: #3730a3;
+  background: #e0e7ff;
+  border: 1px solid #a5b4fc;
+  border-radius: 11px;
+}
+.page-heading-copy {
+  min-width: 0;
+}
+.page-heading-copy h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.page-heading-copy p {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.crm-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 15px;
+  margin-bottom: 16px;
+}
+.crm-stat-card {
+  min-width: 0;
+}
+.crm-stat-card-content {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.crm-stat-sparkline {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.crm-charts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+.crm-chart-card-wide {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.crm-bar-chart-scroll {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.crm-bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  height: 150px;
+  min-width: 560px;
+}
+.crm-chart-empty {
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+@media (max-width: 1280px) {
+  .crm-stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 820px) {
+  .crm-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .crm-charts-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .crm-chart-card-wide {
+    grid-column: auto;
+  }
+}
+@media (max-width: 520px) {
+  .crm-stat-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .header {
   display: flex;
   flex-wrap: nowrap;

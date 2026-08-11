@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useToast, useConfirm } from '../contexts/UIContext';
+import PageHeader from '../components/PageHeader';
 
 const TOPUP_PRESETS = [100, 500, 1000, 5000];
 
@@ -161,7 +162,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Title */}
-      <h2 style={{ margin: '0 0 24px', fontSize: 22, fontWeight: 700, color: T.text }}>Billing</h2>
+      <PageHeader icon="billing" title="Billing" subtitle="Manage credits, plans, and payments." />
 
       {/* Call Credits card */}
       <div style={{ ...card, marginBottom: 20, padding: '22px 28px', borderLeft: `4px solid ${T.accent}` }}>

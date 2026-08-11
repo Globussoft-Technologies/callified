@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import PageHeader from '../PageHeader';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -203,14 +204,11 @@ export default function ProductsTab({
     <div style={{ minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          {hideAiFeatures ? '📦 Products' : <>📦 <span style={{ color: T.cyan }}>Product</span> Knowledge</>}
-        </h2>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          {hideAiFeatures ? 'Manage your products.' : 'Manage your products. The AI learns from this to have informed conversations.'}
-        </p>
-      </div>
+      <PageHeader
+        icon="products"
+        title={hideAiFeatures ? 'Products' : 'Product Knowledge'}
+        subtitle={hideAiFeatures ? 'Manage your products.' : 'Manage products and AI knowledge.'}
+      />
 
       {/* Org card */}
       <div style={{ ...card, padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
