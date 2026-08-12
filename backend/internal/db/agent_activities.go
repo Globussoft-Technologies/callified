@@ -375,7 +375,7 @@ func (d *DB) GetUserAssignedCampaigns(orgID, userID int64) ([]UserAssignedCampai
 				SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END) AS notes
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
-				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_unicode_ci
 			WHERE aa.org_id = ? AND aa.user_id = ?
 				AND aa.activity_type IN ('call', 'status_update', 'note')
 			GROUP BY aa.campaign_id
@@ -548,7 +548,7 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 		SELECT COUNT(*)
 		FROM agent_activities aa
 		JOIN call_logs cl ON cl.org_id = aa.org_id
-			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_unicode_ci
 		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
 			AND cl.recording_url IS NOT NULL AND cl.recording_url != ''
 			%s`, dateFilter)
@@ -568,7 +568,7 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 			DATE_FORMAT(aa.created_at, '%%Y-%%m-%%d %%H:%%i:%%s')
 		FROM agent_activities aa
 		JOIN call_logs cl ON cl.org_id = aa.org_id
-			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_unicode_ci
 		LEFT JOIN leads l ON l.id = cl.lead_id
 		LEFT JOIN campaigns c ON c.id = cl.campaign_id
 		LEFT JOIN call_transcripts ct ON ct.call_sid = cl.call_sid
@@ -633,7 +633,7 @@ func (d *DB) GetUserActivityStats(orgID, userID int64, from, to time.Time) (User
 			COALESCE(SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END), 0)
 		FROM agent_activities aa
 		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
-			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_unicode_ci
 		WHERE aa.org_id = ? AND aa.user_id = ?
 			AND aa.activity_type IN ('call', 'status_update', 'note')
 			%s`, dateFilter), args...).Scan(&s.TotalCalls, &s.Recordings, &s.Appointments, &s.Notes)
