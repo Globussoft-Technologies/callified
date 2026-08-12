@@ -769,7 +769,7 @@ func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallO
 				END AS outcome
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
-				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_unicode_ci
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci
 			WHERE aa.campaign_id=?
 				AND aa.user_id=?
 				AND aa.activity_type='call'
