@@ -74,6 +74,24 @@ const tdStyle = {
   whiteSpace: 'nowrap',
 };
 
+const thStickyStyle = {
+  ...thStyle,
+  position: 'sticky',
+  top: 0,
+  zIndex: 1,
+};
+
+function Metric({ value, positive, negative }) {
+  const n = value || 0;
+  if (n === 0) {
+    return <span style={{ color: T.muted }}>-</span>;
+  }
+  let color = T.sub;
+  if (positive) color = T.green;
+  if (negative) color = T.red;
+  return <span style={{ color, fontWeight: 800 }}>{n}</span>;
+}
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -284,7 +302,7 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
             <thead>
               <tr>
                 {['Name', 'Role', 'Calls', 'Connected', 'Completed', 'Unanswered', 'Busy', 'Failed', 'Recording', 'Appointments', 'Notes'].map(h => (
-                  <th key={h} style={thStyle}>{h}</th>
+                  <th key={h} style={thStickyStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -299,18 +317,29 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
                       <div style={{ color: T.muted, fontSize: 11, fontWeight: 500 }}>{r.email}</div>
                     </td>
                     <td style={rowTd}><Badge>{r.role}</Badge></td>
-                    <td style={rowTd}>{r.total_calls || 0}</td>
-                    <td style={{ ...rowTd, color: T.green, fontWeight: 800 }}>{r.connected || 0}</td>
-                    <td style={{ ...rowTd, color: T.green, fontWeight: 800 }}>{r.completed || 0}</td>
-                    <td style={{ ...rowTd, color: T.amber, fontWeight: 800 }}>{r.unanswered || 0}</td>
-                    <td style={rowTd}>{r.busy || 0}</td>
-                    <td style={{ ...rowTd, color: T.red }}>{r.failed || 0}</td>
-                    <td style={rowTd}>{r.recordings || 0}</td>
-                    <td style={rowTd}>{r.appointments || 0}</td>
-                    <td style={rowTd}>{r.notes_added || 0}</td>
+                    <td style={rowTd}><Metric value={r.total_calls} /></td>
+                    <td style={rowTd}><Metric value={r.connected} positive /></td>
+                    <td style={rowTd}><Metric value={r.completed} positive /></td>
+                    <td style={rowTd}><Metric value={r.unanswered} /></td>
+                    <td style={rowTd}><Metric value={r.busy} /></td>
+                    <td style={rowTd}><Metric value={r.failed} negative /></td>
+                    <td style={rowTd}><Metric value={r.recordings} /></td>
+                    <td style={rowTd}><Metric value={r.appointments} positive /></td>
+                    <td style={rowTd}><Metric value={r.notes_added} /></td>
                   </tr>
                 );
               })}
+              {!loading && rows.length > 0 && (
+                <tr style={{ background: '#fbfcff', fontWeight: 800 }}>
+                  <td style={{ ...tdStyle, color: T.text, borderTop: `2px solid ${T.border}` }}>Total</td>
+                  <td style={{ ...tdStyle, borderTop: `2px solid ${T.border}` }}>-</td>
+                  {['total_calls', 'connected', 'completed', 'unanswered', 'busy', 'failed', 'recordings', 'appointments', 'notes_added'].map(k => (
+                    <td key={k} style={{ ...tdStyle, borderTop: `2px solid ${T.border}` }}>
+                      <Metric value={rows.reduce((s, r) => s + (Number(r[k]) || 0), 0)} positive={k !== 'failed' && k !== 'unanswered'} negative={k === 'failed'} />
+                    </td>
+                  ))}
+                </tr>
+              )}
               {!loading && rows.length === 0 && (
                 <tr>
                   <td colSpan="11" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: 30 }}>

@@ -8,7 +8,7 @@ import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
-import { isAdmin } from '../../utils/roles';
+import { isAdmin, isExecutive } from '../../utils/roles';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -389,6 +389,9 @@ export default function CampaignDetail({
   const canViewRecordings = hasPermission('calls.recordings');
   const canViewReports = hasPermission('reports.view');
   const canSaveVoiceSettings = hasPermission('voice_settings.save');
+  // Only Executives are restricted from changing the per-machine browser call account;
+  // Admins/Agents can always change it, and Executives can if granted the permission.
+  const canChangeBrowserCallAccount = !isExecutive(currentUser?.role) || hasPermission('calls.browser_call_account');
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -449,7 +452,9 @@ export default function CampaignDetail({
   const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
-  const effectiveBrowserAccountId = browserAccountId || selectedExotelAccountId;
+  // If the user lacks permission to change the per-machine browser call account,
+  // force the fixed campaign/lead assignment account and ignore any localStorage override.
+  const effectiveBrowserAccountId = canChangeBrowserCallAccount ? (browserAccountId || selectedExotelAccountId) : selectedExotelAccountId;
   const effectiveBrowserAccount = orgExotelAccounts.find(a => String(a.id) === String(effectiveBrowserAccountId));
 
   const openScheduleModal = useCallback((lead, editing = false) => {
@@ -1098,11 +1103,16 @@ export default function CampaignDetail({
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.exotel_account_id) setSelectedExotelAccountId(String(data.exotel_account_id)); })
       .catch(() => {});
-    // Restore per-machine browser-call account from localStorage
-    try {
-      const saved = localStorage.getItem(browserAccountKey(selectedCampaign.id));
-      if (saved != null) setBrowserAccountId(saved);
-    } catch { /* ignore */ }
+    // Restore per-machine browser-call account from localStorage only when the user
+    // is allowed to change it. Otherwise the fixed campaign/lead assignment account is used.
+    if (canChangeBrowserCallAccount) {
+      try {
+        const saved = localStorage.getItem(browserAccountKey(selectedCampaign.id));
+        if (saved != null) setBrowserAccountId(saved);
+      } catch { /* ignore */ }
+    } else {
+      setBrowserAccountId('');
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaign.id, browserAccountKey]);
 
@@ -1337,7 +1347,9 @@ export default function CampaignDetail({
             <select
               className="form-input"
               value={effectiveBrowserAccountId}
+              disabled={!canChangeBrowserCallAccount}
               onChange={e => {
+                if (!canChangeBrowserCallAccount) return;
                 const v = e.target.value;
                 const override = v === selectedExotelAccountId ? '' : v;
                 setBrowserAccountId(override);
@@ -1345,7 +1357,7 @@ export default function CampaignDetail({
                   localStorage.setItem(browserAccountKey(selectedCampaign.id), override);
                 } catch { /* ignore */ }
               }}
-              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
+              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420, opacity: canChangeBrowserCallAccount ? 1 : 0.6, cursor: canChangeBrowserCallAccount ? 'pointer' : 'not-allowed' }}>
               <option value="">Use campaign default</option>
               {orgExotelAccounts.filter(a => a.app_type === 'voicebot').map(a => (
                 <option key={a.id} value={String(a.id)}>
@@ -1359,7 +1371,9 @@ export default function CampaignDetail({
               ? `Dialing from: ${effectiveBrowserAccount.name || effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.caller_id || 'no caller ID'}${browserAccountId ? '' : ' (campaign default)'}`
               : orgExotelAccounts.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
-                : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
+                : canChangeBrowserCallAccount
+                  ? 'Browser calls will use the campaign default. This choice is saved only in this browser.'
+                  : 'This account is fixed by the campaign/lead assignment. Contact admin to change it.'}
           </div>
         </div>
       )}
