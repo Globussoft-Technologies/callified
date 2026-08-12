@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../contexts/UIContext';
+import UserDetailModal from '../components/modals/UserDetailModal';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -137,11 +138,29 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const [month, setMonth] = useState(monthStr());
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
+  const [roleFilter, setRoleFilter] = useState('All');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [modalUserId, setModalUserId] = useState(null);
 
   const agentOptions = useMemo(
     () => members.filter(m => ['Agent', 'Executive', 'TeamLeader'].includes(m.role)),
     [members],
   );
+
+  const displayRows = useMemo(() => {
+    let filtered = rows;
+    if (roleFilter !== 'All') {
+      filtered = filtered.filter((r) => r.role === roleFilter);
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.toLowerCase();
+      filtered = filtered.filter((r) =>
+        (r.full_name || '').toLowerCase().includes(q) ||
+        (r.email || '').toLowerCase().includes(q)
+      );
+    }
+    return filtered;
+  }, [rows, roleFilter, searchTerm]);
 
   const range = useMemo(() => {
     if (period === 'monthly') {
@@ -281,11 +300,35 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
               setMonth(monthStr());
               setFrom(todayStr());
               setTo(todayStr());
+              setRoleFilter('All');
+              setSearchTerm('');
             }}
             style={btnGhost}
           >
             Reset
           </button>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 14, alignItems: 'end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: 1 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>
+            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inputStyle, height: 41 }}>
+              <option value="All">All</option>
+              <option value="Admin">Admin</option>
+              <option value="Agent">Agent</option>
+              <option value="Executive">Executive</option>
+              <option value="TeamLeader">TeamLeader</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220, flex: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Search name/email</span>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Type to filter..."
+              style={inputStyle}
+            />
+          </label>
         </div>
       </div>
 
@@ -307,11 +350,17 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => {
-                const last = i === rows.length - 1;
+              {displayRows.map((r, i) => {
+                const last = i === displayRows.length - 1;
                 const rowTd = { ...tdStyle, borderBottom: last ? 'none' : `1px solid ${T.border}` };
                 return (
-                  <tr key={r.user_id}>
+                  <tr
+                    key={r.user_id}
+                    onClick={() => setModalUserId(r.user_id)}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f9fafb'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                  >
                     <td style={{ ...rowTd, color: T.text, fontWeight: 800 }}>
                       <div>{r.full_name || '-'}</div>
                       <div style={{ color: T.muted, fontSize: 11, fontWeight: 500 }}>{r.email}</div>
@@ -329,18 +378,18 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
                   </tr>
                 );
               })}
-              {!loading && rows.length > 0 && (
+              {!loading && displayRows.length > 0 && (
                 <tr style={{ background: '#fbfcff', fontWeight: 800 }}>
                   <td style={{ ...tdStyle, color: T.text, borderTop: `2px solid ${T.border}` }}>Total</td>
                   <td style={{ ...tdStyle, borderTop: `2px solid ${T.border}` }}>-</td>
                   {['total_calls', 'connected', 'completed', 'unanswered', 'busy', 'failed', 'recordings', 'appointments', 'notes_added'].map(k => (
                     <td key={k} style={{ ...tdStyle, borderTop: `2px solid ${T.border}` }}>
-                      <Metric value={rows.reduce((s, r) => s + (Number(r[k]) || 0), 0)} positive={k !== 'failed' && k !== 'unanswered'} negative={k === 'failed'} />
+                      <Metric value={displayRows.reduce((s, r) => s + (Number(r[k]) || 0), 0)} positive={k !== 'failed' && k !== 'unanswered'} negative={k === 'failed'} />
                     </td>
                   ))}
                 </tr>
               )}
-              {!loading && rows.length === 0 && (
+              {!loading && displayRows.length === 0 && (
                 <tr>
                   <td colSpan="11" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: 30 }}>
                     No agent performance found for this filter.
@@ -351,6 +400,16 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
           </table>
         </div>
       </div>
+
+      {modalUserId && (
+        <UserDetailModal
+          userId={modalUserId}
+          onClose={() => setModalUserId(null)}
+          apiFetch={apiFetch}
+          API_URL={API_URL}
+          range={range}
+        />
+      )}
     </div>
   );
 }

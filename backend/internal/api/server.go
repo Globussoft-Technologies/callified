@@ -474,6 +474,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/analytics/scored-leads", auth(s.scoredLeads))
 	mux.HandleFunc("GET /api/analytics/agent-lead-summary", auth(s.agentLeadSummary))
 	mux.HandleFunc("GET /api/analytics/agent-report", auth(s.agentReportXLSX))
+	mux.HandleFunc("GET /api/analytics/user-detail/{id}", auth(s.userDetail))
 
 	// ── Billing (Phase 3B) ────────────────────────────────────────────────────
 	// Subscribe/cancel/create-order/verify-payment all carry financial impact

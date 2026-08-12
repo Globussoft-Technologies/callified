@@ -284,6 +284,153 @@ func (s *Server) agentLeadSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(rows))
 }
 
+// GET /api/analytics/user-detail/{id}
+// @Summary     User performance detail
+// @Description Returns a single user's profile, assigned campaigns, leads, recordings, and activity stats. Requires reports.view permission.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id           path   int64   true   "User ID"
+// @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
+// @Param       to           query  string  false  "End date (YYYY-MM-DD)"
+// @Param       campaign_id  query  int64   false  "Campaign ID to filter leads (0 = all)"
+// @Param       leads_page   query  int64   false  "Leads page number"
+// @Param       leads_limit  query  int64   false  "Leads page size (max 100)"
+// @Param       recordings_page   query  int64  false  "Recordings page number"
+// @Param       recordings_limit  query  int64  false  "Recordings page size (max 100)"
+// @Success     200  {object}  db.UserDetailResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/user-detail/{id} [get]
+func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
+	ac := getAuth(r)
+	userID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	// Agents/Executives can only view their own detail.
+	if db.IsAgentLikeRole(ac.Role) {
+		if userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	profile, err := s.db.GetUserByIDInOrgWithRole(userID, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if profile == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	var from, to time.Time
+	if fromStr != "" {
+		from, _ = time.Parse("2006-01-02", fromStr)
+	}
+	if toStr != "" {
+		to, _ = time.Parse("2006-01-02", toStr)
+	}
+
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
+	leadsPage := int64(1)
+	if p, err := strconv.ParseInt(r.URL.Query().Get("leads_page"), 10, 64); err == nil && p > 0 {
+		leadsPage = p
+	}
+	leadsLimit := int64(20)
+	if l, err := strconv.ParseInt(r.URL.Query().Get("leads_limit"), 10, 64); err == nil && l > 0 {
+		if l > 100 {
+			l = 100
+		}
+		leadsLimit = l
+	}
+	leadsOffset := (leadsPage - 1) * leadsLimit
+
+	recordingsPage := int64(1)
+	if p, err := strconv.ParseInt(r.URL.Query().Get("recordings_page"), 10, 64); err == nil && p > 0 {
+		recordingsPage = p
+	}
+	recordingsLimit := int64(20)
+	if l, err := strconv.ParseInt(r.URL.Query().Get("recordings_limit"), 10, 64); err == nil && l > 0 {
+		if l > 100 {
+			l = 100
+		}
+		recordingsLimit = l
+	}
+	recordingsOffset := (recordingsPage - 1) * recordingsLimit
+
+	campaigns, err := s.db.GetUserAssignedCampaigns(ac.OrgID, userID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	assignedLeads, err := s.db.CountUserAssignedLeads(ac.OrgID, userID, campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	stats, err := s.db.GetUserActivityStats(ac.OrgID, userID, from, to)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	stats.AssignedLeads = assignedLeads
+	stats.AssignedCampaigns = int64(len(campaigns))
+
+	leads, err := s.db.GetUserAssignedLeads(ac.OrgID, userID, leadsLimit, leadsOffset, campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	recordings, recTotal, err := s.db.GetUserRecordings(ac.OrgID, userID, from, to, recordingsLimit, recordingsOffset)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := db.UserDetailResponse{
+		Profile:    *profile,
+		Stats:      stats,
+		Campaigns:  emptyJSON(campaigns),
+		Leads:      emptyJSON(leads),
+		Recordings: emptyJSON(recordings),
+	}
+	resp.LeadPagination.Page = leadsPage
+	resp.LeadPagination.Limit = leadsLimit
+	resp.LeadPagination.Total = assignedLeads
+	resp.RecordingPagination.Page = recordingsPage
+	resp.RecordingPagination.Limit = recordingsLimit
+	resp.RecordingPagination.Total = recTotal
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func formatSeconds(sec int64) string {
 	if sec <= 0 {
 		return "0s"

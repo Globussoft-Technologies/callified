@@ -1,7 +1,9 @@
 package db
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -326,4 +328,333 @@ func (d *DB) GetAgentActivityDetail(orgID int64, from, to time.Time, campaignID,
 		list = append(list, a)
 	}
 	return list, rows.Err()
+}
+
+// UserAssignedCampaign is a campaign directly assigned to a dashboard user with
+// lead and activity counts.
+type UserAssignedCampaign struct {
+	CampaignID   int64  `json:"campaign_id"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	LeadCount    int64  `json:"lead_count"`
+	TotalCalls   int64  `json:"total_calls"`
+	Recordings   int64  `json:"recordings"`
+	Appointments int64  `json:"appointments"`
+	Notes        int64  `json:"notes"`
+}
+
+// GetUserAssignedCampaigns returns the campaigns directly assigned to a user
+// together with the total leads and the user's call/activity stats for those
+// campaigns (all time, not date-bound).
+func (d *DB) GetUserAssignedCampaigns(orgID, userID int64) ([]UserAssignedCampaign, error) {
+	rows, err := d.pool.Query(`
+		SELECT
+			c.id,
+			c.name,
+			COALESCE(c.status, 'active'),
+			COALESCE(lc.lead_count, 0),
+			COALESCE(cs.total_calls, 0),
+			COALESCE(cs.recordings, 0),
+			COALESCE(cs.appointments, 0),
+			COALESCE(cs.notes, 0)
+		FROM campaigns c
+		JOIN campaign_user_assignments cua ON cua.campaign_id = c.id AND cua.user_id = ?
+		LEFT JOIN (
+			SELECT campaign_id, COUNT(*) AS lead_count
+			FROM campaign_leads
+			GROUP BY campaign_id
+		) lc ON lc.campaign_id = c.id
+		LEFT JOIN (
+			SELECT
+				aa.campaign_id,
+				SUM(CASE WHEN aa.activity_type = 'call' THEN 1 ELSE 0 END) AS total_calls,
+				SUM(CASE WHEN aa.activity_type = 'call'
+						AND cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings,
+				SUM(CASE WHEN aa.activity_type = 'status_update'
+						AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.new_status')) = 'Appointment Set' THEN 1 ELSE 0 END) AS appointments,
+				SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END) AS notes
+			FROM agent_activities aa
+			LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+			WHERE aa.org_id = ? AND aa.user_id = ?
+				AND aa.activity_type IN ('call', 'status_update', 'note')
+			GROUP BY aa.campaign_id
+		) cs ON cs.campaign_id = c.id
+		WHERE c.org_id = ?
+		ORDER BY c.name`, userID, orgID, userID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []UserAssignedCampaign
+	for rows.Next() {
+		var c UserAssignedCampaign
+		if err := rows.Scan(&c.CampaignID, &c.Name, &c.Status, &c.LeadCount,
+			&c.TotalCalls, &c.Recordings, &c.Appointments, &c.Notes); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
+// executiveIDForUser returns the executives.id linked to a dashboard user with
+// role Executive via email. It returns 0 when no such executive exists.
+func (d *DB) executiveIDForUser(orgID, userID int64) (int64, error) {
+	var execID int64
+	err := d.pool.QueryRow(`
+		SELECT e.id
+		FROM executives e
+		JOIN users u ON LOWER(u.email) = LOWER(e.email) AND u.org_id = e.org_id
+		WHERE e.org_id = ? AND u.id = ? AND u.role = 'Executive'
+		LIMIT 1`, orgID, userID).Scan(&execID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return execID, err
+}
+
+// CountUserAssignedLeads counts leads that are considered assigned to the user:
+// either leads in campaigns directly assigned to the user, or leads whose
+// campaign_leads.executive_id matches the user's Executive record.
+func (d *DB) CountUserAssignedLeads(orgID, userID, campaignID int64) (int64, error) {
+	execID, err := d.executiveIDForUser(orgID, userID)
+	if err != nil {
+		return 0, err
+	}
+	args := []any{orgID, userID}
+	execFilter := ""
+	if execID > 0 {
+		execFilter = "OR cl.executive_id = ?"
+		args = append(args, execID)
+	}
+	campaignFilter := ""
+	if campaignID > 0 {
+		campaignFilter = "AND cl.campaign_id = ?"
+		args = append(args, campaignID)
+	}
+	var n int64
+	err = d.pool.QueryRow(fmt.Sprintf(`
+		SELECT COUNT(DISTINCT l.id)
+		FROM leads l
+		JOIN campaign_leads cl ON cl.lead_id = l.id
+		WHERE l.org_id = ? AND (
+			cl.campaign_id IN (SELECT campaign_id FROM campaign_user_assignments WHERE user_id = ?)
+			%s
+		)
+		%s`, execFilter, campaignFilter), args...).Scan(&n)
+	return n, err
+}
+
+// UserAssignedLead is a lead assigned to a user, including the campaign it was
+// pulled from.
+type UserAssignedLead struct {
+	Lead
+	CampaignID   int64  `json:"campaign_id"`
+	CampaignName string `json:"campaign_name"`
+}
+
+// GetUserAssignedLeads returns one page of leads assigned to the user, filtered
+// by an optional campaign ID.
+func (d *DB) GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64) ([]UserAssignedLead, error) {
+	execID, err := d.executiveIDForUser(orgID, userID)
+	if err != nil {
+		return nil, err
+	}
+	args := []any{orgID, userID}
+	execFilter := ""
+	if execID > 0 {
+		execFilter = "OR cl.executive_id = ?"
+		args = append(args, execID)
+	}
+	campaignFilter := ""
+	if campaignID > 0 {
+		campaignFilter = "AND cl.campaign_id = ?"
+		args = append(args, campaignID)
+	}
+	args = append(args, limit, offset)
+	rows, err := d.pool.Query(fmt.Sprintf(`
+		SELECT
+			l.id, l.org_id, l.first_name, COALESCE(l.last_name, ''), l.phone,
+			COALESCE(l.source, ''), COALESCE(l.status, 'new'), COALESCE(l.follow_up_note, ''),
+			COALESCE(l.follow_up_at, ''),
+			COALESCE(l.interest, ''), COALESCE(l.company, ''), COALESCE(l.external_id, ''),
+			COALESCE(l.crm_provider, ''), COALESCE(l.executive_id, 0),
+			DATE_FORMAT(l.created_at, '%%Y-%%m-%%d %%H:%%i:%%s'),
+			c.id, c.name
+		FROM leads l
+		JOIN campaign_leads cl ON cl.lead_id = l.id
+		JOIN campaigns c ON c.id = cl.campaign_id
+		WHERE l.org_id = ? AND (
+			cl.campaign_id IN (SELECT campaign_id FROM campaign_user_assignments WHERE user_id = ?)
+			%s
+		)
+		%s
+		ORDER BY l.created_at DESC, l.id DESC
+		LIMIT ? OFFSET ?`, execFilter, campaignFilter), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []UserAssignedLead
+	for rows.Next() {
+		var r UserAssignedLead
+		var cid int64
+		if err := rows.Scan(&r.ID, &r.OrgID, &r.FirstName, &r.LastName, &r.Phone,
+			&r.Source, &r.Status, &r.FollowUpNote, &r.FollowUpAt, &r.Interest,
+			&r.Company, &r.ExternalID, &r.CRMProvider, &r.ExecutiveID, &r.CreatedAt,
+			&cid, &r.CampaignName); err != nil {
+			return nil, err
+		}
+		r.CampaignID = cid
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// UserRecording is a call recording attributed to a user, enriched with lead
+// and campaign names.
+type UserRecording struct {
+	CallLog
+	LeadName     string  `json:"lead_name"`
+	CampaignName string  `json:"campaign_name"`
+	DurationS    float64 `json:"duration_s"`
+	UserCallAt   string  `json:"user_call_at"`
+}
+
+// GetUserRecordings returns the user's calls (with recordings) for an optional
+// date range, paginated.
+func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, offset int64) ([]UserRecording, int64, error) {
+	dateFilter := ""
+	args := []any{orgID, userID}
+	if !from.IsZero() && !to.IsZero() {
+		dateFilter = "AND aa.created_at >= ? AND aa.created_at <= ?"
+		args = append(args, from, to.Add(24*time.Hour-time.Second))
+	} else if !from.IsZero() {
+		dateFilter = "AND aa.created_at >= ?"
+		args = append(args, from)
+	} else if !to.IsZero() {
+		dateFilter = "AND aa.created_at <= ?"
+		args = append(args, to.Add(24*time.Hour-time.Second))
+	}
+	countArgs := append([]any(nil), args...)
+	listArgs := append([]any(nil), args...)
+	listArgs = append(listArgs, limit, offset)
+
+	var total int64
+	countQ := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM agent_activities aa
+		JOIN call_logs cl ON cl.org_id = aa.org_id
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
+			AND cl.recording_url IS NOT NULL AND cl.recording_url != ''
+			%s`, dateFilter)
+	if err := d.pool.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	q := fmt.Sprintf(`
+		SELECT
+			cl.id, cl.lead_id, COALESCE(cl.campaign_id, 0), cl.org_id,
+			COALESCE(cl.call_sid, ''), COALESCE(cl.phone, ''), COALESCE(cl.provider, ''),
+			COALESCE(cl.status, ''), COALESCE(cl.recording_url, ''),
+			DATE_FORMAT(cl.created_at, '%%Y-%%m-%%d %%H:%%i:%%s'),
+			COALESCE(CONCAT(l.first_name, ' ', COALESCE(l.last_name, '')), ''),
+			COALESCE(c.name, ''),
+			COALESCE(ct.call_duration_s, 0),
+			DATE_FORMAT(aa.created_at, '%%Y-%%m-%%d %%H:%%i:%%s')
+		FROM agent_activities aa
+		JOIN call_logs cl ON cl.org_id = aa.org_id
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+		LEFT JOIN leads l ON l.id = cl.lead_id
+		LEFT JOIN campaigns c ON c.id = cl.campaign_id
+		LEFT JOIN call_transcripts ct ON ct.call_sid = cl.call_sid
+		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
+			AND cl.recording_url IS NOT NULL AND cl.recording_url != ''
+			%s
+		ORDER BY aa.created_at DESC
+		LIMIT ? OFFSET ?`, dateFilter)
+	rows, err := d.pool.Query(q, listArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var list []UserRecording
+	for rows.Next() {
+		var r UserRecording
+		if err := rows.Scan(&r.ID, &r.LeadID, &r.CampaignID, &r.OrgID,
+			&r.CallSid, &r.Phone, &r.Provider, &r.Status, &r.RecordingURL, &r.CreatedAt,
+			&r.LeadName, &r.CampaignName, &r.DurationS, &r.UserCallAt); err != nil {
+			return nil, 0, err
+		}
+		list = append(list, r)
+	}
+	return list, total, rows.Err()
+}
+
+// UserActivityStats aggregates the user's activity counts.
+type UserActivityStats struct {
+	AssignedLeads     int64 `json:"assigned_leads"`
+	AssignedCampaigns int64 `json:"assigned_campaigns"`
+	TotalCalls        int64 `json:"total_calls"`
+	Recordings        int64 `json:"recordings"`
+	Appointments      int64 `json:"appointments"`
+	Notes             int64 `json:"notes"`
+}
+
+// GetUserActivityStats returns call/outcome/note counts for the user, optionally
+// filtered by a date range. AssignedLeads and AssignedCampaigns are populated
+// by the caller from the dedicated helpers.
+func (d *DB) GetUserActivityStats(orgID, userID int64, from, to time.Time) (UserActivityStats, error) {
+	var s UserActivityStats
+	dateFilter := ""
+	args := []any{orgID, userID}
+	if !from.IsZero() && !to.IsZero() {
+		dateFilter = "AND aa.created_at >= ? AND aa.created_at <= ?"
+		args = append(args, from, to.Add(24*time.Hour-time.Second))
+	} else if !from.IsZero() {
+		dateFilter = "AND aa.created_at >= ?"
+		args = append(args, from)
+	} else if !to.IsZero() {
+		dateFilter = "AND aa.created_at <= ?"
+		args = append(args, to.Add(24*time.Hour-time.Second))
+	}
+	err := d.pool.QueryRow(fmt.Sprintf(`
+		SELECT
+			COALESCE(SUM(CASE WHEN aa.activity_type = 'call' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type = 'call'
+					AND cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type = 'status_update'
+					AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.new_status')) = 'Appointment Set' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END), 0)
+		FROM agent_activities aa
+		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid'))
+		WHERE aa.org_id = ? AND aa.user_id = ?
+			AND aa.activity_type IN ('call', 'status_update', 'note')
+			%s`, dateFilter), args...).Scan(&s.TotalCalls, &s.Recordings, &s.Appointments, &s.Notes)
+	return s, err
+}
+
+// UserDetailResponse is the payload for GET /api/analytics/user-detail/{id}.
+type UserDetailResponse struct {
+	Profile        User                   `json:"profile"`
+	Stats          UserActivityStats      `json:"stats"`
+	Campaigns      []UserAssignedCampaign `json:"campaigns"`
+	Leads          []UserAssignedLead     `json:"leads"`
+	Recordings     []UserRecording        `json:"recordings"`
+	LeadPagination struct {
+		Page  int64 `json:"page"`
+		Limit int64 `json:"limit"`
+		Total int64 `json:"total"`
+	} `json:"lead_pagination"`
+	RecordingPagination struct {
+		Page  int64 `json:"page"`
+		Limit int64 `json:"limit"`
+		Total int64 `json:"total"`
+	} `json:"recording_pagination"`
 }
