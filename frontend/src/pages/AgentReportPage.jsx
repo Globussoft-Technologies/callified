@@ -131,7 +131,6 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [userId, setUserId] = useState('');
   const [campaignId, setCampaignId] = useState('');
   const [period, setPeriod] = useState('daily');
   const [day, setDay] = useState(todayStr());
@@ -142,10 +141,7 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [modalUserId, setModalUserId] = useState(null);
 
-  const agentOptions = useMemo(
-    () => members.filter(m => ['Agent', 'Executive', 'TeamLeader'].includes(m.role)),
-    [members],
-  );
+  const maxDate = todayStr();
 
   const displayRows = useMemo(() => {
     let filtered = rows;
@@ -183,7 +179,6 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
       setLoading(true);
       try {
         const params = new URLSearchParams({ from: range.from, to: range.to });
-        if (userId) params.set('user_id', userId);
         if (campaignId) params.set('campaign_id', campaignId);
         const res = await apiFetch(`${API_URL}/analytics/agent-lead-summary?${params.toString()}`);
         const data = await res.json().catch(() => []);
@@ -196,13 +191,12 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
     };
     load();
     return () => { cancelled = true; };
-  }, [apiFetch, API_URL, range.from, range.to, userId, campaignId]);
+  }, [apiFetch, API_URL, range.from, range.to, campaignId]);
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
       const params = new URLSearchParams({ from: range.from, to: range.to });
-      if (userId) params.set('user_id', userId);
       if (campaignId) params.set('campaign_id', campaignId);
       const res = await apiFetch(`${API_URL}/analytics/agent-report?${params.toString()}`);
       if (!res.ok) {
@@ -240,24 +234,15 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
       </div>
 
       <div style={{ ...card, padding: 18, marginBottom: 18 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(150px, 1fr)) auto', gap: 12, alignItems: 'end' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Name</span>
-            <select value={userId} onChange={e => setUserId(e.target.value)} style={{ ...inputStyle, height: 41 }}>
-              <option value="">All agents</option>
-              {agentOptions.map(m => (
-                <option key={m.id} value={m.id}>{m.full_name || m.email}</option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Campaign</span>
             <select value={campaignId} onChange={e => setCampaignId(e.target.value)} style={{ ...inputStyle, height: 41 }}>
               <option value="">All campaigns</option>
               {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 140, flex: '1 1 120px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Period</span>
             <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputStyle, height: 41 }}>
               <option value="daily">Daily</option>
@@ -266,34 +251,50 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
             </select>
           </label>
           {period === 'daily' && (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Date</span>
-              <input type="date" value={day} onChange={e => setDay(e.target.value)} style={inputStyle} />
+              <input type="date" value={day} max={maxDate} onChange={e => setDay(e.target.value)} style={inputStyle} />
             </label>
           )}
           {period === 'monthly' && (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Month</span>
-              <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={inputStyle} />
+              <input type="month" value={month} max={monthStr()} onChange={e => setMonth(e.target.value)} style={inputStyle} />
             </label>
           )}
           {period === 'custom' && (
             <>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
                 <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>From</span>
-                <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={inputStyle} />
+                <input type="date" value={from} max={maxDate} onChange={e => setFrom(e.target.value)} style={inputStyle} />
               </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
                 <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>To</span>
-                <input type="date" value={to} onChange={e => setTo(e.target.value)} style={inputStyle} />
+                <input type="date" value={to} max={maxDate} min={from} onChange={e => setTo(e.target.value)} style={inputStyle} />
               </label>
             </>
           )}
-          {period !== 'custom' && <div />}
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 130, flex: '1 1 120px' }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>
+            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inputStyle, height: 41 }}>
+              <option value="All">All</option>
+              <option value="Agent">Agent</option>
+              <option value="Executive">Executive</option>
+            </select>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: '2 1 200px' }}>
+            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Search name/email</span>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              placeholder="Type to filter..."
+              style={inputStyle}
+            />
+          </label>
           <button
             type="button"
             onClick={() => {
-              setUserId('');
               setCampaignId('');
               setPeriod('daily');
               setDay(todayStr());
@@ -307,28 +308,6 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
           >
             Reset
           </button>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 14, alignItems: 'end' }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: 1 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>
-            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inputStyle, height: 41 }}>
-              <option value="All">All</option>
-              <option value="Admin">Admin</option>
-              <option value="Agent">Agent</option>
-              <option value="Executive">Executive</option>
-              <option value="TeamLeader">TeamLeader</option>
-            </select>
-          </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220, flex: 2 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Search name/email</span>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              placeholder="Type to filter..."
-              style={inputStyle}
-            />
-          </label>
         </div>
       </div>
 

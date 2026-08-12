@@ -158,7 +158,7 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 				SUM(CASE WHEN cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
-				AND cl.call_sid=JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid'))
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_unicode_ci
 			WHERE aa.org_id=?
 				AND aa.activity_type='call'
 				AND aa.created_at >= ?
@@ -270,7 +270,7 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 			%s
 			%s
 		LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
-			AND cl.call_sid=JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid'))
+			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_unicode_ci
 		WHERE u.org_id=?
 			%s
 		GROUP BY u.id, u.email, u.full_name, u.role
