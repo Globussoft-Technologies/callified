@@ -213,7 +213,13 @@ body {
 .top-header-mobile-menu {
   display: none;
 }
-@media (max-width: 900px) {
+.top-header-desktop-nav {
+  scrollbar-width: none;
+}
+.top-header-desktop-nav::-webkit-scrollbar {
+  display: none;
+}
+@media (max-width: 1535px) {
   .top-header {
     height: 64px !important;
     padding: 0 14px !important;
@@ -231,8 +237,7 @@ body {
   .top-header-brand {
     font-size: 20px !important;
   }
-  .top-header-desktop-nav,
-  .top-header-desktop-account {
+  .top-header-desktop-nav {
     display: none !important;
   }
   .top-header-actions {
@@ -255,8 +260,8 @@ body {
   .top-header-mobile-menu {
     position: absolute;
     top: calc(100% + 1px);
-    right: 10px;
-    left: 10px;
+    right: 14px;
+    width: min(680px, calc(100vw - 28px));
     display: flex;
     flex-direction: column;
     max-height: calc(100svh - 76px);
@@ -267,7 +272,7 @@ body {
     box-shadow: 0 18px 50px rgba(15, 23, 42, 0.18);
   }
   .top-header-mobile-user {
-    display: flex;
+    display: none;
     align-items: center;
     gap: 10px;
     padding: 14px 16px;
@@ -350,7 +355,7 @@ body {
     font-weight: 700;
   }
   .top-header-mobile-footer {
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
@@ -392,6 +397,22 @@ body {
   .top-header-mobile-logout-confirm button:first-child {
     color: #b91c1c;
     border-color: #fecaca;
+  }
+}
+@media (max-width: 900px) {
+  .top-header-desktop-account {
+    display: none !important;
+  }
+  .top-header-mobile-user,
+  .top-header-mobile-footer {
+    display: flex;
+  }
+}
+@media (max-width: 640px) {
+  .top-header-mobile-menu {
+    right: 10px;
+    left: 10px;
+    width: auto;
   }
 }
 @media (max-width: 420px) {
