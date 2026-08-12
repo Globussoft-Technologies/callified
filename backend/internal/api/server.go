@@ -227,6 +227,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/campaigns/{id}", adminAuth(s.deleteCampaign))
 	mux.HandleFunc("GET /api/campaigns/{id}/leads", adminOrAgent(s.listCampaignLeads))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads", adminAuth(s.addCampaignLeads))
+	mux.HandleFunc("PUT /api/campaigns/{id}/leads/executive", auth(s.bulkUpdateCampaignLeadExecutives))
 	mux.HandleFunc("DELETE /api/campaigns/{id}/leads/{lead_id}", adminAuth(s.removeCampaignLead))
 	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminOrAgent(s.getCampaignStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-outcome-stats", adminOrAgent(s.getCampaignCallOutcomeStats))

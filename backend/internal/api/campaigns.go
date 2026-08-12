@@ -534,6 +534,74 @@ func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"added": added})
 }
 
+// ── PUT /api/campaigns/{id}/leads/executive ────────────────────────────────────
+
+// @Summary     Bulk assign executive to campaign leads
+// @Description Assigns an executive to multiple leads in a campaign at once. Requires crm.assign permission.
+// @Tags        campaigns
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id       path  int64                              true  "Campaign ID"
+// @Param       body     body  object{lead_ids=[]int64,executive_id=int64}  true  "Lead IDs and executive ID (0 to unassign)"
+// @Success     200  {object}  BoolResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/leads/executive [put]
+func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.assign") {
+		return
+	}
+	ac := getAuth(r)
+	if !s.isSuperAdmin(ac.Email) {
+		user, err := s.db.GetUserByEmail(ac.Email)
+		if err != nil {
+			s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives: user lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if user != nil && user.Role == db.RoleExecutive {
+			writeError(w, http.StatusForbidden, "executives cannot reassign leads")
+			return
+		}
+	}
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	var body struct {
+		LeadIDs     []int64 `json:"lead_ids"`
+		ExecutiveID int64   `json:"executive_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.LeadIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "lead_ids required")
+		return
+	}
+	executiveID := body.ExecutiveID
+	if executiveID > 0 {
+		resolved, err := s.db.ResolveExecutiveID(campaign.OrgID, executiveID)
+		if err != nil {
+			s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives: executive lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if resolved == 0 {
+			writeError(w, http.StatusBadRequest, "executive not found")
+			return
+		}
+		executiveID = resolved
+	}
+	if err := s.db.UpdateCampaignLeadExecutives(campaign.ID, campaign.OrgID, body.LeadIDs, executiveID); err != nil {
+		s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
 // ── DELETE /api/campaigns/{id}/leads/{lead_id} ───────────────────────────────
 
 // @Summary     Remove lead from campaign

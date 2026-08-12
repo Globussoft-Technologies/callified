@@ -412,6 +412,10 @@ export default function CampaignDetail({
   const [scheduleError, setScheduleError] = useState('');
   const [qaStatus, setQaStatus] = useState(null);
   const [leadSearch, setLeadSearch] = useState('');
+  // ── Bulk executive assignment state ─────────────────────────────────────────
+  const [bulkSelectedIds, setBulkSelectedIds] = useState(new Set());
+  const [bulkExecutiveId, setBulkExecutiveId] = useState('');
+  const [bulkAssigning, setBulkAssigning] = useState(false);
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
@@ -495,6 +499,8 @@ export default function CampaignDetail({
     setScheduleFrom('');
     setScheduleTo('');
     setCurrentPage(1);
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
   }, [selectedCampaign?.id, setDetailExecutiveFilter]);
 
   useEffect(() => {
@@ -525,6 +531,13 @@ export default function CampaignDetail({
     setCurrentPage(1);
   }, [leadSearch, execFilter, scheduleFrom, scheduleTo]);
 
+  // Clear bulk selection when filters, search, or page changes so selections don't
+  // span shifting result sets.
+  useEffect(() => {
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
+  }, [leadSearch, execFilter, scheduleFrom, scheduleTo, currentPage]);
+
   const totalPages = Math.ceil(campaignLeadsTotal / PAGE_SIZE);
   const safePage = Math.max(1, Math.min(currentPage, totalPages || 1));
 
@@ -534,6 +547,58 @@ export default function CampaignDetail({
       setCurrentPage(Math.max(1, Math.min(totalPages, n)));
     }
     setJumpPage('');
+  };
+
+  // ── Bulk executive assignment helpers ─────────────────────────────────────────
+  const toggleBulkSelection = (leadId) => {
+    setBulkSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId);
+      else next.add(leadId);
+      return next;
+    });
+  };
+
+  const selectAllVisible = (checked) => {
+    if (checked) {
+      setBulkSelectedIds(new Set(paginatedLeads.map(l => l.id)));
+    } else {
+      setBulkSelectedIds(new Set());
+    }
+  };
+
+  const clearBulkSelection = () => {
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
+  };
+
+  const handleBulkAssignExecutive = async () => {
+    if (!currentCampaignId || bulkSelectedIds.size === 0 || !bulkExecutiveId) return;
+    const leadIds = Array.from(bulkSelectedIds);
+    const execId = parseInt(bulkExecutiveId, 10);
+    if (!execId || isNaN(execId)) {
+      toast('Please select an executive');
+      return;
+    }
+    setBulkAssigning(true);
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${currentCampaignId}/leads/executive`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_ids: leadIds, executive_id: execId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to assign executive (${res.status})`);
+      }
+      toast(`Executive assigned to ${data.updated || leadIds.length} lead(s)`);
+      clearBulkSelection();
+      fetchCampaignLeads(currentCampaignId);
+    } catch (err) {
+      toast(err.message || 'Failed to assign executive');
+    } finally {
+      setBulkAssigning(false);
+    }
   };
 
   useEffect(() => {
@@ -2069,12 +2134,59 @@ export default function CampaignDetail({
         </div>
       )}
 
+      {/* Bulk executive assignment bar */}
+      {detailTab === 'leads' && canAssignLeads && campaignLeadsTotal > 0 && !autoDialEnabled && (
+        <div style={{ ...card, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
+            {bulkSelectedIds.size > 0 ? `${bulkSelectedIds.size} selected` : 'Select leads to assign executive'}
+          </span>
+          <select
+            className="form-input"
+            value={bulkExecutiveId}
+            onChange={e => setBulkExecutiveId(e.target.value)}
+            disabled={bulkSelectedIds.size === 0 || bulkAssigning}
+            style={{ ...inputStyle, height: 34, fontSize: 13, padding: '4px 10px', minWidth: 180, background: '#fff' }}
+          >
+            <option value="">— Select Executive —</option>
+            {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          <button
+            onClick={handleBulkAssignExecutive}
+            disabled={bulkSelectedIds.size === 0 || !bulkExecutiveId || bulkAssigning}
+            style={{
+              ...btnPrimary,
+              opacity: (bulkSelectedIds.size === 0 || !bulkExecutiveId || bulkAssigning) ? 0.6 : 1,
+              cursor: (bulkSelectedIds.size === 0 || !bulkExecutiveId || bulkAssigning) ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {bulkAssigning ? 'Assigning...' : 'Assign Executive'}
+          </button>
+          {bulkSelectedIds.size > 0 && (
+            <button
+              onClick={clearBulkSelection}
+              disabled={bulkAssigning}
+              style={{ ...btnGhost, opacity: bulkAssigning ? 0.6 : 1 }}
+            >
+              Clear selection
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Leads Table */}
       {detailTab === 'leads' && (
         <div style={{ ...card, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                {canAssignLeads && <th key="select" style={{ ...thStyle, width: 40, textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={paginatedLeads.length > 0 && paginatedLeads.every(l => bulkSelectedIds.has(l.id))}
+                    onChange={e => selectAllVisible(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: T.accent, cursor: 'pointer' }}
+                  />
+                </th>}
                 {['Name','Phone','Company','Source','Executive','Status','Action'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
@@ -2082,10 +2194,18 @@ export default function CampaignDetail({
             </thead>
             <tbody>
               {campaignLeadsTotal === 0 ? (
-                <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
+                <tr><td colSpan={canAssignLeads ? 8 : 7} style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
               ) : paginatedLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
+                    {canAssignLeads && <td style={{ ...tdStyle, textAlign: 'center', verticalAlign: 'middle' }}>
+                      <input
+                        type="checkbox"
+                        checked={bulkSelectedIds.has(lead.id)}
+                        onChange={() => toggleBulkSelection(lead.id)}
+                        style={{ width: 16, height: 16, accentColor: T.accent, cursor: 'pointer' }}
+                      />
+                    </td>}
                     <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>
                       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                         <span>{lead.first_name} {lead.last_name}</span>

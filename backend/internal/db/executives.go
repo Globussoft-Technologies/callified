@@ -334,6 +334,31 @@ func (d *DB) UpdateCampaignLeadExecutive(campaignID, leadID, orgID, execID int64
 	return nil
 }
 
+// UpdateCampaignLeadExecutives assigns an executive to a set of campaign-lead
+// rows in one campaign. Passing execID=0 clears the assignment.
+func (d *DB) UpdateCampaignLeadExecutives(campaignID, orgID int64, leadIDs []int64, execID int64) error {
+	if len(leadIDs) == 0 {
+		return nil
+	}
+	var exec any = nil
+	if execID > 0 {
+		exec = execID
+	}
+	placeholders := strings.Repeat("?,", len(leadIDs)-1) + "?"
+	args := make([]any, 0, len(leadIDs)+4)
+	args = append(args, exec, campaignID, orgID, orgID)
+	for _, id := range leadIDs {
+		args = append(args, id)
+	}
+	_, err := d.pool.Exec(`
+		UPDATE campaign_leads cl
+		JOIN leads l ON l.id=cl.lead_id
+		JOIN campaigns c ON c.id=cl.campaign_id
+		SET cl.executive_id=?
+		WHERE cl.campaign_id=? AND c.org_id=? AND (l.org_id=? OR l.org_id IS NULL) AND cl.lead_id IN (`+placeholders+`)`, args...)
+	return err
+}
+
 // UpdateAllCampaignLeadsExecutive assigns every campaign-lead row in one
 // campaign to the given executive. Passing execID=0 clears the assignment.
 func (d *DB) UpdateAllCampaignLeadsExecutive(campaignID, orgID, execID int64) error {
