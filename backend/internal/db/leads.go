@@ -655,6 +655,8 @@ func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
 // GetTranscriptByRecordingURL returns the transcript whose recording_url matches
 // the given value and whose org_id matches the caller. Used to authorise access
 // to local recording files served by /api/recordings/{filename}.
+// Also checks call_logs as a fallback because some recordings are saved there
+// before the transcript row is updated.
 func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Transcript, error) {
 	row := d.pool.QueryRow(`
 		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
@@ -666,10 +668,29 @@ func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Tra
 		WHERE org_id=? AND recording_url=?`, orgID, recordingURL)
 	var t Transcript
 	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		return &t, nil
+	}
+
+	// Fallback: recordings are sometimes stored in call_logs.recording_url
+	// while call_transcripts.recording_url remains NULL.
+	row = d.pool.QueryRow(`
+		SELECT cl.id, COALESCE(cl.lead_id,0), COALESCE(cl.campaign_id,0), COALESCE(cl.org_id,0),
+		       '[]', COALESCE(cl.recording_url,''),
+		       '',
+		       0,
+		       DATE_FORMAT(cl.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_logs cl
+		WHERE cl.org_id=? AND cl.recording_url=?`, orgID, recordingURL)
+	var ct Transcript
+	err = row.Scan(&ct.ID, &ct.LeadID, &ct.CampaignID, &ct.OrgID, &ct.Transcript, &ct.RecordingURL, &ct.TTSLanguage, &ct.CallDurationS, &ct.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return &t, err
+	return &ct, err
 }
 
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
