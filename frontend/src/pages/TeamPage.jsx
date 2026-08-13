@@ -58,6 +58,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [permissionLoading, setPermissionLoading] = useState(false);
   const [permissionSaving, setPermissionSaving] = useState(false);
   const [permissionError, setPermissionError] = useState('');
+  const [providerAccounts, setProviderAccounts] = useState([]);
+  const [selectedProviderAccountIds, setSelectedProviderAccountIds] = useState([]);
   const fileInputRef = useRef(null);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
@@ -346,16 +348,26 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setPermissionValues([]);
     setPermissionCustom(false);
     setPermissionError('');
+    setProviderAccounts([]);
+    setSelectedProviderAccountIds([]);
     setPermissionLoading(true);
     try {
-      const res = await apiFetch(`${API_URL}/team/${member.id}/permissions`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      const [permsRes, accountsRes] = await Promise.all([
+        apiFetch(`${API_URL}/team/${member.id}/permissions`),
+        apiFetch(`${API_URL}/team/${member.id}/provider-accounts`),
+      ]);
+      const data = await permsRes.json().catch(() => ({}));
+      if (!permsRes.ok) {
         setPermissionError(data.error || data.detail || 'Failed to load permissions.');
       } else {
         setPermissionDefs(Array.isArray(data.available) ? data.available : []);
         setPermissionValues(Array.isArray(data.permissions) ? data.permissions : []);
         setPermissionCustom(Boolean(data.is_custom));
+      }
+      const accountsData = await accountsRes.json().catch(() => []);
+      if (accountsRes.ok && Array.isArray(accountsData)) {
+        setProviderAccounts(accountsData);
+        setSelectedProviderAccountIds(accountsData.filter(a => a.allowed).map(a => a.id));
       }
     } catch {
       setPermissionError('Network error');
@@ -370,6 +382,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setPermissionValues([]);
     setPermissionCustom(false);
     setPermissionError('');
+    setProviderAccounts([]);
+    setSelectedProviderAccountIds([]);
   };
 
   const togglePermission = (key) => {
@@ -381,20 +395,34 @@ export default function TeamPage({ apiFetch, API_URL }) {
     setPermissionSaving(true);
     setPermissionError('');
     try {
-      const res = await apiFetch(`${API_URL}/team/${permissionMember.id}/permissions`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions: permissionValues }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      const [permsRes, accountsRes] = await Promise.all([
+        apiFetch(`${API_URL}/team/${permissionMember.id}/permissions`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissions: permissionValues }),
+        }),
+        apiFetch(`${API_URL}/team/${permissionMember.id}/provider-accounts`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_ids: selectedProviderAccountIds }),
+        }),
+      ]);
+      const data = await permsRes.json().catch(() => ({}));
+      if (!permsRes.ok) {
         setPermissionError(data.error || data.detail || 'Failed to save permissions.');
-      } else {
-        toast(`Permissions saved for ${permissionMember.full_name || permissionMember.email}`, 'success');
         setPermissionSaving(false);
-        closePermissions();
         return;
       }
+      const accountsData = await accountsRes.json().catch(() => ({}));
+      if (!accountsRes.ok) {
+        setPermissionError(accountsData.error || accountsData.detail || 'Failed to save provider accounts.');
+        setPermissionSaving(false);
+        return;
+      }
+      toast(`Permissions saved for ${permissionMember.full_name || permissionMember.email}`, 'success');
+      setPermissionSaving(false);
+      closePermissions();
+      return;
     } catch {
       setPermissionError('Network error');
     }
@@ -726,6 +754,49 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       </div>
                     ))}
                   </div>
+
+                  {/* Provider Accounts visibility */}
+                  {permissionMember && (permissionMember.role === 'Agent' || permissionMember.role === 'Executive') && (
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: '#fff', overflow: 'hidden', marginTop: 14 }}>
+                      <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: `1px solid ${T.border}`, color: T.text, fontWeight: 800, fontSize: 13 }}>
+                        Provider Accounts
+                      </div>
+                      <div style={{ padding: '12px 14px' }}>
+                        <p style={{ margin: '0 0 10px', color: T.muted, fontSize: 12, lineHeight: 1.4 }}>
+                          Check the accounts this user can see and use for browser calls. Unchecked accounts are hidden from their dropdown.
+                        </p>
+                        {providerAccounts.length === 0 ? (
+                          <p style={{ margin: 0, color: T.muted, fontSize: 13 }}>No org provider accounts available.</p>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {providerAccounts.map(a => {
+                              const checked = selectedProviderAccountIds.includes(a.id);
+                              return (
+                                <label key={a.id} style={{
+                                  display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
+                                  alignItems: 'flex-start', padding: '7px 6px', borderRadius: 6,
+                                  cursor: 'pointer', background: checked ? 'rgba(99,102,241,0.06)' : 'transparent',
+                                }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => setSelectedProviderAccountIds(prev =>
+                                      prev.includes(a.id) ? prev.filter(id => id !== a.id) : [...prev, a.id]
+                                    )}
+                                    style={{ marginTop: 2 }}
+                                  />
+                                  <span>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{a.name}</span>
+                                    <span style={{ display: 'block', color: T.muted, fontSize: 12 }}>{a.caller_id} · {a.account_sid}</span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

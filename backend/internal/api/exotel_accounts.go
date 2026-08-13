@@ -45,6 +45,27 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Non-Admins only see org-level accounts explicitly allowed for them.
+	// Admins bypass the filter so they can manage campaigns for any account.
+	if ac.Role != db.RoleAdmin {
+		allowedIDs, err := s.db.GetUserAllowedExotelAccountIDs(ac.UserID)
+		if err != nil {
+			s.logger.Sugar().Errorw("listExotelAccountOptions: allowed ids", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		allowedSet := make(map[int64]bool, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowedSet[id] = true
+		}
+		filtered := make([]db.OrgExotelAccount, 0, len(allowedIDs))
+		for _, a := range accounts {
+			if allowedSet[a.ID] {
+				filtered = append(filtered, a)
+			}
+		}
+		accounts = filtered
+	}
 	var userAccounts []db.OrgExotelAccount
 	if ac.UserID > 0 {
 		userAccounts, _ = s.db.GetUserExotelAccounts(ac.UserID, ac.OrgID)

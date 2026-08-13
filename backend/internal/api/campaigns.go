@@ -478,7 +478,7 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // ── POST /api/campaigns/{id}/leads ───────────────────────────────────────────
 
 // @Summary     Add leads to campaign
-// @Description Enrols existing leads into a campaign. Requires Admin role.
+// @Description Enrols existing leads into a campaign. Requires crm.create permission.
 // @Tags        campaigns
 // @Accept      json
 // @Produce     json
@@ -492,7 +492,7 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads [post]
 func (s *Server) addCampaignLeads(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "campaigns.edit") {
+	if !s.requirePermission(w, r, "crm.create") {
 		return
 	}
 	ac := getAuth(r)
@@ -575,8 +575,42 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 	var body struct {
 		LeadIDs     []int64 `json:"lead_ids"`
 		ExecutiveID int64   `json:"executive_id"`
+		All         bool    `json:"all"`
+		Search      string  `json:"search"`
+		ScheduledFrom string `json:"scheduled_from"`
+		ScheduledTo   string `json:"scheduled_to"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.LeadIDs) == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	leadIDs := body.LeadIDs
+	if body.All {
+		execIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
+		if err != nil {
+			s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives: resolve exec ids", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		filter := db.CampaignLeadsFilter{
+			CampaignID:    campaign.ID,
+			Search:        body.Search,
+			ScheduledFrom: body.ScheduledFrom,
+			ScheduledTo:   body.ScheduledTo,
+			ExecIDs:       execIDs,
+		}
+		allLeads, err := s.db.GetCampaignLeadsPaginated(filter, 0, 0)
+		if err != nil {
+			s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives: list all", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		leadIDs = make([]int64, 0, len(allLeads))
+		for _, l := range allLeads {
+			leadIDs = append(leadIDs, l.ID)
+		}
+	}
+	if len(leadIDs) == 0 {
 		writeError(w, http.StatusBadRequest, "lead_ids required")
 		return
 	}
@@ -594,7 +628,7 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 		}
 		executiveID = resolved
 	}
-	if err := s.db.UpdateCampaignLeadExecutives(campaign.ID, campaign.OrgID, body.LeadIDs, executiveID); err != nil {
+	if err := s.db.UpdateCampaignLeadExecutives(campaign.ID, campaign.OrgID, leadIDs, executiveID); err != nil {
 		s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -619,7 +653,7 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/leads/{lead_id} [delete]
 func (s *Server) removeCampaignLead(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "campaigns.edit") {
+	if !s.requirePermission(w, r, "crm.delete") {
 		return
 	}
 	campaign := s.requireCampaignView(w, r)

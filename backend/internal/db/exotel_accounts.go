@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 )
 
 // EnsureOrgExotelAccountsTable creates the org_exotel_accounts table if it doesn't exist.
@@ -42,6 +44,23 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 	_, _ = d.pool.Exec(`CREATE INDEX idx_user_org ON org_exotel_accounts(user_id, org_id)`)
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`)
 	return nil
+}
+
+// EnsureUserAllowedExotelAccountsTable creates a junction table that records
+// which org-level provider accounts a given user is allowed to see and use.
+func (d *DB) EnsureUserAllowedExotelAccountsTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS user_allowed_exotel_accounts (
+			user_id BIGINT NOT NULL,
+			exotel_account_id BIGINT NOT NULL,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id, exotel_account_id),
+			INDEX idx_exotel_account_id (exotel_account_id),
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (exotel_account_id) REFERENCES org_exotel_accounts(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+	`)
+	return err
 }
 
 // OrgExotelAccount holds a named set of provider credentials (Exotel or Twilio)
@@ -370,4 +389,71 @@ func (d *DB) GetOrgOrUserExotelAccountCreds(accountID, orgID, userID int64) (Exo
 		return ExotelCreds{}, nil
 	}
 	return accountToCreds(a), nil
+}
+
+// GetUserAllowedExotelAccountIDs returns the IDs of org-level provider accounts
+// the user is allowed to use. An empty slice means no accounts are explicitly allowed.
+func (d *DB) GetUserAllowedExotelAccountIDs(userID int64) ([]int64, error) {
+	rows, err := d.pool.Query(`
+		SELECT exotel_account_id FROM user_allowed_exotel_accounts WHERE user_id=? ORDER BY exotel_account_id ASC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// SetUserAllowedExotelAccountIDs replaces the allowed account list for a user.
+func (d *DB) SetUserAllowedExotelAccountIDs(userID, orgID int64, accountIDs []int64) error {
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Remove existing allowed entries.
+	if _, err := tx.Exec(`DELETE FROM user_allowed_exotel_accounts WHERE user_id=?`, userID); err != nil {
+		return err
+	}
+
+	if len(accountIDs) == 0 {
+		return tx.Commit()
+	}
+
+	// Verify the requested IDs belong to the same org.
+	placeholders := make([]string, len(accountIDs))
+	args := make([]any, 0, len(accountIDs)+1)
+	for i, id := range accountIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, orgID)
+	var validCount int64
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM org_exotel_accounts
+		WHERE id IN (%s) AND org_id=? AND user_id IS NULL`, strings.Join(placeholders, ","))
+	if err := tx.QueryRow(countQuery, args...).Scan(&validCount); err != nil {
+		return err
+	}
+	if int(validCount) != len(accountIDs) {
+		return errors.New("one or more accounts do not belong to this org")
+	}
+
+	// Insert new allowed entries.
+	for _, id := range accountIDs {
+		if _, err := tx.Exec(`
+			INSERT INTO user_allowed_exotel_accounts (user_id, exotel_account_id) VALUES (?,?)`,
+			userID, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

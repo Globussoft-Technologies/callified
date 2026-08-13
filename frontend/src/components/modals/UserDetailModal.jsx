@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import AuthAudio from '../AuthAudio';
 
 const T = {
   bg: '#f4f5f9',
@@ -390,12 +391,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
                   <td style={rowTd}><Badge>{rec.status || '-'}</Badge></td>
                   <td style={rowTd}>
                     {recUrl ? (
-                      <a
-                        href={recUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ color: T.accent, fontWeight: 700, fontSize: 13 }}
-                      >Open recording</a>
+                      <AuthAudio src={recUrl} style={{ width: 240, height: 32, verticalAlign: 'middle' }} />
                     ) : (
                       <span style={{ color: T.muted, fontSize: 12 }}>Unavailable</span>
                     )}

@@ -112,9 +112,9 @@ type permissionDefinition struct {
 var permissionCatalog = []permissionDefinition{
 	{Key: "dashboard.view", Module: "Dashboard", Label: "View dashboard", Action: "Can see", Description: "See dashboard summary and KPIs.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive, db.RoleTeamLeader}},
 	{Key: "crm.view", Module: "CRM Leads", Label: "View leads", Action: "Can see", Description: "See leads within the user's allowed scope.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
-	{Key: "crm.create", Module: "CRM Leads", Label: "Create leads", Action: "Can create", Description: "Add new leads within allowed campaigns.", Roles: []string{db.RoleAdmin, db.RoleAgent}},
-	{Key: "crm.edit", Module: "CRM Leads", Label: "Edit leads", Action: "Can edit", Description: "Update lead fields, status, notes, and follow-ups.", Roles: []string{db.RoleAdmin, db.RoleAgent}},
-	{Key: "crm.delete", Module: "CRM Leads", Label: "Delete leads", Action: "Can delete", Description: "Remove leads from the organization.", Roles: []string{db.RoleAdmin}},
+	{Key: "crm.create", Module: "CRM Leads", Label: "Create leads", Action: "Can create", Description: "Add new leads within allowed campaigns.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "crm.edit", Module: "CRM Leads", Label: "Edit leads", Action: "Can edit", Description: "Update lead fields, status, notes, and follow-ups.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "crm.delete", Module: "CRM Leads", Label: "Delete leads", Action: "Can delete", Description: "Remove leads from the organization.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "crm.import", Module: "CRM Leads", Label: "Import leads", Action: "Can import", Description: "Bulk import leads using CSV.", Roles: []string{db.RoleAdmin}},
 	{Key: "crm.export", Module: "CRM Leads", Label: "Export leads", Action: "Can export", Description: "Download lead lists as CSV.", Roles: []string{db.RoleAdmin}},
 	{Key: "crm.assign", Module: "CRM Leads", Label: "Assign leads", Action: "Can assign", Description: "Assign campaign leads to executives.", Roles: []string{db.RoleAdmin}},
@@ -1096,4 +1096,105 @@ func (s *Server) deleteTeamMember(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Warnw("deleteTeamMember: linked executive lookup failed", "err", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+// ── GET /api/team/{id}/provider-accounts ─────────────────────────────────────
+// Lists org-level provider accounts and flags which ones the target user is
+// allowed to see. Used by the Admin permissions modal to configure per-user
+// account visibility.
+func (s *Server) getTeamMemberProviderAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.permissions") {
+		return
+	}
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	target, err := s.db.GetUserByIDInOrg(id, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getTeamMemberProviderAccounts: lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	accounts, err := s.db.GetOrgExotelAccounts(ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getTeamMemberProviderAccounts: accounts", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	allowedIDs, err := s.db.GetUserAllowedExotelAccountIDs(target.ID)
+	if err != nil {
+		s.logger.Sugar().Errorw("getTeamMemberProviderAccounts: allowed ids", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	allowedSet := make(map[int64]bool, len(allowedIDs))
+	for _, id := range allowedIDs {
+		allowedSet[id] = true
+	}
+	type accountWithAllowed struct {
+		ID         int64  `json:"id"`
+		Provider   string `json:"provider"`
+		Name       string `json:"name"`
+		CallerID   string `json:"caller_id"`
+		AccountSID string `json:"account_sid"`
+		Allowed    bool   `json:"allowed"`
+	}
+	out := make([]accountWithAllowed, 0, len(accounts))
+	for _, a := range accounts {
+		out = append(out, accountWithAllowed{
+			ID:         a.ID,
+			Provider:   a.Provider,
+			Name:       a.Name,
+			CallerID:   a.CallerID,
+			AccountSID: a.AccountSID,
+			Allowed:    allowedSet[a.ID],
+		})
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(out))
+}
+
+// ── PUT /api/team/{id}/provider-accounts ───────────────────────────────────────
+// Replaces the list of org-level provider accounts the target user is allowed
+// to see and use. Admins always see all accounts; this only affects Agents and
+// Executives.
+func (s *Server) updateTeamMemberProviderAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "team.permissions") {
+		return
+	}
+	ac := getAuth(r)
+	id, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	target, err := s.db.GetUserByIDInOrg(id, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateTeamMemberProviderAccounts: lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if target == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	var body struct {
+		AccountIDs []int64 `json:"account_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if err := s.db.SetUserAllowedExotelAccountIDs(target.ID, ac.OrgID, body.AccountIDs); err != nil {
+		s.logger.Sugar().Errorw("updateTeamMemberProviderAccounts: save", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }

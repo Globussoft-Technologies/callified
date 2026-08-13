@@ -580,6 +580,20 @@ export default function CampaignsTab({
     } catch (e) { console.error(e); }
   };
 
+  const handleDeleteLead = async (leadId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${leadId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Delete failed (${res.status})`, 'error');
+        return;
+      }
+      fetchCampaignLeads(selectedCampaign.id);
+      fetchCampaigns();
+      toast('Lead deleted');
+    } catch (e) { console.error(e); toast('Delete failed', 'error'); }
+  };
+
   const handleEditLead = (lead) => {
     setEditLead(lead);
     setEditForm({ first_name: lead.first_name || '', last_name: lead.last_name || '', phone: lead.phone || '', company: lead.company || '', source: lead.source || '', executive_id: lead.executive_id || 0 });
@@ -763,6 +777,7 @@ export default function CampaignsTab({
           handleLeadStatusChange={handleLeadStatusChange}
           handleEditLead={handleEditLead}
           handleRemoveLead={handleRemoveLead}
+          handleDeleteLead={handleDeleteLead}
           handleViewTranscripts={handleViewTranscripts}
           onCampaignDial={onCampaignDial}
           onCampaignWebCall={onCampaignWebCall}
