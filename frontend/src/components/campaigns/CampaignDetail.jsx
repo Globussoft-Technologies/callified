@@ -405,9 +405,9 @@ export default function CampaignDetail({
   const [dispositionSaving, setDispositionSaving] = useState(false);
   const [dispositionNextLead, setDispositionNextLead] = useState(null);
 
-  // Per-machine browser-call account: stored in localStorage so different systems
-  // can dial from different Exotel voicebot accounts in parallel without changing
-  // the campaign default used by AI/server calls.
+  // Browser-call account for this machine. When a specific account is selected
+  // it is also persisted as the campaign default so AI auto-dial and external
+  // API calls route through the same provider account (e.g. Tata Tele).
   const [browserAccountId, setBrowserAccountId] = useState('');
   const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
 
@@ -1026,6 +1026,26 @@ export default function CampaignDetail({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaign.id, browserAccountKey]);
 
+  // If a browser-call account is already saved in localStorage for this campaign
+  // and it differs from the server-side campaign default, push it to the server
+  // so AI auto-dial and API calls use the same account without requiring the
+  // user to re-select it manually.
+  useEffect(() => {
+    if (!selectedCampaign.id || !browserAccountId) return;
+    if (String(browserAccountId) === String(selectedExotelAccountId)) return;
+    const accountId = parseInt(browserAccountId, 10);
+    if (!accountId) return;
+    setSelectedExotelAccountId(browserAccountId);
+    const chosen = findCallingAccount(browserAccountId);
+    if (chosen) setCampaignDefaultAccount(chosen);
+    apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exotel_account_id: accountId }),
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCampaign.id, browserAccountId]);
+
   const callingAccountOptions = mergeProviderAccount(orgExotelAccounts, campaignDefaultAccount)
     .filter(a => (a.direction || 'outbound') !== 'inbound')
     .filter(a => a.provider === 'tata' || a.app_type === 'voicebot');
@@ -1268,6 +1288,21 @@ export default function CampaignDetail({
                 try {
                   localStorage.setItem(browserAccountKey(selectedCampaign.id), v);
                 } catch { /* ignore */ }
+                // Selecting a browser-call account also makes it the campaign
+                // default so AI auto-dial and external API calls use the same
+                // provider account (e.g. Tata Tele) instead of falling back to
+                // the campaign's previously linked Exotel account.
+                if (v) {
+                  const accountId = parseInt(v, 10);
+                  setSelectedExotelAccountId(v);
+                  const chosen = findCallingAccount(v);
+                  if (chosen) setCampaignDefaultAccount(chosen);
+                  apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/exotel-account`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ exotel_account_id: accountId || 0 }),
+                  }).catch(() => {});
+                }
               }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
               <option value="">{campaignDefaultLabel}</option>
@@ -1282,13 +1317,13 @@ export default function CampaignDetail({
             {browserAccountId
               ? (() => {
                   const a = findCallingAccount(browserAccountId);
-                  return a ? `Dialing from: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
+                  return a ? `AI, API, browser and auto-dial calls will use: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
                 })()
               : callingAccountOptions.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
                 : campaignDefaultAccount
-                  ? `Browser calls will use campaign default: ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id}`
-                  : 'Browser calls will use the campaign default. This choice is saved only in this browser.'}
+                  ? `All calls will use campaign default: ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id}`
+                  : 'Select an account above to set it as the campaign default for AI, API and browser calls.'}
           </div>
         </div>
       )}
