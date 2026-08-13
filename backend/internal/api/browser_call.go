@@ -50,6 +50,9 @@ type BrowserCallResponse struct {
 //     detects IsBridge=true and skips the AI pipeline, relaying audio to the
 //     agent browser instead.
 func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -68,7 +71,7 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
-	if !s.canAccessLead(ac, lead.ID) {
+	if !s.canAccessCampaignLead(ac, campaignID, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
@@ -117,17 +120,18 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    leadName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  campaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: provider,
-		TTSVoiceID:  voiceID,
-		TTSLanguage: lang,
+		LeadID:          lead.ID,
+		LeadName:        leadName,
+		LeadPhone:       lead.Phone,
+		CampaignID:      campaignID,
+		OrgID:           ac.OrgID,
+		Interest:        lead.Interest,
+		TTSProvider:     provider,
+		TTSVoiceID:      voiceID,
+		TTSLanguage:     lang,
 		IsBridge:        true,
 		UserEmail:       ac.Email,
+		UserID:          userIDForDial(ac),
 		ExotelAccountID: body.ExotelAccountID,
 	}
 

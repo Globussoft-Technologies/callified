@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { API_URL } from '../constants/api';
 
 const AuthContext = createContext(null);
@@ -30,6 +30,7 @@ function clearBrowserData() {
 export function AuthProvider({ children }) {
   const [authToken, setAuthToken] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
+  const [permissions, setPermissions] = useState(null);
   // authReady becomes true once /auth/me has run (or when there's no token).
   // apiFetch only calls clearSession on 401 after authReady=true to avoid a
   // race where a component's first fetch clears a stale-but-not-yet-validated
@@ -39,6 +40,7 @@ export function AuthProvider({ children }) {
   const clearSession = useCallback(() => {
     setAuthToken(null);
     setCurrentUser(null);
+    setPermissions(null);
     setAuthReady(true);
     clearBrowserData();
   }, []);
@@ -81,10 +83,20 @@ export function AuthProvider({ children }) {
       .then(u => {
         setCurrentUser(u);
         setAuthReady(true);
+        fetch(`${API_URL}/users/me/permissions`, {
+          credentials: 'include',
+          headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+        })
+          .then(r => r.ok ? r.json() : Promise.reject())
+          .then(data => {
+            setPermissions(Array.isArray(data.permissions) ? data.permissions : []);
+          })
+          .catch(() => setPermissions(null));
       })
       .catch(() => {
         setAuthToken(null);
         setCurrentUser(null);
+        setPermissions(null);
         setAuthReady(true);
       });
   }, [authToken, clearSession]);
@@ -112,6 +124,12 @@ export function AuthProvider({ children }) {
 
   // Helper: true when the current user should not see AI-related UI sections.
   const hideAiFeatures = Boolean(currentUser?.hide_ai_features);
+  const permissionSet = useMemo(() => new Set(permissions || []), [permissions]);
+  const hasPermission = useCallback((key) => {
+    if (!key) return true;
+    if (permissions === null) return true;
+    return permissionSet.has(key);
+  }, [permissionSet, permissions]);
 
   const signup = async (orgName, fullName, email, password) => {
     const res = await fetch(`${API_URL}/auth/signup`, {
@@ -167,7 +185,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, loading: !authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures }}>
+    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, loading: !authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures, permissions, hasPermission }}>
       {children}
     </AuthContext.Provider>
   );

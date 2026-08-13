@@ -17,7 +17,8 @@ export default function CampaignsPage({
   const handleViewTranscripts = async (lead) => {
     setTranscriptLead(lead);
     try {
-      const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts`);
+      const query = lead.campaign_id ? `?campaign_id=${encodeURIComponent(lead.campaign_id)}` : '';
+      const res = await apiFetch(`${API_URL}/leads/${lead.id}/transcripts${query}`);
       if (!res.ok) { setTranscripts([]); return; }
       const data = await res.json();
       setTranscripts(Array.isArray(data) ? data : []);

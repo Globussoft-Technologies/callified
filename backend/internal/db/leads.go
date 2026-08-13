@@ -72,7 +72,12 @@ const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.pho
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
 func execFilterClause(execIDs []int64, apply bool) (string, []any) {
-	if !apply || len(execIDs) == 0 {
+	return execFilterClauseForAlias("l", execIDs, apply)
+}
+
+func execFilterClauseForAlias(alias string, execIDs []int64, apply bool) (string, []any) {
+	_ = apply
+	if len(execIDs) == 0 {
 		return "", nil
 	}
 	placeholders := make([]string, len(execIDs))
@@ -81,7 +86,7 @@ func execFilterClause(execIDs []int64, apply bool) (string, []any) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	return fmt.Sprintf("COALESCE(l.executive_id, 0) IN (%s)", strings.Join(placeholders, ",")), args
+	return fmt.Sprintf("COALESCE(%s.executive_id, 0) IN (%s)", alias, strings.Join(placeholders, ",")), args
 }
 
 // GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
@@ -203,10 +208,10 @@ type LeadWithCampaign struct {
 // SearchLeadsWithCampaigns searches leads by name/phone in the org and returns
 // one row per campaign membership. If statuses is provided, only leads whose
 // status matches one of the values are returned.
-// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+// When applyExecFilter is true, only campaign-lead rows whose executive_id is in execIDs are returned.
 func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string, execIDs []int64, applyExecFilter bool) ([]LeadWithCampaign, error) {
 	like := "%" + query + "%"
-	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.executive_id,0), c.id, c.name
+	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(cl.executive_id,0), c.id, c.name
 		FROM leads l
 		LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
 		LEFT JOIN campaigns c ON c.id = cl.campaign_id
@@ -220,7 +225,7 @@ func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []stri
 		}
 		q += ` AND l.status IN (` + strings.Join(placeholders, ",") + `)`
 	}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := execFilterClauseForAlias("cl", execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
@@ -712,6 +717,8 @@ func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
 // GetTranscriptByRecordingURL returns the transcript whose recording_url matches
 // the given value and whose org_id matches the caller. Used to authorise access
 // to local recording files served by /api/recordings/{filename}.
+// Also checks call_logs as a fallback because some recordings are saved there
+// before the transcript row is updated.
 func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Transcript, error) {
 	row := d.pool.QueryRow(`
 		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
@@ -723,10 +730,29 @@ func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Tra
 		WHERE org_id=? AND recording_url=?`, orgID, recordingURL)
 	var t Transcript
 	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		return &t, nil
+	}
+
+	// Fallback: recordings are sometimes stored in call_logs.recording_url
+	// while call_transcripts.recording_url remains NULL.
+	row = d.pool.QueryRow(`
+		SELECT cl.id, COALESCE(cl.lead_id,0), COALESCE(cl.campaign_id,0), COALESCE(cl.org_id,0),
+		       '[]', COALESCE(cl.recording_url,''),
+		       '',
+		       0,
+		       DATE_FORMAT(cl.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_logs cl
+		WHERE cl.org_id=? AND cl.recording_url=?`, orgID, recordingURL)
+	var ct Transcript
+	err = row.Scan(&ct.ID, &ct.LeadID, &ct.CampaignID, &ct.OrgID, &ct.Transcript, &ct.RecordingURL, &ct.TTSLanguage, &ct.CallDurationS, &ct.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return &t, err
+	return &ct, err
 }
 
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.

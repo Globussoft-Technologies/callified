@@ -41,6 +41,7 @@ type manualCallRequest struct {
 //
 //	{"type":"transcript","role":"user|agent","text":"..."}
 //	{"type":"audio","role":"user|agent","format":"pcm16_8k|ulaw_8k","payload":"<base64>"}
+//
 // @Summary     Manual call
 // @Description Places an immediate outbound call or creates a web-sim session. Requires Admin role.
 // @Tags        dialing
@@ -109,6 +110,7 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 			TTSVoiceID:  voiceID,
 			TTSLanguage: lang,
 			UserEmail:   ac.Email,
+			UserID:      userIDForDial(ac),
 		}
 		callSid, err := s.initiator.Initiate(r.Context(), data)
 		if err != nil {
@@ -140,6 +142,8 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 			TTSProvider: provider,
 			TTSVoiceID:  voiceID,
 			TTSLanguage: lang,
+			UserEmail:   ac.Email,
+			UserID:      ac.UserID,
 		}
 		_ = s.store.SetPendingCall(r.Context(), "latest", pending)
 		_ = s.store.SetPendingCall(r.Context(), "phone:"+body.Phone, pending)

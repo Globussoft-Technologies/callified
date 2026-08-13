@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
 
@@ -46,6 +46,21 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [inviteSuccess, setInviteSuccess] = useState('');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [resetMember, setResetMember] = useState(null);
+  const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [resetError, setResetError] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [permissionMember, setPermissionMember] = useState(null);
+  const [permissionDefs, setPermissionDefs] = useState([]);
+  const [permissionValues, setPermissionValues] = useState([]);
+  const [permissionCustom, setPermissionCustom] = useState(false);
+  const [permissionLoading, setPermissionLoading] = useState(false);
+  const [permissionSaving, setPermissionSaving] = useState(false);
+  const [permissionError, setPermissionError] = useState('');
+  const [providerAccounts, setProviderAccounts] = useState([]);
+  const [selectedProviderAccountIds, setSelectedProviderAccountIds] = useState([]);
+  const fileInputRef = useRef(null);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
   // Only the most-recently-issued key per user is surfaced — older orphaned rows
@@ -171,6 +186,26 @@ export default function TeamPage({ apiFetch, API_URL }) {
     }
   };
 
+  const copyStoredKey = async (key) => {
+    if (!key) return;
+    const copyValue = key.key_plaintext || '';
+    if (!copyValue) {
+      toast('Full key is unavailable for older keys. Generate a new key to enable full-key copy.', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      toast('Full API key copied to clipboard', 'success');
+    } catch {
+      await promptInline({
+        title: 'Copy API key',
+        message: 'Clipboard access was blocked — select and copy manually.',
+        defaultValue: copyValue,
+        okText: 'Done',
+      });
+    }
+  };
+
   const closeInvite = () => {
     setShowInvite(false);
     setInviteForm({ email: '', full_name: '', password: '', role: 'Agent' });
@@ -200,6 +235,53 @@ export default function TeamPage({ apiFetch, API_URL }) {
     } catch { setInviteError('Network error');
      }
     setInviteLoading(false);
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/team/template-csv`);
+      if (!res.ok) {
+        toast('Failed to download template', 'error');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'team_members_template.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast('Network error', 'error');
+    }
+  };
+
+  const handleBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    setBulkLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/team/import-csv`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error || data.detail || 'Failed to import team members', 'error');
+      } else {
+        const failed = Array.isArray(data.errors) ? data.errors.length : 0;
+        toast(`Created ${data.created || 0} member${data.created === 1 ? '' : 's'}${failed ? `, ${failed} skipped` : ''}`, failed ? 'error' : 'success');
+        fetchTeam();
+      }
+    } catch {
+      toast('Network error', 'error');
+    }
+    setBulkLoading(false);
   };
 
   const handleCopyInviteLink = async (inviteId) => {
@@ -254,11 +336,109 @@ export default function TeamPage({ apiFetch, API_URL }) {
       });
       if (res.ok) fetchTeam();
       else {
-        const data = await res.json();
-        toast(data.detail || 'Failed to update role', 'error');
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || data.detail || `Failed to update role (HTTP ${res.status})`, 'error');
       }
     } catch { toast('Network error', 'error');  }
   };
+
+  const openPermissions = async (member) => {
+    setPermissionMember(member);
+    setPermissionDefs([]);
+    setPermissionValues([]);
+    setPermissionCustom(false);
+    setPermissionError('');
+    setProviderAccounts([]);
+    setSelectedProviderAccountIds([]);
+    setPermissionLoading(true);
+    try {
+      const [permsRes, accountsRes] = await Promise.all([
+        apiFetch(`${API_URL}/team/${member.id}/permissions`),
+        apiFetch(`${API_URL}/team/${member.id}/provider-accounts`),
+      ]);
+      const data = await permsRes.json().catch(() => ({}));
+      if (!permsRes.ok) {
+        setPermissionError(data.error || data.detail || 'Failed to load permissions.');
+      } else {
+        setPermissionDefs(Array.isArray(data.available) ? data.available : []);
+        setPermissionValues(Array.isArray(data.permissions) ? data.permissions : []);
+        setPermissionCustom(Boolean(data.is_custom));
+      }
+      const accountsData = await accountsRes.json().catch(() => []);
+      if (accountsRes.ok && Array.isArray(accountsData)) {
+        setProviderAccounts(accountsData);
+        setSelectedProviderAccountIds(accountsData.filter(a => a.allowed).map(a => a.id));
+      }
+    } catch {
+      setPermissionError('Network error');
+    }
+    setPermissionLoading(false);
+  };
+
+  const closePermissions = () => {
+    if (permissionSaving) return;
+    setPermissionMember(null);
+    setPermissionDefs([]);
+    setPermissionValues([]);
+    setPermissionCustom(false);
+    setPermissionError('');
+    setProviderAccounts([]);
+    setSelectedProviderAccountIds([]);
+  };
+
+  const togglePermission = (key) => {
+    setPermissionValues(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+
+  const savePermissions = async () => {
+    if (!permissionMember) return;
+    setPermissionSaving(true);
+    setPermissionError('');
+    try {
+      const [permsRes, accountsRes] = await Promise.all([
+        apiFetch(`${API_URL}/team/${permissionMember.id}/permissions`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ permissions: permissionValues }),
+        }),
+        apiFetch(`${API_URL}/team/${permissionMember.id}/provider-accounts`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_ids: selectedProviderAccountIds }),
+        }),
+      ]);
+      const data = await permsRes.json().catch(() => ({}));
+      if (!permsRes.ok) {
+        setPermissionError(data.error || data.detail || 'Failed to save permissions.');
+        setPermissionSaving(false);
+        return;
+      }
+      const accountsData = await accountsRes.json().catch(() => ({}));
+      if (!accountsRes.ok) {
+        setPermissionError(accountsData.error || accountsData.detail || 'Failed to save provider accounts.');
+        setPermissionSaving(false);
+        return;
+      }
+      toast(`Permissions saved for ${permissionMember.full_name || permissionMember.email}`, 'success');
+      setPermissionSaving(false);
+      closePermissions();
+      return;
+    } catch {
+      setPermissionError('Network error');
+    }
+    setPermissionSaving(false);
+  };
+
+  const resetPermissionsToRole = () => {
+    setPermissionValues(permissionDefs.map(p => p.key));
+    setPermissionCustom(false);
+  };
+
+  const groupedPermissions = permissionDefs.reduce((acc, p) => {
+    if (!acc[p.module]) acc[p.module] = [];
+    acc[p.module].push(p);
+    return acc;
+  }, {});
 
   const handleDelete = async (member) => {
     const label = member.full_name || member.email;
@@ -281,11 +461,59 @@ export default function TeamPage({ apiFetch, API_URL }) {
     } catch { toast('Network error', 'error');  }
   };
 
+  const openResetPassword = (member) => {
+    setResetMember(member);
+    setResetForm({ password: '', confirm: '' });
+    setResetError('');
+  };
+
+  const closeResetPassword = () => {
+    if (resetLoading) return;
+    setResetMember(null);
+    setResetForm({ password: '', confirm: '' });
+    setResetError('');
+  };
+
+  const handleResetPassword = async (e) => {
+    e.preventDefault();
+    if (!resetMember) return;
+    const password = resetForm.password;
+    if (!password.trim()) {
+      setResetError('Password is required.');
+      return;
+    }
+    if (password !== resetForm.confirm) {
+      setResetError('Passwords do not match.');
+      return;
+    }
+    setResetError('');
+    setResetLoading(true);
+    try {
+      const res = await apiFetch(`${API_URL}/team/${resetMember.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResetError(data.error || data.detail || 'Failed to reset password.');
+      } else {
+        toast(`Password reset for ${resetMember.email}`, 'success');
+        setResetLoading(false);
+        closeResetPassword();
+        return;
+      }
+    } catch {
+      setResetError('Network error');
+    }
+    setResetLoading(false);
+  };
+
   const roleBadge = (role) => {
     const colors = {
       Admin:  { bg: 'rgba(99,102,241,0.1)',  color: T.accent, border: 'rgba(99,102,241,0.3)' },
       Agent:  { bg: 'rgba(16,185,129,0.1)',  color: T.green,  border: 'rgba(16,185,129,0.3)' },
-      Viewer: { bg: 'rgba(245,158,11,0.1)',  color: T.amber,  border: 'rgba(245,158,11,0.3)' },
+      Executive: { bg: 'rgba(245,158,11,0.1)',  color: T.amber,  border: 'rgba(245,158,11,0.3)' },
     };
     const c = colors[role] || colors.Agent;
     return (
@@ -304,15 +532,43 @@ export default function TeamPage({ apiFetch, API_URL }) {
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
           <span style={{ color: T.accent }}>Team</span> Members
         </h2>
-        <button
-          onClick={() => setShowInvite(true)}
-          style={{
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-            borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
-            fontWeight: 700, fontSize: 13, fontFamily: T.font,
-          }}>
-          + Add Member
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button
+            onClick={handleDownloadTemplate}
+            style={{
+              background: '#fff', border: `1px solid ${T.border}`,
+              borderRadius: 8, color: T.sub, padding: '10px 16px', cursor: 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font,
+            }}>
+            Download Template
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleBulkUpload}
+            style={{ display: 'none' }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={bulkLoading}
+            style={{
+              background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)',
+              borderRadius: 8, color: T.accent, padding: '10px 16px', cursor: bulkLoading ? 'wait' : 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: bulkLoading ? 0.7 : 1,
+            }}>
+            {bulkLoading ? 'Importing...' : 'Import Members'}
+          </button>
+          <button
+            onClick={() => setShowInvite(true)}
+            style={{
+              background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+              borderRadius: 8, color: '#fff', padding: '10px 20px', cursor: 'pointer',
+              fontWeight: 700, fontSize: 13, fontFamily: T.font,
+            }}>
+            + Add Member
+          </button>
+        </div>
       </div>
 
       {/* Invite Modal */}
@@ -350,7 +606,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 >
                   <option value="Admin">Admin</option>
                   <option value="Agent">Agent</option>
-                  <option value="Viewer">Viewer</option>
+                  <option value="Executive">Executive</option>
                 </select>
                 {inviteError && (
                   <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
@@ -378,6 +634,194 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetMember && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={closeResetPassword} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 420, maxWidth: '90vw' }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>Reset Password</h3>
+            <p style={{ margin: '0 0 18px', color: T.muted, fontSize: 13 }}>
+              Set a new password for {resetMember.full_name || resetMember.email}.
+            </p>
+            <form onSubmit={handleResetPassword}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <input
+                  placeholder="New password" type="password" required value={resetForm.password}
+                  onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
+                  style={inputStyle}
+                  autoFocus
+                />
+                <input
+                  placeholder="Confirm password" type="password" required value={resetForm.confirm}
+                  onChange={e => setResetForm({ ...resetForm, confirm: e.target.value })}
+                  style={inputStyle}
+                />
+                {resetError && (
+                  <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
+                    {resetError}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={closeResetPassword} disabled={resetLoading}
+                    style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '8px 16px', cursor: resetLoading ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 600, fontSize: 13 }}>
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={resetLoading}
+                    style={{
+                      background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                      borderRadius: 8, color: '#fff', padding: '8px 20px', cursor: resetLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 700, fontSize: 13, fontFamily: T.font, opacity: resetLoading ? 0.7 : 1,
+                    }}>
+                    {resetLoading ? 'Resetting...' : 'Reset Password'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Permissions Modal */}
+      {permissionMember && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }} onClick={closePermissions} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div style={{ ...cardStyle, width: 760, maxWidth: '94vw', maxHeight: '86vh', overflow: 'hidden', padding: 0 }} onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <div style={{ padding: '22px 26px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: T.text }}>Permissions</h3>
+                <p style={{ margin: '6px 0 0', color: T.muted, fontSize: 13 }}>
+                  {permissionMember.full_name || permissionMember.email} · {permissionMember.role}
+                </p>
+              </div>
+              <button onClick={closePermissions}
+                style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, width: 34, height: 34, cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
+                ×
+              </button>
+            </div>
+            <div style={{ padding: '18px 26px', maxHeight: '58vh', overflowY: 'auto' }}>
+              {permissionLoading ? (
+                <div style={{ color: T.muted, padding: '28px 0', textAlign: 'center' }}>Loading permissions...</div>
+              ) : permissionError ? (
+                <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 12px' }}>
+                  {permissionError}
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 14, color: T.muted, fontSize: 13 }}>
+                    Role boundary is enforced automatically. Permissions outside <strong>{permissionMember.role}</strong> are not available here.
+                    {permissionCustom && <span style={{ color: T.accent, fontWeight: 700 }}> Custom permissions are active.</span>}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+                    {Object.entries(groupedPermissions).map(([module, items]) => (
+                      <div key={module} style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: '#fff', overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: `1px solid ${T.border}`, color: T.text, fontWeight: 800, fontSize: 13 }}>
+                          {module}
+                        </div>
+                        <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {items.map(p => {
+                            const checked = permissionValues.includes(p.key);
+                            return (
+                              <label key={p.key} style={{
+                                display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
+                                alignItems: 'flex-start', padding: '7px 6px', borderRadius: 6,
+                                cursor: 'pointer', background: checked ? 'rgba(99,102,241,0.06)' : 'transparent',
+                              }}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePermission(p.key)}
+                                  style={{ marginTop: 2 }}
+                                />
+                                <span>
+                                  <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{p.label}</span>
+                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{p.action}</span>
+                                  </span>
+                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{p.description}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Provider Accounts visibility */}
+                  {permissionMember && (permissionMember.role === 'Agent' || permissionMember.role === 'Executive') && (
+                    <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, background: '#fff', overflow: 'hidden', marginTop: 14 }}>
+                      <div style={{ padding: '10px 12px', background: '#f9fafb', borderBottom: `1px solid ${T.border}`, color: T.text, fontWeight: 800, fontSize: 13 }}>
+                        Provider Accounts
+                      </div>
+                      <div style={{ padding: '12px 14px' }}>
+                        <p style={{ margin: '0 0 10px', color: T.muted, fontSize: 12, lineHeight: 1.4 }}>
+                          Check the accounts this user can see and use for browser calls. Unchecked accounts are hidden from their dropdown.
+                        </p>
+                        {providerAccounts.length === 0 ? (
+                          <p style={{ margin: 0, color: T.muted, fontSize: 13 }}>No org provider accounts available.</p>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {providerAccounts.map(a => {
+                              const checked = selectedProviderAccountIds.includes(a.id);
+                              return (
+                                <label key={a.id} style={{
+                                  display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
+                                  alignItems: 'flex-start', padding: '7px 6px', borderRadius: 6,
+                                  cursor: 'pointer', background: checked ? 'rgba(99,102,241,0.06)' : 'transparent',
+                                }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => setSelectedProviderAccountIds(prev =>
+                                      prev.includes(a.id) ? prev.filter(id => id !== a.id) : [...prev, a.id]
+                                    )}
+                                    style={{ marginTop: 2 }}
+                                  />
+                                  <span>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{a.name}</span>
+                                    <span style={{ display: 'block', color: T.muted, fontSize: 12 }}>{a.caller_id} · {a.account_sid}</span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ padding: '14px 26px 20px', borderTop: `1px solid ${T.border}`, display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={resetPermissionsToRole} disabled={permissionLoading || permissionSaving}
+                style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '9px 14px', cursor: permissionLoading || permissionSaving ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 700, fontSize: 13 }}>
+                Reset to Role Default
+              </button>
+              <span style={{ display: 'inline-flex', gap: 10 }}>
+                <button onClick={closePermissions} disabled={permissionSaving}
+                  style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, color: T.sub, padding: '9px 16px', cursor: permissionSaving ? 'not-allowed' : 'pointer', fontFamily: T.font, fontWeight: 700, fontSize: 13 }}>
+                  Cancel
+                </button>
+                <button onClick={savePermissions} disabled={permissionLoading || permissionSaving || Boolean(permissionError)}
+                  style={{
+                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
+                    borderRadius: 8, color: '#fff', padding: '9px 18px',
+                    cursor: permissionLoading || permissionSaving || permissionError ? 'not-allowed' : 'pointer',
+                    fontWeight: 800, fontSize: 13, fontFamily: T.font,
+                    opacity: permissionLoading || permissionSaving || permissionError ? 0.65 : 1,
+                  }}>
+                  {permissionSaving ? 'Saving...' : 'Save Permissions'}
+                </button>
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -485,6 +929,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                 <th style={thStyle}>Name</th>
                 <th style={thStyle}>Email</th>
                 <th style={thStyle}>Role</th>
+                <th style={thStyle}>Permissions</th>
                 <th style={thStyle}>Joined</th>
                 <th style={thStyle}>API Key</th>
                 <th style={{ ...thStyle, textAlign: 'right' }}>Actions</th>
@@ -522,15 +967,31 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       >
                         <option value="Admin">Admin</option>
                         <option value="Agent">Agent</option>
-                        <option value="Viewer">Viewer</option>
+                        <option value="Executive">Executive</option>
                       </select>
+                    </td>
+                    <td style={rowTd}>
+                      <button
+                        onClick={() => openPermissions(m)}
+                        disabled={isSelf}
+                        title={isSelf ? 'You cannot edit your own permissions' : `Edit permissions for ${m.full_name || m.email}`}
+                        style={{
+                          background: isSelf ? '#f9fafb' : 'rgba(99,102,241,0.08)',
+                          border: `1px solid ${isSelf ? T.border : 'rgba(99,102,241,0.25)'}`,
+                          borderRadius: 7, color: isSelf ? T.muted : T.accent,
+                          width: 32, height: 30, cursor: isSelf ? 'not-allowed' : 'pointer',
+                          fontSize: 14, fontFamily: T.font, fontWeight: 700,
+                        }}
+                      >
+                        🛡
+                      </button>
                     </td>
                     <td style={{ ...rowTd, color: T.muted }}>
                       {m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}
                     </td>
                     <td style={rowTd}>
                       {!isAdminMember(m) ? (
-                        // API keys are Admin-only — Agents/Viewers shouldn't mint
+                        // API keys are Admin-only — Agents/Executives shouldn't mint
                         // org-scoped keys that bypass their role restrictions.
                         <span style={{ color: T.muted }}>—</span>
                       ) : !key ? (
@@ -553,6 +1014,16 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           }}>
                             {key.key_prefix}…
                           </code>
+                          <button
+                            onClick={() => copyStoredKey(key)}
+                            disabled={busy}
+                            title={key.key_plaintext ? 'Copy full API key' : 'Full key unavailable for older keys. Generate a new key to copy the full value.'}
+                            style={{
+                              background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.22)',
+                              borderRadius: 4, color: T.accent, padding: '2px 8px',
+                              cursor: busy ? 'wait' : 'pointer', fontSize: 11, fontFamily: T.font,
+                              opacity: key.key_plaintext ? 1 : 0.65,
+                            }}>Copy</button>
                           {key.is_active ? (
                             <span style={{ fontSize: 11, color: T.green, fontWeight: 600 }}>active</span>
                           ) : (
@@ -592,10 +1063,16 @@ export default function TeamPage({ apiFetch, API_URL }) {
                       {isSelf ? (
                         <span style={{ color: T.muted, fontSize: 13 }}>—</span>
                       ) : (
-                        <button onClick={() => handleDelete(m)}
-                          style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
-                          Remove
-                        </button>
+                        <span style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                          <button onClick={() => openResetPassword(m)}
+                            style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 6, color: T.accent, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
+                            Reset Password
+                          </button>
+                          <button onClick={() => handleDelete(m)}
+                            style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
+                            Remove
+                          </button>
+                        </span>
                       )}
                     </td>
                   </tr>

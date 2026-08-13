@@ -8,6 +8,7 @@ import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
+import { isAdmin, isExecutive } from '../../utils/roles';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -103,6 +104,8 @@ function AutoDialPanel({
   autoDialEnabled,
   autoDialQueue,
   autoDialActiveId,
+  autoDialUninterrupted,
+  onToggleUninterrupted,
   paginatedLeads,
   browserCallLead,
   browserCallDialing,
@@ -141,6 +144,21 @@ function AutoDialPanel({
           </button>
         </div>
       </div>
+
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+        fontSize: '0.85rem', color: T.sub, marginBottom: '1rem', userSelect: 'none'
+      }}>
+        <input
+          type="checkbox"
+          checked={autoDialUninterrupted}
+          onChange={(e) => onToggleUninterrupted(e.target.checked)}
+          style={{ width: 16, height: 16, accentColor: T.accent }}
+        />
+        <span>
+          <strong style={{ color: T.text }}>Uninterrupted mode</strong> — skip the post-call disposition screen and automatically dial the next lead until the batch is finished.
+        </span>
+      </label>
 
       {browserCallLead || browserCallDialing ? (
         <div style={{
@@ -346,7 +364,7 @@ export default function CampaignDetail({
   campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
-  handleLeadStatusChange, handleEditLead, handleRemoveLead,
+  handleLeadStatusChange, handleEditLead, handleRemoveLead, handleDeleteLead,
   campaignLeadsTotal,
   handleViewTranscripts,
   onCampaignDial, onCampaignWebCall,
@@ -354,12 +372,32 @@ export default function CampaignDetail({
   setSelectedLeadIds, setShowAddLeadsModal, setShowCsvImportModal, setCsvFile,
   apiFetch, API_URL, orgTimezone,
   handleEditCampaign,
-  executives
+  executives,
+  agents = [],
+  detailExecutiveFilter, setDetailExecutiveFilter
 }) {
   const stats = getCampaignStats(selectedCampaign);
   const toast = useToast();
   const confirm = useConfirm();
-  const { currentUser } = useAuth();
+  const { currentUser, hasPermission } = useAuth();
+  const hideAiFeatures = useHideAiFeatures();
+  const canShowAgentFilter = isAdmin(currentUser?.role);
+  const canCreateLead = hasPermission('crm.create');
+  const canEditLead = hasPermission('crm.edit');
+  const canDeleteLead = hasPermission('crm.delete');
+  const canImportLeads = hasPermission('crm.import');
+  const canExportLeads = hasPermission('crm.export');
+  const canAssignLeads = hasPermission('crm.assign');
+  const canEditCampaign = hasPermission('campaigns.edit');
+  const canMakeCalls = hasPermission('calls.make');
+  const canScheduleCalls = hasPermission('calls.schedule');
+  const canViewTranscripts = hasPermission('calls.transcripts');
+  const canViewRecordings = hasPermission('calls.recordings');
+  const canViewReports = hasPermission('reports.view');
+  const canSaveVoiceSettings = hasPermission('voice_settings.save');
+  // Only Executives are restricted from changing the per-machine browser call account;
+  // Admins/Agents can always change it, and Executives can if granted the permission.
+  const canChangeBrowserCallAccount = !isExecutive(currentUser?.role) || hasPermission('calls.browser_call_account');
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -380,11 +418,21 @@ export default function CampaignDetail({
   const [scheduleError, setScheduleError] = useState('');
   const [qaStatus, setQaStatus] = useState(null);
   const [leadSearch, setLeadSearch] = useState('');
+  // ── Bulk executive assignment state ─────────────────────────────────────────
+  const [bulkSelectedIds, setBulkSelectedIds] = useState(new Set());
+  const [bulkSelectAll, setBulkSelectAll] = useState(false);
+  const [bulkExecutiveId, setBulkExecutiveId] = useState('');
+  const [bulkAssigning, setBulkAssigning] = useState(false);
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
+  const [showDetailExecFilter, setShowDetailExecFilter] = useState(false);
+  const [detailExecSearch, setDetailExecSearch] = useState('');
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
+  const currentCampaignId = Number(
+    selectedCampaign?.id || selectedCampaign?.campaign_id || selectedCampaign?.campaignId || 0
+  );
 
   // ── Lead-table pagination ───────────────────────────────────────────────────
   const PAGE_SIZE = 100;
@@ -395,6 +443,9 @@ export default function CampaignDetail({
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
+  // Uninterrupted mode: skip the post-call disposition modal and auto-advance
+  // to the next lead until the queue is exhausted.
+  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(false);
 
   // ── Disposition modal state (post-call before next auto-dial) ───────────────
   const [showDispositionModal, setShowDispositionModal] = useState(false);
@@ -410,6 +461,12 @@ export default function CampaignDetail({
   // API calls route through the same provider account (e.g. Tata Tele).
   const [browserAccountId, setBrowserAccountId] = useState('');
   const browserAccountKey = useCallback((id) => `callified_browser_account_campaign_${id}`, []);
+  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
+  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
+  // If the user lacks permission to change the per-machine browser call account,
+  // force the fixed campaign/lead assignment account and ignore any localStorage override.
+  const effectiveBrowserAccountId = canChangeBrowserCallAccount ? (browserAccountId || selectedExotelAccountId) : selectedExotelAccountId;
+  const effectiveBrowserAccount = orgExotelAccounts.find(a => String(a.id) === String(effectiveBrowserAccountId));
 
   const openScheduleModal = useCallback((lead, editing = false) => {
     setScheduleEditingCallId(editing ? Number(lead?.scheduled_call_id || 0) : 0);
@@ -436,16 +493,27 @@ export default function CampaignDetail({
     setExecFilter([]);
     setExecSearch('');
     setShowExecFilter(false);
+    setDetailExecutiveFilter([]);
+    setDetailExecSearch('');
+    setShowDetailExecFilter(false);
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
+    setAutoDialUninterrupted(false);
     setShowDispositionModal(false);
     setDispositionLead(null);
     setDispositionNextLead(null);
     setScheduleFrom('');
     setScheduleTo('');
     setCurrentPage(1);
-  }, [selectedCampaign?.id]);
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
+  }, [selectedCampaign?.id, setDetailExecutiveFilter]);
+
+  useEffect(() => {
+    if (detailTab === 'calllog' && !canViewTranscripts && !canViewRecordings) setDetailTab('leads');
+    if ((detailTab === 'insights' || detailTab === 'retries') && (!canViewReports || hideAiFeatures)) setDetailTab('leads');
+  }, [detailTab, canViewTranscripts, canViewRecordings, canViewReports, hideAiFeatures, setDetailTab]);
 
   // Server-side pagination: fetch the current page with active filters.
   const loadCampaignLeads = useCallback(() => {
@@ -470,6 +538,14 @@ export default function CampaignDetail({
     setCurrentPage(1);
   }, [leadSearch, execFilter, scheduleFrom, scheduleTo]);
 
+  // Clear bulk selection when filters, search, or page changes so selections don't
+  // span shifting result sets.
+  useEffect(() => {
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
+    setBulkSelectAll(false);
+  }, [leadSearch, execFilter, scheduleFrom, scheduleTo, currentPage]);
+
   const totalPages = Math.ceil(campaignLeadsTotal / PAGE_SIZE);
   const safePage = Math.max(1, Math.min(currentPage, totalPages || 1));
 
@@ -479,6 +555,67 @@ export default function CampaignDetail({
       setCurrentPage(Math.max(1, Math.min(totalPages, n)));
     }
     setJumpPage('');
+  };
+
+  // ── Bulk executive assignment helpers ─────────────────────────────────────────
+  const toggleBulkSelection = (leadId) => {
+    setBulkSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(leadId)) next.delete(leadId);
+      else next.add(leadId);
+      return next;
+    });
+  };
+
+  const selectAllVisible = (checked) => {
+    if (checked) {
+      setBulkSelectedIds(new Set(paginatedLeads.map(l => l.id)));
+    } else {
+      setBulkSelectedIds(new Set());
+      setBulkSelectAll(false);
+    }
+  };
+
+  const selectAllCampaign = () => {
+    setBulkSelectAll(true);
+    setBulkSelectedIds(new Set(paginatedLeads.map(l => l.id)));
+  };
+
+  const clearBulkSelection = () => {
+    setBulkSelectedIds(new Set());
+    setBulkExecutiveId('');
+    setBulkSelectAll(false);
+  };
+
+  const handleBulkAssignExecutive = async () => {
+    if (!currentCampaignId || (!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId) return;
+    const execId = parseInt(bulkExecutiveId, 10);
+    if (!execId || isNaN(execId)) {
+      toast('Please select an executive');
+      return;
+    }
+    setBulkAssigning(true);
+    try {
+      const payload = bulkSelectAll
+        ? { all: true, executive_id: execId, search: leadSearch.trim(), scheduled_from: scheduleFrom, scheduled_to: scheduleTo }
+        : { lead_ids: Array.from(bulkSelectedIds), executive_id: execId };
+      const res = await apiFetch(`${API_URL}/campaigns/${currentCampaignId}/leads/executive`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || `Failed to assign executive (${res.status})`);
+      }
+      toast(`Executive assigned to ${bulkSelectAll ? campaignLeadsTotal : data.updated || bulkSelectedIds.size} lead(s)`);
+      clearBulkSelection();
+      fetchCampaignLeads(currentCampaignId);
+    } catch (err) {
+      toast(err.message || 'Failed to assign executive');
+    } finally {
+      setBulkAssigning(false);
+    }
   };
 
   useEffect(() => {
@@ -616,11 +753,11 @@ export default function CampaignDetail({
 
   const [dndBlockedLeadIds, setDndBlockedLeadIds] = useState(() => new Set());
   const requireSelectedDialAccount = useCallback(() => {
-    const selected = String(browserAccountId || '').trim();
+    const selected = String(effectiveBrowserAccountId || '').trim();
     if (selected) return true;
     toast('Select a browser call account before dialing');
     return false;
-  }, [browserAccountId, toast]);
+  }, [effectiveBrowserAccountId, toast]);
 
   const handleDialClick = async (lead) => {
     if (!requireSelectedDialAccount()) return;
@@ -673,16 +810,19 @@ export default function CampaignDetail({
   const autoDialEnabledRef = useRef(autoDialEnabled);
   const autoDialActiveIdRef = useRef(autoDialActiveId);
   const autoDialQueueRef = useRef(autoDialQueue);
+  const autoDialUninterruptedRef = useRef(autoDialUninterrupted);
   const campaignLeadsRef = useRef(campaignLeads);
   const paginatedLeadsRef = useRef(paginatedLeads);
   useEffect(() => { autoDialEnabledRef.current = autoDialEnabled; }, [autoDialEnabled]);
   useEffect(() => { autoDialActiveIdRef.current = autoDialActiveId; }, [autoDialActiveId]);
   useEffect(() => { autoDialQueueRef.current = autoDialQueue; }, [autoDialQueue]);
+  useEffect(() => { autoDialUninterruptedRef.current = autoDialUninterrupted; }, [autoDialUninterrupted]);
   useEffect(() => { campaignLeadsRef.current = campaignLeads; }, [campaignLeads]);
   useEffect(() => { paginatedLeadsRef.current = paginatedLeads; }, [paginatedLeads]);
 
   const advanceAutoDial = useCallback((status, errorMsg) => {
-    if (status === 'error') {
+    const terminalError = status === 'error';
+    if (terminalError && (!autoDialEnabledRef.current || !autoDialActiveIdRef.current || !autoDialUninterruptedRef.current)) {
       toast('Auto dial stopped: browser call failed');
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
@@ -709,6 +849,35 @@ export default function CampaignDetail({
       return;
     }
 
+    // Uninterrupted mode: skip the disposition modal and dial the next lead
+    // automatically. When the queue is exhausted, stop cleanly.
+    if (autoDialUninterruptedRef.current) {
+      if (nextLead) {
+        setTimeout(async () => {
+          for (let i = nextIdx; i < autoDialQueueRef.current.length; i += 1) {
+            const id = autoDialQueueRef.current[i];
+            const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
+            if (!lead) continue;
+            const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
+            if (started) {
+              setAutoDialActiveId(lead.id);
+              return;
+            }
+          }
+          toast('Auto dial complete');
+          setAutoDialEnabled(false);
+          setAutoDialActiveId(null);
+          setAutoDialQueue([]);
+        }, terminalError ? 800 : 400);
+        return;
+      }
+      toast('Auto dial complete');
+      setAutoDialEnabled(false);
+      setAutoDialActiveId(null);
+      setAutoDialQueue([]);
+      return;
+    }
+
     if (!nextId) {
       // Last lead in the queue: still show disposition, then mark complete after save.
       setDispositionNextLead(null);
@@ -722,7 +891,7 @@ export default function CampaignDetail({
     setDispositionRemarks(finishedLead.follow_up_note || '');
     setDispositionFollowUpAt(finishedLead.follow_up_at ? finishedLead.follow_up_at.slice(0, 16) : '');
     setShowDispositionModal(true);
-  }, [toast]);
+  }, [toast, triggerBrowserCall, selectedCampaign.id, effectiveBrowserAccountId]);
 
   const saveDispositionAndAdvance = useCallback(async (stopAfterSave) => {
     if (!dispositionLead) return;
@@ -770,16 +939,16 @@ export default function CampaignDetail({
 
     // Advance to the next lead only after the browser can place the call.
     setTimeout(async () => {
-      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, browserAccountId);
+      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
       if (started) {
         setAutoDialActiveId(dispositionNextLead.id);
       }
     }, 400);
-  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, browserAccountId, toast]);
+  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, effectiveBrowserAccountId, toast]);
 
   const startBrowserCallWithAutoDial = async (lead) => {
     if (!requireSelectedDialAccount()) return;
-    const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, browserAccountId);
+    const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, effectiveBrowserAccountId);
     if (started && autoDialEnabled) {
       setAutoDialActiveId(lead.id);
       const ids = paginatedLeads.map(l => l.id);
@@ -903,9 +1072,12 @@ export default function CampaignDetail({
     setInsightsLoading(true);
     setInsightsError('');
     try {
+      const params = new URLSearchParams();
+      if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
       const [insightsRes, reviewsRes] = await Promise.all([
-        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights`),
-        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews`),
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights${query}`),
+        apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-reviews${query}`),
       ]);
       if (!insightsRes.ok) {
         setCallInsights(null);
@@ -929,7 +1101,10 @@ export default function CampaignDetail({
   const fetchRetries = async () => {
     setRetriesLoading(true);
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries`);
+      const params = new URLSearchParams();
+      if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries${query}`);
       const data = await res.json();
       setRetries(Array.isArray(data) ? data : (data?.retries || []));
     } catch (e) { console.error('Failed to fetch retries', e); }
@@ -937,11 +1112,11 @@ export default function CampaignDetail({
   };
 
   useEffect(() => {
-     
+    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter);
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailTab, selectedCampaign.id]);
+  }, [detailTab, selectedCampaign.id, detailExecutiveFilter]);
 
   // Load call outcome stats whenever the campaign detail is opened.
   useEffect(() => {
@@ -968,8 +1143,6 @@ export default function CampaignDetail({
   }, []);
 
   // ── Exotel account selector state ─────────────────────────────────────────
-  const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
-  const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
   const [campaignDefaultAccount, setCampaignDefaultAccount] = useState(null);
   const [exotelAccountSaveStatus, setExotelAccountSaveStatus] = useState('idle'); // idle | saving | saved | error
 
@@ -979,8 +1152,6 @@ export default function CampaignDetail({
   const [humanCallError, setHumanCallError] = useState('');
 
   // const [twilioBrowserLead, setTwilioBrowserLead] = useState(null); // lead for Twilio WebRTC call
-
-  const hideAiFeatures = useHideAiFeatures();
 
   // Call-action visibility from Settings page (localStorage).
   const [visibleCallActions, setVisibleCallActions] = useState({
@@ -1018,11 +1189,16 @@ export default function CampaignDetail({
         if (data?.account) setCampaignDefaultAccount(data.account);
       })
       .catch(() => {});
-    // Restore per-machine browser-call account from localStorage
-    try {
-      const saved = localStorage.getItem(browserAccountKey(selectedCampaign.id));
-      if (saved != null) setBrowserAccountId(saved);
-    } catch { /* ignore */ }
+    // Restore per-machine browser-call account from localStorage only when the user
+    // is allowed to change it. Otherwise the fixed campaign/lead assignment account is used.
+    if (canChangeBrowserCallAccount) {
+      try {
+        const saved = localStorage.getItem(browserAccountKey(selectedCampaign.id));
+        if (saved != null) setBrowserAccountId(saved);
+      } catch { /* ignore */ }
+    } else {
+      setBrowserAccountId('');
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCampaign.id, browserAccountKey]);
 
@@ -1130,29 +1306,33 @@ export default function CampaignDetail({
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
-        <button onClick={() => handleEditCampaign(selectedCampaign)}
-          style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
-          Edit Campaign
-        </button>
-        <select className="form-input" value={selectedCampaign.lead_source || ''}
-          onChange={async (e) => {
-            const src = e.target.value;
-            await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
-              method: 'PUT', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({ lead_source: src })
-            });
-            setSelectedCampaign({...selectedCampaign, lead_source: src});
-          }}
-          style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
-          <option value="">No Source</option>
-          <option value="facebook">Facebook / Meta</option>
-          <option value="google">Google Ads</option>
-          <option value="instagram">Instagram</option>
-          <option value="linkedin">LinkedIn</option>
-          <option value="website">Website</option>
-          <option value="referral">Referral</option>
-          <option value="cold">Cold Outreach</option>
-        </select>
+        {canEditCampaign && (
+          <button onClick={() => handleEditCampaign(selectedCampaign)}
+            style={{ background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, color: '#92400e', borderRadius: 8, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>
+            Edit Campaign
+          </button>
+        )}
+        {canEditCampaign && (
+          <select className="form-input" value={selectedCampaign.lead_source || ''}
+            onChange={async (e) => {
+              const src = e.target.value;
+              await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ lead_source: src })
+              });
+              setSelectedCampaign({...selectedCampaign, lead_source: src});
+            }}
+            style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
+            <option value="">No Source</option>
+            <option value="facebook">Facebook / Meta</option>
+            <option value="google">Google Ads</option>
+            <option value="instagram">Instagram</option>
+            <option value="linkedin">LinkedIn</option>
+            <option value="website">Website</option>
+            <option value="referral">Referral</option>
+            <option value="cold">Cold Outreach</option>
+          </select>
+        )}
       </div>
 
       {/* Metrics grid */}
@@ -1231,7 +1411,7 @@ export default function CampaignDetail({
                 <option key={l.code} value={l.code}>{l.name}</option>
               ))}
             </select>
-            <button style={{
+            {canSaveVoiceSettings && <button style={{
                 background: campVoiceSaveStatus === 'saved' ? T.green
                   : campVoiceSaveStatus === 'error' ? T.red
                   : T.accent,
@@ -1245,8 +1425,8 @@ export default function CampaignDetail({
                 : campVoiceSaveStatus === 'saved' ? '✓ Saved'
                 : campVoiceSaveStatus === 'error' ? '✗ Failed'
                 : 'Save'}
-            </button>
-            <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>
+            </button>}
+            {canSaveVoiceSettings && <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>}
           </div>
           <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>
             {campVoice.tts_provider
@@ -1281,12 +1461,15 @@ export default function CampaignDetail({
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
               className="form-input"
-              value={browserAccountId}
+              value={effectiveBrowserAccountId}
+              disabled={!canChangeBrowserCallAccount}
               onChange={e => {
+                if (!canChangeBrowserCallAccount) return;
                 const v = e.target.value;
-                setBrowserAccountId(v);
+                const override = v === selectedExotelAccountId ? '' : v;
+                setBrowserAccountId(override);
                 try {
-                  localStorage.setItem(browserAccountKey(selectedCampaign.id), v);
+                  localStorage.setItem(browserAccountKey(selectedCampaign.id), override);
                 } catch { /* ignore */ }
                 // Selecting a browser-call account also makes it the campaign
                 // default so AI auto-dial and external API calls use the same
@@ -1304,7 +1487,7 @@ export default function CampaignDetail({
                   }).catch(() => {});
                 }
               }}
-              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420 }}>
+              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420, opacity: canChangeBrowserCallAccount ? 1 : 0.6, cursor: canChangeBrowserCallAccount ? 'pointer' : 'not-allowed' }}>
               <option value="">{campaignDefaultLabel}</option>
               {callingAccountOptions.map(a => (
                 <option key={a.id} value={String(a.id)}>
@@ -1314,16 +1497,17 @@ export default function CampaignDetail({
             </select>
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
-            {browserAccountId
+            {effectiveBrowserAccount
               ? (() => {
-                  const a = findCallingAccount(browserAccountId);
-                  return a ? `AI, API, browser and auto-dial calls will use: ${a.name} · ${a.account_sid} · ${a.caller_id}` : 'Account selected';
+                  const a = effectiveBrowserAccount;
+                  const source = browserAccountId ? 'browser override' : 'campaign default';
+                  return `Dialing from: ${a.name || a.account_sid} · ${a.account_sid} · ${a.caller_id || 'no caller ID'} (${source})`;
                 })()
-              : callingAccountOptions.length === 0
+              : orgExotelAccounts.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
-                : campaignDefaultAccount
-                  ? `All calls will use campaign default: ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id}`
-                  : 'Select an account above to set it as the campaign default for AI, API and browser calls.'}
+                : canChangeBrowserCallAccount
+                  ? 'Browser calls will use the campaign default. This choice is saved only in this browser.'
+                  : 'This account is fixed by the campaign/lead assignment. Contact admin to change it.'}
           </div>
         </div>
       )}
@@ -1378,7 +1562,7 @@ export default function CampaignDetail({
       </div>}
 
       {/* Quick Add Lead Form */}
-      <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      {canCreateLead && <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
@@ -1454,7 +1638,7 @@ export default function CampaignDetail({
             } catch(e) { setQaApiErr('Failed: ' + (e?.message || 'network error')); }
           }}>Add & Assign</button>
         {qaApiErr && <span style={{ color: T.red, fontSize: '0.75rem', width: '100%', marginTop: 4 }}>{qaApiErr}</span>}
-      </div>
+      </div>}
 
       {selectedCampaign.channel === 'whatsapp' && !hideAiFeatures && (
         <div style={{ marginBottom: 14 }}>
@@ -1464,10 +1648,10 @@ export default function CampaignDetail({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>
-        <button style={{ ...btnPrimary, background: '#0891b2' }}
-          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>
-        <button
+        {canAssignLeads && <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>}
+        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2' }}
+          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>}
+        {canExportLeads && <button
           style={{ ...btnPrimary, background: T.green }}
           onClick={() => {
             downloadCSV({
@@ -1478,8 +1662,8 @@ export default function CampaignDetail({
             });
           }}>
           ⬇ Export
-        </button>
-        {!hideAiFeatures && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+        </button>}
+        {!hideAiFeatures && canMakeCalls && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               if (!requireSelectedDialAccount()) return;
@@ -1500,7 +1684,7 @@ export default function CampaignDetail({
             📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        {!hideAiFeatures && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && canMakeCalls && <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
@@ -1518,7 +1702,7 @@ export default function CampaignDetail({
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>}
-        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+        {selectedCampaign.channel !== 'whatsapp' && canMakeCalls && visibleCallActions.browserCall && (
           <button
             style={{
               ...btnPrimary,
@@ -1549,6 +1733,8 @@ export default function CampaignDetail({
           autoDialEnabled={autoDialEnabled}
           autoDialQueue={autoDialQueue}
           autoDialActiveId={autoDialActiveId}
+          autoDialUninterrupted={autoDialUninterrupted}
+          onToggleUninterrupted={setAutoDialUninterrupted}
           paginatedLeads={paginatedLeads}
           browserCallLead={browserCallLead}
           browserCallDialing={browserCallDialing}
@@ -1557,10 +1743,76 @@ export default function CampaignDetail({
             setAutoDialEnabled(false);
             setAutoDialActiveId(null);
             setAutoDialQueue([]);
+            setAutoDialUninterrupted(false);
             toast('Auto dial stopped');
           }}
           campaignName={selectedCampaign.name}
         />
+      )}
+
+      {/* Agent filter for detail tabs */}
+      {!autoDialEnabled && canShowAgentFilter && detailExecutiveFilter && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Filter by agent</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowDetailExecFilter(v => !v)}
+              style={{
+                padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
+                fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
+                cursor: 'pointer', minWidth: 160, textAlign: 'left'
+              }}>
+              {detailExecutiveFilter.length === 0 ? 'All agents' : `${detailExecutiveFilter.length} agent${detailExecutiveFilter.length > 1 ? 's' : ''}`} ▾
+            </button>
+            {showDetailExecFilter && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: 220,
+                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
+                maxHeight: 300, overflowY: 'auto'
+              }}>
+                <input
+                  type="text"
+                  placeholder="Search agents..."
+                  value={detailExecSearch}
+                  onChange={e => setDetailExecSearch(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
+                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
+                    outline: 'none'
+                  }}
+                />
+                <div
+                  onClick={() => setDetailExecutiveFilter([])}
+                  style={{
+                    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                    color: detailExecutiveFilter.length === 0 ? T.accent : T.text, fontWeight: detailExecutiveFilter.length === 0 ? 700 : 400,
+                    background: detailExecutiveFilter.length === 0 ? 'rgba(99,102,241,0.08)' : 'transparent'
+                  }}>
+                  All agents
+                </div>
+                {(() => {
+                  const q = detailExecSearch.trim().toLowerCase();
+                  const filtered = q ? (agents || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (agents || []);
+                  if (filtered.length === 0) {
+                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No agents found.</div>;
+                  }
+                  return filtered.map(e => {
+                    const checked = detailExecutiveFilter.includes(e.id);
+                    return (
+                      <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => setDetailExecutiveFilter(prev => checked ? prev.filter(id => id !== e.id) : [...prev, e.id])} />
+                        {e.name || e.full_name || e.email}
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Search + Tab Switcher */}
@@ -1568,16 +1820,13 @@ export default function CampaignDetail({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent },
-          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green  },
-          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures },
-          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures },
+            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent, hidden: !hasPermission('crm.view') },
+          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
+          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
+          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures || !canViewReports },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
-              onClick={() => {
-                if (tab.id === 'calllog') { setDetailTab('calllog'); fetchCallLog(selectedCampaign.id); fetchInsights(); }
-                else setDetailTab(tab.id);
-              }}
+              onClick={() => setDetailTab(tab.id)}
               style={{
                 padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
                 fontSize: 13, fontWeight: 600, fontFamily: T.font,
@@ -1600,7 +1849,7 @@ export default function CampaignDetail({
             outline: 'none', minWidth: 260,
           }}
         />
-        {executives && executives.length > 0 && (
+        {canShowAgentFilter && executives && executives.length > 0 && (
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowExecFilter(v => !v)}
@@ -1699,14 +1948,20 @@ export default function CampaignDetail({
       {detailTab === 'calllog' && selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, overflowX: 'auto', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 16px 0' }}>
-            <a
-              href={`${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`}
+            {canViewRecordings && <a
+              href={(() => {
+                const params = new URLSearchParams();
+                if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+                return `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings${params.toString() ? `?${params.toString()}` : ''}`;
+              })()}
               download
               onClick={e => {
                 e.preventDefault();
+                const params = new URLSearchParams();
+                if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
                 downloadCSV({
                   apiFetch,
-                  url: `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings`,
+                  url: `${API_URL}/campaigns/${selectedCampaign.id}/export-recordings${params.toString() ? `?${params.toString()}` : ''}`,
                   filename: `recordings_${selectedCampaign.name?.replace(/\s+/g,'_') || selectedCampaign.id}.csv`,
                   toast,
                 });
@@ -1718,7 +1973,7 @@ export default function CampaignDetail({
                 fontFamily: T.font, textDecoration: 'none', cursor: 'pointer',
               }}>
               ⬇ Export CSV
-            </a>
+            </a>}
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -1956,12 +2211,72 @@ export default function CampaignDetail({
         </div>
       )}
 
+      {/* Bulk executive assignment bar */}
+      {detailTab === 'leads' && canAssignLeads && campaignLeadsTotal > 0 && !autoDialEnabled && (
+        <div style={{ ...card, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
+            {bulkSelectAll
+              ? `${campaignLeadsTotal} leads selected (all in campaign)`
+              : bulkSelectedIds.size > 0
+                ? `${bulkSelectedIds.size} selected`
+                : 'Select leads to assign executive'}
+          </span>
+          {bulkSelectedIds.size > 0 && !bulkSelectAll && campaignLeadsTotal > paginatedLeads.length && (
+            <button
+              onClick={selectAllCampaign}
+              disabled={bulkAssigning}
+              style={{ ...btnGhost, fontSize: 12, padding: '4px 10px', color: T.accent, borderColor: T.accent }}
+            >
+              Select all {campaignLeadsTotal} leads in this campaign
+            </button>
+          )}
+          <select
+            className="form-input"
+            value={bulkExecutiveId}
+            onChange={e => setBulkExecutiveId(e.target.value)}
+            disabled={(bulkSelectedIds.size === 0 && !bulkSelectAll) || bulkAssigning}
+            style={{ ...inputStyle, height: 34, fontSize: 13, padding: '4px 10px', minWidth: 180, background: '#fff' }}
+          >
+            <option value="">— Select Executive —</option>
+            {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          <button
+            onClick={handleBulkAssignExecutive}
+            disabled={(!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning}
+            style={{
+              ...btnPrimary,
+              opacity: ((!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning) ? 0.6 : 1,
+              cursor: ((!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning) ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {bulkAssigning ? 'Assigning...' : 'Assign Executive'}
+          </button>
+          {(bulkSelectedIds.size > 0 || bulkSelectAll) && (
+            <button
+              onClick={clearBulkSelection}
+              disabled={bulkAssigning}
+              style={{ ...btnGhost, opacity: bulkAssigning ? 0.6 : 1 }}
+            >
+              Clear selection
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Leads Table */}
       {detailTab === 'leads' && (
         <div style={{ ...card, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
+                {canAssignLeads && <th key="select" style={{ ...thStyle, width: 40, textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={bulkSelectAll || (paginatedLeads.length > 0 && paginatedLeads.every(l => bulkSelectedIds.has(l.id)))}
+                    onChange={e => selectAllVisible(e.target.checked)}
+                    style={{ width: 16, height: 16, accentColor: T.accent, cursor: 'pointer' }}
+                  />
+                </th>}
                 {['Name','Phone','Company','Source','Executive','Status','Action'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
@@ -1969,10 +2284,18 @@ export default function CampaignDetail({
             </thead>
             <tbody>
               {campaignLeadsTotal === 0 ? (
-                <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
+                <tr><td colSpan={canAssignLeads ? 8 : 7} style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>{(leadSearch.trim() || execFilter.length > 0) ? 'No leads match your filters.' : 'No leads in this campaign yet. Add some to start dialing!'}</td></tr>
               ) : paginatedLeads.map(lead => (
                 <React.Fragment key={lead.id}>
                   <tr>
+                    {canAssignLeads && <td style={{ ...tdStyle, textAlign: 'center', verticalAlign: 'middle' }}>
+                      <input
+                        type="checkbox"
+                        checked={bulkSelectedIds.has(lead.id)}
+                        onChange={() => toggleBulkSelection(lead.id)}
+                        style={{ width: 16, height: 16, accentColor: T.accent, cursor: 'pointer' }}
+                      />
+                    </td>}
                     <td style={{ ...tdStyle, fontWeight: 600, color: T.text }}>
                       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
                         <span>{lead.first_name} {lead.last_name}</span>
@@ -1995,7 +2318,7 @@ export default function CampaignDetail({
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>{lead.company || '-'}</td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.source || ''}
+                      {canEditLead ? <select className="form-input" value={lead.source || ''}
                         onChange={async e => {
                           const src = e.target.value;
                           try {
@@ -2012,41 +2335,51 @@ export default function CampaignDetail({
                         {['facebook','google','instagram','linkedin','website','referral','cold'].map(s => (
                           <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>
                         ))}
-                      </select>
+                      </select> : (lead.source || 'No Source')}
                     </td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.executive_id || ''}
+                      {canAssignLeads ? <select className="form-input" value={lead.executive_id || ''}
                         onChange={async e => {
                           const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
+                          if (!currentCampaignId) {
+                            toast('Campaign is still loading. Please try again.');
+                            return;
+                          }
                           try {
-                            await apiFetch(`${API_URL}/leads/${lead.id}/executive`, {
+                            const res = await apiFetch(`${API_URL}/leads/${lead.id}/executive`, {
                               method: 'PUT',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ executive_id: execId })
+                              body: JSON.stringify({ executive_id: execId, campaign_id: currentCampaignId })
                             });
-                            fetchCampaignLeads(selectedCampaign.id);
-                          } catch (err) { toast('Failed to assign executive'); }
+                            if (!res.ok) {
+                              const data = await res.json().catch(() => ({}));
+                              throw new Error(data.error || 'Failed to assign executive');
+                            }
+                            fetchCampaignLeads(currentCampaignId);
+                          } catch (err) { toast(err.message || 'Failed to assign executive'); }
                         }}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
                         <option value="">— Unassigned —</option>
                         {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                      </select>
+                      </select> : (
+                        executives.find(e => String(e.id) === String(lead.executive_id))?.name || '— Unassigned —'
+                      )}
                     </td>
                     <td style={tdStyle}>
-                      <select className="form-input" value={lead.status || 'New'}
+                      {canEditLead ? <select className="form-input" value={lead.status || 'New'}
                         onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
                         {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      </select> : (lead.status || 'New')}
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        <button
+                        {canEditLead && <button
                           onClick={() => handleEditLead(lead)}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           ✏️ Edit
-                        </button>
-                        {visibleCallActions.dial && (
+                        </button>}
+                        {canMakeCalls && visibleCallActions.dial && (
                           <button
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
@@ -2073,7 +2406,7 @@ export default function CampaignDetail({
                             📲 Manual Call
                           </button>
                         )} */}
-                        {selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+                        {canMakeCalls && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
                           <button
                             onClick={() => startBrowserCallWithAutoDial(lead)}
                             disabled={browserCallDialing || browserCallLead != null}
@@ -2089,7 +2422,7 @@ export default function CampaignDetail({
                             {autoDialEnabled ? '⏩ Browser Call' : '🎙 Browser Call'}
                           </button>
                         )}
-                        {selectedCampaign.channel === 'whatsapp' && (
+                        {canMakeCalls && selectedCampaign.channel === 'whatsapp' && (
                           <button
                             onClick={() => handleSendWA(lead)}
                             disabled={waSendingId === lead.id}
@@ -2105,7 +2438,7 @@ export default function CampaignDetail({
                             {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
                           </button>
                         )}
-                        {visibleCallActions.simWebCall && (
+                        {canMakeCalls && visibleCallActions.simWebCall && (
                           <button
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}
@@ -2130,8 +2463,8 @@ export default function CampaignDetail({
                             🚫 DND — number blocked
                           </span>
                         )}
-                        <button
-                          onClick={() => handleViewTranscripts(lead)}
+                        {canViewTranscripts && <button
+                          onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
                             color: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '#065f46' : T.muted,
@@ -2142,20 +2475,20 @@ export default function CampaignDetail({
                             : (lead.recording_count > 0 || lead.dial_attempts > 0) ? '📋 Call History' : '📋 No Calls'}
                           {lead.recording_count > 0 && ' 🔊'}
                           {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
-                        </button>
-                        <button
+                        </button>}
+                        {canEditLead && <button
                           onClick={() => openNoteModal(lead)}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📝 Note
-                        </button>
-                        <button
+                        </button>}
+                        {canScheduleCalls && <button
                           onClick={() => {
                             openScheduleModal(lead, false);
                           }}
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           📅 Schedule
-                        </button>
-                        <button onClick={async () => {
+                        </button>}
+                        {canDeleteLead && <button onClick={async () => {
                             const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
                             const ok = await confirm({
                               title: 'Remove Lead',
@@ -2170,8 +2503,8 @@ export default function CampaignDetail({
                             background: '#fee2e2', border: '1px solid #fca5a5',
                             color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           Remove
-                        </button>
-                        {lead.has_pending_scheduled_call && lead.next_scheduled_at && (
+                        </button>}
+                        {canScheduleCalls && lead.has_pending_scheduled_call && lead.next_scheduled_at && (
                           <div style={{ position: 'relative', display: 'inline-flex' }}>
                             <button
                               onClick={(e) => {

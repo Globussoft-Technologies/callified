@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -94,6 +95,9 @@ func (s *Server) sampleCSV(w http.ResponseWriter, _ *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/export [get]
 func (s *Server) exportLeads(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.export") {
+		return
+	}
 	ac := getAuth(r)
 	execIDs, apply, err := s.leadAccessExecIDs(ac)
 	if err != nil {
@@ -147,6 +151,9 @@ type PaginatedLeadsResponse struct {
 // @Router      /api/leads [get]
 func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	page, limit := parsePagination(r, 100, 500)
 	offset := (page - 1) * limit
 
@@ -199,6 +206,9 @@ func (s *Server) listLeads(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/leads/search [get]
 func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, http.StatusBadRequest, "q query param required")
@@ -243,6 +253,9 @@ func (s *Server) searchLeads(w http.ResponseWriter, r *http.Request) {
 // @Router      /api/leads/search-campaigns [get]
 func (s *Server) searchLeadsWithCampaigns(w http.ResponseWriter, r *http.Request) {
 	ac := getAuth(r)
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		writeError(w, http.StatusBadRequest, "q query param required")
@@ -298,6 +311,9 @@ type leadCreateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads [post]
 func (s *Server) createLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.create") {
+		return
+	}
 	ac := getAuth(r)
 	var req leadCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -387,6 +403,9 @@ func isDuplicateEntryError(err error) bool {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id} [get]
 func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -426,6 +445,9 @@ type leadUpdateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id} [put]
 func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -478,6 +500,9 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id} [delete]
 func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.delete") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -516,6 +541,9 @@ func (s *Server) deleteLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/status [put]
 func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -551,13 +579,13 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/leads/{id}/executive ─────────────────────────────────────────────
 
 // @Summary     Update lead executive
-// @Description Assigns or unassigns an executive for a lead without re-validating name/phone.
+// @Description Assigns or unassigns an executive for a lead in one campaign without re-validating name/phone.
 // @Tags        leads
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id    path      int64                       true  "Lead ID"
-// @Param       body  body      object{executive_id=int64}  true  "Executive ID (0 to unassign)"
+// @Param       body  body      object{executive_id=int64,campaign_id=int64}  true  "Executive ID (0 to unassign) and campaign ID"
 // @Success     200   {object}  BoolResponse
 // @Failure     400   {object}  ErrorResponse
 // @Failure     401   {object}  ErrorResponse
@@ -565,23 +593,81 @@ func (s *Server) updateLeadStatus(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/executive [put]
 func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.assign") {
+		return
+	}
 	ac := getAuth(r)
+	if !s.isSuperAdmin(ac.Email) {
+		user, err := s.db.GetUserByEmail(ac.Email)
+		if err != nil {
+			s.logger.Sugar().Errorw("updateLeadExecutive: user lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if user != nil && user.Role == db.RoleExecutive {
+			writeError(w, http.StatusForbidden, "executives cannot reassign leads")
+			return
+		}
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
-		return
-	}
 	var body struct {
 		ExecutiveID int64 `json:"executive_id"`
+		CampaignID  int64 `json:"campaign_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.UpdateLeadExecutive(id, ac.OrgID, body.ExecutiveID); err != nil {
+	if body.CampaignID <= 0 {
+		body.CampaignID = campaignIDFromReferer(r)
+		if body.CampaignID <= 0 {
+			writeError(w, http.StatusBadRequest, "campaign_id is required")
+			return
+		}
+	}
+	campaign, err := s.db.GetCampaignByID(body.CampaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateLeadExecutive: campaign lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if campaign == nil || (campaign.OrgID != ac.OrgID && !s.isSuperAdmin(ac.Email)) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if !s.canViewCampaign(ac, body.CampaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	lead, err := s.db.GetLeadByID(id)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateLeadExecutive: lead lookup", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if lead == nil || (lead.OrgID != 0 && lead.OrgID != campaign.OrgID && !s.isSuperAdmin(ac.Email)) {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	executiveID := body.ExecutiveID
+	if body.ExecutiveID > 0 {
+		executiveID, err = s.db.ResolveExecutiveID(campaign.OrgID, body.ExecutiveID)
+		if err != nil {
+			s.logger.Sugar().Errorw("updateLeadExecutive: executive lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if executiveID == 0 {
+			writeError(w, http.StatusBadRequest, "executive not found")
+			return
+		}
+	}
+	err = s.db.UpdateCampaignLeadExecutive(body.CampaignID, id, campaign.OrgID, executiveID)
+	if err != nil {
 		s.logger.Sugar().Errorw("updateLeadExecutive", "err", err)
 		if err.Error() == "lead not found" {
 			writeError(w, http.StatusNotFound, "lead not found")
@@ -590,7 +676,32 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if err := s.db.UpdateLeadExecutive(id, campaign.OrgID, 0); err != nil {
+		s.logger.Sugar().Warnw("updateLeadExecutive: clear legacy lead executive failed", "err", err, "lead_id", id)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func campaignIDFromReferer(r *http.Request) int64 {
+	ref := r.Header.Get("Referer")
+	if ref == "" {
+		return 0
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return 0
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] != "campaigns" {
+			continue
+		}
+		id, err := strconv.ParseInt(parts[i+1], 10, 64)
+		if err == nil && id > 0 {
+			return id
+		}
+	}
+	return 0
 }
 
 // ── PUT /api/leads/{id}/source ────────────────────────────────────────────────
@@ -610,6 +721,9 @@ func (s *Server) updateLeadExecutive(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/source [put]
 func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -655,6 +769,9 @@ func (s *Server) updateLeadSource(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/notes [post]
 func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -719,6 +836,9 @@ type leadDispositionRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/disposition [put]
 func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -765,6 +885,9 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/import-csv [post]
 func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.import") {
+		return
+	}
 	ac := getAuth(r)
 	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10 MB limit
 		writeError(w, http.StatusBadRequest, "failed to parse form")
@@ -855,6 +978,9 @@ func (s *Server) importLeadsCSV(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/documents [get]
 func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -888,6 +1014,9 @@ func (s *Server) getLeadDocuments(w http.ResponseWriter, r *http.Request) {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/leads/{id}/documents [post]
 func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "crm.edit") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -948,6 +1077,9 @@ func (s *Server) uploadLeadDocument(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/transcripts/{id}/review [get]
 func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -983,12 +1115,28 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/transcripts [get]
 func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 {
+		ac := getAuth(r)
+		campaign, err := s.db.GetCampaignByID(campaignID)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLeadTranscripts: campaign", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if campaign == nil || campaign.OrgID != ac.OrgID || !s.canAccessCampaignLead(ac, campaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	transcripts, err := s.db.GetTranscriptsByLead(id)
@@ -996,6 +1144,15 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("getLeadTranscripts", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if campaignID > 0 {
+		filtered := transcripts[:0]
+		for _, t := range transcripts {
+			if t.CampaignID == campaignID {
+				filtered = append(filtered, t)
+			}
+		}
+		transcripts = filtered
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(transcripts))
 }
@@ -1015,6 +1172,9 @@ func (s *Server) getLeadTranscripts(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/leads/{id}/interactions [get]
 func (s *Server) getLeadInteractions(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -1078,6 +1238,9 @@ func (s *Server) getLeadInteractions(w http.ResponseWriter, r *http.Request) {
 // @Failure     500    {object}  ErrorResponse
 // @Router      /api/leads/by-phone/{phone}/calls [get]
 func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	phone := normalizePhone(strings.TrimSpace(r.PathValue("phone")))
 	if phone == "" {
 		writeError(w, http.StatusBadRequest, "phone required")
@@ -1274,6 +1437,9 @@ Return ONLY the note text, no labels or headers.`, name, lead.Phone, lead.Intere
 // with prose it is returned as-is unless ?force=1 is passed.
 // Returns 204 when the transcript has no turns to analyse.
 func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.transcripts") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

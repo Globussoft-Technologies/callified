@@ -54,6 +54,8 @@ type PendingCallInfo struct {
 	// UserEmail is the agent/admin who initiated the call. Used to segregate
 	// recordings into per-user folders.
 	UserEmail string `json:"user_email,omitempty"`
+	// UserID is the resolved DB user id of the agent/admin who initiated the call.
+	UserID int64 `json:"user_id,omitempty"`
 	// ExotelAccountID is the org_exotel_accounts row used to place this specific
 	// call. It lets browser calls from different machines use different provider
 	// accounts while the campaign default remains unchanged for AI calls.
