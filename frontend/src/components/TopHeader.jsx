@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatDateTime } from '../utils/dateFormat';
 
 // Tabs that should be hidden when AI features are disabled for the user.
-const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'ai-receptionist', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts', 'team']);
+const AI_TAB_IDS = new Set(['monitor', 'knowledge', 'sandbox', 'whatsapp', 'ai-receptionist', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'campaign-progress']);
 
 const AGENT_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
