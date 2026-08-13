@@ -48,6 +48,9 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 
 // EnsureUserAllowedExotelAccountsTable creates a junction table that records
 // which org-level provider accounts a given user is allowed to see and use.
+// Foreign keys are intentionally omitted because the live schema has
+// users.id as INT and org_exotel_accounts.id as BIGINT, so no single FK
+// column type can satisfy both. Application code enforces referential integrity.
 func (d *DB) EnsureUserAllowedExotelAccountsTable() error {
 	_, err := d.pool.Exec(`
 		CREATE TABLE IF NOT EXISTS user_allowed_exotel_accounts (
@@ -55,9 +58,7 @@ func (d *DB) EnsureUserAllowedExotelAccountsTable() error {
 			exotel_account_id BIGINT NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (user_id, exotel_account_id),
-			INDEX idx_exotel_account_id (exotel_account_id),
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-			FOREIGN KEY (exotel_account_id) REFERENCES org_exotel_accounts(id) ON DELETE CASCADE
+			INDEX idx_exotel_account_id (exotel_account_id)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 	`)
 	return err

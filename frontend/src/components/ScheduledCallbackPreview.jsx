@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
-import { useToast } from '../contexts/UIContext';
-import { useAuth } from '../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -45,9 +43,7 @@ function toLocalInputValue(isoString) {
   return `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(local.getHours())}:${pad(local.getMinutes())}`;
 }
 
-export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onRescheduled, apiFetch, API_URL, orgTimezone }) {
-  const toast = useToast();
-  const { currentUser } = useAuth();
+export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onRescheduled, apiFetch, API_URL, orgTimezone, currentUser, toast }) {
   const [lead, setLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +56,8 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
   const [newScheduleNotes, setNewScheduleNotes] = useState(call.notes || '');
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
   const [rescheduleError, setRescheduleError] = useState('');
+  const [dismissing, setDismissing] = useState(false);
+  const [dismissError, setDismissError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -108,10 +106,33 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
     onStart();
   };
 
+  const handleDismiss = async () => {
+    if (!call?.id) {
+      onDismiss();
+      return;
+    }
+    setDismissing(true);
+    setDismissError('');
+    try {
+      const res = await apiFetch(`${API_URL}/scheduled-calls/${call.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setDismissError(data.error || `Failed to cancel (${res.status})`);
+        return;
+      }
+      toast('Callback cancelled');
+      onDismiss();
+    } catch {
+      setDismissError('Network error while cancelling.');
+    } finally {
+      setDismissing(false);
+    }
+  };
+
   return (
     <div
       className="modal-overlay"
-      onClick={e => { if (e.target === e.currentTarget) onDismiss(); }}
+      onClick={e => { if (e.target === e.currentTarget) handleDismiss(); }}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
@@ -127,7 +148,7 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Scheduled Callback Ready</h3>
-          <button onClick={onDismiss} style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+          <button onClick={handleDismiss} disabled={dismissing} style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
         </div>
 
         {loading ? (
@@ -205,7 +226,7 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
           <button onClick={() => setRescheduling(true)} disabled={autoStarting || rescheduling} style={{ ...btnGhost, opacity: (autoStarting || rescheduling) ? 0.6 : 1 }}>
             📅 Reschedule
           </button>
-          <button onClick={onDismiss} disabled={autoStarting || rescheduling} style={{ ...btnGhost, opacity: (autoStarting || rescheduling) ? 0.6 : 1 }}>Dismiss</button>
+          <button onClick={handleDismiss} disabled={autoStarting || rescheduling || dismissing} style={{ ...btnGhost, opacity: (autoStarting || rescheduling || dismissing) ? 0.6 : 1 }}>{dismissing ? 'Cancelling…' : 'Dismiss'}</button>
           <button onClick={handleManualStart} disabled={loading || autoStarting || rescheduling} style={{ ...btnPrimary, background: T.green, opacity: (loading || autoStarting || rescheduling) ? 0.6 : 1 }}>
             {autoStarting ? 'Starting…' : '▶ Start Call'}
           </button>
@@ -291,12 +312,12 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
                 />
               </label>
             </div>
-            {rescheduleError && (
+            {(rescheduleError || dismissError) && (
               <div style={{
                 marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
                 background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
               }}>
-                ⚠️ {rescheduleError}
+                ⚠️ {rescheduleError || dismissError}
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
