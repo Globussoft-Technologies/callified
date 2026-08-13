@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
+import { useToast } from '../contexts/UIContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -34,13 +36,30 @@ function outcomeFor(t) {
 
 const AUTO_START_SECONDS = 5;
 
-export default function ScheduledCallbackPreview({ call, onStart, onDismiss, apiFetch, API_URL, orgTimezone }) {
+function toLocalInputValue(isoString) {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  const offsetMs = d.getTimezoneOffset() * 60000;
+  const local = new Date(d.getTime() - offsetMs);
+  return `${local.getFullYear()}-${pad(local.getMonth() + 1)}-${pad(local.getDate())}T${pad(local.getHours())}:${pad(local.getMinutes())}`;
+}
+
+export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onRescheduled, apiFetch, API_URL, orgTimezone }) {
+  const toast = useToast();
+  const { currentUser } = useAuth();
   const [lead, setLead] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(AUTO_START_SECONDS);
   const [autoStarting, setAutoStarting] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
+  const [newScheduleAt, setNewScheduleAt] = useState(() => toLocalInputValue(call.scheduled_time));
+  const [newScheduleMode, setNewScheduleMode] = useState(call.mode || 'manual');
+  const [newScheduleNotes, setNewScheduleNotes] = useState(call.notes || '');
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
+  const [rescheduleError, setRescheduleError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +91,7 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, api
 
   // Countdown to auto-start the browser call once the preview is loaded.
   useEffect(() => {
-    if (loading || error || !lead || autoStarting) return;
+    if (loading || error || !lead || autoStarting || rescheduling) return;
     if (secondsLeft <= 0) {
       setAutoStarting(true);
       onStart();
@@ -82,7 +101,7 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, api
       setSecondsLeft(s => s - 1);
     }, 1000);
     return () => clearInterval(id);
-  }, [loading, error, lead, secondsLeft, autoStarting, onStart]);
+  }, [loading, error, lead, secondsLeft, autoStarting, rescheduling, onStart]);
 
   const handleManualStart = () => {
     setAutoStarting(true);
@@ -183,12 +202,156 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, api
               {autoStarting ? 'Connecting…' : `Auto-starting call in ${secondsLeft}s`}
             </div>
           )}
-          <button onClick={onDismiss} disabled={autoStarting} style={{ ...btnGhost, opacity: autoStarting ? 0.6 : 1 }}>Dismiss</button>
-          <button onClick={handleManualStart} disabled={loading || autoStarting} style={{ ...btnPrimary, background: T.green, opacity: (loading || autoStarting) ? 0.6 : 1 }}>
+          <button onClick={() => setRescheduling(true)} disabled={autoStarting || rescheduling} style={{ ...btnGhost, opacity: (autoStarting || rescheduling) ? 0.6 : 1 }}>
+            📅 Reschedule
+          </button>
+          <button onClick={onDismiss} disabled={autoStarting || rescheduling} style={{ ...btnGhost, opacity: (autoStarting || rescheduling) ? 0.6 : 1 }}>Dismiss</button>
+          <button onClick={handleManualStart} disabled={loading || autoStarting || rescheduling} style={{ ...btnPrimary, background: T.green, opacity: (loading || autoStarting || rescheduling) ? 0.6 : 1 }}>
             {autoStarting ? 'Starting…' : '▶ Start Call'}
           </button>
         </div>
       </div>
+
+      {rescheduling && (
+        <div
+          className="modal-overlay"
+          onClick={e => { if (e.target === e.currentTarget) { setRescheduling(false); setRescheduleError(''); } }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(2,6,23,0.6)',
+            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 10002, padding: '1rem'
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ ...card, maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Reschedule Callback</h3>
+              <button
+                onClick={() => { setRescheduling(false); setRescheduleError(''); }}
+                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
+            <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              {lead?.first_name || call.first_name} {lead?.last_name || ''} — {lead?.phone || call.phone}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Date &amp; Time
+                <input
+                  type="datetime-local"
+                  value={newScheduleAt}
+                  onChange={e => { setNewScheduleAt(e.target.value); setRescheduleError(''); }}
+                  min={(() => {
+                    const d = new Date();
+                    const pad = n => String(n).padStart(2, '0');
+                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                  })()}
+                  style={{
+                    width: '100%', marginTop: 6, padding: '8px 10px',
+                    border: `1px solid ${T.border}`, borderRadius: 8,
+                    fontSize: 13, fontFamily: T.font, color: T.text, boxSizing: 'border-box'
+                  }}
+                />
+              </label>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Callback mode
+                <select
+                  value={newScheduleMode}
+                  onChange={e => setNewScheduleMode(e.target.value)}
+                  style={{
+                    width: '100%', marginTop: 6, padding: '8px 10px',
+                    border: `1px solid ${T.border}`, borderRadius: 8,
+                    fontSize: 13, fontFamily: T.font, color: T.text, boxSizing: 'border-box',
+                    height: 38, background: '#fff'
+                  }}
+                >
+                  <option value="manual">Manual / Browser Callback (auto-connect for you)</option>
+                  <option value="ai">AI Dial</option>
+                </select>
+              </label>
+              <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
+                Notes (optional)
+                <textarea
+                  value={newScheduleNotes}
+                  onChange={e => setNewScheduleNotes(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. follow-up on pricing discussion"
+                  style={{
+                    width: '100%', marginTop: 6, padding: '8px 10px',
+                    border: `1px solid ${T.border}`, borderRadius: 8,
+                    fontSize: 13, fontFamily: T.font, color: T.text, boxSizing: 'border-box',
+                    resize: 'vertical'
+                  }}
+                />
+              </label>
+            </div>
+            {rescheduleError && (
+              <div style={{
+                marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
+                background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
+              }}>
+                ⚠️ {rescheduleError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
+              <button
+                onClick={() => { setRescheduling(false); setRescheduleError(''); }}
+                disabled={rescheduleSaving}
+                style={{ ...btnGhost, opacity: rescheduleSaving ? 0.6 : 1 }}>
+                Cancel
+              </button>
+              <button
+                disabled={rescheduleSaving || !newScheduleAt}
+                onClick={async () => {
+                  if (!newScheduleAt) return;
+                  if (new Date(newScheduleAt).getTime() <= Date.now()) {
+                    setRescheduleError('Please pick a future date and time.');
+                    return;
+                  }
+                  setRescheduleError('');
+                  setRescheduleSaving(true);
+                  try {
+                    const serverTime = new Date(newScheduleAt).toISOString();
+                    const res = await apiFetch(`${API_URL}/scheduled-calls`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        lead_id: call.lead_id,
+                        campaign_id: call.campaign_id,
+                        scheduled_at: serverTime,
+                        notes: newScheduleNotes,
+                        mode: newScheduleMode,
+                        executive_id: call.executive_id || 0,
+                        scheduled_by_user_id: currentUser?.id || 0,
+                      }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      setRescheduleError(data.error || data.detail || `Failed to reschedule (${res.status})`);
+                    } else {
+                      toast('Callback rescheduled');
+                      setRescheduling(false);
+                      onDismiss();
+                      if (onRescheduled) onRescheduled(data.id);
+                    }
+                  } catch {
+                    setRescheduleError('Network error while rescheduling.');
+                  }
+                  setRescheduleSaving(false);
+                }}
+                style={{ ...btnPrimary, opacity: (rescheduleSaving || !newScheduleAt) ? 0.6 : 1 }}>
+                {rescheduleSaving ? 'Saving…' : 'Save New Time'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

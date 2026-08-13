@@ -386,6 +386,11 @@ export function CallProvider({ children }) {
     setScheduledCallbackPreview(null);
   }, [scheduledCallbackPreview, dismissScheduledCall]);
 
+  const handleRescheduled = useCallback((callId) => {
+    fetchDueManualCalls();
+    if (callId) clearDismissedScheduledCall(callId);
+  }, [fetchDueManualCalls, clearDismissedScheduledCall]);
+
   const handleBrowserCallEnded = useCallback((status, errorMsg) => {
     const cb = browserCallEndedCbRef.current;
     browserCallEndedCbRef.current = null;
@@ -584,7 +589,10 @@ export function CallProvider({ children }) {
       if (!myUserId) return;
       // Only show one preview at a time and don't interrupt an active call.
       if (scheduledCallbackPreview || browserCallLead || browserCallDialing) return;
-      for (const call of calls) {
+      // Respect client-side dismissal so a dismissed callback does not
+      // reappear after a refresh while the backend row is still pending.
+      const visibleCalls = (calls || []).filter(c => !dismissedIds.has(c.id));
+      for (const call of visibleCalls) {
         if (call.scheduled_by_user_id !== myUserId) continue;
         if (triggeredScheduledRef.current.has(call.id)) continue;
         if (!call.campaign_id || !call.lead_id) continue;
@@ -655,6 +663,7 @@ export function CallProvider({ children }) {
           call={scheduledCallbackPreview}
           onStart={startScheduledCallback}
           onDismiss={dismissScheduledCallbackPreview}
+          onRescheduled={handleRescheduled}
           apiFetch={apiFetch}
           API_URL={API_URL}
         />
