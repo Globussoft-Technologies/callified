@@ -11,11 +11,12 @@ import (
 
 // userCreateRequest is the payload for Admin/Team Leader direct user creation.
 type userCreateRequest struct {
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	FullName  string `json:"full_name"`
-	Role      string `json:"role"`
-	ManagerID *int64 `json:"manager_id"`
+	Email           string                  `json:"email"`
+	Password        string                  `json:"password"`
+	FullName        string                  `json:"full_name"`
+	Role            string                  `json:"role"`
+	ManagerID       *int64                  `json:"manager_id"`
+	ProviderAccount *providerAccountRequest `json:"provider_account,omitempty"`
 }
 
 // userUpdateRequest is the payload for editing a user.
@@ -35,6 +36,8 @@ func normalizeRole(role string) string {
 		return db.RoleTeamLeader
 	case "agent":
 		return db.RoleAgent
+	case "executive":
+		return db.RoleExecutive
 	default:
 		return ""
 	}
@@ -74,7 +77,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	role := normalizeRole(req.Role)
 	if role == "" {
-		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+		writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 		return
 	}
 	if role == db.RoleAdmin && req.ManagerID != nil && *req.ManagerID != 0 {
@@ -111,7 +114,30 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not create user. Please try again.")
 		return
 	}
+	s.maybeCreateUserProviderAccount(id, ac.OrgID, req.ProviderAccount)
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, req.FullName, req.Email)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "email": req.Email})
+}
+
+// maybeCreateUserProviderAccount creates a personal provider account for a newly
+// created user when the request includes one. Validation failures are ignored so
+// a bad calling config does not roll back the user creation.
+func (s *Server) maybeCreateUserProviderAccount(userID, orgID int64, pa *providerAccountRequest) {
+	if pa == nil {
+		return
+	}
+	normalizeProviderAccountRequest(pa)
+	if errMsg := validateProviderAccount(pa.Provider, pa.Direction, pa.Name, pa.APIKey, pa.APIToken, pa.APISecret, pa.AccountSID, pa.CallerID, pa.AppID); errMsg != "" {
+		return
+	}
+	if pa.Provider == "exotel" && pa.AppType != "exoml" && pa.AppType != "voicebot" {
+		return
+	}
+	_, _ = s.db.CreateUserExotelAccount(userID, orgID, pa.Provider,
+		strings.TrimSpace(pa.Name), pa.APIKey, pa.APIToken, pa.APISecret,
+		pa.AccountSID, pa.CallerID, pa.AppID, pa.AppType, pa.Region, pa.Subdomain)
 }
 
 // ── PUT /api/users/{id} ──────────────────────────────────────────────────────
@@ -144,7 +170,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	if req.Role != "" {
 		role = normalizeRole(req.Role)
 		if role == "" {
-			writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, or Agent"})
+			writeFieldError(w, http.StatusBadRequest, "Invalid role.", map[string]string{"role": "Role must be Admin, TeamLeader, Agent, or Executive"})
 			return
 		}
 	}
@@ -176,6 +202,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("updateUser", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if role == db.RoleExecutive {
+		_ = s.db.EnsureExecutiveForUser(ac.OrgID, fullName, target.Email)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
 }
@@ -223,6 +252,16 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		s.logger.Sugar().Errorw("deleteUser", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if exec, err := s.db.GetExecutiveByEmail(ac.OrgID, target.Email); err == nil && exec != nil {
+		if err := s.db.DeleteExecutive(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteUser: linked executive delete failed", "err", err)
+		}
+		if err := s.db.UnassignExecutiveFromLeads(exec.ID, ac.OrgID); err != nil {
+			s.logger.Sugar().Warnw("deleteUser: linked executive unassign failed", "err", err)
+		}
+	} else if err != nil {
+		s.logger.Sugar().Warnw("deleteUser: linked executive lookup failed", "err", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
 }
@@ -283,9 +322,10 @@ func (s *Server) createAgentUnderManager(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		FullName string `json:"full_name"`
+		Email           string                  `json:"email"`
+		Password        string                  `json:"password"`
+		FullName        string                  `json:"full_name"`
+		ProviderAccount *providerAccountRequest `json:"provider_account,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -323,6 +363,7 @@ func (s *Server) createAgentUnderManager(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "Could not create user. Please try again.")
 		return
 	}
+	s.maybeCreateUserProviderAccount(id, ac.OrgID, req.ProviderAccount)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "email": req.Email})
 }
 
@@ -403,15 +444,15 @@ func (s *Server) updateManagedAgent(w http.ResponseWriter, r *http.Request) {
 // userResponseWithRole builds the user-profile object including RBAC fields.
 func userResponseWithRole(u *db.User, orgName string) map[string]any {
 	return map[string]any{
-		"id":          u.ID,
-		"email":       u.Email,
-		"full_name":   u.FullName,
-		"role":        u.Role,
-		"manager_id":  u.ManagerID,
-		"is_active":   u.IsActive,
-		"org_id":      u.OrgID,
-		"org_name":    orgName,
-		"created_at":  u.CreatedAt,
+		"id":         u.ID,
+		"email":      u.Email,
+		"full_name":  u.FullName,
+		"role":       u.Role,
+		"manager_id": u.ManagerID,
+		"is_active":  u.IsActive,
+		"org_id":     u.OrgID,
+		"org_name":   orgName,
+		"created_at": u.CreatedAt,
 	}
 }
 

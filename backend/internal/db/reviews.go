@@ -49,8 +49,8 @@ type CallReviewWithLead struct {
 // joined to leads for first_name/last_name and COALESCEd across the legacy
 // (sentiment/insights/summary) and current (customer_sentiment/what_went_*) column
 // pairs so the Call Insights tab renders for both old and new rows. Issue #75.
-func (d *DB) GetCallReviewsByCampaign(campaignID int64) ([]CallReviewWithLead, error) {
-	rows, err := d.pool.Query(`
+func (d *DB) GetCallReviewsByCampaign(campaignID int64, execIDs []int64, applyExecFilter bool) ([]CallReviewWithLead, error) {
+	q := `
 		SELECT r.id, r.transcript_id, COALESCE(r.org_id,0),
 		       COALESCE(r.lead_id, t.lead_id, 0),
 		       COALESCE(l.first_name,''), COALESCE(l.last_name,''),
@@ -65,8 +65,14 @@ func (d *DB) GetCallReviewsByCampaign(campaignID int64) ([]CallReviewWithLead, e
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
 		LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)
-		WHERE t.campaign_id=?
-		ORDER BY r.id DESC`, campaignID)
+		WHERE t.campaign_id=?`
+	args := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY r.id DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -110,11 +116,20 @@ type ImprovementCount struct {
 // GetCampaignCallInsights aggregates call_reviews rows for a campaign into
 // the shape the Insights tab renders. Sentiment/improvement/failure columns
 // COALESCE legacy and current schema names so old rows still contribute.
-func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, error) {
+func (d *DB) GetCampaignCallInsights(campaignID int64, execIDs []int64, applyExecFilter bool) (*CampaignCallInsights, error) {
 	out := &CampaignCallInsights{
 		SentimentBreakdown: map[string]int64{},
 		TopImprovements:    []ImprovementCount{},
 		TopFailureReasons:  []FailureReason{},
+	}
+
+	filterJoin := ""
+	filterWhere := ""
+	filterArgs := []any{}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		filterJoin = "LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)"
+		filterWhere = " AND " + c
+		filterArgs = append(filterArgs, a...)
 	}
 
 	// Summary tile: total / avg score / appointment rate (as a percentage 0-100,
@@ -127,7 +142,8 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       END
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
-		WHERE t.campaign_id=?`, campaignID).
+		`+filterJoin+`
+		WHERE t.campaign_id=?`+filterWhere, append([]any{campaignID}, filterArgs...)...).
 		Scan(&out.TotalReviews, &out.AvgQualityScore, &out.AppointmentRate)
 	if err != nil {
 		return nil, err
@@ -138,8 +154,9 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       COUNT(*)
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
-		WHERE t.campaign_id=?
-		GROUP BY s`, campaignID)
+		`+filterJoin+`
+		WHERE t.campaign_id=?`+filterWhere+`
+		GROUP BY s`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer sRows.Close()
 		for sRows.Next() {
@@ -156,10 +173,12 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       COUNT(*) AS cnt
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
+		`+filterJoin+`
 		WHERE t.campaign_id=?
 		  AND COALESCE(NULLIF(r.prompt_improvement_suggestion,''), NULLIF(r.insights,'')) IS NOT NULL
+		  `+filterWhere+`
 		GROUP BY s
-		ORDER BY cnt DESC LIMIT 5`, campaignID)
+		ORDER BY cnt DESC LIMIT 5`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer iRows.Close()
 		for iRows.Next() {
@@ -174,9 +193,11 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		SELECT r.failure_reason, COUNT(*) AS cnt
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
+		`+filterJoin+`
 		WHERE t.campaign_id=? AND r.failure_reason IS NOT NULL AND r.failure_reason<>''
+		  `+filterWhere+`
 		GROUP BY r.failure_reason
-		ORDER BY cnt DESC LIMIT 5`, campaignID)
+		ORDER BY cnt DESC LIMIT 5`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer fRows.Close()
 		for fRows.Next() {

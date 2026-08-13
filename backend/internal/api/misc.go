@@ -106,6 +106,9 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/reports [get]
 func (s *Server) getReports(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	report, err := s.db.GetReports(ac.OrgID)
 	if err != nil {
@@ -235,6 +238,9 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 // @Failure     401  {object}  ErrorResponse
 // @Router      /api/recordings/{filename} [get]
 func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.recordings") {
+		return
+	}
 	ac := getAuth(r)
 	relPath := r.PathValue("filename")
 
@@ -307,6 +313,9 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 // @Failure     503  {object}  ErrorResponse
 // @Router      /api/upload-recording [post]
 func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.recordings") {
+		return
+	}
 	if s.cfg.RecordingsDir == "" {
 		writeError(w, http.StatusServiceUnavailable, "recordings dir not configured")
 		return

@@ -29,7 +29,19 @@ func dialErrorStatus(err error) int {
 	}
 }
 
-// dialLead initiates an immediate call to a specific lead.
+// userIDForDial returns the authenticated user's ID when the caller is an
+// Agent or TeamLeader so that the initiator can prefer their personal provider
+// account. Admins/SuperAdmins return 0 so the campaign/org default is used.
+func userIDForDial(ac AuthClaims) int64 {
+	if ac.UserID == 0 {
+		return 0
+	}
+	if db.IsAgentLikeRole(ac.Role) || ac.Role == db.RoleTeamLeader {
+		return ac.UserID
+	}
+	return 0
+}
+
 // POST /api/dial/{lead_id}
 // @Summary     Dial lead
 // @Description Initiates an immediate outbound call to a specific lead.
@@ -60,10 +72,6 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ac := getAuth(r)
-	if !s.canAccessLead(ac, lead.ID) {
-		writeError(w, http.StatusNotFound, "lead not found")
-		return
-	}
 
 	var body struct {
 		CampaignID int64 `json:"campaign_id"`
@@ -72,6 +80,15 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 
 	if body.CampaignID > 0 && !s.canViewCampaign(ac, body.CampaignID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+	if body.CampaignID > 0 {
+		if !s.canAccessCampaignLead(ac, body.CampaignID, lead.ID) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if !s.canAccessLead(ac, lead.ID) {
+		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
 
@@ -88,6 +105,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 		TTSVoiceID:  vs.TTSVoiceID,
 		TTSLanguage: vs.TTSLanguage,
 		UserEmail:   ac.Email,
+		UserID:      userIDForDial(ac),
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -116,6 +134,9 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     502  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial/{lead_id} [post]
 func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
@@ -133,7 +154,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
-	if !s.canAccessLead(ac, lead.ID) {
+	if !s.canAccessCampaignLead(ac, campaignID, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
@@ -156,6 +177,7 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		TTSVoiceID:      vs.TTSVoiceID,
 		TTSLanguage:     vs.TTSLanguage,
 		UserEmail:       ac.Email,
+		UserID:          userIDForDial(ac),
 		ExotelAccountID: body.ExotelAccountID,
 	}
 
@@ -196,6 +218,9 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial-all [post]
 func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -328,6 +353,9 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/redial-failed [post]
 func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return

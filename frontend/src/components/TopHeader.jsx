@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
+import { useAuth } from '../contexts/AuthContext';
 import { formatDateTime } from '../utils/dateFormat';
 
 // Tabs that should be hidden when AI features are disabled for the user.
@@ -47,6 +48,27 @@ const MORE_ADMIN_TABS = [
   { id: 'ai-receptionist', label: 'AI Receptionist', path: '/ai-receptionist', testid: 'tab-ai-receptionist' },
 ];
 
+const TAB_PERMISSION = {
+  products: 'products.view',
+  campaigns: 'campaigns.view',
+  analytics: 'reports.view',
+  'exotel-accounts': 'provider_accounts.global',
+  monitor: 'monitor.view',
+  knowledge: 'knowledge.manage',
+  scheduled: 'calls.schedule',
+  'agent-report': 'reports.view',
+  'campaign-progress': 'reports.view',
+  billing: 'billing.manage',
+  dnd: 'dnd.manage',
+  executives: 'executives.manage',
+  settings: 'settings.manage',
+  logs: 'logs.view',
+  team: 'team.view',
+  receptionist: 'settings.manage',
+  integrations: 'integrations.manage',
+  whatsapp: 'whatsapp.manage',
+};
+
 const SUPER_ADMIN_TABS = [
   { id: 'subscriptions', label: 'Subscriptions', path: '/subscriptions', testid: 'tab-subscriptions' },
   { id: 'feature-flags', label: 'Feature Flags', path: '/feature-flags', testid: 'tab-feature-flags' },
@@ -59,6 +81,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const location = useLocation();
   const activeTab = location.pathname.replace('/', '') || 'crm';
   const hideAiFeatures = useHideAiFeatures();
+  const { hasPermission } = useAuth();
 
   const [callingStatus, setCallingStatus] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -118,6 +141,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   // Super admins see the same navigation as admins, plus the super-admin-only tabs.
   const isAdminLike = userRole === 'Admin' || userRole === 'SuperAdmin' || currentUser?.is_super_admin;
   const isTeamLeader = userRole === 'TeamLeader';
+  const canViewCampaigns = hasPermission('campaigns.view');
+  const allowedTab = (tab) => {
+    const key = TAB_PERMISSION[tab.id];
+    return !key || hasPermission(key);
+  };
 
   const userName = currentUser?.full_name || currentUser?.email || '';
   const userInitial = userName.charAt(0).toUpperCase();
@@ -170,11 +198,14 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
       <nav style={{ display: 'flex', alignItems: 'center', gap: 2, flex: 1, flexWrap: 'nowrap', overflow: 'visible' }}>
         {tabBtn('crm', 'CRM', '/crm', 'tab-crm')}
 
-        {userRole === 'Agent' && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
+        {(userRole === 'Agent' || userRole === 'Executive') && canViewCampaigns && AGENT_TABS.map(t => tabBtn(t.id, t.label, t.path, t.testid))}
         {isTeamLeader && TEAM_LEADER_PRIMARY_TABS
+          .filter(t => t.id !== 'campaigns' || canViewCampaigns)
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
         {isAdminLike && PRIMARY_ADMIN_TABS
+          .filter(t => t.id !== 'campaigns' || canViewCampaigns)
+          .filter(allowedTab)
           .filter(t => !hideAiFeatures || !AI_TAB_IDS.has(t.id))
           .map(t => tabBtn(t.id, t.label, t.path, t.testid))}
 
@@ -182,8 +213,8 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
           (() => {
             const superAdminTabs = currentUser?.is_super_admin ? SUPER_ADMIN_TABS : [];
             const roleFilteredMoreTabs = isTeamLeader
-              ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id))
-              : visibleMoreTabs;
+              ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id)).filter(allowedTab)
+              : visibleMoreTabs.filter(allowedTab);
             const allMoreTabs = [...roleFilteredMoreTabs, ...superAdminTabs];
             if (allMoreTabs.length === 1) {
               const t = allMoreTabs[0];

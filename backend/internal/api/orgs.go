@@ -409,6 +409,9 @@ func (s *Server) buildProductKnowledgeContext(orgID int64) string {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/organizations/{id}/products [get]
 func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -450,6 +453,9 @@ type productCreateRequest struct {
 // @Failure     500   {object}  ErrorResponse
 // @Router      /api/organizations/{id}/products [post]
 func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	orgID, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid org id")
@@ -508,6 +514,9 @@ type productUpdateRequest struct {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/products/{id} [put]
 func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -544,6 +553,9 @@ func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/products/{id} [delete]
 func (s *Server) deleteProduct(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -574,6 +586,9 @@ func (s *Server) deleteProduct(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/products/{id}/prompt [get]
 func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.view") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -611,6 +626,9 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/products/{id}/prompt [put]
 func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1046,6 +1064,9 @@ func crawlSiteImages(ctx context.Context, baseURL string, maxPages int) []string
 // POST /api/products/{id}/scrape
 // Fetches the product's website_url and asks the LLM to extract product context.
 func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	if s.llmProvider == nil {
 		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
 		return
@@ -1129,6 +1150,9 @@ Crawled page content:
 // POST /api/products/{id}/generate-prompt
 // Uses Gemini to generate agent_persona + call_flow_instructions from product info.
 func (s *Server) generateProductPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	if s.llmProvider == nil {
 		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
 		return
@@ -1183,6 +1207,9 @@ Return ONLY a JSON object with keys "agent_persona" and "call_flow_instructions"
 // scraped info / manual notes and persists them. Returns both fields plus a
 // status flag the frontend uses to show success/error inline.
 func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	if s.llmProvider == nil {
 		writeJSON(w, http.StatusServiceUnavailable,
 			map[string]string{"status": "error", "error": "LLM not configured", "message": "LLM not configured"})
@@ -1248,6 +1275,9 @@ func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) 
 // POST /api/organizations/{id}/generate-prompt
 // Uses Gemini to generate a custom system prompt for the org.
 func (s *Server) generateOrgPrompt(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "settings.manage") {
+		return
+	}
 	if s.llmProvider == nil {
 		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
 		return
@@ -1642,6 +1672,9 @@ func min(a, b int) int {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/products/{id}/images [post]
 func (s *Server) uploadProductImage(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1708,6 +1741,9 @@ func (s *Server) uploadProductImage(w http.ResponseWriter, r *http.Request) {
 // @Success     204  "No Content"
 // @Router      /api/products/{id}/images [put]
 func (s *Server) updateProductImages(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1739,6 +1775,9 @@ func (s *Server) updateProductImages(w http.ResponseWriter, r *http.Request) {
 // @Failure     404  {object}  ErrorResponse
 // @Router      /api/products/{id}/images/{index} [delete]
 func (s *Server) deleteProductImage(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "products.manage") {
+		return
+	}
 	id, err := parseID(r, "id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")

@@ -15,6 +15,7 @@ type ActiveSession struct {
 	LeadPhone  string `json:"lead_phone,omitempty"`
 	CampaignID int64  `json:"campaign_id,omitempty"`
 	OrgID      int64  `json:"org_id,omitempty"`
+	UserID     int64  `json:"user_id,omitempty"`
 	UserEmail  string `json:"user_email,omitempty"`
 	IsExotel   bool   `json:"is_exotel"`
 	IsWebSim   bool   `json:"is_web_sim"`
@@ -48,6 +49,7 @@ func (h *Handler) ActiveSessions() []ActiveSession {
 			LeadPhone:  sess.LeadPhone,
 			CampaignID: sess.CampaignID,
 			OrgID:      sess.OrgID,
+			UserID:     sess.UserID,
 			UserEmail:  sess.UserEmail,
 			IsExotel:   sess.IsExotel,
 			IsWebSim:   sess.IsWebSim,
