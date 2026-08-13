@@ -1,0 +1,154 @@
+{
+  "info": {
+    "name": "Callified — Transcripts API",
+    "description": "API endpoints for fetching call transcripts from Callified.\n\n## Quick start\n1. Set the `host` collection variable to your environment:\n   - Local: `http://localhost:8001`\n   - testgo1: `https://testgo1.callified.ai`\n2. Run **Login** first — it auto-saves the JWT into the `token` variable.\n3. Subsequent requests use `{{token}}` automatically.\n\n## Endpoints\n- **Login** — exchange email/password for a JWT (24h validity).\n- **Transcripts by phone** — all calls for the lead with this phone number, flat array.\n- **Transcripts by name** — all calls for leads whose first/last name matches, grouped by lead.\n- **Bulk export** — every campaign → its leads → their transcripts + Gemini conclusion. Best for one-shot dumps.\n\nAll authenticated endpoints are org-scoped: a user can only see their own org's data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "ca11f1ed-tx-collection-0001"
+  },
+  "variable": [
+    {
+      "key": "host",
+      "value": "http://localhost:8001",
+      "description": "Backend base URL. Change to https://testgo1.callified.ai for staging."
+    },
+    {
+      "key": "email",
+      "value": "support@callified.ai",
+      "description": "Callified user email used for the Login request."
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "secret",
+      "description": "Callified user password. Set per-environment, do not commit."
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "secret",
+      "description": "JWT — populated automatically by the Login request's test script."
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Login (run first)",
+      "description": "Exchange email + password for a JWT. The response token is saved into the `token` collection variable automatically.",
+      "request": {
+        "method": "POST",
+        "auth": { "type": "noauth" },
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{host}}/api/login",
+          "host": ["{{host}}"],
+          "path": ["api", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "if (body.token) {",
+              "  pm.collectionVariables.set('token', body.token);",
+              "  console.log('JWT saved to collection variable {{token}}');",
+              "} else {",
+              "  console.warn('No token in response — check email/password');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transcripts by phone",
+      "description": "Returns every call for the lead matching this phone, as a flat array (one row per call).\n\nResponse shape:\n```\n[\n  {\n    \"id\":            259,\n    \"lead_id\":       2,\n    \"lead_name\":     \"Harsha\",\n    \"phone\":         \"9177007429\",\n    \"duration_s\":    56.7,\n    \"tts_language\":  \"en\",\n    \"created_at\":    \"2026-04-28 10:01:08\",\n    \"recording_url\": \"/api/recordings/...wav\",\n    \"transcript\":    [{\"role\":\"AI\",\"text\":\"...\"}, ...]\n  }\n]\n```\n\nReturns `[]` (200 OK) when no lead matches that phone in the caller's org.",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{host}}/api/leads/by-phone/9177007429/calls",
+          "host": ["{{host}}"],
+          "path": ["api", "leads", "by-phone", "9177007429", "calls"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Transcripts by name",
+      "description": "Returns calls grouped by lead, since one name can match multiple leads in an org (e.g. two Harshas).\n\nPartial matches are allowed — `Hars` matches `Harsha`. URL-encode the name when it contains spaces (`John%20Doe`).\n\nResponse shape:\n```\n[\n  {\n    \"lead_id\":   2,\n    \"lead_name\": \"Harsha\",\n    \"phone\":     \"9177007429\",\n    \"calls\": [\n      {\n        \"id\":            259,\n        \"duration_s\":    56.7,\n        \"tts_language\":  \"en\",\n        \"created_at\":    \"...\",\n        \"recording_url\": \"...\",\n        \"transcript\":    [...]\n      }\n    ]\n  }\n]\n```\n\nReturns `[]` (200 OK) when no name matches.",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{host}}/api/leads/by-name/Harsha/calls",
+          "host": ["{{host}}"],
+          "path": ["api", "leads", "by-name", "Harsha", "calls"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bulk export — all campaigns + transcripts + conclusions",
+      "description": "Single call that returns every campaign in the caller's org, with all leads nested underneath each campaign, and all calls (transcript + Gemini conclusion) nested under each lead.\n\nUse the optional `?campaign_id=` query param to scope to one campaign — useful when the org is large enough that pulling everything at once would be slow.\n\nThe `conclusion` field is `null` when no Gemini review exists for the call (e.g. very short calls where analysis was skipped).\n\nResponse shape:\n```\n[\n  {\n    \"campaign_id\":   5,\n    \"campaign_name\": \"Whatsapp campaign\",\n    \"channel\":       \"WhatsApp\",\n    \"status\":        \"active\",\n    \"created_at\":    \"2026-04-12 09:00:00\",\n    \"totals\":        { \"total\": 2, \"called\": 2, \"qualified\": 0, \"booked\": 0 },\n    \"leads\": [\n      {\n        \"lead_id\":   12,\n        \"lead_name\": \"Harsha\",\n        \"phone\":     \"9177007429\",\n        \"status\":    \"Completed\",\n        \"calls\": [\n          {\n            \"id\":            259,\n            \"duration_s\":    56.7,\n            \"tts_language\":  \"en\",\n            \"created_at\":    \"...\",\n            \"recording_url\": \"...\",\n            \"transcript\":    [...],\n            \"conclusion\":    {\n              \"quality_score\":                 4.0,\n              \"sentiment\":                     \"positive\",\n              \"customer_sentiment\":            \"interested\",\n              \"appointment_booked\":            true,\n              \"failure_reason\":                \"\",\n              \"summary\":                       \"...\",\n              \"what_went_well\":                \"...\",\n              \"what_went_wrong\":               \"...\",\n              \"insights\":                      \"...\",\n              \"prompt_improvement_suggestion\": \"...\"\n            }\n          }\n        ]\n      }\n    ]\n  }\n]\n```",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{host}}/api/external/transcripts",
+          "host": ["{{host}}"],
+          "path": ["api", "external", "transcripts"],
+          "query": [
+            {
+              "key": "campaign_id",
+              "value": "",
+              "description": "Optional — restrict to one campaign. Omit for all campaigns in the org.",
+              "disabled": true
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

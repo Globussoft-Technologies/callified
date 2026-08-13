@@ -165,19 +165,19 @@ func TestBinaryFrameAccepted(t *testing.T) {
 // ─── Session unit tests ──────────────────────────────────────────────────────
 
 // TestMaxTokens verifies token allocation is based on transcript length,
-// clamped between 150 and 400.
+// clamped between 500 and 800.
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words → 40) clamped to minimum 150
-	assert.Equal(t, int32(150), sess.MaxTokens("test transcript"), "short transcript should be 150")
+	// Short transcript (2 words → 80) clamped to minimum 500
+	assert.Equal(t, int32(500), sess.MaxTokens("test transcript"), "short transcript should be 500")
 
-	// Medium transcript (10 words → 200)
-	assert.Equal(t, int32(200), sess.MaxTokens("one two three four five six seven eight nine ten"))
+	// Medium transcript (13 words → 520)
+	assert.Equal(t, int32(520), sess.MaxTokens("one two three four five six seven eight nine ten eleven twelve thirteen"))
 
-	// Long transcript (>20 words → >400) clamped to maximum 400
+	// Long transcript (>20 words → >800) clamped to maximum 800
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
-	assert.Equal(t, int32(400), sess.MaxTokens(longText), "long transcript should be 400")
+	assert.Equal(t, int32(800), sess.MaxTokens(longText), "long transcript should be 800")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).
