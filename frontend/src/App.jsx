@@ -198,7 +198,7 @@ export default function App() {
           </RequireRole>
         } />
         <Route path="/ops" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <OpsPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
-        <Route path="/analytics" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/analytics" element={<AdminOnly userRole={userRole}><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
         <Route path="/whatsapp" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />}</AdminOnly>} />
         <Route path="/integrations" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />}</AdminOnly>} />
         <Route path="/monitor" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} />}</AdminOnly>} />
