@@ -52,7 +52,8 @@ func (g *GeminiFallback) Reply(ctx context.Context, sess *session.Session, userT
 		if model == "" {
 			model = "gemini-2.5-flash"
 		}
-		g.client = llm.NewGeminiClient(key, model)
+		baseURL := os.Getenv("GEMINI_BASE_URL")
+		g.client = llm.NewGeminiClient(key, model, baseURL)
 	})
 	if g.client == nil {
 		return ""

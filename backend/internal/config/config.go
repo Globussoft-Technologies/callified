@@ -32,11 +32,12 @@ type Config struct {
 
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`
-	GeminiModel   string `env:"GEMINI_MODEL"    envDefault:"gemini-2.5-flash"`
+	GeminiModel   string `env:"GEMINI_MODEL"      envDefault:"gemini-2.5-flash"`
+	GeminiBaseURL string `env:"GEMINI_BASE_URL" envDefault:"https://generativelanguage.googleapis.com/v1beta"`
 	GroqAPIKey    string `env:"GROQ_API_KEY"`
-	GroqModel     string `env:"GROQ_MODEL"      envDefault:"llama-3.3-70b-versatile"`
-	LLMProvider   string `env:"LLM_PROVIDER"    envDefault:"gemini"`
-	RAGServiceURL string `env:"RAG_SERVICE_URL" envDefault:"http://rag-service:8002"`
+	GroqModel     string `env:"GROQ_MODEL"        envDefault:"llama-3.3-70b-versatile"`
+	LLMProvider   string `env:"LLM_PROVIDER"      envDefault:"gemini"`
+	RAGServiceURL string `env:"RAG_SERVICE_URL"   envDefault:"http://rag-service:8002"`
 
 	// Deepgram
 	DeepgramAPIKey string `env:"DEEPGRAM_API_KEY"`

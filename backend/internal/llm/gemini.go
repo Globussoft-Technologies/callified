@@ -15,13 +15,17 @@ var ErrMaxTokens = errors.New("llm stopped at max output tokens")
 
 // GeminiClient calls Google Gemini via REST SSE streaming.
 type GeminiClient struct {
-	apiKey string
-	model  string
-	http   *http.Client
+	apiKey  string
+	model   string
+	baseURL string
+	http    *http.Client
 }
 
-func NewGeminiClient(apiKey, model string) *GeminiClient {
-	return &GeminiClient{apiKey: apiKey, model: model, http: &http.Client{}}
+func NewGeminiClient(apiKey, model, baseURL string) *GeminiClient {
+	if baseURL == "" {
+		baseURL = "https://generativelanguage.googleapis.com/v1beta"
+	}
+	return &GeminiClient{apiKey: apiKey, model: model, baseURL: baseURL, http: &http.Client{}}
 }
 
 // --- request types ---
@@ -114,8 +118,8 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 	}
 
 	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		g.model, g.apiKey,
+		"%s/models/%s:generateContent?key=%s",
+		g.baseURL, g.model, g.apiKey,
 	)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -181,8 +185,8 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	}
 
 	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?key=%s&alt=sse",
-		g.model, g.apiKey,
+		"%s/models/%s:streamGenerateContent?key=%s&alt=sse",
+		g.baseURL, g.model, g.apiKey,
 	)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
