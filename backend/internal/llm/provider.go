@@ -23,7 +23,7 @@ type Provider struct {
 // NewProvider creates a Provider wired to Gemini and Groq from cfg.
 func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 	return &Provider{
-		gemini: NewGeminiClient(cfg.GeminiAPIKey, cfg.GeminiModel),
+		gemini: NewGeminiClient(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiBaseURL),
 		groq:   NewGroqClient(cfg.GroqAPIKey, cfg.GroqModel),
 		cfg:    cfg,
 		log:    log,
