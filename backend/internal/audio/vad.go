@@ -86,14 +86,6 @@ func (v *VAD) processFrame(frame []byte) bool {
 	if isSilence {
 		v.silenceCount++
 		v.speechCount = 0
-		// Adapt noise floor during quiet periods only, and not while we believe
-		// we are inside speech (which would pull the floor up).
-		if !v.inSpeech {
-			v.noiseFloor = vadNoiseAlpha*v.noiseFloor + (1-vadNoiseAlpha)*rms
-			if v.noiseFloor < vadMinNoiseFloor {
-				v.noiseFloor = vadMinNoiseFloor
-			}
-		}
 	} else {
 		v.silenceCount = 0
 	}
@@ -105,6 +97,16 @@ func (v *VAD) processFrame(frame []byte) bool {
 	// Speech decision.
 	snr := rms / v.noiseFloor
 	isSpeechFrame := !isSilence && snr > vadMinSNR && zcr >= vadMinZCR && zcr <= vadMaxZCR
+
+	// Adapt the noise floor on any frame that is not a clear speech peak.
+	// Using a 3x headroom lets us track steady background noise/hum even when
+	// it sits above the absolute silence floor, while ignoring actual speech.
+	if rms < v.noiseFloor*3 {
+		v.noiseFloor = vadNoiseAlpha*v.noiseFloor + (1-vadNoiseAlpha)*rms
+		if v.noiseFloor < vadMinNoiseFloor {
+			v.noiseFloor = vadMinNoiseFloor
+		}
+	}
 
 	if isSpeechFrame {
 		v.speechCount++

@@ -66,6 +66,8 @@ type CallSession struct {
 	hangupReq       atomic.Bool
 	dgAlive         atomic.Bool
 	bargeInActive   atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
+	bargeInPending  atomic.Bool  // true while waiting for STT confirmation of a barge-in
+	bargeInDeadline atomic.Int64 // UnixNano; STT must confirm by this time
 	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
 	lastTTSEndNano  atomic.Int64 // UnixNano
 	lastTranscript  atomic.Int64 // UnixNano — debounce timestamp
@@ -371,6 +373,58 @@ func (s *CallSession) TriggerBargeIn() bool {
 	if frame != nil {
 		_ = s.SendText(frame)
 	}
+	return true
+}
+
+// SetBargeInPending marks whether a barge-in is waiting for STT confirmation.
+func (s *CallSession) SetBargeInPending(v bool) { s.bargeInPending.Store(v) }
+
+// IsBargeInPending returns true when a barge-in has fired but STT has not yet
+// confirmed it with a real transcript.
+func (s *CallSession) IsBargeInPending() bool { return s.bargeInPending.Load() }
+
+// BargeInDeadline returns the UnixNano deadline by which STT must confirm a
+// pending barge-in. Zero means no deadline is active.
+func (s *CallSession) BargeInDeadline() int64 { return s.bargeInDeadline.Load() }
+
+// TentativeTriggerBargeIn triggers barge-in but keeps it in a pending state.
+// STT must confirm the interruption with a real transcript within the timeout;
+// otherwise the barge-in is automatically cancelled so the AI can continue.
+func (s *CallSession) TentativeTriggerBargeIn() bool {
+	if !s.TriggerBargeIn() {
+		return false
+	}
+	s.SetBargeInPending(true)
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	s.bargeInDeadline.Store(deadline.UnixNano())
+	go func() {
+		time.Sleep(time.Until(deadline))
+		// If still pending, no meaningful transcript arrived — cancel barge-in.
+		if s.bargeInPending.CompareAndSwap(true, false) {
+			s.SetBargeIn(false)
+			s.Log.Info("barge-in: cancelled (no STT confirmation)")
+		}
+	}()
+	return true
+}
+
+// ConfirmBargeIn marks a pending barge-in as confirmed by real STT input.
+// Returns true if there was a pending barge-in to confirm.
+func (s *CallSession) ConfirmBargeIn() bool {
+	if !s.bargeInPending.CompareAndSwap(true, false) {
+		return false
+	}
+	s.Log.Info("barge-in: confirmed by STT")
+	return true
+}
+
+// CancelBargeIn cancels a pending barge-in and resets the active flag.
+// Returns true if a pending barge-in was actually cancelled.
+func (s *CallSession) CancelBargeIn() bool {
+	if !s.bargeInPending.CompareAndSwap(true, false) {
+		return false
+	}
+	s.SetBargeIn(false)
 	return true
 }
 

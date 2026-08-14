@@ -267,13 +267,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// picks these up as speech but they are not real customer replies.
 		// Agent keeps waiting for a meaningful response.
 		if isFillerSound(text) {
-			sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			// If a barge-in is pending, a filler sound means the user did not
+			// actually intend to interrupt — cancel the barge-in so TTS can resume.
+			if sess.CancelBargeIn() {
+				sess.Log.Info("barge-in: cancelled by filler sound", zap.String("text", text))
+			} else {
+				sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			}
 			return
+		}
+		// A real transcript confirms any pending barge-in before we apply the
+		// normal TTS cooldown filter.
+		if sess.IsBargeInPending() {
+			sess.ConfirmBargeIn()
 		}
 		// Suppress transcripts while TTS is playing or within 1s of it ending
 		// to prevent the agent's own voice from looping back as customer input.
-		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
-		if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+		// Skip this check when a barge-in was just confirmed — the user intentionally
+		// interrupted the agent.
+		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
 			sess.Log.Debug("transcript dropped: TTS cooldown",
 				zap.Bool("tts_playing", sess.IsTTSPlaying()),
 				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
@@ -572,9 +584,9 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	// this is when user interruption actually matters.
 	vadSpeech := sess.VAD.ProcessPCM(pcm)
 	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && vadSpeech {
-		if sess.TriggerBargeIn() {
-			sess.Log.Info("barge-in: VAD triggered",
+	if recentTTS && !sess.IsBargeInActive() && !sess.IsBargeInPending() && vadSpeech {
+		if sess.TentativeTriggerBargeIn() {
+			sess.Log.Info("barge-in: VAD triggered (awaiting STT confirmation)",
 				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
 		}
 	}
@@ -1034,9 +1046,9 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	// Only arm barge-in while TTS is playing or within 500ms of it ending.
 	vadSpeech := sess.VAD.ProcessPCM(pcm)
 	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && vadSpeech {
-		if sess.TriggerBargeIn() {
-			sess.Log.Info("barge-in: VAD triggered",
+	if recentTTS && !sess.IsBargeInActive() && !sess.IsBargeInPending() && vadSpeech {
+		if sess.TentativeTriggerBargeIn() {
+			sess.Log.Info("barge-in: VAD triggered (awaiting STT confirmation)",
 				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
 		}
 	}
