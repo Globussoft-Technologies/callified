@@ -65,7 +65,7 @@ type CallSession struct {
 	ttsPlaying      atomic.Bool
 	hangupReq       atomic.Bool
 	dgAlive         atomic.Bool
-	bargeInActive   atomic.Bool  // set on SpeechStarted; cleared when new LLM response starts
+	bargeInActive   atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
 	lastTTSEndNano  atomic.Int64 // UnixNano
 	lastTranscript  atomic.Int64 // UnixNano — debounce timestamp
@@ -87,6 +87,7 @@ type CallSession struct {
 	// Audio processing helpers
 	PlaybackTracker *audio.PlaybackTracker
 	EchoCanceller   *audio.EchoCanceller
+	VAD             *audio.VAD
 
 	// Monitor (manager dashboard) WebSocket connections
 	monitorMu    sync.RWMutex
@@ -223,6 +224,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		CallStart:       time.Now(),
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
+		VAD:             audio.NewVAD(),
 		monitorConns:    make(map[*websocket.Conn]struct{}),
 	}
 	s.dgAlive.Store(true)

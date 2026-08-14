@@ -551,6 +551,12 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(data)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
@@ -561,18 +567,17 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Only arm barge-in while TTS is playing or within 500ms of it ending —
+	// this is when user interruption actually matters.
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	if recentTTS && !sess.IsBargeInActive() && vadSpeech {
+		if sess.TriggerBargeIn() {
+			sess.Log.Info("barge-in: VAD triggered",
+				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
+		}
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -917,27 +922,6 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	}
 }
 
-// bargeInEnergyThreshold is the mean-square PCM energy level above which we
-// treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
-// value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
-// Raised to 1_000_000 (RMS≈1000): TTS echo was measuring ~280K and falsely
-// triggering barge-in, cancelling the agent's greeting mid-sentence.
-const bargeInEnergyThreshold int64 = 1_000_000
-
-// pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
-func pcmEnergy(pcm []byte) int64 {
-	n := len(pcm) / 2
-	if n == 0 {
-		return 0
-	}
-	var sum int64
-	for i := 0; i+1 < len(pcm); i += 2 {
-		s := int64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
-		sum += s * s
-	}
-	return sum / int64(n)
-}
-
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -1030,11 +1014,13 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		}
 		pcm = audio.UlawToPCM(raw)
 	} else {
-		// PCM-16 LE — Voicebot applet, browser web-sim. The echo canceller
-		// is currently μ-law-keyed, so it's skipped here; AI-vs-user
-		// overlap is bounded by the mic-muting logic in the client and the
-		// nextPlayTime arithmetic on the synthesis side.
-		pcm = raw
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(raw)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
+		pcm = raw // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
 		// Record customer audio for the server-side stereo WAV, then relay
@@ -1044,17 +1030,16 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Only arm barge-in while TTS is playing or within 500ms of it ending.
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
+	if recentTTS && !sess.IsBargeInActive() && vadSpeech {
+		if sess.TriggerBargeIn() {
+			sess.Log.Info("barge-in: VAD triggered",
+				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
+		}
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default:
