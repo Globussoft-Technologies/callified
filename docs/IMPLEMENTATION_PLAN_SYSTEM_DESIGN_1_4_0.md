@@ -4,6 +4,13 @@
 
 This document proposes a set of architectural and implementation changes for the Callified AI Dialer platform to resolve the most pressing live issues, improve reliability, and prepare the product for scale. The plan covers the **frontend**, **backend**, and **AI pipeline**, with concrete file references and a phased rollout.
 
+## Implementation Status
+
+- **Phase 1 (partially complete)** — merged in PR #97 to `dev_1.3.0`.
+  - Done: provider abstraction, credential validation on save, clearer dial errors, `RecordingStorage` interface, `MYSQL_PASSWORD_FILE` support.
+  - Pending: full account-priority resolution, pre-signed recording URLs, storage health check on startup, WebSocket authentication, MySQL password rotation.
+- **Phases 2–5** — not started.
+
 ## Current Pain Points Observed
 
 Based on recent testgo1, testgo2, and app.callified.ai issues:
@@ -458,19 +465,19 @@ callified:campaign:{id}:completed           # terminal outcomes
 ### Phase 1 — Stability (Weeks 1–2)
 
 #### Backend
-- [ ] 1.1 Create `dial.Provider` interface with Exotel, Twilio, Tata implementations.
-- [ ] 1.2 Add credential validation on provider account save.
+- [x] 1.1 Create `dial.Provider` interface with Exotel, Twilio, Tata implementations.
+- [x] 1.2 Add credential validation on provider account save.
 - [ ] 1.3 Resolve provider account by priority (lead → campaign → user → org fallback).
-- [ ] 1.4 Return clear 4xx errors instead of 502 for missing/invalid credentials.
+- [x] 1.4 Return clear 4xx errors instead of 502 for missing/invalid credentials.
 
 #### Storage
-- [ ] 1.5 Create `storage.RecordingStorage` interface (OCI/S3/local).
+- [x] 1.5 Create `storage.RecordingStorage` interface (OCI/S3/local).
 - [ ] 1.6 Generate pre-signed recording URLs at read time.
 - [ ] 1.7 Add storage health check on startup.
 
 #### Security
 - [ ] 1.8 Authenticate WebSocket upgrades before `upgrader.Upgrade`.
-- [ ] 1.9 Remove plaintext DB password from `backend/.env`; move to file-based secrets.
+- [x] 1.9 Remove plaintext DB password from `backend/.env`; move to file-based secrets.
 - [ ] 1.10 Rotate MySQL password.
 
 ---
