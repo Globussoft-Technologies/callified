@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -18,10 +20,11 @@ type Config struct {
 	RedisPassword string `env:"REDIS_PASSWORD" envDefault:""`
 
 	// MySQL (Phase 4 REST API)
-	MySQLHost     string `env:"MYSQL_HOST"     envDefault:"localhost"`
-	MySQLUser     string `env:"MYSQL_USER"     envDefault:"callified"`
-	MySQLPassword string `env:"MYSQL_PASSWORD" envDefault:""`
-	MySQLDatabase string `env:"MYSQL_DATABASE" envDefault:"callified_ai"`
+	MySQLHost         string `env:"MYSQL_HOST"          envDefault:"localhost"`
+	MySQLUser         string `env:"MYSQL_USER"          envDefault:"callified"`
+	MySQLPassword     string `env:"MYSQL_PASSWORD"      envDefault:""`
+	MySQLPasswordFile string `env:"MYSQL_PASSWORD_FILE" envDefault:""`
+	MySQLDatabase     string `env:"MYSQL_DATABASE"      envDefault:"callified_ai"`
 
 	// JWT auth (shared secret with Python FastAPI)
 	JWTSecret string `env:"JWT_SECRET_KEY"`
@@ -157,6 +160,17 @@ func Load() (*Config, error) {
 	}
 	if len(cfg.JWTSecret) < 32 {
 		return nil, fmt.Errorf("JWT_SECRET_KEY must be at least 32 characters long")
+	}
+	// MySQL password file support: read the password from a secret file if
+	// MYSQL_PASSWORD is empty and MYSQL_PASSWORD_FILE is set. This keeps
+	// plaintext passwords out of environment variables and satisfies secret
+	// managers / systemd credential files.
+	if cfg.MySQLPassword == "" && cfg.MySQLPasswordFile != "" {
+		b, err := os.ReadFile(cfg.MySQLPasswordFile)
+		if err != nil {
+			return nil, fmt.Errorf("read MYSQL_PASSWORD_FILE %s: %w", cfg.MySQLPasswordFile, err)
+		}
+		cfg.MySQLPassword = strings.TrimSpace(string(b))
 	}
 	return cfg, nil
 }
