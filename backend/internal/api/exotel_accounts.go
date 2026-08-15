@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/globussoft/callified-backend/internal/dial"
 	"github.com/globussoft/callified-backend/internal/db"
 )
 
@@ -140,6 +143,10 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "app_type must be 'exoml' or 'voicebot'")
 		return
 	}
+	if err := validateProviderCredentials(r.Context(), req.Provider, req.Direction, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("credentials validation failed: %v", err))
+		return
+	}
 	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
 		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain)
@@ -194,6 +201,10 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Provider == "exotel" && req.AppType != "exoml" && req.AppType != "voicebot" {
 		writeError(w, http.StatusBadRequest, "app_type must be 'exoml' or 'voicebot'")
+		return
+	}
+	if err := validateProviderCredentials(r.Context(), req.Provider, req.Direction, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("credentials validation failed: %v", err))
 		return
 	}
 	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
@@ -294,4 +305,35 @@ func validateProviderAccount(provider, direction, name, apiKey, apiToken, apiSec
 		}
 	}
 	return ""
+}
+
+// validateProviderCredentials attempts to build a Provider from the request
+// fields and runs a lightweight credential validation. It returns an error if
+// the account cannot be used for outbound calls or if the credentials fail the
+// carrier check (where implemented).
+func validateProviderCredentials(ctx context.Context, provider, direction, apiKey, apiToken, apiSecret, accountSID, callerID, appID, appType, region, subdomain string) error {
+	ptype := dial.ProviderType(strings.ToLower(provider))
+	if ptype == "" {
+		ptype = dial.ProviderExotel
+	}
+	if ptype == "smartflo" || ptype == "tata_tele" {
+		ptype = dial.ProviderTata
+	}
+	acc := dial.ProviderAccount{
+		Type:      ptype,
+		APIKey:    apiKey,
+		APIToken:  apiToken,
+		AccountSID: accountSID,
+		CallerID:  callerID,
+		AppID:     appID,
+		AppType:   appType,
+		Region:    region,
+		Subdomain: subdomain,
+		Direction: direction,
+	}
+	prov, err := dial.NewProvider(acc)
+	if err != nil {
+		return err
+	}
+	return prov.ValidateCredentials(ctx)
 }

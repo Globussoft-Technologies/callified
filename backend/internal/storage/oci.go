@@ -65,3 +65,21 @@ func (c *OCIClient) UploadPublic(ctx context.Context, key string, data []byte) (
 	publicURL := fmt.Sprintf("https://objectstorage.%s.oraclecloud.com/n/%s/b/%s/o/%s", c.region, c.namespace, c.bucket, key)
 	return publicURL, nil
 }
+
+// PublicURL returns the public URL for a stored object without uploading.
+func (c *OCIClient) PublicURL(key string) string {
+	return fmt.Sprintf("https://objectstorage.%s.oraclecloud.com/n/%s/b/%s/o/%s", c.region, c.namespace, c.bucket, key)
+}
+
+// HealthCheck performs a HeadObject on the bucket root sentinel to verify
+// credentials and connectivity. It returns an error if the bucket is not
+// reachable or the credentials are invalid.
+func (c *OCIClient) HealthCheck(ctx context.Context) error {
+	_, err := c.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(c.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("oci health check failed: %w", err)
+	}
+	return nil
+}
