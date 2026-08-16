@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/callmanager"
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
@@ -394,6 +395,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// only ever showed turns starting from the user's first utterance.
 		sess.BroadcastTranscript("agent", sess.GreetingText)
 		sess.AppendHistory("model", sess.GreetingText)
+		sess.MarkGreetingDelivered()
+		sess.TransitionCallState(callmanager.StateSpeaking, "greeting queued")
 	}
 	sess.SendGreeting = sendGreeting
 
@@ -573,6 +576,7 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	case "media":
 		h.handleMediaEvent(sess, event)
 	case "stop":
+		sess.TransitionCallState(callmanager.StateCompleted, "carrier stop event")
 		return true
 	}
 	return false
@@ -861,6 +865,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 						sess.SendGreeting()
 					}
 				}
+				sess.TransitionCallState(callmanager.StateConnected, "start event received")
 			}
 			if sess.IsInbound && !sess.IsBridge {
 				if h.promptBuilder != nil {

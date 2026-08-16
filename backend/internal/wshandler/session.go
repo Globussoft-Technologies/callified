@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/callmanager"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
@@ -136,9 +137,13 @@ type CallSession struct {
 	ttsMu       sync.RWMutex
 	ttsInstance tts.Provider
 
-	CallStart time.Time
-	WS        *websocket.Conn
-	Log       *zap.Logger
+	CallStart   time.Time
+	WS          *websocket.Conn
+	Log         *zap.Logger
+
+	// CallManager tracks the lifecycle state of the call (dialing, connected,
+	// speaking, listening, completed, failed, etc.).
+	CallManager *callmanager.Manager
 }
 
 var langLabels = map[string]string{
@@ -239,6 +244,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
 		monitorConns:    make(map[*websocket.Conn]struct{}),
+		CallManager:     callmanager.NewManager(),
 	}
 	s.dgAlive.Store(true)
 	return s
@@ -345,6 +351,37 @@ func (s *CallSession) UpdateStreamType() {
 
 // TrySetGreeting atomically marks greeting as sent. Returns true only the first call.
 func (s *CallSession) TrySetGreeting() bool { return s.greetingSent.CompareAndSwap(false, true) }
+
+// MarkGreetingDelivered should be called after the greeting audio has actually
+// been queued. It appends a guard to the system prompt so the LLM does not
+// re-greet the user on the next turn.
+func (s *CallSession) MarkGreetingDelivered() {
+	s.llmMu.Lock()
+	defer s.llmMu.Unlock()
+	guard := "\n\n[CONVERSATION STATE: The opening greeting has already been delivered. Do NOT greet the user again. Do NOT say 'Hello' or re-introduce yourself. Continue the conversation by asking the first question from the call flow instructions.]"
+	if !strings.Contains(s.SystemPrompt, "CONVERSATION STATE: The opening greeting has already been delivered") {
+		s.SystemPrompt += guard
+	}
+}
+
+// TransitionCallState moves the call to a new state and logs any error. It is a
+// convenience wrapper around callmanager.Manager.Transition.
+func (s *CallSession) TransitionCallState(new callmanager.State, reason string) {
+	if s.CallManager == nil {
+		return
+	}
+	if err := s.CallManager.Transition(new, reason); err != nil {
+		s.Log.Warn("call state transition rejected", zap.String("to", string(new)), zap.String("reason", reason), zap.Error(err))
+	}
+}
+
+// CallState returns the current lifecycle state of the call.
+func (s *CallSession) CallState() callmanager.State {
+	if s.CallManager == nil {
+		return callmanager.StatePending
+	}
+	return s.CallManager.State()
+}
 
 func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }

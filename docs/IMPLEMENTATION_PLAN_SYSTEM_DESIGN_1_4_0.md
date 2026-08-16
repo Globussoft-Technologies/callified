@@ -9,7 +9,9 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 1 (partially complete)** — merged in PR #97 to `dev_1.3.0`.
   - Done: provider abstraction, credential validation on save, clearer dial errors, `RecordingStorage` interface, `MYSQL_PASSWORD_FILE` support.
   - Pending: full account-priority resolution, pre-signed recording URLs, storage health check on startup, WebSocket authentication, MySQL password rotation.
-- **Phases 2–5** — not started.
+- **Phase 2 (in progress)** — PR #98.
+  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch to prevent repeated greetings.
+  - Pending: Redis-backed auto-dial queue, retry logic, TRAI call-hour enforcement, locked language, full `ConversationState` struct, state-event emission.
 
 ## Current Pain Points Observed
 
@@ -485,8 +487,8 @@ callified:campaign:{id}:completed           # terminal outcomes
 ### Phase 2 — Dialer & State (Weeks 3–4)
 
 #### State Management
-- [ ] 2.1 Define explicit `CallState` enum and `CallManager` package.
-- [ ] 2.2 Track all call transitions and emit events.
+- [x] 2.1 Define explicit `CallState` enum and `CallManager` package.
+- [~] 2.2 Track all call transitions and emit events. (Transitions tracked; event emission pending.)
 
 #### Auto-Dialer
 - [ ] 2.3 Implement Redis-backed queue per campaign (`campaign:{id}:dial_queue`).
@@ -500,8 +502,8 @@ callified:campaign:{id}:completed           # terminal outcomes
 - [ ] 2.9 Enforce locked language across STT/LLM/TTS.
 
 #### Conversation State
-- [ ] 2.10 Add `ConversationState` per session (`greetingDone`, `questionsAsked`, etc.).
-- [ ] 2.11 Guard against repeated greetings.
+- [~] 2.10 Add `ConversationState` per session (`greetingDone`, `questionsAsked`, etc.). (`greetingDone` guard implemented; full struct pending.)
+- [x] 2.11 Guard against repeated greetings.
 
 ---
 
