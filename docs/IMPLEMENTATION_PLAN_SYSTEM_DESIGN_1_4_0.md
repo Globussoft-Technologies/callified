@@ -519,9 +519,10 @@ callified:campaign:{id}:completed           # terminal outcomes
 - [ ] 3.4 Mutations invalidate related query keys.
 
 #### Real-Time
-- [ ] 3.5 Implement SSE endpoint `/api/events` in backend.
-- [ ] 3.6 Create `EventContext` in frontend.
-- [ ] 3.7 Push events for lead status, call completion, agent presence.
+- [x] 3.5 Implement SSE endpoint `/api/events` in backend.
+- [x] 3.6 Create `EventContext` in frontend.
+- [x] 3.7 Push events for lead status, call completion, agent presence.
+- [ ] 3.8 Extend events to agent presence and other mutations (CRM, products, billing).
 
 #### Routing
 - [ ] 3.8 Create central `routeConfig.js` with permissions and AI-feature flags.
