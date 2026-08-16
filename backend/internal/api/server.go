@@ -449,6 +449,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", adminOrAgent(s.campaignDialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
+	mux.HandleFunc("GET /api/campaigns/{id}/dial-queue/status", auth(s.campaignDialQueueStatus))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/pause", adminAuth(s.campaignDialQueuePause))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/resume", adminAuth(s.campaignDialQueueResume))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/abort", adminAuth(s.campaignDialQueueAbort))
 	mux.HandleFunc("POST /api/manual-call", adminOrAgent(s.manualCall))
 
 	// ── AI Receptionist (embedded — no separate process) ────────────────────

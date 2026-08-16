@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 )
 
 // dialErrorStatus maps a dial.Initiator error to the right HTTP status code
@@ -262,16 +262,31 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse to start a new queue while one is still running for this campaign.
+	existing, err := s.store.GetDialState(r.Context(), campaignID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read dial state")
+		return
+	}
+	if existing.Running && !existing.Aborted {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "error",
+			"message": "A dial queue is already running for this campaign",
+			"queued":  existing.QueuedCount - existing.ProcessedCount,
+		})
+		return
+	}
+
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 	ac := getAuth(r)
+	userID := userIDForDial(ac)
+	if userID == 0 {
+		userID = ac.UserID
+	}
 
-	// Detach from the HTTP request's context — the queue runs for minutes
-	// after the HTTP response returns. Using r.Context() would cancel every
-	// pending dial the moment the response flushes.
-	ctx := context.Background()
-	queue := make([]dial.CallData, 0, len(dialable))
+	jobs := make([]rstore.DialJob, 0, len(dialable))
 	for _, l := range dialable {
-		queue = append(queue, dial.CallData{
+		jobs = append(jobs, rstore.DialJob{
 			LeadID:          l.ID,
 			LeadName:        l.FirstName + " " + l.LastName,
 			LeadPhone:       l.Phone,
@@ -282,51 +297,42 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 			TTSVoiceID:      vs.TTSVoiceID,
 			TTSLanguage:     vs.TTSLanguage,
 			UserEmail:       ac.Email,
+			UserID:          userID,
 			ExotelAccountID: body.ExotelAccountID,
+			Attempt:         1,
+			MaxAttempts:     3,
+			EnqueuedAt:      time.Now(),
 		})
 	}
 
-	go func() {
-		verb := "new leads"
-		if force {
-			verb = "leads"
-		}
-		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-			"started", fmt.Sprintf("Dialing %d %s", len(queue), verb))
-		for i, d := range queue {
-			if i > 0 {
-				time.Sleep(30 * time.Second)
-			}
-			if d.OrgID > 0 {
-				if isDND, _ := s.db.IsDNDNumber(d.OrgID, d.LeadPhone); isDND {
-					s.store.EmitCampaignEvent(ctx, campaignID, d.LeadName, d.LeadPhone,
-						"dnd", "on DND list")
-					continue
-				}
-			}
-			if _, err := s.initiator.Initiate(ctx, d); err != nil {
-				s.logger.Warn("campaignDialAll: lead failed",
-					zap.Int64("lead_id", d.LeadID), zap.Error(err))
-				// Initiator already emits `failed` on error — no duplicate.
-				// Hard stop on insufficient credits — every remaining lead
-				// would fail the same way, and we'd flood the activity feed
-				// with N copies of the same recharge prompt. Surface it
-				// once and bail.
-				if errors.Is(err, dial.ErrInsufficientCredits) {
-					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-						"failed", "insufficient credits — recharge to continue")
-					return
-				}
-			}
-		}
-		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-			"finished", fmt.Sprintf("Dial queue complete (%d leads)", len(queue)))
-	}()
+	state := rstore.DialState{
+		CampaignID:     campaignID,
+		Running:        true,
+		Paused:         false,
+		Aborted:        false,
+		StartedAt:      time.Now(),
+		QueuedCount:    len(jobs),
+		ProcessedCount: 0,
+		FailedCount:    0,
+		RetryCount:     0,
+	}
+
+	if err := s.store.EnqueueDialJobs(r.Context(), state, jobs); err != nil {
+		s.logger.Error("campaignDialAll: failed to enqueue", zap.Error(err), zap.Int64("campaign_id", campaignID))
+		writeError(w, http.StatusInternalServerError, "failed to enqueue dial jobs")
+		return
+	}
+
+	verb := "new leads"
+	if force {
+		verb = "leads"
+	}
+	s.store.EmitCampaignEvent(r.Context(), campaignID, "Campaign", "", "started", fmt.Sprintf("Queued %d %s for dialing", len(jobs), verb))
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
-		"message": fmt.Sprintf("Dialing %d leads (30s gap between calls)", len(queue)),
-		"queued":  len(queue),
+		"message": fmt.Sprintf("Queued %d %s for dialing (30s gap between calls)", len(jobs), verb),
+		"queued":  len(jobs),
 	})
 }
 
@@ -376,16 +382,30 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, err := s.store.GetDialState(r.Context(), campaignID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read dial state")
+		return
+	}
+	if existing.Running && !existing.Aborted {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "error",
+			"message": "A dial queue is already running for this campaign",
+			"queued":  existing.QueuedCount - existing.ProcessedCount,
+		})
+		return
+	}
+
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 	ac := getAuth(r)
+	userID := userIDForDial(ac)
+	if userID == 0 {
+		userID = ac.UserID
+	}
 
-	// Copy slice into a simple, independently-owned value before handing it
-	// to the background goroutine — r.Context() cancels when this handler
-	// returns, but the redial queue runs for minutes. Use a detached ctx.
-	ctx := context.Background()
-	queue := make([]dial.CallData, 0, len(leads))
+	jobs := make([]rstore.DialJob, 0, len(leads))
 	for _, lead := range leads {
-		queue = append(queue, dial.CallData{
+		jobs = append(jobs, rstore.DialJob{
 			LeadID:      lead.ID,
 			LeadName:    lead.FirstName + " " + lead.LastName,
 			LeadPhone:   lead.Phone,
@@ -396,44 +416,139 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 			TTSVoiceID:  vs.TTSVoiceID,
 			TTSLanguage: vs.TTSLanguage,
 			UserEmail:   ac.Email,
+			UserID:      userID,
+			Attempt:     1,
+			MaxAttempts: 3,
+			EnqueuedAt:  time.Now(),
 		})
 	}
 
-	go func() {
-		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-			"started", fmt.Sprintf("Redialing %d failed leads", len(queue)))
-		for i, d := range queue {
-			if i > 0 {
-				time.Sleep(30 * time.Second)
-			}
-			// DND check mirrors Python — skip and log to the feed so users
-			// can see why the number was held back.
-			if d.OrgID > 0 {
-				if isDND, _ := s.db.IsDNDNumber(d.OrgID, d.LeadPhone); isDND {
-					s.store.EmitCampaignEvent(ctx, campaignID, d.LeadName, d.LeadPhone,
-						"dnd", "on DND list")
-					continue
-				}
-			}
-			if _, err := s.initiator.Initiate(ctx, d); err != nil {
-				s.logger.Warn("campaignRedialFailed: lead failed",
-					zap.Int64("lead_id", d.LeadID), zap.Error(err))
-				// initiator.Initiate already emits a `failed` event on errors,
-				// so no duplicate emit needed here.
-				if errors.Is(err, dial.ErrInsufficientCredits) {
-					s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-						"failed", "insufficient credits — recharge to continue")
-					return
-				}
-			}
-		}
-		s.store.EmitCampaignEvent(ctx, campaignID, "Campaign", "",
-			"finished", fmt.Sprintf("Redial queue complete (%d leads)", len(queue)))
-	}()
+	state := rstore.DialState{
+		CampaignID:     campaignID,
+		Running:        true,
+		Paused:         false,
+		Aborted:        false,
+		StartedAt:      time.Now(),
+		QueuedCount:    len(jobs),
+		ProcessedCount: 0,
+		FailedCount:    0,
+		RetryCount:     0,
+	}
+
+	if err := s.store.EnqueueDialJobs(r.Context(), state, jobs); err != nil {
+		s.logger.Error("campaignRedialFailed: failed to enqueue", zap.Error(err), zap.Int64("campaign_id", campaignID))
+		writeError(w, http.StatusInternalServerError, "failed to enqueue redial jobs")
+		return
+	}
+
+	s.store.EmitCampaignEvent(r.Context(), campaignID, "Campaign", "", "started", fmt.Sprintf("Queued %d failed leads for redial", len(jobs)))
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "success",
-		"message": fmt.Sprintf("Redialing %d failed leads (30s gap between calls)", len(queue)),
-		"queued":  len(queue),
+		"message": fmt.Sprintf("Queued %d failed leads for redial (30s gap between calls)", len(jobs)),
+		"queued":  len(jobs),
 	})
+}
+
+// campaignDialQueueStatus returns the current Redis-backed dial queue state for
+// a campaign: counts, running/paused/aborted flags, and any last error.
+//
+// GET /api/campaigns/{id}/dial-queue/status
+// @Summary     Dial queue status
+// @Description Returns the current Redis-backed auto-dial state for a campaign.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Campaign ID"
+// @Success     200  {object}  redis.DialState
+// @Router      /api/campaigns/{id}/dial-queue/status [get]
+func (s *Server) campaignDialQueueStatus(w http.ResponseWriter, r *http.Request) {
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	state, err := s.store.GetDialState(r.Context(), campaign.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read dial state")
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+// campaignDialQueuePause pauses an active dial queue.
+//
+// POST /api/campaigns/{id}/dial-queue/pause
+// @Summary     Pause dial queue
+// @Description Pauses the Redis-backed auto-dial queue for a campaign.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Campaign ID"
+// @Success     200  {object}  BoolResponse
+// @Router      /api/campaigns/{id}/dial-queue/pause [post]
+func (s *Server) campaignDialQueuePause(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	if err := s.store.PauseDialQueue(r.Context(), campaign.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to pause queue")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"paused": true})
+}
+
+// campaignDialQueueResume resumes a paused dial queue.
+//
+// POST /api/campaigns/{id}/dial-queue/resume
+// @Summary     Resume dial queue
+// @Description Resumes a paused Redis-backed auto-dial queue.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Campaign ID"
+// @Success     200  {object}  BoolResponse
+// @Router      /api/campaigns/{id}/dial-queue/resume [post]
+func (s *Server) campaignDialQueueResume(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	if err := s.store.ResumeDialQueue(r.Context(), campaign.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resume queue")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"resumed": true})
+}
+
+// campaignDialQueueAbort stops and drains the dial queue for a campaign.
+//
+// POST /api/campaigns/{id}/dial-queue/abort
+// @Summary     Abort dial queue
+// @Description Aborts and drains the Redis-backed auto-dial queue for a campaign.
+// @Tags        dialing
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id  path  int64  true  "Campaign ID"
+// @Success     200  {object}  BoolResponse
+// @Router      /api/campaigns/{id}/dial-queue/abort [post]
+func (s *Server) campaignDialQueueAbort(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
+	campaign := s.requireCampaignView(w, r)
+	if campaign == nil {
+		return
+	}
+	if err := s.store.AbortDialQueue(r.Context(), campaign.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to abort queue")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"aborted": true})
 }

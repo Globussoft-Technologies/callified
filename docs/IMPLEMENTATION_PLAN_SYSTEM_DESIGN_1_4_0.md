@@ -9,9 +9,10 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 1 (partially complete)** — merged in PR #97 to `dev_1.3.0`.
   - Done: provider abstraction, credential validation on save, clearer dial errors, `RecordingStorage` interface, `MYSQL_PASSWORD_FILE` support.
   - Pending: full account-priority resolution, pre-signed recording URLs, storage health check on startup, WebSocket authentication, MySQL password rotation.
-- **Phase 2 (in progress)** — PR #98.
-  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch to prevent repeated greetings.
-  - Pending: Redis-backed auto-dial queue, retry logic, TRAI call-hour enforcement, locked language, full `ConversationState` struct, state-event emission.
+- **Phase 2 (in progress)** — PR #98 merged to `dev_1.3.0`.
+  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch.
+  - Current PR: Redis-backed dial queue, retry logic, TRAI/rate-limit guards, pause/resume/abort, progress panel.
+  - Pending: locked language per call, full `ConversationState` struct, event emission.
 
 ## Current Pain Points Observed
 
@@ -491,11 +492,11 @@ callified:campaign:{id}:completed           # terminal outcomes
 - [~] 2.2 Track all call transitions and emit events. (Transitions tracked; event emission pending.)
 
 #### Auto-Dialer
-- [ ] 2.3 Implement Redis-backed queue per campaign (`campaign:{id}:dial_queue`).
-- [ ] 2.4 Add retry queue with exponential backoff.
-- [ ] 2.5 Respect TRAI call-hour rules (`internal/callguard`).
-- [ ] 2.6 Remove forced Save/Next popup from auto-dial UX.
-- [ ] 2.7 Add pause/resume/abort controls.
+- [x] 2.3 Implement Redis-backed queue per campaign (`campaign:{id}:dial_queue` via global `dial_queue` + per-campaign state).
+- [x] 2.4 Add retry queue with exponential backoff.
+- [~] 2.5 Respect TRAI call-hour rules (`internal/callguard`). **Disabled by request — callguard always allows.**
+- [x] 2.6 Remove forced Save/Next popup from AI auto-dial UX (queue runs uninterrupted; browser auto-dial uninterrupted mode defaults to on).
+- [x] 2.7 Add pause/resume/abort controls.
 
 #### Language Stability
 - [ ] 2.8 Lock language from campaign settings at call start.
