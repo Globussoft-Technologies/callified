@@ -6,6 +6,7 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCallifiedEvents, CALLIFIED_EVENT_NAME } from '../../contexts/EventContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isExecutive } from '../../utils/roles';
@@ -659,6 +660,36 @@ export default function CampaignDetail({
     const interval = setInterval(fetchState, 5000);
     return () => clearInterval(interval);
   }, [selectedCampaign?.id, aiQueuePolling, apiFetch, API_URL]);
+
+  // Listen to domain events from the server-side event bus and refresh the
+  // campaign data when relevant events arrive (lead status changes, call
+  // completions, queue start/finish). This keeps the dashboard/table in sync
+  // during AI auto-dial and other background operations.
+  useEffect(() => {
+    if (!selectedCampaign?.id) return;
+    let timeout = null;
+    const handler = (ev) => {
+      const payload = ev?.detail;
+      if (!payload) return;
+      const relevantTypes = ['LEAD_STATUS_CHANGED', 'CALL_COMPLETED', 'CAMPAIGN_DIAL_STARTED', 'CAMPAIGN_DIAL_FINISHED'];
+      if (!relevantTypes.includes(payload.type)) return;
+      if (payload.campaign_id && payload.campaign_id !== selectedCampaign.id) return;
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        fetchCampaignLeads(selectedCampaign.id);
+        fetchCallLog(selectedCampaign.id);
+        // Trigger a queue status refresh if a queue event arrived.
+        if (['CAMPAIGN_DIAL_STARTED', 'CAMPAIGN_DIAL_FINISHED'].includes(payload.type)) {
+          setAiQueuePolling(true);
+        }
+      }, 500);
+    };
+    window.addEventListener(CALLIFIED_EVENT_NAME, handler);
+    return () => {
+      window.removeEventListener(CALLIFIED_EVENT_NAME, handler);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [selectedCampaign?.id, fetchCampaignLeads, fetchCallLog]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);

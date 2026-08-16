@@ -7,6 +7,7 @@ import { OrgProvider } from './contexts/OrgContext'
 import { VoiceProvider } from './contexts/VoiceContext'
 import { CallProvider } from './contexts/CallContext'
 import { UIProvider } from './contexts/UIContext'
+import { EventProvider } from './contexts/EventContext'
 import { BrowserRouter } from 'react-router-dom'
 
 class ErrorBoundary extends Component {
@@ -34,13 +35,15 @@ createRoot(document.getElementById('root')).render(
       <BrowserRouter>
         <UIProvider>
           <AuthProvider>
-            <OrgProvider>
-              <VoiceProvider>
-                <CallProvider>
-                  <App />
-                </CallProvider>
-              </VoiceProvider>
-            </OrgProvider>
+            <EventProvider>
+              <OrgProvider>
+                <VoiceProvider>
+                  <CallProvider>
+                    <App />
+                  </CallProvider>
+                </VoiceProvider>
+              </OrgProvider>
+            </EventProvider>
           </AuthProvider>
         </UIProvider>
       </BrowserRouter>

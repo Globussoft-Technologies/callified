@@ -9,10 +9,12 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 1 (partially complete)** — merged in PR #97 to `dev_1.3.0`.
   - Done: provider abstraction, credential validation on save, clearer dial errors, `RecordingStorage` interface, `MYSQL_PASSWORD_FILE` support.
   - Pending: full account-priority resolution, pre-signed recording URLs, storage health check on startup, WebSocket authentication, MySQL password rotation.
-- **Phase 2 (in progress)** — PR #98 merged to `dev_1.3.0`.
-  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch.
-  - Current PR: Redis-backed dial queue, retry logic, TRAI/rate-limit guards, pause/resume/abort, progress panel.
-  - Pending: locked language per call, full `ConversationState` struct, event emission.
+- **Phase 2 (merged)** — PRs #98 and #99 merged to `dev_1.3.0`.
+  - Done: `CallState` enum and `CallManager` package, call-state transitions, greeting-guard prompt patch, Redis-backed dial queue, retry logic, pause/resume/abort, progress panel, TRAI check removed.
+  - Pending: locked language per call, full `ConversationState` struct.
+- **Phase 3 (in progress)** — real-time SSE event bus + `EventContext`.
+  - Done: `/api/events` SSE endpoint, `EventContext`, domain events from dialer worker, wshandler, and lead status/disposition APIs, auto-refresh in `CampaignDetail`.
+  - Pending: full React Query migration, central route config, lazy-loaded pages, agent presence events.
 
 ## Current Pain Points Observed
 
