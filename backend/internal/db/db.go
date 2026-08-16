@@ -71,6 +71,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureAPIKeysTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure API keys table: %w", err)
 	}
+	if err := d.EnsurePromptTemplatesTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure prompt templates table: %w", err)
+	}
 	return d, nil
 }
 

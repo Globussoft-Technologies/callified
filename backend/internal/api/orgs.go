@@ -432,9 +432,10 @@ func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 // ── POST /api/organizations/{id}/products ────────────────────────────────────
 
 type productCreateRequest struct {
-	Name        string `json:"name"`
-	WebsiteURL  string `json:"website_url"`
-	ManualNotes string `json:"manual_notes"`
+	Name            string `json:"name"`
+	WebsiteURL      string `json:"website_url"`
+	ManualNotes     string `json:"manual_notes"`
+	OpeningScriptID int64  `json:"opening_script_id"`
 }
 
 // @Summary     Create product
@@ -481,7 +482,7 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	id, err := s.db.CreateProduct(orgID, req.Name, req.WebsiteURL, req.ManualNotes)
+	id, err := s.db.CreateProduct(orgID, req.Name, req.WebsiteURL, req.ManualNotes, req.OpeningScriptID)
 	if err != nil {
 		s.logger.Sugar().Errorw("createProduct", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -493,10 +494,11 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/products/{id} ───────────────────────────────────────────────────
 
 type productUpdateRequest struct {
-	Name        string `json:"name"`
-	WebsiteURL  string `json:"website_url"`
-	ScrapedInfo string `json:"scraped_info"`
-	ManualNotes string `json:"manual_notes"`
+	Name            string `json:"name"`
+	WebsiteURL      string `json:"website_url"`
+	ScrapedInfo     string `json:"scraped_info"`
+	ManualNotes     string `json:"manual_notes"`
+	OpeningScriptID int64  `json:"opening_script_id"`
 }
 
 // @Summary     Update product
@@ -530,7 +532,7 @@ func (s *Server) updateProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.UpdateProduct(id, req.Name, req.WebsiteURL, req.ScrapedInfo, req.ManualNotes); err != nil {
+	if err := s.db.UpdateProduct(id, req.Name, req.WebsiteURL, req.ScrapedInfo, req.ManualNotes, req.OpeningScriptID); err != nil {
 		s.logger.Sugar().Errorw("updateProduct", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -1139,7 +1141,7 @@ Crawled page content:
 	}
 	s.logger.Sugar().Infow("scrapeProduct: success", "product_id", id, "scrapedLen", len(scraped))
 
-	if err := s.db.UpdateProduct(id, "", "", scraped, ""); err != nil {
+	if err := s.db.UpdateProduct(id, "", "", scraped, "", 0); err != nil {
 		s.logger.Sugar().Errorw("scrapeProduct: UpdateProduct", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

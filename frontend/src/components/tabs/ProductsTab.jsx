@@ -41,6 +41,9 @@ export default function ProductsTab({
   const fileInputRefs = React.useRef({});
   const hideAiFeatures = useHideAiFeatures();
 
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+
   const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
   const setWebsiteUrl = (productId, url) =>
     setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url } }));
@@ -141,8 +144,26 @@ export default function ProductsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts]);
 
+  React.useEffect(() => {
+    if (!selectedOrg) return;
+    setTemplatesLoading(true);
+    apiFetch(`${API_URL}/templates`)
+      .then(res => res.ok ? res.json() : { templates: [] })
+      .then(data => setTemplates(Array.isArray(data.templates) ? data.templates : []))
+      .catch(() => setTemplates([]))
+      .finally(() => setTemplatesLoading(false));
+  }, [selectedOrg, API_URL, apiFetch]);
+
   const updateProductPrompt = (productId, field, value) => {
     setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
+  };
+
+  const handleScriptChange = async (productId, templateId) => {
+    try {
+      await handleSaveProduct(productId, { opening_script_id: templateId ? Number(templateId) : null });
+    } catch (e) {
+      toast('Failed to update call script: ' + (e.message || e));
+    }
   };
 
   const handleGenerateProductPrompt = async (productId) => {
@@ -323,6 +344,21 @@ export default function ProductsTab({
                           cursor: 'pointer', fontSize: 13, fontFamily: T.font,
                         }}>🗑️ Remove</button>
                       )}
+                    </div>
+
+                    <div style={{ marginBottom: 12, maxWidth: 420 }}>
+                      <label style={{ ...labelStyle, color: T.accent }}>📜 Call Script</label>
+                      <select
+                        value={p.opening_script_id || ''}
+                        onChange={e => handleScriptChange(p.id, e.target.value)}
+                        disabled={templatesLoading}
+                        style={{ ...inputStyle, cursor: templatesLoading ? 'not-allowed' : 'pointer' }}
+                      >
+                        <option value="">{templatesLoading ? 'Loading scripts...' : 'Default (no custom script)'}</option>
+                        {templates.map(t => (
+                          <option key={t.id} value={t.id}>{t.name} {t.language ? `(${t.language})` : ''}</option>
+                        ))}
+                      </select>
                     </div>
 
                     {!hideAiFeatures && (

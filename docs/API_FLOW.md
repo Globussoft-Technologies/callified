@@ -106,6 +106,7 @@ Authorization: Bearer <access_token>
     "lead_source": "Website",
     "channel": "voice",
     "product_name": "AI Sales Bot",
+    "opening_script_id": 1,
     "created_at": "2026-06-15 09:30:00",
     "stats": {
       "total": 150,
@@ -655,6 +656,125 @@ You can also receive a `call.completed` webhook. The payload includes:
 ```
 
 Then call `GET /api/transcripts/{transcript_id}/review` to fetch the full summary.
+
+---
+
+## Prompt templates
+
+Prompt templates are reusable scripts stored in `prompt_templates`. The registry resolves the active template for a call in priority order: campaign → product → global default. Admin users can manage templates; Agents can read them.
+
+### List templates
+
+```http
+GET /api/templates
+```
+
+**Example response — 200 OK**
+
+```json
+{
+  "templates": [
+    {
+      "id": 1,
+      "org_id": 1,
+      "name": "panora_v4_curiosity",
+      "language": "en",
+      "template_type": "voice",
+      "script_body": "...",
+      "version": 1,
+      "is_active": true,
+      "created_at": "2026-08-16 09:00:00",
+      "updated_at": "2026-08-16 09:00:00"
+    }
+  ]
+}
+```
+
+### Get a template
+
+```http
+GET /api/templates/{id}
+```
+
+### Create a template
+
+```http
+POST /api/templates
+```
+
+**Request body**
+
+```json
+{
+  "name": "panora_wholesale",
+  "language": "en",
+  "template_type": "voice",
+  "script_body": "You are a sales agent for Panora. Greet the lead, confirm interest, then ask about their monthly order volume."
+}
+```
+
+### Update a template (creates a new version)
+
+```http
+PUT /api/templates/{id}
+```
+
+**Request body**
+
+```json
+{
+  "script_body": "Updated script body..."
+}
+```
+
+### Seed default Panora templates
+
+```http
+POST /api/templates/seed-panora
+```
+
+Creates the default Panora qualification templates for the current org.
+
+### Assign a template to a product or campaign
+
+Products and campaigns accept `opening_script_id` on create and update. The UI exposes a **Call Script** dropdown on the product page. When a campaign is created or updated, it can also reference `opening_script_id` directly; if omitted, the campaign inherits the script from its product.
+
+---
+
+## Post-call report
+
+After a call ends, an async worker analyzes the recording/transcript. The report endpoint returns the analyzed data when ready, or `202 Accepted` while analysis is in progress.
+
+```http
+GET /api/calls/{call_id}/report
+```
+
+**Example response — 200 OK (analysis complete)**
+
+```json
+{
+  "call_id": "CA1234",
+  "lead_id": 101,
+  "campaign_id": 42,
+  "duration_s": 56.7,
+  "recording_url": "/recordings/rec_abc.wav",
+  "outcome": "Interested",
+  "sentiment": "positive",
+  "summary": "Lead was interested in the premium plan and asked for a callback next week.",
+  "qualified": true,
+  "appointment_booked": false,
+  "cost_paise": 45
+}
+```
+
+**Example response — 202 Accepted (analysis pending)**
+
+```json
+{
+  "status": "analyzing",
+  "message": "Call report is being generated. Retry shortly."
+}
+```
 
 ---
 

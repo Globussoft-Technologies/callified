@@ -272,6 +272,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/products/{id}", s.requireAdminPermission("products.manage")(s.deleteProduct))
 	mux.HandleFunc("GET /api/products/{id}/prompt", s.requireAdminPermission("products.view")(s.getProductPrompt))
 	mux.HandleFunc("PUT /api/products/{id}/prompt", s.requireAdminPermission("products.manage")(s.updateProductPrompt))
+
+	// ── Prompt Templates ───────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/templates", auth(s.listTemplates))
+	mux.HandleFunc("POST /api/templates", s.requireAdminPermission("products.manage")(s.createTemplate))
+	mux.HandleFunc("GET /api/templates/{id}", auth(s.getTemplate))
+	mux.HandleFunc("PUT /api/templates/{id}", s.requireAdminPermission("products.manage")(s.updateTemplate))
+	mux.HandleFunc("POST /api/templates/seed-panora", s.requireAdminPermission("products.manage")(s.seedPanoraTemplates))
 	mux.HandleFunc("POST /api/products/{id}/images", s.requireAdminPermission("products.manage")(s.uploadProductImage))
 	mux.HandleFunc("PUT /api/products/{id}/images", s.requireAdminPermission("products.manage")(s.updateProductImages))
 	mux.HandleFunc("DELETE /api/products/{id}/images/{index}", s.requireAdminPermission("products.manage")(s.deleteProductImage))
@@ -312,6 +319,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
+	mux.HandleFunc("GET /api/calls/{call_id}/report", auth(s.getCallReport))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	// /check is a read-only lookup any agent might need before placing a call;

@@ -11,6 +11,7 @@ import ScheduledCallsPage from '../pages/ScheduledCallsPage';
 import InteractionHistoryPage from '../pages/InteractionHistoryPage';
 import AgentPresencePage from '../pages/AgentPresencePage';
 import ProductsPage from '../pages/ProductsPage';
+import ScriptsPage from '../pages/ScriptsPage';
 
 const DEFAULT_ROLES = ['Admin', 'SuperAdmin', 'TeamLeader', 'Agent', 'Executive'];
 const ADMIN_ROLES = ['Admin', 'SuperAdmin'];
@@ -48,6 +49,7 @@ export const routes = [
   { path: '/knowledge', element: KnowledgePage, roles: ADMIN_ROLES, aiFeatures: true },
   { path: '/sandbox', element: SandboxPage, roles: ADMIN_ROLES, aiFeatures: true },
   { path: '/products', element: ProductsPage, roles: ADMIN_ROLES },
+  { path: '/scripts', element: ScriptsPage, roles: ADMIN_ROLES },
   { path: '/settings', element: SettingsPage, roles: DEFAULT_ROLES },
   { path: '/logs', element: LogsPage, aiFeatures: true },
   { path: '/checkin', element: CheckInPage, roles: DEFAULT_ROLES },

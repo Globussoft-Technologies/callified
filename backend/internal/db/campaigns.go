@@ -43,6 +43,7 @@ func (d *DB) EnsureCampaignsTable() error {
 		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
 		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
 		{"exotel_account_id", "BIGINT DEFAULT NULL"},
+		{"opening_script_id", "BIGINT DEFAULT NULL"},
 	}
 	for _, col := range columns {
 		_, alterErr := d.pool.Exec(fmt.Sprintf("ALTER TABLE campaigns ADD COLUMN %s %s", col.name, col.def))
@@ -57,20 +58,21 @@ func (d *DB) EnsureCampaignsTable() error {
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
 // nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID              int64          `json:"id"`
-	OrgID           int64          `json:"org_id"`
-	ProductID       int64          `json:"product_id"`
-	Name            string         `json:"name"`
-	Status          string         `json:"status"`
-	TTSProvider     string         `json:"tts_provider"`
-	TTSVoiceID      string         `json:"tts_voice_id"`
-	TTSLanguage     string         `json:"tts_language"`
-	LeadSource      string         `json:"lead_source"`
-	Channel         string         `json:"channel"`
-	ExotelAccountID int64          `json:"exotel_account_id"`
-	ProductName     string         `json:"product_name"`
-	CreatedAt       string         `json:"created_at"`
-	Stats           *CampaignStats `json:"stats,omitempty"`
+	ID                int64          `json:"id"`
+	OrgID             int64          `json:"org_id"`
+	ProductID         int64          `json:"product_id"`
+	OpeningScriptID   int64          `json:"opening_script_id"`
+	Name              string         `json:"name"`
+	Status            string         `json:"status"`
+	TTSProvider       string         `json:"tts_provider"`
+	TTSVoiceID        string         `json:"tts_voice_id"`
+	TTSLanguage       string         `json:"tts_language"`
+	LeadSource        string         `json:"lead_source"`
+	Channel           string         `json:"channel"`
+	ExotelAccountID   int64          `json:"exotel_account_id"`
+	ProductName       string         `json:"product_name"`
+	CreatedAt         string         `json:"created_at"`
+	Stats             *CampaignStats `json:"stats,omitempty"`
 }
 
 // COALESCE on product_id because campaigns can legitimately have a NULL
@@ -83,14 +85,22 @@ const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.tts_language,''), COALESCE(c.lead_source,''),
 	COALESCE(c.channel,'voice'),
 	COALESCE(c.exotel_account_id,0),
+	COALESCE(c.opening_script_id,0),
 	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s')`
 
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
+	var openingScriptID sql.NullInt64
 	err := row.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 		&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-		&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt)
-	return c, err
+		&c.Channel, &c.ExotelAccountID, &openingScriptID, &c.ProductName, &c.CreatedAt)
+	if err != nil {
+		return c, err
+	}
+	if openingScriptID.Valid {
+		c.OpeningScriptID = openingScriptID.Int64
+	}
+	return c, nil
 }
 
 // GetCampaignsByOrg returns all campaigns for an org ordered newest first.
@@ -132,7 +142,7 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.OpeningScriptID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -184,7 +194,7 @@ func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.OpeningScriptID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -227,7 +237,7 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.OpeningScriptID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -253,13 +263,13 @@ func (d *DB) GetCampaignByID(id int64) (*Campaign, error) {
 }
 
 // CreateCampaign inserts a new campaign. Returns the new ID.
-func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID int64) (int64, error) {
+func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID, openingScriptID int64) (int64, error) {
 	if channel == "" {
 		channel = "voice"
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id) VALUES (?,?,?,?,?,?)`,
-		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID))
+		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id, opening_script_id) VALUES (?,?,?,?,?,?,?)`,
+		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID), nullInt64(openingScriptID))
 	if err != nil {
 		return 0, err
 	}
@@ -275,7 +285,7 @@ func (d *DB) SetCampaignExotelAccount(campaignID, accountID int64) error {
 }
 
 // UpdateCampaign updates mutable campaign fields. Pass zero/empty to skip a field.
-func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID int64) error {
+func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID, openingScriptID int64) error {
 	if name != "" {
 		if _, err := d.pool.Exec(`UPDATE campaigns SET name=? WHERE id=?`, name, id); err != nil {
 			return err
@@ -293,6 +303,11 @@ func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, 
 	}
 	if productID != 0 {
 		if _, err := d.pool.Exec(`UPDATE campaigns SET product_id=? WHERE id=?`, productID, id); err != nil {
+			return err
+		}
+	}
+	if openingScriptID != 0 {
+		if _, err := d.pool.Exec(`UPDATE campaigns SET opening_script_id=? WHERE id=?`, openingScriptID, id); err != nil {
 			return err
 		}
 	}
@@ -469,14 +484,38 @@ type CampaignLeadsFilter struct {
 }
 
 // GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
-// Use limit=0 to return all matching leads (backward compatibility).
+// Duplicate leads (same phone number) are collapsed to the most recent
+// campaign_lead row per phone. Use limit=0 to return all matching leads.
 func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset int64) ([]CampaignLead, error) {
 	search := "%" + filter.Search + "%"
-	q := `SELECT l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
+
+	execFilter := ""
+	execArgs := []any{}
+	if len(filter.ExecIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
+		execFilter = ` AND COALESCE(cl.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range filter.ExecIDs {
+			execArgs = append(execArgs, id)
+		}
+	}
+
+	q := `WITH dedup_leads AS (
+		SELECT lead_id, executive_id
+		FROM (
+			SELECT cl.lead_id, cl.executive_id,
+				ROW_NUMBER() OVER (PARTITION BY l.phone ORDER BY cl.id DESC) AS rn
+			FROM campaign_leads cl
+			JOIN leads l ON l.id = cl.lead_id
+			WHERE cl.campaign_id = ?
+			  AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)` + execFilter + `
+		) ranked
+		WHERE rn = 1
+	)
+	SELECT l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
 		COALESCE(l.source,''), COALESCE(l.status,'new'),
 		COALESCE(l.follow_up_note,''), COALESCE(DATE_FORMAT(l.follow_up_at, '%Y-%m-%dT%H:%i:%sZ'),''),
 		COALESCE(l.interest,''), COALESCE(l.company,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
-		COALESCE(cl2.executive_id,0),
+		COALESCE(d.executive_id,0),
 		DATE_FORMAT(l.created_at, '%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(ct.transcript_count, 0) AS transcript_count,
 		COALESCE(ct.recording_count, 0) AS recording_count,
@@ -486,8 +525,8 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 		COALESCE(pc.id, 0) AS scheduled_call_id,
 		COALESCE(pc.mode, '') AS scheduled_call_mode,
 		COALESCE(pc.notes, '') AS scheduled_call_notes
-	 FROM campaign_leads cl2
-	 JOIN leads l ON l.id = cl2.lead_id
+	 FROM dedup_leads d
+	 JOIN leads l ON l.id = d.lead_id
 	 LEFT JOIN (
 		SELECT lead_id,
 			COUNT(*) AS dial_attempts,
@@ -509,16 +548,10 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 		) picked ON picked.lead_id = sc1.lead_id AND picked.scheduled_at = sc1.scheduled_at
 		WHERE sc1.campaign_id = ? AND sc1.status = 'pending'
 	 ) pc ON pc.lead_id = l.id
-	 WHERE cl2.campaign_id = ?
-	   AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)`
-	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, filter.CampaignID, search, search, search, search, search}
-	if len(filter.ExecIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(cl2.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range filter.ExecIDs {
-			args = append(args, id)
-		}
-	}
+	 WHERE 1=1`
+	args := []any{filter.CampaignID, search, search, search, search, search}
+	args = append(args, execArgs...)
+	args = append(args, filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID)
 	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
 		q += ` AND pc.scheduled_at IS NOT NULL`
 	}
@@ -544,11 +577,34 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 }
 
 // CountCampaignLeads returns the total number of leads in a campaign matching
-// the provided filter.
+// the provided filter, deduplicated by phone (most recent lead per phone wins).
 func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	search := "%" + filter.Search + "%"
-	q := `SELECT COUNT(*) FROM campaign_leads cl
-	 JOIN leads l ON l.id = cl.lead_id
+
+	execFilter := ""
+	execArgs := []any{}
+	if len(filter.ExecIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
+		execFilter = ` AND COALESCE(cl.executive_id,0) IN (` + placeholders + `)`
+		for _, id := range filter.ExecIDs {
+			execArgs = append(execArgs, id)
+		}
+	}
+
+	q := `WITH dedup_leads AS (
+		SELECT lead_id, executive_id
+		FROM (
+			SELECT cl.lead_id, cl.executive_id,
+				ROW_NUMBER() OVER (PARTITION BY l.phone ORDER BY cl.id DESC) AS rn
+			FROM campaign_leads cl
+			JOIN leads l ON l.id = cl.lead_id
+			WHERE cl.campaign_id = ?
+			  AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)` + execFilter + `
+		) ranked
+		WHERE rn = 1
+	)
+	SELECT COUNT(*) FROM dedup_leads d
+	 JOIN leads l ON l.id = d.lead_id
 	 LEFT JOIN (
 		SELECT lead_id, MIN(scheduled_at) AS scheduled_at
 		FROM scheduled_calls
@@ -557,16 +613,10 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 		  AND scheduled_at <= COALESCE(NULLIF(?, ''), scheduled_at)
 		GROUP BY lead_id
 	 ) pc ON pc.lead_id = l.id
-	 WHERE cl.campaign_id = ?
-	   AND (l.first_name LIKE ? OR l.last_name LIKE ? OR l.phone LIKE ? OR l.company LIKE ? OR l.source LIKE ?)`
-	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
-	if len(filter.ExecIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(cl.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range filter.ExecIDs {
-			args = append(args, id)
-		}
-	}
+	 WHERE 1=1`
+	args := []any{filter.CampaignID, search, search, search, search, search}
+	args = append(args, execArgs...)
+	args = append(args, filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo)
 	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
 		q += ` AND pc.scheduled_at IS NOT NULL`
 	}

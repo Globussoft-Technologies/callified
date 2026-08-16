@@ -8,7 +8,7 @@ import { formatDateTime } from '../utils/dateFormat';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 // Note: exotel-accounts is reachable from Settings for manual accounts, so it is hidden here to avoid duplication.
-const AI_TAB_IDS = new Set(['monitor', 'knowledge', 'sandbox', 'whatsapp', 'ai-receptionist', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'campaign-progress', 'exotel-accounts']);
+const AI_TAB_IDS = new Set(['monitor', 'knowledge', 'sandbox', 'whatsapp', 'ai-receptionist', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'campaign-progress', 'exotel-accounts', 'scripts']);
 
 const AGENT_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
@@ -32,6 +32,7 @@ const TEAM_LEADER_MORE_TAB_IDS = new Set(['scheduled', 'interaction-history', 's
 const MORE_ADMIN_TABS = [
   { id: 'integrations',     label: 'Integrations',      path: '/integrations',      testid: 'tab-integrations' },
   { id: 'exotel-accounts', label: 'Provider Accounts',  path: '/exotel-accounts',   testid: 'tab-exotel-accounts' },
+  { id: 'scripts',        label: 'Call Scripts',      path: '/scripts',       testid: 'tab-scripts' },
   { id: 'monitor',      label: 'Monitor AI Calls',path: '/monitor',      testid: 'tab-monitor' },
   { id: 'knowledge',    label: 'RAG Knowledge',   path: '/knowledge',    testid: 'tab-rag' },
   { id: 'sandbox',      label: 'AI Sandbox',      path: '/sandbox',      testid: 'tab-sandbox' },
@@ -51,6 +52,7 @@ const MORE_ADMIN_TABS = [
 
 const TAB_PERMISSION = {
   products: 'products.view',
+  scripts: 'products.view',
   campaigns: 'campaigns.view',
   analytics: 'reports.view',
   'exotel-accounts': 'provider_accounts.global',

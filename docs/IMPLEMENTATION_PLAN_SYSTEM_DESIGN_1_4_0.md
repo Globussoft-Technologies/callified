@@ -15,6 +15,9 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 3 (done)** — TanStack Query migration, central route config, lazy loading, bundle below 500 KB.
   - Done: `@tanstack/react-query` dependency, query hooks (`useCampaigns`, `useCampaign`, `useLeads`, `useCallLogs`, `useAgentReport`, `useOrganizations`, `useOrgProducts`), React Query provider wiring, `OrgContext` refactored, `EventContext` invalidates affected query keys, route table + `ProtectedRoute`, `App.jsx` refactored with lazy-loaded pages, `CampaignsPage`/`CampaignDetail`/`AgentReportPage` use query hooks, Vite chunk splitting, initial bundle 357 kB (gzipped 85 kB).
   - Pending: extend React Query to remaining ad-hoc fetches (team, executives, products, billing, etc.), agent-presence events.
+- **Phase 4 (done)** — Prompt registry, AI guardrails, post-call reports, agent-specific access, lead deduplication.
+  - Done: `prompt_templates` table with versioning (`20250816_add_prompt_templates.sql`), `internal/prompt/registry.go`, `internal/prompt/builder.go` resolves campaign → product → global default, Panora script seeding, template REST API (`/api/templates`), `ApplyGuardrails` strips markdown/URLs/phones and preserves `[HANGUP]`, `ConversationState` tracks greeting/turn/question, `GET /api/calls/{call_id}/report` with async analysis, `GET /api/campaigns/{id}/leads` deduplicates by phone, agents see only their own leads/calls.
+  - Pending: provider fallback chains (TTS/STT/LLM) are out of scope for this branch.
 
 ## Current Pain Points Observed
 
@@ -538,15 +541,15 @@ callified:campaign:{id}:completed           # terminal outcomes
 ### Phase 4 — AI & Analytics (Weeks 7–8)
 
 #### Prompt Registry
-- [ ] 4.1 Add `prompt_templates` table with versioning.
-- [ ] 4.2 Migrate existing hard-coded prompts into registry.
-- [ ] 4.3 Add Panora script variants (`panora_v4_curiosity`, `panora_wholesale`, etc.).
-- [ ] 4.4 Allow script selection per campaign/product.
+- [x] 4.1 Add `prompt_templates` table with versioning.
+- [x] 4.2 Migrate existing hard-coded prompts into registry.
+- [x] 4.3 Add Panora script variants (`panora_v4_curiosity`, `panora_wholesale`, etc.).
+- [x] 4.4 Allow script selection per campaign/product.
 
 #### AI Guardrails
-- [ ] 4.5 Post-process LLM output before TTS.
-- [ ] 4.6 Strip repeated greetings and hallucinated URLs.
-- [ ] 4.7 Map outputs to allowed intents.
+- [x] 4.5 Post-process LLM output before TTS.
+- [x] 4.6 Strip repeated greetings and hallucinated URLs.
+- [x] 4.7 Map outputs to allowed intents.
 
 #### Provider Fallbacks
 - [ ] 4.8 Implement TTS fallback chain (Sarvam → ElevenLabs → SmallestAI).
@@ -554,13 +557,13 @@ callified:campaign:{id}:completed           # terminal outcomes
 - [ ] 4.10 Implement LLM fallback chain (Gemini → Groq → Anthropic).
 
 #### Post-Call Analysis
-- [ ] 4.11 Queue recording/transcript for async analysis.
-- [ ] 4.12 Extract outcome, sentiment, summary, cost, recording URL, qualified, appointment.
-- [ ] 4.13 Add `GET /api/calls/{call_id}/report`.
+- [x] 4.11 Queue recording/transcript for async analysis.
+- [x] 4.12 Extract outcome, sentiment, summary, cost, recording URL, qualified, appointment.
+- [x] 4.13 Add `GET /api/calls/{call_id}/report`.
 
 #### Access & Data Quality
-- [ ] 4.14 Implement agent-specific lead visibility and call ownership.
-- [ ] 4.15 Add duplicate phone filtering in campaign lead lists.
+- [x] 4.14 Implement agent-specific lead visibility and call ownership.
+- [x] 4.15 Add duplicate phone filtering in campaign lead lists.
 
 ---
 

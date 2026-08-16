@@ -54,7 +54,8 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		buf.Reset()
 		buf.WriteString(remainder)
 		for _, sent := range sentences {
-			if text, hangup := parseChunk(sent); text != "" || hangup {
+			cleaned := ApplyGuardrails(sent, req.Language, p.log)
+			if text, hangup := parseChunk(cleaned); text != "" || hangup {
 				onSentence(SentenceChunk{Text: text, HasHangup: hangup})
 			}
 		}
@@ -72,7 +73,8 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	// sounds like a sentence cut off in the middle when the model stops without
 	// punctuation.
 	if remaining := strings.TrimSpace(buf.String()); remaining != "" && !errors.Is(err, ErrMaxTokens) && !req.DropIncompleteRemainder {
-		text, hangup := parseChunk(remaining)
+		cleaned := ApplyGuardrails(remaining, req.Language, p.log)
+		text, hangup := parseChunk(cleaned)
 		if text != "" || hangup {
 			onSentence(SentenceChunk{Text: text, HasHangup: hangup})
 		}
@@ -109,7 +111,7 @@ func (p *Provider) GenerateResponse(ctx context.Context, systemPrompt string, hi
 	} else {
 		err = p.groq.StreamTokens(ctx, req, onToken)
 	}
-	return strings.TrimSpace(result.String()), err
+	return ApplyGuardrails(strings.TrimSpace(result.String()), req.Language, p.log), err
 }
 
 // GenerateText calls Gemini (non-streaming) with thinking disabled.

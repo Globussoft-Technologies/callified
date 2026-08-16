@@ -109,6 +109,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 		return
 	}
 
+	// --- Update conversation state for this turn ---
+	sess.IncrementTurn()
+	sess.UpdateConversationStateMarker()
+
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
 
@@ -127,6 +131,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	hasHangup := false
 	firstChunk := true
 	tPreLLM := time.Now()
+	var questionsAskedThisTurn []string
 
 	var err error
 	if provider != nil {
@@ -153,6 +158,9 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			if chunk.Text != "" {
 				responseBuilder.WriteString(chunk.Text)
 				responseBuilder.WriteString(" ")
+				if q := extractQuestion(chunk.Text); q != "" {
+					questionsAskedThisTurn = append(questionsAskedThisTurn, q)
+				}
 				select {
 				case sess.TTSSentences <- chunk.Text:
 				case <-ctx.Done():
@@ -172,6 +180,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	if resp := strings.TrimSpace(responseBuilder.String()); resp != "" {
 		sess.AppendHistory("model", resp)
 		sess.BroadcastTranscript("agent", resp)
+		for _, q := range questionsAskedThisTurn {
+			sess.RecordQuestion(q)
+		}
+		sess.UpdateConversationStateMarker()
 	}
 
 	// --- Signal TTS worker that HANGUP follows the last sentence ---
@@ -360,4 +372,34 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// extractQuestion returns a short normalized question string if the sentence
+// appears to contain a question. Used to populate the conversation state so the
+// LLM does not re-ask the same question.
+func extractQuestion(sentence string) string {
+	sentence = strings.TrimSpace(sentence)
+	if sentence == "" {
+		return ""
+	}
+	// Treat the whole sentence as a question if it ends with a question mark.
+	if strings.HasSuffix(sentence, "?") {
+		return truncateSentence(sentence, 120)
+	}
+	// Indian languages often use a rising intonation without '?'; look for
+	// common question words in English/Hinglish speech.
+	lower := strings.ToLower(sentence)
+	for _, word := range []string{"what", "when", "where", "which", "who", "how", "why", "kya", "kab", "kaun", "kitna", "kaise", "kahan"} {
+		if strings.Contains(lower, " "+word+" ") || strings.HasPrefix(lower, word+" ") || strings.HasSuffix(lower, " "+word) {
+			return truncateSentence(sentence, 120)
+		}
+	}
+	return ""
+}
+
+func truncateSentence(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }

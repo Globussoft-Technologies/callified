@@ -4,6 +4,7 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,6 +119,11 @@ type CallSession struct {
 	TTSLanguage  string
 	AgentName    string
 	Language     string
+
+	// ConversationState tracks the call's progress so the LLM can respect one-turn,
+	// one-question, greeting-done, and language constraints. Guarded by stateMu.
+	conversationState ConversationState
+	stateMu           sync.Mutex
 
 	// Deferred-init hooks. Real Exotel calls connect with empty URL params
 	// (the campaign context arrives later via the Redis "start" event), so
@@ -362,6 +368,7 @@ func (s *CallSession) MarkGreetingDelivered() {
 	if !strings.Contains(s.SystemPrompt, "CONVERSATION STATE: The opening greeting has already been delivered") {
 		s.SystemPrompt += guard
 	}
+	s.MarkGreetingDone()
 }
 
 // TransitionCallState moves the call to a new state and logs any error. It is a
@@ -557,6 +564,105 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	copy(snap, s.ChatHistory)
 	s.historyMu.Unlock()
 	return snap
+}
+
+// ConversationState tracks dynamic call progress for the LLM.
+type ConversationState struct {
+	GreetingDone   bool     `json:"greeting_done"`
+	Language       string   `json:"language"`
+	QuestionsAsked []string `json:"questions_asked"`
+	TurnCount      int      `json:"turn_count"`
+}
+
+// State returns a copy of the conversation state (thread-safe).
+func (s *CallSession) State() ConversationState {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	out := s.conversationState
+	out.QuestionsAsked = append([]string(nil), s.conversationState.QuestionsAsked...)
+	return out
+}
+
+// SetState replaces the conversation state (thread-safe).
+func (s *CallSession) SetState(st ConversationState) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.conversationState = st
+}
+
+// MarkGreetingDone records that the opening greeting has been delivered.
+func (s *CallSession) MarkGreetingDone() {
+	s.stateMu.Lock()
+	s.conversationState.GreetingDone = true
+	s.stateMu.Unlock()
+}
+
+// IncrementTurn increases the turn count.
+func (s *CallSession) IncrementTurn() {
+	s.stateMu.Lock()
+	s.conversationState.TurnCount++
+	s.stateMu.Unlock()
+}
+
+// RecordQuestion appends a question to the asked list.
+func (s *CallSession) RecordQuestion(q string) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if q == "" {
+		return
+	}
+	s.conversationState.QuestionsAsked = append(s.conversationState.QuestionsAsked, q)
+}
+
+// UpdateConversationStateMarker appends a concise state marker to the system prompt
+// so the LLM knows which questions have already been asked and whether the greeting
+// has been delivered. It is idempotent: identical markers are not duplicated.
+func (s *CallSession) UpdateConversationStateMarker() {
+	s.stateMu.Lock()
+	st := s.conversationState
+	st.QuestionsAsked = append([]string(nil), s.conversationState.QuestionsAsked...)
+	s.stateMu.Unlock()
+
+	s.llmMu.Lock()
+	defer s.llmMu.Unlock()
+
+	var b strings.Builder
+	b.WriteString("\n\n[CONVERSATION STATE]")
+	if st.GreetingDone {
+		b.WriteString(" The opening greeting has already been delivered. Do NOT greet the user again.")
+	}
+	if st.TurnCount > 0 {
+		b.WriteString(" Turn count: ")
+		b.WriteString(fmt.Sprintf("%d", st.TurnCount))
+		b.WriteString(".")
+	}
+	if len(st.QuestionsAsked) > 0 {
+		b.WriteString(" Questions already asked: ")
+		for i, q := range st.QuestionsAsked {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			b.WriteString(q)
+		}
+		b.WriteString(".")
+	}
+	b.WriteString(" Do NOT ask a question that has already been asked.")
+
+	marker := b.String()
+	if strings.Contains(s.SystemPrompt, "[CONVERSATION STATE]") {
+		// Replace existing marker block.
+		start := strings.Index(s.SystemPrompt, "[CONVERSATION STATE]")
+		rest := s.SystemPrompt[start:]
+		var end int
+		if idx := strings.Index(rest, "\n\n["); idx > 0 {
+			end = start + idx
+		} else {
+			end = len(s.SystemPrompt)
+		}
+		s.SystemPrompt = s.SystemPrompt[:start] + marker + s.SystemPrompt[end:]
+		return
+	}
+	s.SystemPrompt += marker
 }
 
 // MaxTokens returns a token budget based on transcript length, clamped
