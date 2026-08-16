@@ -8,14 +8,13 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/globussoft/callified-backend/internal/callguard"
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 )
 
 // DialerWorker consumes a Redis-backed queue of outbound calls and dials them
-// sequentially with TRAI hours, provider rate limits, and retry logic.
+// sequentially with provider rate limits and retry logic.
 type DialerWorker struct {
 	db        *db.DB
 	store     *rstore.Store
@@ -97,20 +96,6 @@ func (w *DialerWorker) tick(ctx context.Context) error {
 		time.Sleep(1 * time.Second)
 		return nil
 	}
-
-	// 5. TRAI calling hours check.
-	tz, _ := w.db.GetOrgTimezone(job.OrgID)
-	status := callguard.Check(tz)
-	if !status.Allowed {
-		w.store.EmitCampaignEvent(ctx, job.CampaignID, job.LeadName, job.LeadPhone, "failed", status.Reason)
-		w.log.Info("dialer_worker: outside TRAI hours, requeueing", zap.Int64("lead_id", job.LeadID), zap.String("reason", status.Reason))
-		if err := w.requeueHead(ctx, job); err != nil {
-			w.log.Warn("dialer_worker: requeue on TRAI failed", zap.Error(err))
-		}
-		time.Sleep(30 * time.Second)
-		return nil
-	}
-
 	w.lastDial = time.Now()
 	w.processJob(ctx, job, state)
 	return nil

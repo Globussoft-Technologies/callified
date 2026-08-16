@@ -494,7 +494,7 @@ callified:campaign:{id}:completed           # terminal outcomes
 #### Auto-Dialer
 - [x] 2.3 Implement Redis-backed queue per campaign (`campaign:{id}:dial_queue` via global `dial_queue` + per-campaign state).
 - [x] 2.4 Add retry queue with exponential backoff.
-- [~] 2.5 Respect TRAI call-hour rules (`internal/callguard`). (Worker checks; enforcement currently always allows — see `callguard.Check`.)
+- [~] 2.5 Respect TRAI call-hour rules (`internal/callguard`). **Disabled by request — callguard always allows.**
 - [x] 2.6 Remove forced Save/Next popup from AI auto-dial UX (queue runs uninterrupted; browser auto-dial uninterrupted mode defaults to on).
 - [x] 2.7 Add pause/resume/abort controls.
 
