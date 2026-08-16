@@ -445,7 +445,11 @@ export default function CampaignDetail({
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
   // Uninterrupted mode: skip the post-call disposition modal and auto-advance
   // to the next lead until the queue is exhausted.
-  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(false);
+  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(true);
+
+  // ── AI dial queue state (server-side Redis queue) ────────────────────────────
+  const [aiQueueState, setAiQueueState] = useState(null);
+  const [aiQueuePolling, setAiQueuePolling] = useState(false);
 
   // ── Disposition modal state (post-call before next auto-dial) ───────────────
   const [showDispositionModal, setShowDispositionModal] = useState(false);
@@ -636,6 +640,25 @@ export default function CampaignDetail({
       return ids;
     });
   }, [paginatedLeads, autoDialEnabled, autoDialActiveId]);
+
+  // Poll the server-side Redis dial queue for this campaign so the UI can show
+  // progress and pause/resume/abort controls while AI auto-dial is running.
+  useEffect(() => {
+    if (!selectedCampaign?.id) return;
+    const fetchState = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/status`);
+        if (!res.ok) return;
+        const state = await res.json();
+        setAiQueueState(state && state.running ? state : null);
+        setAiQueuePolling(!!(state && state.running && !state.aborted && !state.paused));
+      } catch (_) {}
+    };
+    fetchState();
+    if (!aiQueuePolling) return;
+    const interval = setInterval(fetchState, 5000);
+    return () => clearInterval(interval);
+  }, [selectedCampaign?.id, aiQueuePolling, apiFetch, API_URL]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -1058,6 +1081,30 @@ export default function CampaignDetail({
       }
     } catch (_) {}
     onCampaignWebCall(lead, campaignId);
+  };
+
+  // AI dial queue controls
+  const handlePauseAIQueue = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/pause`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue paused'); setAiQueueState(s => s ? { ...s, paused: true } : s); }
+      else { toast('Failed to pause queue'); }
+    } catch (_) { toast('Network error'); }
+  };
+  const handleResumeAIQueue = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/resume`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue resumed'); setAiQueueState(s => s ? { ...s, paused: false } : s); setAiQueuePolling(true); }
+      else { toast('Failed to resume queue'); }
+    } catch (_) { toast('Network error'); }
+  };
+  const handleAbortAIQueue = async () => {
+    if (!await confirm({ message: 'Stop the AI auto-dial queue and discard remaining calls?' })) return;
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/abort`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue aborted'); setAiQueueState(null); setAiQueuePolling(false); }
+      else { toast('Failed to abort queue'); }
+    } catch (_) { toast('Network error'); }
   };
 
   // Auto-dismiss success toast after 4 s
@@ -1748,6 +1795,51 @@ export default function CampaignDetail({
           }}
           campaignName={selectedCampaign.name}
         />
+      )}
+
+      {/* AI Dial Queue Panel — server-side Redis queue progress and controls */}
+      {aiQueueState && (
+        <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>
+                {aiQueueState.paused ? '⏸ AI Dial Queue Paused' : aiQueueState.aborted ? '⏹ AI Dial Queue Aborted' : '▶ AI Dial Queue Running'}
+              </h3>
+              <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>{selectedCampaign.name}</p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {aiQueueState.paused ? (
+                <button onClick={handleResumeAIQueue} style={{ ...btnGhost, color: T.green, borderColor: 'rgba(16,185,129,0.3)' }}>▶ Resume</button>
+              ) : (
+                <button onClick={handlePauseAIQueue} style={{ ...btnGhost, color: T.amber, borderColor: 'rgba(245,158,11,0.3)' }}>⏸ Pause</button>
+              )}
+              <button onClick={handleAbortAIQueue} style={{ ...btnGhost, color: T.red, borderColor: 'rgba(239,68,68,0.3)' }}>⏹ Stop</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Queued</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.text }}>{aiQueueState.queued_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Processed</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.green }}>{aiQueueState.processed_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Failed</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.red }}>{aiQueueState.failed_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Retrying</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.amber }}>{aiQueueState.retry_count || 0}</div>
+            </div>
+          </div>
+          {aiQueueState.last_error && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.2)`, borderRadius: 8, color: T.red, fontSize: '0.85rem' }}>
+              {aiQueueState.last_error}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Agent filter for detail tabs */}

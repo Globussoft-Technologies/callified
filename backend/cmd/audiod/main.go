@@ -150,6 +150,7 @@ func main() {
 	if database != nil && initiator != nil {
 		go workers.NewScheduler(database, initiator, logger).Run(workerCtx)
 		go workers.NewRetryWorker(database, initiator, logger).Run(workerCtx)
+		go workers.NewDialerWorker(database, store, initiator, logger).Run(workerCtx)
 		go workers.NewCRMPoller(database, logger).Run(workerCtx)
 	}
 
