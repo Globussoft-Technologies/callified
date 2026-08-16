@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from './AuthContext';
 import { API_URL } from '../constants/api';
 
@@ -13,6 +14,7 @@ export const CALLIFIED_EVENT_NAME = 'callified:event';
 
 export function EventProvider({ children }) {
   const { fetchSseTicket, currentUser, authReady } = useAuth();
+  const queryClient = useQueryClient();
   const esRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const listenersRef = useRef(new Set());
@@ -72,6 +74,29 @@ export function EventProvider({ children }) {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };
   }, [connect]);
+
+  // Invalidate React Query caches when relevant domain events arrive.
+  useEffect(() => {
+    const handler = (ev) => {
+      const payload = ev?.detail;
+      if (!payload) return;
+      const campaignId = payload.campaignId || payload.campaign_id;
+      if (payload.type === 'LEAD_STATUS_CHANGED' && campaignId) {
+        queryClient.invalidateQueries({ queryKey: ['campaign', campaignId, 'leads'] });
+        queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      }
+      if (payload.type === 'CALL_COMPLETED' && campaignId) {
+        queryClient.invalidateQueries({ queryKey: ['campaign', campaignId, 'leads'] });
+        queryClient.invalidateQueries({ queryKey: ['campaign', campaignId, 'callLogs'] });
+        queryClient.invalidateQueries({ queryKey: ['agentReport'] });
+      }
+      if (['CAMPAIGN_DIAL_STARTED', 'CAMPAIGN_DIAL_STOPPED'].includes(payload.type)) {
+        queryClient.invalidateQueries({ queryKey: ['campaigns'] });
+      }
+    };
+    window.addEventListener(CALLIFIED_EVENT_NAME, handler);
+    return () => window.removeEventListener(CALLIFIED_EVENT_NAME, handler);
+  }, [queryClient]);
 
   return (
     <EventContext.Provider value={{ subscribe }}>

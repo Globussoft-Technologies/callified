@@ -8,6 +8,7 @@ import { VoiceProvider } from './contexts/VoiceContext'
 import { CallProvider } from './contexts/CallContext'
 import { UIProvider } from './contexts/UIContext'
 import { EventProvider } from './contexts/EventContext'
+import { QueryProvider } from './contexts/QueryProvider'
 import { BrowserRouter } from 'react-router-dom'
 
 class ErrorBoundary extends Component {
@@ -33,19 +34,21 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
-        <UIProvider>
-          <AuthProvider>
-            <EventProvider>
-              <OrgProvider>
-                <VoiceProvider>
-                  <CallProvider>
-                    <App />
-                  </CallProvider>
-                </VoiceProvider>
-              </OrgProvider>
-            </EventProvider>
-          </AuthProvider>
-        </UIProvider>
+        <QueryProvider>
+          <UIProvider>
+            <AuthProvider>
+              <EventProvider>
+                <OrgProvider>
+                  <VoiceProvider>
+                    <CallProvider>
+                      <App />
+                    </CallProvider>
+                  </VoiceProvider>
+                </OrgProvider>
+              </EventProvider>
+            </AuthProvider>
+          </UIProvider>
+        </QueryProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </StrictMode>,

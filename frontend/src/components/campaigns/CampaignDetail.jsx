@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
@@ -6,7 +6,8 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { useCallifiedEvents, CALLIFIED_EVENT_NAME } from '../../contexts/EventContext';
+import { CALLIFIED_EVENT_NAME } from '../../contexts/EventContext';
+import { useLeads, useCallLogs } from '../../hooks/useQueries';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isExecutive } from '../../utils/roles';
@@ -359,14 +360,14 @@ function AuthAudioPlayer({ src, style }) {
 
 export default function CampaignDetail({
   selectedCampaign, setSelectedCampaign,
-  campaignLeads, callLog, detailTab, setDetailTab,
+  campaignLeads: campaignLeadsProp, callLog: callLogProp, detailTab, setDetailTab,
   handleBack, fetchCampaignLeads, fetchCallLog, fetchCampaigns,
   statusBadge, getProductName, getCampaignStats,
   campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead, handleDeleteLead,
-  campaignLeadsTotal,
+  campaignLeadsTotal: campaignLeadsTotalProp,
   handleViewTranscripts,
   onCampaignDial, onCampaignWebCall,
   dialingId, webCallActive,
@@ -439,6 +440,21 @@ export default function CampaignDetail({
   const PAGE_SIZE = 100;
   const [currentPage, setCurrentPage] = useState(1);
   const [jumpPage, setJumpPage] = useState('');
+
+  // React Query hooks for server state.
+  const leadsParams = useMemo(() => ({
+    page: currentPage,
+    limit: PAGE_SIZE,
+    search: leadSearch.trim(),
+    executiveIds: execFilter,
+    scheduleFrom,
+    scheduleTo,
+  }), [currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo]);
+  const { data: leadsData } = useLeads(currentCampaignId, leadsParams);
+  const campaignLeads = leadsData?.leads ?? campaignLeadsProp;
+  const campaignLeadsTotal = typeof leadsData?.total === 'number' ? leadsData.total : campaignLeadsTotalProp;
+  const { data: callLogData } = useCallLogs(currentCampaignId, { executiveIds: detailExecutiveFilter });
+  const callLog = callLogProp ?? callLogData ?? [];
 
   // ── Auto-dialer state (Browser Call only) ───────────────────────────────────
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
@@ -519,23 +535,6 @@ export default function CampaignDetail({
     if (detailTab === 'calllog' && !canViewTranscripts && !canViewRecordings) setDetailTab('leads');
     if ((detailTab === 'insights' || detailTab === 'retries') && (!canViewReports || hideAiFeatures)) setDetailTab('leads');
   }, [detailTab, canViewTranscripts, canViewRecordings, canViewReports, hideAiFeatures, setDetailTab]);
-
-  // Server-side pagination: fetch the current page with active filters.
-  const loadCampaignLeads = useCallback(() => {
-    if (!selectedCampaign?.id) return;
-    fetchCampaignLeads(selectedCampaign.id, {
-      page: currentPage,
-      limit: PAGE_SIZE,
-      search: leadSearch.trim(),
-      executiveIds: execFilter,
-      scheduledFrom: scheduleFrom,
-      scheduledTo: scheduleTo,
-    });
-  }, [selectedCampaign?.id, currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo, fetchCampaignLeads]);
-
-  useEffect(() => {
-    loadCampaignLeads();
-  }, [loadCampaignLeads]);
 
   // Reset to page 1 whenever filters/search change so the user doesn't land on
   // an empty page after narrowing the list.
@@ -1029,7 +1028,7 @@ export default function CampaignDetail({
       );
     }
     prevWebCallActiveRef.current = webCallActive;
-  }, [webCallActive]);
+  }, [webCallActive, selectedCampaign.id, fetchCallLog]);
 
   // Pre-fill date/time to current time every time the modal opens for a lead.
   useEffect(() => {
@@ -1189,12 +1188,12 @@ export default function CampaignDetail({
     setRetriesLoading(false);
   };
 
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter);
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailTab, selectedCampaign.id, detailExecutiveFilter]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // Load call outcome stats whenever the campaign detail is opened.
   useEffect(() => {
