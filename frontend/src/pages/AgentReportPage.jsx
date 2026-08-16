@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useToast } from '../contexts/UIContext';
 import { useAgentReport } from '../hooks/useQueries';
 import UserDetailModal from '../components/modals/UserDetailModal';
@@ -128,7 +128,6 @@ function Badge({ children, color = T.accent }) {
 
 export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const toast = useToast();
-  const [members, setMembers] = useState([]);
   const [downloading, setDownloading] = useState(false);
   const [campaignId, setCampaignId] = useState('');
   const [period, setPeriod] = useState('daily');
@@ -170,13 +169,6 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
     to: range.to,
     campaignId: campaignId ? Number(campaignId) : undefined,
   });
-
-  useEffect(() => {
-    apiFetch(`${API_URL}/team`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setMembers(Array.isArray(data) ? data : []))
-      .catch(() => setMembers([]));
-  }, [apiFetch, API_URL]);
 
   const handleDownload = async () => {
     setDownloading(true);

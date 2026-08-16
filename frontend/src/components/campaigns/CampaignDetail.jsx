@@ -6,7 +6,7 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { CALLIFIED_EVENT_NAME } from '../../contexts/EventContext';
+import { CALLIFIED_EVENT_NAME } from '../../constants/events';
 import { useLeads, useCallLogs } from '../../hooks/useQueries';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';

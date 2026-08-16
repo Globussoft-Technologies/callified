@@ -525,13 +525,13 @@ callified:campaign:{id}:completed           # terminal outcomes
 - [x] 3.8 Extend events to agent presence and other mutations (CRM, products, billing).
 
 #### Routing
-- [x] 3.8 Create central `routeConfig.js` with permissions and AI-feature flags.
-- [x] 3.9 Create `ProtectedRoute` wrapper.
-- [x] 3.10 Replace scattered `hideAiFeatures ? <Navigate to="/crm" />` in `App.jsx`.
+- [x] 3.9 Create central `routeConfig.js` with permissions and AI-feature flags.
+- [x] 3.10 Create `ProtectedRoute` wrapper.
+- [x] 3.11 Replace scattered `hideAiFeatures ? <Navigate to="/crm" />` in `App.jsx`.
 
 #### Performance
-- [x] 3.11 Lazy-load Analytics, Agent Report, Team, User Management, Receptionist.
-- [x] 3.12 Reduce initial bundle below 500 KB.
+- [x] 3.12 Lazy-load Analytics, Agent Report, Team, User Management, Receptionist.
+- [x] 3.13 Reduce initial bundle below 500 KB.
 
 ---
 
