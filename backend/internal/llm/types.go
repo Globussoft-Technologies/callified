@@ -24,4 +24,5 @@ type TranscriptRequest struct {
 	Language                string        // e.g. "hi", "mr", "en", "ta"
 	MaxTokens               int32
 	DropIncompleteRemainder bool
+	GreetingDone            bool // if true, guardrails will strip repeated greetings
 }

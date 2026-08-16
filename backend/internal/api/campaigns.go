@@ -261,20 +261,20 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	// Attach voice settings in a merged map so we stay backwards-compatible
 	// with clients that still read c.* directly.
 	resp := map[string]any{
-		"id":           c.ID,
-		"org_id":       c.OrgID,
-		"product_id":   c.ProductID,
-		"name":         c.Name,
-		"status":       c.Status,
-		"tts_provider": c.TTSProvider,
-		"tts_voice_id": c.TTSVoiceID,
-		"tts_language": c.TTSLanguage,
-		"lead_source":  c.LeadSource,
-		"channel":      c.Channel,
-		"product_name": c.ProductName,
+		"id":                c.ID,
+		"org_id":            c.OrgID,
+		"product_id":        c.ProductID,
+		"name":              c.Name,
+		"status":            c.Status,
+		"tts_provider":      c.TTSProvider,
+		"tts_voice_id":      c.TTSVoiceID,
+		"tts_language":      c.TTSLanguage,
+		"lead_source":       c.LeadSource,
+		"channel":           c.Channel,
+		"product_name":      c.ProductName,
 		"opening_script_id": c.OpeningScriptID,
-		"created_at":   c.CreatedAt,
-		"stats":        c.Stats,
+		"created_at":        c.CreatedAt,
+		"stats":             c.Stats,
 	}
 	if vs, err := s.db.GetCampaignVoiceSettings(id); err == nil {
 		resp["voice_settings"] = map[string]string{
@@ -297,7 +297,7 @@ type campaignUpdateRequest struct {
 	LeadSource      string `json:"lead_source"`
 	ProductID       int64  `json:"product_id"`
 	Channel         string `json:"channel"`
-	OpeningScriptID int64  `json:"opening_script_id"`
+	OpeningScriptID *int64 `json:"opening_script_id"`
 }
 
 // @Summary     Update campaign
@@ -576,12 +576,12 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 		return
 	}
 	var body struct {
-		LeadIDs     []int64 `json:"lead_ids"`
-		ExecutiveID int64   `json:"executive_id"`
-		All         bool    `json:"all"`
-		Search      string  `json:"search"`
-		ScheduledFrom string `json:"scheduled_from"`
-		ScheduledTo   string `json:"scheduled_to"`
+		LeadIDs       []int64 `json:"lead_ids"`
+		ExecutiveID   int64   `json:"executive_id"`
+		All           bool    `json:"all"`
+		Search        string  `json:"search"`
+		ScheduledFrom string  `json:"scheduled_from"`
+		ScheduledTo   string  `json:"scheduled_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")

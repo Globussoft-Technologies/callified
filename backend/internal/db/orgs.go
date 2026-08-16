@@ -292,8 +292,8 @@ type Product struct {
 	CallFlowInstructions string         `json:"call_flow_instructions"`
 	OpeningScriptID      int64          `json:"opening_script_id"`
 	CreatedAt            string         `json:"created_at"`
-	ImageURLs            []string       `json:"image_urls"`     // scraped from website
-	ManualImages         []ProductImage `json:"manual_images"`  // manually uploaded via UI
+	ImageURLs            []string       `json:"image_urls"`    // scraped from website
+	ManualImages         []ProductImage `json:"manual_images"` // manually uploaded via UI
 }
 
 const productCols = `id, org_id, name,
@@ -404,8 +404,9 @@ func (d *DB) CreateProduct(orgID int64, name, websiteURL, manualNotes string, op
 	return res.LastInsertId()
 }
 
-// UpdateProduct updates mutable product fields. Pass empty to skip a field.
-func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes string, openingScriptID int64) error {
+// UpdateProduct updates mutable product fields. Pass nil for openingScriptID to
+// leave it unchanged, or a pointer to an int64 to set/clear it (0 clears to NULL).
+func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes string, openingScriptID *int64) error {
 	var parts []string
 	var args []any
 	if name != "" {
@@ -429,9 +430,9 @@ func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes 
 		parts = append(parts, "manual_notes=?")
 		args = append(args, manualNotes)
 	}
-	if openingScriptID != 0 {
+	if openingScriptID != nil {
 		parts = append(parts, "opening_script_id=?")
-		args = append(args, openingScriptID)
+		args = append(args, nullInt64(*openingScriptID))
 	}
 	if len(parts) == 0 {
 		return nil

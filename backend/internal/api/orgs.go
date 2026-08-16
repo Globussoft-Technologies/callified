@@ -476,9 +476,9 @@ func (s *Server) createProduct(w http.ResponseWriter, r *http.Request) {
 	// can select it instead of creating a confusing duplicate.
 	if existing, lookupErr := s.db.GetProductByOrgAndName(orgID, req.Name); lookupErr == nil && existing != nil {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":            "product already exists",
-			"existing_id":      existing.ID,
-			"existing_name":    existing.Name,
+			"error":         "product already exists",
+			"existing_id":   existing.ID,
+			"existing_name": existing.Name,
 		})
 		return
 	}
@@ -498,7 +498,7 @@ type productUpdateRequest struct {
 	WebsiteURL      string `json:"website_url"`
 	ScrapedInfo     string `json:"scraped_info"`
 	ManualNotes     string `json:"manual_notes"`
-	OpeningScriptID int64  `json:"opening_script_id"`
+	OpeningScriptID *int64 `json:"opening_script_id"`
 }
 
 // @Summary     Update product
@@ -666,7 +666,7 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 // Resolves relative URLs, filters non-content images, deduplicates, returns up to 10.
 func extractImageURLs(rawHTML, baseURL string) []string {
 	lower := strings.ToLower(rawHTML)
-	seen := map[string]bool{}    // full URL dedup
+	seen := map[string]bool{}     // full URL dedup
 	seenName := map[string]bool{} // filename-stem dedup (prevents mobile/desktop duplicates)
 	var results []string
 	const maxImages = 10
@@ -1141,7 +1141,7 @@ Crawled page content:
 	}
 	s.logger.Sugar().Infow("scrapeProduct: success", "product_id", id, "scrapedLen", len(scraped))
 
-	if err := s.db.UpdateProduct(id, "", "", scraped, "", 0); err != nil {
+	if err := s.db.UpdateProduct(id, "", "", scraped, "", nil); err != nil {
 		s.logger.Sugar().Errorw("scrapeProduct: UpdateProduct", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -1268,9 +1268,9 @@ func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"status":                   "success",
-		"agent_persona":            persona,
-		"call_flow_instructions":   callFlow,
+		"status":                 "success",
+		"agent_persona":          persona,
+		"call_flow_instructions": callFlow,
 	})
 }
 

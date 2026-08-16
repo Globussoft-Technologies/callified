@@ -142,6 +142,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			Language:                sess.Language,
 			MaxTokens:               sess.MaxTokens(transcript),
 			DropIncompleteRemainder: sess.IsInbound,
+			GreetingDone:            sess.State().GreetingDone,
 		}, func(chunk llm.SentenceChunk) {
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk

@@ -58,21 +58,21 @@ func (d *DB) EnsureCampaignsTable() error {
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
 // nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID                int64          `json:"id"`
-	OrgID             int64          `json:"org_id"`
-	ProductID         int64          `json:"product_id"`
-	OpeningScriptID   int64          `json:"opening_script_id"`
-	Name              string         `json:"name"`
-	Status            string         `json:"status"`
-	TTSProvider       string         `json:"tts_provider"`
-	TTSVoiceID        string         `json:"tts_voice_id"`
-	TTSLanguage       string         `json:"tts_language"`
-	LeadSource        string         `json:"lead_source"`
-	Channel           string         `json:"channel"`
-	ExotelAccountID   int64          `json:"exotel_account_id"`
-	ProductName       string         `json:"product_name"`
-	CreatedAt         string         `json:"created_at"`
-	Stats             *CampaignStats `json:"stats,omitempty"`
+	ID              int64          `json:"id"`
+	OrgID           int64          `json:"org_id"`
+	ProductID       int64          `json:"product_id"`
+	OpeningScriptID int64          `json:"opening_script_id"`
+	Name            string         `json:"name"`
+	Status          string         `json:"status"`
+	TTSProvider     string         `json:"tts_provider"`
+	TTSVoiceID      string         `json:"tts_voice_id"`
+	TTSLanguage     string         `json:"tts_language"`
+	LeadSource      string         `json:"lead_source"`
+	Channel         string         `json:"channel"`
+	ExotelAccountID int64          `json:"exotel_account_id"`
+	ProductName     string         `json:"product_name"`
+	CreatedAt       string         `json:"created_at"`
+	Stats           *CampaignStats `json:"stats,omitempty"`
 }
 
 // COALESCE on product_id because campaigns can legitimately have a NULL
@@ -284,8 +284,9 @@ func (d *DB) SetCampaignExotelAccount(campaignID, accountID int64) error {
 	return err
 }
 
-// UpdateCampaign updates mutable campaign fields. Pass zero/empty to skip a field.
-func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID, openingScriptID int64) error {
+// UpdateCampaign updates mutable campaign fields. Pass nil for openingScriptID to
+// leave it unchanged, or a pointer to set/clear it (0 clears to NULL).
+func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID int64, openingScriptID *int64) error {
 	if name != "" {
 		if _, err := d.pool.Exec(`UPDATE campaigns SET name=? WHERE id=?`, name, id); err != nil {
 			return err
@@ -306,8 +307,8 @@ func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, 
 			return err
 		}
 	}
-	if openingScriptID != 0 {
-		if _, err := d.pool.Exec(`UPDATE campaigns SET opening_script_id=? WHERE id=?`, openingScriptID, id); err != nil {
+	if openingScriptID != nil {
+		if _, err := d.pool.Exec(`UPDATE campaigns SET opening_script_id=? WHERE id=?`, nullInt64(*openingScriptID), id); err != nil {
 			return err
 		}
 	}
@@ -1244,7 +1245,6 @@ func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error
 		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage), campaignID)
 	return err
 }
-
 
 func coalesceStr(s, def string) string {
 	if s == "" {

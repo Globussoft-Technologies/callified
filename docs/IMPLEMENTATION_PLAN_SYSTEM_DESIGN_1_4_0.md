@@ -16,7 +16,7 @@ This document proposes a set of architectural and implementation changes for the
   - Done: `@tanstack/react-query` dependency, query hooks (`useCampaigns`, `useCampaign`, `useLeads`, `useCallLogs`, `useAgentReport`, `useOrganizations`, `useOrgProducts`), React Query provider wiring, `OrgContext` refactored, `EventContext` invalidates affected query keys, route table + `ProtectedRoute`, `App.jsx` refactored with lazy-loaded pages, `CampaignsPage`/`CampaignDetail`/`AgentReportPage` use query hooks, Vite chunk splitting, initial bundle 357 kB (gzipped 85 kB).
   - Pending: extend React Query to remaining ad-hoc fetches (team, executives, products, billing, etc.), agent-presence events.
 - **Phase 4 (done)** — Prompt registry, AI guardrails, post-call reports, agent-specific access, lead deduplication.
-  - Done: `prompt_templates` table with versioning (`20250816_add_prompt_templates.sql`), `internal/prompt/registry.go`, `internal/prompt/builder.go` resolves campaign → product → global default, Panora script seeding, template REST API (`/api/templates`), `ApplyGuardrails` strips markdown/URLs/phones and preserves `[HANGUP]`, `ConversationState` tracks greeting/turn/question, `GET /api/calls/{call_id}/report` with async analysis, `GET /api/campaigns/{id}/leads` deduplicates by phone, agents see only their own leads/calls.
+  - Done: `prompt_templates` table with versioning (`20250816_add_prompt_templates.sql`), `internal/prompt/registry.go`, `internal/prompt/builder.go` resolves campaign → product → global default, Panora script seeding including `panora_v4_curiosity`, `panora_wholesale`, `panora_hotel_spa_towels`, `panora_retail`, template REST API (`/api/templates`), script selection dropdown in `ProductsTab.jsx` and `ScriptsPage.jsx`, `ApplyGuardrails` strips markdown/URLs/phones, disallowed bracket tags, repeated greetings (when `GreetingDone` is true), and enforces language-specific length limits (240 chars Indic, 200 chars English) while preserving `[HANGUP]`, `ConversationState` tracks greeting/turn/question and is injected into the LLM request, `GET /api/calls/{call_id}/report` with async analysis, `GET /api/campaigns/{id}/leads` deduplicates by phone, agents see only their own leads/calls.
   - Pending: provider fallback chains (TTS/STT/LLM) are out of scope for this branch.
 
 ## Current Pain Points Observed
@@ -543,13 +543,13 @@ callified:campaign:{id}:completed           # terminal outcomes
 #### Prompt Registry
 - [x] 4.1 Add `prompt_templates` table with versioning.
 - [x] 4.2 Migrate existing hard-coded prompts into registry.
-- [x] 4.3 Add Panora script variants (`panora_v4_curiosity`, `panora_wholesale`, etc.).
+- [x] 4.3 Add Panora script variants (`panora_v4_curiosity`, `panora_wholesale`, `panora_hotel_spa_towels`, `panora_retail`).
 - [x] 4.4 Allow script selection per campaign/product.
 
 #### AI Guardrails
-- [x] 4.5 Post-process LLM output before TTS.
-- [x] 4.6 Strip repeated greetings and hallucinated URLs.
-- [x] 4.7 Map outputs to allowed intents.
+- [x] 4.5 Post-process LLM output before TTS with `ApplyGuardrailsWithState`.
+- [x] 4.6 Strip repeated greetings when `GreetingDone` is true and remove hallucinated URLs/phone numbers.
+- [x] 4.7 Strip disallowed bracket tags (e.g. `[HOLD]`), enforce response length limits (240 chars Indic / 200 chars English), and map outputs to allowed intents.
 
 #### Provider Fallbacks
 - [ ] 4.8 Implement TTS fallback chain (Sarvam → ElevenLabs → SmallestAI).

@@ -54,7 +54,7 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		buf.Reset()
 		buf.WriteString(remainder)
 		for _, sent := range sentences {
-			cleaned := ApplyGuardrails(sent, req.Language, p.log)
+			cleaned := ApplyGuardrailsWithState(sent, req.Language, req.GreetingDone, p.log)
 			if text, hangup := parseChunk(cleaned); text != "" || hangup {
 				onSentence(SentenceChunk{Text: text, HasHangup: hangup})
 			}
@@ -73,7 +73,7 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	// sounds like a sentence cut off in the middle when the model stops without
 	// punctuation.
 	if remaining := strings.TrimSpace(buf.String()); remaining != "" && !errors.Is(err, ErrMaxTokens) && !req.DropIncompleteRemainder {
-		cleaned := ApplyGuardrails(remaining, req.Language, p.log)
+		cleaned := ApplyGuardrailsWithState(remaining, req.Language, req.GreetingDone, p.log)
 		text, hangup := parseChunk(cleaned)
 		if text != "" || hangup {
 			onSentence(SentenceChunk{Text: text, HasHangup: hangup})
