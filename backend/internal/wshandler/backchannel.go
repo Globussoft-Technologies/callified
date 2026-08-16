@@ -39,6 +39,16 @@ func isFillerSound(text string) bool {
 	return len([]rune(word)) <= 2
 }
 
+// isKnownFiller returns true only when the text exactly matches a known filler
+// sound. Unlike isFillerSound, it does not drop short partial words like "he"
+// or "my", which are often the beginning of a real interruption.
+func isKnownFiller(text string) bool {
+	word := strings.ToLower(strings.TrimSpace(text))
+	word = strings.Trim(word, ".,!?…")
+	_, ok := fillerSounds[word]
+	return ok
+}
+
 
 // explicitSwitchKeywords maps target language codes to phrases that unambiguously
 // request a language switch, regardless of what Sarvam detects as the language.

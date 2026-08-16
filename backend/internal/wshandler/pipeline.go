@@ -334,6 +334,9 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	}
 	frame, _ := json.Marshal(frameData)
 	_ = sess.SendText(frame)
+	// Track when we last sent audio so barge-in stays armed while audio is still
+	// in flight to the phone/carrier (fixes barge-in misses on long sentences).
+	sess.MarkAudioSent()
 
 	// Relay a copy of the agent's outbound audio to any attached monitors so
 	// external consumers can render / play back what the AI is saying.

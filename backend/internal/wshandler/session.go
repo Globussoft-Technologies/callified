@@ -68,10 +68,11 @@ type CallSession struct {
 	bargeInActive   atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending  atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline atomic.Int64 // UnixNano; STT must confirm by this time
-	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
-	lastTTSEndNano  atomic.Int64 // UnixNano
-	lastTranscript  atomic.Int64 // UnixNano — debounce timestamp
-	outboundSeq     atomic.Uint64
+	lastBargeInNano   atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
+	lastTTSEndNano    atomic.Int64 // UnixNano
+	lastAudioSentNano atomic.Int64 // UnixNano of last outbound audio frame sent
+	lastTranscript    atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq       atomic.Uint64
 
 	// Serialization
 	llmMu sync.Mutex // one LLM turn at a time per session
@@ -376,6 +377,24 @@ func (s *CallSession) TriggerBargeIn() bool {
 	return true
 }
 
+// TryBargeIn attempts to trigger a tentative barge-in when customer speech is
+// detected. Returns true if barge-in was actually triggered. It requires TTS to
+// be playing or recently finished (within 800ms of TTS end or 2000ms of last
+// audio sent), and it respects the cooldown/active/pending guards.
+func (s *CallSession) TryBargeIn(source string) bool {
+	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
+	if !recentTTS || s.IsBargeInActive() || s.IsBargeInPending() {
+		return false
+	}
+	if !s.TentativeTriggerBargeIn() {
+		return false
+	}
+	s.Log.Info("barge-in: triggered",
+		zap.String("source", source),
+		zap.Float64("noise_floor", s.VAD.NoiseFloor()))
+	return true
+}
+
 // SetBargeInPending marks whether a barge-in is waiting for STT confirmation.
 func (s *CallSession) SetBargeInPending(v bool) { s.bargeInPending.Store(v) }
 
@@ -388,14 +407,14 @@ func (s *CallSession) IsBargeInPending() bool { return s.bargeInPending.Load() }
 func (s *CallSession) BargeInDeadline() int64 { return s.bargeInDeadline.Load() }
 
 // TentativeTriggerBargeIn triggers barge-in but keeps it in a pending state.
-// STT must confirm the interruption with a real transcript within the timeout;
+// STT must confirm the interruption with a real transcript within 4s;
 // otherwise the barge-in is automatically cancelled so the AI can continue.
 func (s *CallSession) TentativeTriggerBargeIn() bool {
 	if !s.TriggerBargeIn() {
 		return false
 	}
 	s.SetBargeInPending(true)
-	deadline := time.Now().Add(1500 * time.Millisecond)
+	deadline := time.Now().Add(4000 * time.Millisecond)
 	s.bargeInDeadline.Store(deadline.UnixNano())
 	go func() {
 		time.Sleep(time.Until(deadline))
@@ -449,6 +468,21 @@ func (s *CallSession) MsSinceTTSEnd() int64 {
 		return 9999
 	}
 	return (time.Now().UnixNano() - end) / int64(time.Millisecond)
+}
+
+// MarkAudioSent records the current time as when the last outbound audio frame
+// was sent. Used to extend the barge-in window past TTS synthesis end so the
+// customer can interrupt while audio is still playing on the phone.
+func (s *CallSession) MarkAudioSent() { s.lastAudioSentNano.Store(time.Now().UnixNano()) }
+
+// MsSinceAudioSent returns milliseconds since the last outbound audio frame.
+// Returns 9999 if no audio has been sent yet.
+func (s *CallSession) MsSinceAudioSent() int64 {
+	last := s.lastAudioSentNano.Load()
+	if last == 0 {
+		return 9999
+	}
+	return (time.Now().UnixNano() - last) / int64(time.Millisecond)
 }
 
 // StampTranscript records the current time as the latest transcript timestamp
@@ -563,27 +597,42 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	return snap
 }
 
-// MaxTokens returns a token budget based on transcript length, clamped
-// between 150 and 400. Roughly 20 tokens per word is used as a heuristic.
+// MaxTokens returns a token budget based on transcript length and language,
+// clamped to a sane range. Indian languages are tokenized less efficiently by
+// LLM subword tokenizers, so they get a higher multiplier and a higher cap.
 func (s *CallSession) MaxTokens(transcript string) int32 {
+	isEnglish := s.Language == "en"
+
 	if s.IsInbound {
-		words := len(strings.Fields(transcript))
-		tokens := int32(words * 34)
-		if tokens < 500 {
-			return 500
+		perWord, minTok, maxTok := int32(34), int32(500), int32(900)
+		if !isEnglish {
+			perWord = 50
+			maxTok = 1600
 		}
-		if tokens > 900 {
-			return 900
+		words := len(strings.Fields(transcript))
+		tokens := int32(words) * perWord
+		if tokens < minTok {
+			return minTok
+		}
+		if tokens > maxTok {
+			return maxTok
 		}
 		return tokens
 	}
-	words := len(strings.Fields(transcript))
-	tokens := int32(words * 20)
-	if tokens < 150 {
-		return 150
+
+	perWord, minTok, maxTok := int32(20), int32(150), int32(400)
+	if !isEnglish {
+		perWord = 30
+		minTok = 250
+		maxTok = 900
 	}
-	if tokens > 400 {
-		return 400
+	words := len(strings.Fields(transcript))
+	tokens := int32(words) * perWord
+	if tokens < minTok {
+		return minTok
+	}
+	if tokens > maxTok {
+		return maxTok
 	}
 	return tokens
 }

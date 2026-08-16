@@ -297,9 +297,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 		}
 	}
-	// BARGE-IN DISABLED — uncomment to re-enable
 	onSpeechStarted := func() {
-		sess.Log.Info("barge-in: SpeechStarted (disabled)", zap.Bool("tts_playing", sess.IsTTSPlaying()))
+		// Sarvam ASR detected the start of human speech. If a barge-in is already
+		// pending from energy VAD, confirm it immediately — Sarvam's own speech
+		// detector is a stronger signal than waiting for the first partial transcript.
+		// Otherwise try to trigger a fresh barge-in.
+		if sess.IsBargeInPending() {
+			sess.ConfirmBargeIn()
+			sess.Log.Info("barge-in: confirmed by Sarvam speech_start")
+		} else {
+			sess.TryBargeIn("SpeechStarted")
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -325,44 +333,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// g2: STT goroutine.
-		// Sarvam STT is used for Indian-language calls — it auto-detects language
-		// per utterance (te-IN, hi-IN, etc.) enabling reliable mid-call switching.
+		// Sarvam realtime STT is used for Indian-language calls — it streams
+		// audio over a WebSocket and emits partial transcripts, which let us
+		// confirm a barge-in within the first few hundred milliseconds instead
+		// of waiting for a full utterance to be POSTed to the batch API.
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
 		onLangDetected := func(transcript string, detectedLang string) {
-			if sess.IsInbound {
+			// Auto language switching is disabled. The customer must explicitly
+			// ask for a language switch (handled in onTranscript via
+			// isExplicitLangSwitch). We still log detections for debugging.
+			sess.Log.Debug("lang: detected but not auto-switching",
+				zap.String("detected", detectedLang),
+				zap.String("text", transcript))
+		}
+		onPartialTranscript := func(text string) {
+			// Partial transcripts are not sent to the LLM pipeline; they only
+			// confirm that the user's interruption was real speech. Use a
+			// stricter filter than isFillerSound so short partial words like
+			// "he" / "my" / "no" (often the beginning of a real interruption)
+			// still confirm the barge-in.
+			if isKnownFiller(text) {
+				if sess.CancelBargeIn() {
+					sess.Log.Info("barge-in: cancelled by filler partial", zap.String("text", text))
+				}
 				return
 			}
-			if detectedLang == "" || detectedLang == "od" {
-				// "od" (Odia) is a persistent Sarvam false positive for short
-				// filler syllables from te/kn/ta callers — ignore it entirely.
-				return
+			if sess.IsBargeInPending() {
+				sess.ConfirmBargeIn()
 			}
-			// Require at least 2 words before trusting Sarvam's language
-			// detection — single words like "అవును", "येस", "ம்" are too
-			// short and ambiguous, causing false cross-language switches.
-			if len(strings.Fields(transcript)) < 3 {
-				return
-			}
-			// Validate transcript script against detected language. Sarvam
-			// occasionally mis-labels similar-sounding languages (kn→ta, hi→pa,
-			// ta→ml). Since each Indian language uses a unique Unicode block,
-			// a Kannada transcript cannot contain Tamil characters — so if the
-			// script doesn't match the detected language, it's a mis-detection.
-			if !scriptMatchesLang(transcript, detectedLang) {
-				sess.Log.Debug("lang switch rejected: script mismatch",
-					zap.String("text", transcript),
-					zap.String("detected", detectedLang))
-				return
-			}
-			sess.SwitchLanguage(detectedLang)
 		}
 		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
-			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
+			sarvamClient := stt.NewSarvamRealtimeClient(h.cfg.SarvamAPIKey, h.log)
 			sarvamClient.OnTranscript = onTranscript
 			sarvamClient.OnSpeechStarted = onSpeechStarted
+			sarvamClient.OnPartialTranscript = onPartialTranscript
 			sarvamClient.OnTranscriptWithLang = onLangDetected
-			sarvamClient.CurrentLang = func() string { return sess.Language }
 			go func() {
 				defer wg.Done()
 				sarvamClient.Run(ctx, sess.AudioIn)
@@ -580,15 +586,12 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	}
 	sess.AppendMicChunk(pcm)
 	// Run VAD on every frame so the adaptive noise floor stays current.
-	// Only arm barge-in while TTS is playing or within 500ms of it ending —
-	// this is when user interruption actually matters.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
 	vadSpeech := sess.VAD.ProcessPCM(pcm)
-	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && !sess.IsBargeInPending() && vadSpeech {
-		if sess.TentativeTriggerBargeIn() {
-			sess.Log.Info("barge-in: VAD triggered (awaiting STT confirmation)",
-				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
-		}
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
 	}
 	select {
 	case sess.AudioIn <- pcm:
@@ -1043,14 +1046,12 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	}
 	sess.AppendMicChunk(pcm)
 	// Run VAD on every frame so the adaptive noise floor stays current.
-	// Only arm barge-in while TTS is playing or within 500ms of it ending.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
 	vadSpeech := sess.VAD.ProcessPCM(pcm)
-	recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	if recentTTS && !sess.IsBargeInActive() && !sess.IsBargeInPending() && vadSpeech {
-		if sess.TentativeTriggerBargeIn() {
-			sess.Log.Info("barge-in: VAD triggered (awaiting STT confirmation)",
-				zap.Float64("noise_floor", sess.VAD.NoiseFloor()))
-		}
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
 	}
 	select {
 	case sess.AudioIn <- pcm:

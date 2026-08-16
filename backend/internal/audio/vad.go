@@ -17,14 +17,17 @@ const (
 	//   - zeroCrossingRate in [vadMinZCR, vadMaxZCR] (speech vs tonal/hiss noise)
 	// After that, vadSpeechHangover consecutive speech frames are required before
 	// declaring speech onset, which rejects impulse clicks.
-	vadMinEnergy       = 100.0  // int16 RMS
+	// Tuned to reject impulsive noise (clicks, keyboard taps, line pops) while
+	// still catching normal telephony speech. If you need higher sensitivity for
+	// very quiet speakers, lower vadMinEnergy / vadMinSNR / vadSpeechHangover.
+	vadMinEnergy       = 250.0 // int16 RMS — quiet background sits below this
 	vadMinSNR          = 12.0  // linear ratio (~21 dB above estimated noise)
 	vadMinZCR          = 5      // per 20 ms frame
-	vadMaxZCR          = 60     // per 20 ms frame
-	vadSpeechHangover  = 3      // 60 ms of continuous speech
-	vadSilenceHangover = 25     // 500 ms before clearing speech state
-	vadNoiseAlpha      = 0.95   // EMA weight for noise-floor updates
-	vadMinNoiseFloor   = 50.0   // prevents division by zero / underwater floors
+	vadMaxZCR          = 50    // per 20 ms frame; clicks/hiss usually exceed this
+	vadSpeechHangover  = 5     // 100 ms of continuous speech — rejects single pops
+	vadSilenceHangover = 25    // 500 ms before clearing speech state
+	vadNoiseAlpha      = 0.90  // EMA weight for noise-floor updates (faster adaptation)
+	vadMinNoiseFloor   = 50.0  // prevents division by zero / underwater floors
 )
 
 // VAD is a lightweight, pure-Go voice-activity detector for 8 kHz 16-bit PCM.
