@@ -411,6 +411,32 @@ func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 {
+		ac := getAuth(r)
+		campaign, err := s.db.GetCampaignByID(campaignID)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLead: campaign", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if campaign == nil || campaign.OrgID != ac.OrgID || !s.canViewCampaign(ac, campaignID) || !s.canAccessCampaignLead(ac, campaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+		lead, err := s.db.GetLeadByID(id)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLead: lead", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if lead == nil || lead.OrgID != ac.OrgID {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, lead)
+		return
+	}
 	lead := s.requireLeadAccess(w, r, id)
 	if lead == nil {
 		return

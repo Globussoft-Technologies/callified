@@ -383,12 +383,24 @@ export default function CampaignDetail({
   const canExportLeads = hasPermission('crm.export');
   const canAssignLeads = hasPermission('crm.assign');
   const canEditCampaign = hasPermission('campaigns.edit');
-  const canMakeCalls = hasPermission('calls.make');
+  const canUseLegacyCalls = hasPermission('calls.make');
+  const canDial = canUseLegacyCalls || hasPermission('calls.dial');
+  const canDialAll = canUseLegacyCalls || hasPermission('calls.dial_all');
+  const canBrowserCall = canUseLegacyCalls || hasPermission('calls.browser_call');
+  const canAutoDial = canUseLegacyCalls || hasPermission('calls.auto_dial');
+  const canMakeCalls = canDial || canDialAll || canBrowserCall || canAutoDial;
   const canScheduleCalls = hasPermission('calls.schedule');
   const canViewTranscripts = hasPermission('calls.transcripts');
   const canViewRecordings = hasPermission('calls.recordings');
   const canViewReports = hasPermission('reports.view');
   const canSaveVoiceSettings = hasPermission('voice_settings.save');
+  const currentExecutiveLabel = currentUser?.full_name || currentUser?.name || currentUser?.email || 'You';
+  const executiveNameForLead = (lead) => {
+    const assigned = executives.find(e => String(e.id) === String(lead.executive_id));
+    if (assigned) return assigned.name || assigned.full_name || assigned.email;
+    if (isExecutive(currentUser?.role)) return currentExecutiveLabel;
+    return '— Unassigned —';
+  };
   // Only Executives are restricted from changing the per-machine browser call account;
   // Admins/Agents can always change it, and Executives can if granted the permission.
   const canChangeBrowserCallAccount = !isExecutive(currentUser?.role) || hasPermission('calls.browser_call_account');
@@ -415,8 +427,8 @@ export default function CampaignDetail({
   // ── Bulk executive assignment state ─────────────────────────────────────────
   const [bulkSelectedIds, setBulkSelectedIds] = useState(new Set());
   const [bulkSelectAll, setBulkSelectAll] = useState(false);
-  const [bulkExecutiveId, setBulkExecutiveId] = useState('');
   const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [showBulkAssignMenu, setShowBulkAssignMenu] = useState(false);
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
@@ -501,7 +513,6 @@ export default function CampaignDetail({
     setScheduleTo('');
     setCurrentPage(1);
     setBulkSelectedIds(new Set());
-    setBulkExecutiveId('');
   }, [selectedCampaign?.id, setDetailExecutiveFilter]);
 
   useEffect(() => {
@@ -536,8 +547,8 @@ export default function CampaignDetail({
   // span shifting result sets.
   useEffect(() => {
     setBulkSelectedIds(new Set());
-    setBulkExecutiveId('');
     setBulkSelectAll(false);
+    setShowBulkAssignMenu(false);
   }, [leadSearch, execFilter, scheduleFrom, scheduleTo, currentPage]);
 
   const totalPages = Math.ceil(campaignLeadsTotal / PAGE_SIZE);
@@ -577,14 +588,15 @@ export default function CampaignDetail({
 
   const clearBulkSelection = () => {
     setBulkSelectedIds(new Set());
-    setBulkExecutiveId('');
     setBulkSelectAll(false);
+    setShowBulkAssignMenu(false);
   };
 
-  const handleBulkAssignExecutive = async () => {
-    if (!currentCampaignId || (!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId) return;
-    const execId = parseInt(bulkExecutiveId, 10);
-    if (!execId || isNaN(execId)) {
+  const handleBulkAssignExecutive = async (executiveValue) => {
+    if (!currentCampaignId || (!bulkSelectAll && bulkSelectedIds.size === 0) || !executiveValue) return;
+    const isUnassign = executiveValue === 'clear' || executiveValue === 'remove';
+    const execId = isUnassign ? 0 : parseInt(executiveValue, 10);
+    if (!isUnassign && (!execId || isNaN(execId))) {
       toast('Please select an executive');
       return;
     }
@@ -602,7 +614,8 @@ export default function CampaignDetail({
       if (!res.ok) {
         throw new Error(data.error || `Failed to assign executive (${res.status})`);
       }
-      toast(`Executive assigned to ${bulkSelectAll ? campaignLeadsTotal : data.updated || bulkSelectedIds.size} lead(s)`);
+      const affected = bulkSelectAll ? campaignLeadsTotal : data.updated || bulkSelectedIds.size;
+      toast(isUnassign ? `${affected} lead(s) assignment cleared` : `Executive assigned to ${affected} lead(s)`);
       clearBulkSelection();
       fetchCampaignLeads(currentCampaignId);
     } catch (err) {
@@ -887,6 +900,24 @@ export default function CampaignDetail({
     setShowDispositionModal(true);
   }, [toast, triggerBrowserCall, selectedCampaign.id, effectiveBrowserAccountId]);
 
+  const startNextAutoDialLead = useCallback(async (startIdx) => {
+    for (let i = startIdx; i < autoDialQueueRef.current.length; i += 1) {
+      const id = autoDialQueueRef.current[i];
+      const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
+      if (!lead) continue;
+      const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
+      if (started) {
+        setAutoDialActiveId(lead.id);
+        return true;
+      }
+    }
+    toast('Auto dial complete');
+    setAutoDialEnabled(false);
+    setAutoDialActiveId(null);
+    setAutoDialQueue([]);
+    return false;
+  }, [advanceAutoDial, effectiveBrowserAccountId, selectedCampaign.id, toast, triggerBrowserCall]);
+
   const saveDispositionAndAdvance = useCallback(async (stopAfterSave) => {
     if (!dispositionLead) return;
     if (!dispositionStatus.trim()) {
@@ -933,12 +964,10 @@ export default function CampaignDetail({
 
     // Advance to the next lead only after the browser can place the call.
     setTimeout(async () => {
-      const started = await triggerBrowserCall(dispositionNextLead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
-      if (started) {
-        setAutoDialActiveId(dispositionNextLead.id);
-      }
+      const nextIdx = autoDialQueueRef.current.indexOf(dispositionNextLead.id);
+      await startNextAutoDialLead(nextIdx >= 0 ? nextIdx : 0);
     }, 400);
-  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, triggerBrowserCall, advanceAutoDial, effectiveBrowserAccountId, toast]);
+  }, [dispositionLead, dispositionStatus, dispositionRemarks, dispositionFollowUpAt, dispositionNextLead, apiFetch, API_URL, selectedCampaign.id, fetchCampaignLeads, startNextAutoDialLead, toast]);
 
   const startBrowserCallWithAutoDial = async (lead) => {
     if (!requireSelectedDialAccount()) return;
@@ -1605,7 +1634,7 @@ export default function CampaignDetail({
           }}>
           ⬇ Export
         </button>}
-        {!hideAiFeatures && canMakeCalls && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
+        {!hideAiFeatures && canDialAll && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
           <button style={{ ...btnPrimary, background: T.green }}
             onClick={async () => {
               if (!requireSelectedDialAccount()) return;
@@ -1622,7 +1651,7 @@ export default function CampaignDetail({
             📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        {!hideAiFeatures && canMakeCalls && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && canDialAll && <button style={{ ...btnPrimary, background: '#7c3aed' }}
           onClick={async () => {
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
@@ -1636,7 +1665,7 @@ export default function CampaignDetail({
           }}>
           📞 Dial All ({campaignLeads.length})
         </button>}
-        {selectedCampaign.channel !== 'whatsapp' && canMakeCalls && visibleCallActions.browserCall && (
+        {selectedCampaign.channel !== 'whatsapp' && canAutoDial && canBrowserCall && visibleCallActions.browserCall && (
           <button
             style={{
               ...btnPrimary,
@@ -1658,6 +1687,115 @@ export default function CampaignDetail({
             title={autoDialActiveId ? 'Stop auto-dialing' : 'After a browser call ends, automatically dial the next filtered lead'}>
             {autoDialActiveId ? '⏹ Stop Auto Dial' : autoDialEnabled ? '⏸ Auto Dial On' : '▶ Auto Dial'}
           </button>
+        )}
+        {detailTab === 'leads' && canAssignLeads && !autoDialEnabled && (
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {(bulkSelectedIds.size > 0 || bulkSelectAll) && (
+              <span style={{ fontSize: 12, fontWeight: 700, color: T.sub, whiteSpace: 'nowrap' }}>
+                {bulkSelectAll ? `${campaignLeadsTotal} selected` : `${bulkSelectedIds.size} selected`}
+              </span>
+            )}
+            {bulkSelectedIds.size > 0 && !bulkSelectAll && campaignLeadsTotal > paginatedLeads.length && (
+              <button
+                onClick={selectAllCampaign}
+                disabled={bulkAssigning}
+                style={{ ...btnGhost, fontSize: 12, padding: '8px 10px', color: T.accent, borderColor: T.accent }}
+              >
+                Select all {campaignLeadsTotal}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (bulkSelectedIds.size === 0 && !bulkSelectAll) return;
+                setShowBulkAssignMenu(v => !v);
+              }}
+              disabled={bulkAssigning || (bulkSelectedIds.size === 0 && !bulkSelectAll)}
+              style={{
+                ...btnPrimary,
+                background: T.accent,
+                opacity: (bulkAssigning || (bulkSelectedIds.size === 0 && !bulkSelectAll)) ? 0.55 : 1,
+                cursor: (bulkAssigning || (bulkSelectedIds.size === 0 && !bulkSelectAll)) ? 'not-allowed' : 'pointer',
+              }}
+              title={(bulkSelectedIds.size === 0 && !bulkSelectAll) ? 'Select leads first' : 'Assign selected leads to an executive'}
+            >
+              {bulkAssigning ? 'Assigning...' : 'Assign Executive ▾'}
+            </button>
+            {showBulkAssignMenu && (
+              <div style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                left: 0,
+                zIndex: 60,
+                minWidth: 230,
+                maxHeight: 280,
+                overflowY: 'auto',
+                background: '#fff',
+                border: `1px solid ${T.border}`,
+                borderRadius: 8,
+                boxShadow: '0 14px 36px rgba(15, 23, 42, 0.18)',
+                padding: 6,
+              }}>
+                {executives.length === 0 && (
+                  <div style={{ padding: '9px 10px', fontSize: 13, color: T.muted }}>No executives found</div>
+                )}
+                {executives.map(e => (
+                  <button
+                    key={e.id}
+                    type="button"
+                    onClick={() => handleBulkAssignExecutive(String(e.id))}
+                    style={{
+                      width: '100%',
+                      display: 'block',
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '9px 10px',
+                      color: T.text,
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontFamily: T.font,
+                    }}
+                  >
+                    {e.name || e.full_name || e.email || `Executive ${e.id}`}
+                  </button>
+                ))}
+                <div style={{ height: 1, background: T.border, margin: '6px 0' }} />
+                <button
+                  type="button"
+                  onClick={() => handleBulkAssignExecutive('clear')}
+                  style={{
+                    width: '100%',
+                    display: 'block',
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '9px 10px',
+                    color: T.red,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: T.font,
+                  }}
+                >
+                  Clear Assignment
+                </button>
+              </div>
+            )}
+            {(bulkSelectedIds.size > 0 || bulkSelectAll) && (
+              <button
+                type="button"
+                onClick={clearBulkSelection}
+                disabled={bulkAssigning}
+                style={{ ...btnGhost, opacity: bulkAssigning ? 0.65 : 1 }}
+              >
+                Clear selection
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -2145,58 +2283,6 @@ export default function CampaignDetail({
         </div>
       )}
 
-      {/* Bulk executive assignment bar */}
-      {detailTab === 'leads' && canAssignLeads && campaignLeadsTotal > 0 && !autoDialEnabled && (
-        <div style={{ ...card, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
-            {bulkSelectAll
-              ? `${campaignLeadsTotal} leads selected (all in campaign)`
-              : bulkSelectedIds.size > 0
-                ? `${bulkSelectedIds.size} selected`
-                : 'Select leads to assign executive'}
-          </span>
-          {bulkSelectedIds.size > 0 && !bulkSelectAll && campaignLeadsTotal > paginatedLeads.length && (
-            <button
-              onClick={selectAllCampaign}
-              disabled={bulkAssigning}
-              style={{ ...btnGhost, fontSize: 12, padding: '4px 10px', color: T.accent, borderColor: T.accent }}
-            >
-              Select all {campaignLeadsTotal} leads in this campaign
-            </button>
-          )}
-          <select
-            className="form-input"
-            value={bulkExecutiveId}
-            onChange={e => setBulkExecutiveId(e.target.value)}
-            disabled={(bulkSelectedIds.size === 0 && !bulkSelectAll) || bulkAssigning}
-            style={{ ...inputStyle, height: 34, fontSize: 13, padding: '4px 10px', minWidth: 180, background: '#fff' }}
-          >
-            <option value="">— Select Executive —</option>
-            {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-          <button
-            onClick={handleBulkAssignExecutive}
-            disabled={(!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning}
-            style={{
-              ...btnPrimary,
-              opacity: ((!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning) ? 0.6 : 1,
-              cursor: ((!bulkSelectAll && bulkSelectedIds.size === 0) || !bulkExecutiveId || bulkAssigning) ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {bulkAssigning ? 'Assigning...' : 'Assign Executive'}
-          </button>
-          {(bulkSelectedIds.size > 0 || bulkSelectAll) && (
-            <button
-              onClick={clearBulkSelection}
-              disabled={bulkAssigning}
-              style={{ ...btnGhost, opacity: bulkAssigning ? 0.6 : 1 }}
-            >
-              Clear selection
-            </button>
-          )}
-        </div>
-      )}
-
       {/* Leads Table */}
       {detailTab === 'leads' && (
         <div style={{ ...card, overflowX: 'auto' }}>
@@ -2296,7 +2382,7 @@ export default function CampaignDetail({
                         <option value="">— Unassigned —</option>
                         {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                       </select> : (
-                        executives.find(e => String(e.id) === String(lead.executive_id))?.name || '— Unassigned —'
+                        executiveNameForLead(lead)
                       )}
                     </td>
                     <td style={tdStyle}>
@@ -2313,7 +2399,7 @@ export default function CampaignDetail({
                           style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
                           ✏️ Edit
                         </button>}
-                        {canMakeCalls && visibleCallActions.dial && (
+                        {canDial && visibleCallActions.dial && (
                           <button
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
@@ -2340,7 +2426,7 @@ export default function CampaignDetail({
                             📲 Manual Call
                           </button>
                         )} */}
-                        {canMakeCalls && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
+                        {canBrowserCall && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
                           <button
                             onClick={() => startBrowserCallWithAutoDial(lead)}
                             disabled={browserCallDialing || browserCallLead != null}
@@ -2372,7 +2458,7 @@ export default function CampaignDetail({
                             {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
                           </button>
                         )}
-                        {canMakeCalls && visibleCallActions.simWebCall && (
+                        {canBrowserCall && visibleCallActions.simWebCall && (
                           <button
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}

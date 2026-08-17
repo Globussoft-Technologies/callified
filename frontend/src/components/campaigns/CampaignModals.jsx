@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -33,6 +34,8 @@ export default function CampaignModals({
   setCreateError,
 }) {
   const hideAiFeatures = useHideAiFeatures();
+  const toast = useToast();
+  const csvInputRef = useRef(null);
   const [nameTouched, setNameTouched] = useState(false);
   const [addLeadsError, setAddLeadsError] = useState('');
   const nameError = validateCampaignName(createForm.name);
@@ -442,9 +445,39 @@ export default function CampaignModals({
               </div>
             )}
 
-            <input type="file" accept=".csv" key={csvFile ? csvFile.name : 'empty'}
-              onChange={e => { setCsvFile(e.target.files[0]); if (setCsvImportResult) setCsvImportResult(null); }}
-              style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
+            <div style={{marginBottom: '1rem'}}>
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv"
+                onChange={e => { setCsvFile(e.target.files?.[0] || null); if (setCsvImportResult) setCsvImportResult(null); }}
+                style={{position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none'}}
+              />
+              <div style={{display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap'}}>
+                <button
+                  type="button"
+                  onClick={() => csvInputRef.current?.click()}
+                  style={{
+                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)',
+                    color: '#e2e8f0', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
+                    fontSize: '0.85rem', fontWeight: 600,
+                  }}>
+                  Choose CSV
+                </button>
+                <span style={{
+                  color: csvFile ? '#334155' : '#94a3b8',
+                  background: csvFile ? 'rgba(99,102,241,0.08)' : 'transparent',
+                  border: csvFile ? '1px solid rgba(99,102,241,0.18)' : '1px solid transparent',
+                  borderRadius: '8px',
+                  padding: csvFile ? '7px 10px' : 0,
+                  fontSize: '0.85rem',
+                  fontWeight: csvFile ? 700 : 500,
+                  wordBreak: 'break-all',
+                }}>
+                  {csvFile ? csvFile.name : 'No file selected'}
+                </span>
+              </div>
+            </div>
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
               <button onClick={closeCsvImportModal}
                 style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
@@ -587,7 +620,11 @@ export default function CampaignModals({
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
-                if (!isValidPhone(editForm.phone || '')) { alert(PHONE_VALIDATION_MESSAGE); return; }
+                if (!isValidPhone(editForm.phone || '')) {
+                  setEditErrors(prev => ({...prev, phone: PHONE_VALIDATION_MESSAGE}));
+                  toast(PHONE_VALIDATION_MESSAGE, 'error');
+                  return;
+                }
                 handleSaveEdit();
               }}>Save</button>
             </div>

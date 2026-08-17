@@ -49,6 +49,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [resetMember, setResetMember] = useState(null);
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [showInvitePassword, setShowInvitePassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetError, setResetError] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [permissionMember, setPermissionMember] = useState(null);
@@ -471,6 +474,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
     if (resetLoading) return;
     setResetMember(null);
     setResetForm({ password: '', confirm: '' });
+    setShowResetPassword(false);
+    setShowResetConfirm(false);
     setResetError('');
   };
 
@@ -594,10 +599,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
                   style={inputStyle}
                 />
-                <input
-                  placeholder="Password" type="password" required value={inviteForm.password}
+                <PasswordInput
+                  placeholder="Password"
+                  required
+                  value={inviteForm.password}
                   onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
-                  style={inputStyle}
+                  visible={showInvitePassword}
+                  onToggle={() => setShowInvitePassword(v => !v)}
                 />
                 <select
                   value={inviteForm.role}
@@ -651,16 +659,22 @@ export default function TeamPage({ apiFetch, API_URL }) {
             </p>
             <form onSubmit={handleResetPassword}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <input
-                  placeholder="New password" type="password" required value={resetForm.password}
+                <PasswordInput
+                  placeholder="New password"
+                  required
+                  value={resetForm.password}
                   onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
-                  style={inputStyle}
+                  visible={showResetPassword}
+                  onToggle={() => setShowResetPassword(v => !v)}
                   autoFocus
                 />
-                <input
-                  placeholder="Confirm password" type="password" required value={resetForm.confirm}
+                <PasswordInput
+                  placeholder="Confirm password"
+                  required
+                  value={resetForm.confirm}
                   onChange={e => setResetForm({ ...resetForm, confirm: e.target.value })}
-                  style={inputStyle}
+                  visible={showResetConfirm}
+                  onToggle={() => setShowResetConfirm(v => !v)}
                 />
                 {resetError && (
                   <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
@@ -1082,6 +1096,59 @@ export default function TeamPage({ apiFetch, API_URL }) {
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+function PasswordInput({ value, onChange, visible, onToggle, placeholder, required = false, autoFocus = false }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        placeholder={placeholder}
+        type={visible ? 'text' : 'password'}
+        required={required}
+        value={value}
+        onChange={onChange}
+        style={{ ...inputStyle, paddingRight: 42 }}
+        autoFocus={autoFocus}
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        title={visible ? 'Hide password' : 'Show password'}
+        style={{
+          position: 'absolute',
+          right: 8,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          width: 28,
+          height: 28,
+          border: 'none',
+          borderRadius: 6,
+          background: 'transparent',
+          color: T.muted,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+        }}
+      >
+        {visible ? (
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M9.9 5.2A9.7 9.7 0 0 1 12 5c5.2 0 8.5 4.5 9.5 6.3a1.4 1.4 0 0 1 0 1.4 16 16 0 0 1-2.1 2.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M6.6 6.8a16.2 16.2 0 0 0-4.1 4.5 1.4 1.4 0 0 0 0 1.4C3.5 14.5 6.8 19 12 19c1.4 0 2.7-.3 3.8-.9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M2.5 11.3C3.5 9.5 6.8 5 12 5s8.5 4.5 9.5 6.3a1.4 1.4 0 0 1 0 1.4C20.5 14.5 17.2 19 12 19s-8.5-4.5-9.5-6.3a1.4 1.4 0 0 1 0-1.4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }

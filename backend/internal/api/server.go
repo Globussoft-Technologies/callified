@@ -379,7 +379,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/users/{id}/provider-accounts/{account_id}", auth(s.deleteUserProviderAccount))
 
 	// ── Executives ────────────────────────────────────────────────────────────
-	mux.HandleFunc("GET /api/executives", s.requireAdminPermission("executives.manage")(s.listExecutives))
+	mux.HandleFunc("GET /api/executives", auth(s.listExecutives))
 	mux.HandleFunc("POST /api/executives", s.requireAdminPermission("executives.manage")(s.createExecutive))
 	mux.HandleFunc("PUT /api/executives/{id}", s.requireAdminPermission("executives.manage")(s.updateExecutive))
 	mux.HandleFunc("DELETE /api/executives/{id}", s.requireAdminPermission("executives.manage")(s.deleteExecutive))
@@ -439,13 +439,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /mobile/leads/{id}/transcripts", auth(s.getLeadTranscripts))
 
 	// ── Dial ──────────────────────────────────────────────────────────────────
-	// Single-lead dial stays open so a CRM agent can place calls to their
-	// own leads. Bulk dial (dial-all, redial-failed) and the unrestricted
-	// manual-call endpoint are Admin-only — they can fan out calls to many
-	// numbers and have direct billing/reputation impact.
+	// Single and bulk campaign dial actions are permission-gated in their
+	// handlers. Scoped users only reach campaign leads they can access.
 	mux.HandleFunc("POST /api/dial/{lead_id}", auth(s.dialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", adminOrAgent(s.campaignDialLead))
-	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminOrAgent(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
 	mux.HandleFunc("POST /api/manual-call", adminOrAgent(s.manualCall))
 

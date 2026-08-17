@@ -117,13 +117,17 @@ var permissionCatalog = []permissionDefinition{
 	{Key: "crm.delete", Module: "CRM Leads", Label: "Delete leads", Action: "Can delete", Description: "Remove leads from the organization.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "crm.import", Module: "CRM Leads", Label: "Import leads", Action: "Can import", Description: "Bulk import leads using CSV.", Roles: []string{db.RoleAdmin}},
 	{Key: "crm.export", Module: "CRM Leads", Label: "Export leads", Action: "Can export", Description: "Download lead lists as CSV.", Roles: []string{db.RoleAdmin}},
-	{Key: "crm.assign", Module: "CRM Leads", Label: "Assign leads", Action: "Can assign", Description: "Assign campaign leads to executives.", Roles: []string{db.RoleAdmin}},
+	{Key: "crm.assign", Module: "CRM Leads", Label: "Assign leads", Action: "Can assign", Description: "Assign campaign leads to executives.", Roles: []string{db.RoleAdmin, db.RoleAgent}},
 	{Key: "campaigns.view", Module: "Campaigns", Label: "View campaigns", Action: "Can see", Description: "See campaigns within the user's allowed scope.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "campaigns.create", Module: "Campaigns", Label: "Create campaigns", Action: "Can create", Description: "Create new campaigns.", Roles: []string{db.RoleAdmin}},
 	{Key: "campaigns.edit", Module: "Campaigns", Label: "Edit campaigns", Action: "Can edit", Description: "Modify campaign details and settings.", Roles: []string{db.RoleAdmin}},
 	{Key: "campaigns.delete", Module: "Campaigns", Label: "Delete campaigns", Action: "Can delete", Description: "Remove campaigns.", Roles: []string{db.RoleAdmin}},
 	{Key: "campaigns.assign_users", Module: "Campaigns", Label: "Assign users", Action: "Can assign", Description: "Assign users or executives to campaigns.", Roles: []string{db.RoleAdmin}},
-	{Key: "calls.make", Module: "Calls", Label: "Make calls", Action: "Can call", Description: "Start outbound calls for allowed campaign leads.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "calls.make", Module: "Calls", Label: "Make calls (legacy)", Action: "Can call", Description: "Legacy permission that allows all call actions. Kept for existing users.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "calls.dial", Module: "Calls", Label: "Dial", Action: "Can dial", Description: "Show and use the single-lead Dial button.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "calls.dial_all", Module: "Calls", Label: "Dial All", Action: "Can bulk dial", Description: "Show and use Dial All / Dial All New campaign actions.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "calls.browser_call", Module: "Calls", Label: "Browser Call", Action: "Can browser call", Description: "Show and use Browser Call from campaign leads.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
+	{Key: "calls.auto_dial", Module: "Calls", Label: "Auto Dial", Action: "Can auto dial", Description: "Show and use browser Auto Dial.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "calls.schedule", Module: "Calls", Label: "Schedule calls", Action: "Can schedule", Description: "Create scheduled calls for allowed campaign leads.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "calls.transcripts", Module: "Calls", Label: "View transcripts", Action: "Can see", Description: "Open call transcripts within the user's scope.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
 	{Key: "calls.recordings", Module: "Calls", Label: "View recordings", Action: "Can see", Description: "Open call recordings within the user's scope.", Roles: []string{db.RoleAdmin, db.RoleAgent, db.RoleExecutive}},
@@ -236,7 +240,24 @@ func (s *Server) effectivePermissionsForAuth(ac AuthClaims) ([]string, string, b
 	} else {
 		perms = filterPermissionsForRole(user.Role, perms)
 	}
+	if user.Role == db.RoleAgent && !hasPermissionKey(perms, "crm.assign") {
+		perms = append(perms, "crm.assign")
+	}
+	perms = expandLegacyCallPermissions(perms)
 	return perms, user.Role, custom, nil
+}
+
+func expandLegacyCallPermissions(perms []string) []string {
+	if !hasPermissionKey(perms, "calls.make") {
+		return perms
+	}
+	expanded := []string{"calls.dial", "calls.dial_all", "calls.browser_call", "calls.auto_dial", "calls.schedule"}
+	for _, key := range expanded {
+		if !hasPermissionKey(perms, key) {
+			perms = append(perms, key)
+		}
+	}
+	return perms
 }
 
 func hasPermissionKey(perms []string, key string) bool {
@@ -256,10 +277,37 @@ func (s *Server) authHasPermission(ac AuthClaims, key string) (bool, error) {
 	return hasPermissionKey(perms, key), nil
 }
 
+func (s *Server) authHasAnyPermission(ac AuthClaims, keys ...string) (bool, error) {
+	perms, _, _, err := s.effectivePermissionsForAuth(ac)
+	if err != nil {
+		return false, err
+	}
+	for _, key := range keys {
+		if hasPermissionKey(perms, key) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Server) requirePermission(w http.ResponseWriter, r *http.Request, key string) bool {
 	ok, err := s.authHasPermission(getAuth(r), key)
 	if err != nil {
 		s.logger.Sugar().Errorw("requirePermission", "permission", key, "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "permission denied")
+		return false
+	}
+	return true
+}
+
+func (s *Server) requireAnyPermission(w http.ResponseWriter, r *http.Request, keys ...string) bool {
+	ok, err := s.authHasAnyPermission(getAuth(r), keys...)
+	if err != nil {
+		s.logger.Sugar().Errorw("requireAnyPermission", "permissions", keys, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return false
 	}

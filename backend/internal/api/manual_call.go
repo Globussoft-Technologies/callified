@@ -77,6 +77,12 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mode must be 'dial' or 'web-sim'")
 		return
 	}
+	if mode == "dial" && !s.requireAnyPermission(w, r, "calls.dial", "calls.make") {
+		return
+	}
+	if mode == "web-sim" && !s.requireAnyPermission(w, r, "calls.browser_call", "calls.make") {
+		return
+	}
 
 	ac := getAuth(r)
 	interest := body.Interest

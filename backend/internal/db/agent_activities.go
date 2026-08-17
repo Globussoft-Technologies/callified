@@ -477,7 +477,30 @@ func (d *DB) GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64
 	rows, err := d.pool.Query(fmt.Sprintf(`
 		SELECT
 			l.id, l.org_id, l.first_name, COALESCE(l.last_name, ''), l.phone,
-			COALESCE(l.source, ''), COALESCE(l.status, 'new'), COALESCE(l.follow_up_note, ''),
+			COALESCE(l.source, ''),
+			COALESCE((
+				SELECT CASE LOWER(COALESCE(cl.status, ''))
+					WHEN 'completed' THEN 'Completed'
+					WHEN 'answered' THEN 'Connected'
+					WHEN 'connected' THEN 'Connected'
+					WHEN 'no-answer' THEN 'No Answer'
+					WHEN 'no_answer' THEN 'No Answer'
+					WHEN 'busy' THEN 'Busy'
+					WHEN 'failed' THEN 'Failed'
+					WHEN 'cancelled' THEN 'Cancelled'
+					WHEN 'dialing' THEN 'Calling'
+					WHEN 'initiated' THEN 'Calling'
+					ELSE NULL
+				END
+				FROM call_logs cl
+				WHERE cl.org_id = l.org_id
+				  AND cl.lead_id = l.id
+				  AND COALESCE(cl.campaign_id, 0) = c.id
+				  AND COALESCE(cl.status, '') != ''
+				ORDER BY cl.created_at DESC, cl.id DESC
+				LIMIT 1
+			), CASE WHEN LOWER(COALESCE(l.status, '')) = 'calling' THEN 'None' ELSE COALESCE(l.status, 'new') END),
+			COALESCE(l.follow_up_note, ''),
 			COALESCE(l.follow_up_at, ''),
 			COALESCE(l.interest, ''), COALESCE(l.company, ''), COALESCE(l.external_id, ''),
 			COALESCE(l.crm_provider, ''), COALESCE(l.executive_id, 0),

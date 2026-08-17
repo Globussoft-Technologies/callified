@@ -393,7 +393,7 @@ export function CallProvider({ children }) {
   // the agent must click Start Call to connect. Everyone else just sees a reminder.
   const fetchDueManualCalls = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
+      const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true&lead_time_seconds=10`);
       if (!res.ok) return;
       const calls = await res.json();
       setDueManualCalls(calls || []);
