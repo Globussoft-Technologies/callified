@@ -101,6 +101,7 @@ function AutoDialPanel({
   autoDialUninterrupted,
   onToggleUninterrupted,
   paginatedLeads,
+  autoDialLeads,
   browserCallLead,
   browserCallDialing,
   onStart,
@@ -109,8 +110,9 @@ function AutoDialPanel({
 }) {
   if (!autoDialEnabled) return null;
 
+  const leadPool = Array.isArray(autoDialLeads) && autoDialLeads.length > 0 ? autoDialLeads : paginatedLeads;
   const queueLeads = autoDialQueue
-    .map(id => paginatedLeads.find(l => l.id === id))
+    .map(id => leadPool.find(l => l.id === id))
     .filter(Boolean);
 
   const activeLead = browserCallLead
@@ -383,11 +385,10 @@ export default function CampaignDetail({
   const canExportLeads = hasPermission('crm.export');
   const canAssignLeads = hasPermission('crm.assign');
   const canEditCampaign = hasPermission('campaigns.edit');
-  const canUseLegacyCalls = hasPermission('calls.make');
-  const canDial = canUseLegacyCalls || hasPermission('calls.dial');
-  const canDialAll = canUseLegacyCalls || hasPermission('calls.dial_all');
-  const canBrowserCall = canUseLegacyCalls || hasPermission('calls.browser_call');
-  const canAutoDial = canUseLegacyCalls || hasPermission('calls.auto_dial');
+  const canDial = hasPermission('calls.dial');
+  const canDialAll = hasPermission('calls.dial_all');
+  const canBrowserCall = hasPermission('calls.browser_call');
+  const canAutoDial = hasPermission('calls.auto_dial');
   const canMakeCalls = canDial || canDialAll || canBrowserCall || canAutoDial;
   const canScheduleCalls = hasPermission('calls.schedule');
   const canViewTranscripts = hasPermission('calls.transcripts');
@@ -426,9 +427,13 @@ export default function CampaignDetail({
   const [leadSearch, setLeadSearch] = useState('');
   // ── Bulk executive assignment state ─────────────────────────────────────────
   const [bulkSelectedIds, setBulkSelectedIds] = useState(new Set());
+  const [bulkSelectedLeads, setBulkSelectedLeads] = useState([]);
   const [bulkSelectAll, setBulkSelectAll] = useState(false);
   const [bulkAssigning, setBulkAssigning] = useState(false);
   const [showBulkAssignMenu, setShowBulkAssignMenu] = useState(false);
+  const [showBulkSelectMenu, setShowBulkSelectMenu] = useState(false);
+  const [bulkSelectLimit, setBulkSelectLimit] = useState('');
+  const [bulkSelectionLoading, setBulkSelectionLoading] = useState(false);
   const [execFilter, setExecFilter] = useState([]);
   const [showExecFilter, setShowExecFilter] = useState(false);
   const [execSearch, setExecSearch] = useState('');
@@ -449,6 +454,7 @@ export default function CampaignDetail({
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
+  const [autoDialSelectedOnly, setAutoDialSelectedOnly] = useState(false);
   // Uninterrupted mode: skip the post-call disposition modal and auto-advance
   // to the next lead until the queue is exhausted.
   const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(false);
@@ -505,6 +511,7 @@ export default function CampaignDetail({
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
+    setAutoDialSelectedOnly(false);
     setAutoDialUninterrupted(false);
     setShowDispositionModal(false);
     setDispositionLead(null);
@@ -513,6 +520,10 @@ export default function CampaignDetail({
     setScheduleTo('');
     setCurrentPage(1);
     setBulkSelectedIds(new Set());
+    setBulkSelectedLeads([]);
+    setBulkSelectAll(false);
+    setShowBulkSelectMenu(false);
+    setBulkSelectLimit('');
   }, [selectedCampaign?.id, setDetailExecutiveFilter]);
 
   useEffect(() => {
@@ -547,8 +558,10 @@ export default function CampaignDetail({
   // span shifting result sets.
   useEffect(() => {
     setBulkSelectedIds(new Set());
+    setBulkSelectedLeads([]);
     setBulkSelectAll(false);
     setShowBulkAssignMenu(false);
+    setShowBulkSelectMenu(false);
   }, [leadSearch, execFilter, scheduleFrom, scheduleTo, currentPage]);
 
   const totalPages = Math.ceil(campaignLeadsTotal / PAGE_SIZE);
@@ -568,6 +581,13 @@ export default function CampaignDetail({
       const next = new Set(prev);
       if (next.has(leadId)) next.delete(leadId);
       else next.add(leadId);
+      setBulkSelectedLeads(current => {
+        if (prev.has(leadId)) return current.filter(l => l.id !== leadId);
+        const lead = paginatedLeads.find(l => l.id === leadId);
+        if (!lead || current.some(l => l.id === leadId)) return current;
+        return [...current, lead];
+      });
+      setBulkSelectAll(false);
       return next;
     });
   };
@@ -575,21 +595,69 @@ export default function CampaignDetail({
   const selectAllVisible = (checked) => {
     if (checked) {
       setBulkSelectedIds(new Set(paginatedLeads.map(l => l.id)));
+      setBulkSelectedLeads(paginatedLeads);
     } else {
       setBulkSelectedIds(new Set());
+      setBulkSelectedLeads([]);
       setBulkSelectAll(false);
+    }
+    setShowBulkSelectMenu(false);
+  };
+
+  const fetchBulkLeadSelection = async (requestedLimit) => {
+    if (!currentCampaignId || bulkSelectionLoading) return;
+    const targetTotal = requestedLimit === 'all'
+      ? campaignLeadsTotal
+      : Math.max(0, Math.min(parseInt(requestedLimit, 10) || 0, campaignLeadsTotal));
+    if (targetTotal <= 0) {
+      toast('No leads to select');
+      return;
+    }
+    setBulkSelectionLoading(true);
+    try {
+      const batchSize = 500;
+      const selected = [];
+      let page = 1;
+      while (selected.length < targetTotal) {
+        const params = new URLSearchParams();
+        params.set('page', String(page));
+        params.set('limit', String(Math.min(batchSize, targetTotal - selected.length)));
+        if (leadSearch.trim()) params.set('search', leadSearch.trim());
+        if (execFilter?.length) params.set('executive_ids', execFilter.join(','));
+        if (scheduleFrom) params.set('scheduled_from', scheduleFrom);
+        if (scheduleTo) params.set('scheduled_to', scheduleTo);
+        const res = await apiFetch(`${API_URL}/campaigns/${currentCampaignId}/leads?${params.toString()}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Failed to select leads (${res.status})`);
+        const rows = Array.isArray(data.leads) ? data.leads : [];
+        if (rows.length === 0) break;
+        selected.push(...rows);
+        if (selected.length >= (data.total || targetTotal)) break;
+        page += 1;
+      }
+      const finalRows = selected.slice(0, targetTotal);
+      setBulkSelectedLeads(finalRows);
+      setBulkSelectedIds(new Set(finalRows.map(l => l.id)));
+      setBulkSelectAll(requestedLimit === 'all' || finalRows.length >= campaignLeadsTotal);
+      setShowBulkSelectMenu(false);
+      toast(`${finalRows.length} lead(s) selected`);
+    } catch (err) {
+      toast(err.message || 'Failed to select leads');
+    } finally {
+      setBulkSelectionLoading(false);
     }
   };
 
   const selectAllCampaign = () => {
-    setBulkSelectAll(true);
-    setBulkSelectedIds(new Set(paginatedLeads.map(l => l.id)));
+    fetchBulkLeadSelection('all');
   };
 
   const clearBulkSelection = () => {
     setBulkSelectedIds(new Set());
+    setBulkSelectedLeads([]);
     setBulkSelectAll(false);
     setShowBulkAssignMenu(false);
+    setShowBulkSelectMenu(false);
   };
 
   const handleBulkAssignExecutive = async (executiveValue) => {
@@ -630,11 +698,20 @@ export default function CampaignDetail({
   }, [currentPage, totalPages]);
 
   const paginatedLeads = campaignLeads;
+  const selectedAutoDialLeads = bulkSelectedLeads.length > 0
+    ? bulkSelectedLeads
+    : paginatedLeads.filter(l => bulkSelectedIds.has(l.id));
+  const autoDialButtonCount = !autoDialEnabled && selectedAutoDialLeads.length > 0
+    ? selectedAutoDialLeads.length
+    : 0;
 
   // Keep the auto-dial queue in sync with the current page of leads.
   useEffect(() => {
     if (!autoDialEnabled) return;
-    const ids = paginatedLeads.map(l => l.id);
+    const sourceLeads = autoDialSelectedOnly
+      ? (bulkSelectedLeads.length > 0 ? bulkSelectedLeads : paginatedLeads.filter(l => bulkSelectedIds.has(l.id)))
+      : paginatedLeads;
+    const ids = sourceLeads.map(l => l.id);
     setAutoDialQueue(prev => {
       if (autoDialActiveId && ids.includes(autoDialActiveId)) {
         const idx = ids.indexOf(autoDialActiveId);
@@ -642,7 +719,7 @@ export default function CampaignDetail({
       }
       return ids;
     });
-  }, [paginatedLeads, autoDialEnabled, autoDialActiveId]);
+  }, [paginatedLeads, bulkSelectedIds, bulkSelectedLeads, autoDialEnabled, autoDialActiveId, autoDialSelectedOnly]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -820,12 +897,14 @@ export default function CampaignDetail({
   const autoDialUninterruptedRef = useRef(autoDialUninterrupted);
   const campaignLeadsRef = useRef(campaignLeads);
   const paginatedLeadsRef = useRef(paginatedLeads);
+  const bulkSelectedLeadsRef = useRef(bulkSelectedLeads);
   useEffect(() => { autoDialEnabledRef.current = autoDialEnabled; }, [autoDialEnabled]);
   useEffect(() => { autoDialActiveIdRef.current = autoDialActiveId; }, [autoDialActiveId]);
   useEffect(() => { autoDialQueueRef.current = autoDialQueue; }, [autoDialQueue]);
   useEffect(() => { autoDialUninterruptedRef.current = autoDialUninterrupted; }, [autoDialUninterrupted]);
   useEffect(() => { campaignLeadsRef.current = campaignLeads; }, [campaignLeads]);
   useEffect(() => { paginatedLeadsRef.current = paginatedLeads; }, [paginatedLeads]);
+  useEffect(() => { bulkSelectedLeadsRef.current = bulkSelectedLeads; }, [bulkSelectedLeads]);
 
   const advanceAutoDial = useCallback((status, errorMsg) => {
     const terminalError = status === 'error';
@@ -834,25 +913,27 @@ export default function CampaignDetail({
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
       setAutoDialQueue([]);
+      setAutoDialSelectedOnly(false);
       return;
     }
     if (!autoDialEnabledRef.current || !autoDialActiveIdRef.current) return;
 
     // Find the lead that just finished so the agent can disposition it.
     const finishedId = autoDialActiveIdRef.current;
-    const finishedLead = campaignLeadsRef.current.find(l => l.id === finishedId) || paginatedLeadsRef.current.find(l => l.id === finishedId);
+    const finishedLead = campaignLeadsRef.current.find(l => l.id === finishedId) || paginatedLeadsRef.current.find(l => l.id === finishedId) || bulkSelectedLeadsRef.current.find(l => l.id === finishedId);
 
     // Determine the next lead in the queue (if any).
     const idx = autoDialQueueRef.current.indexOf(finishedId);
     const nextIdx = idx >= 0 ? idx + 1 : autoDialQueueRef.current.length;
     const nextId = autoDialQueueRef.current[nextIdx];
-    const nextLead = nextId ? (campaignLeadsRef.current.find(l => l.id === nextId) || paginatedLeadsRef.current.find(l => l.id === nextId)) : null;
+    const nextLead = nextId ? (campaignLeadsRef.current.find(l => l.id === nextId) || paginatedLeadsRef.current.find(l => l.id === nextId) || bulkSelectedLeadsRef.current.find(l => l.id === nextId)) : null;
 
     if (!finishedLead) {
       toast('Auto dial stopped: lead not found');
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
       setAutoDialQueue([]);
+      setAutoDialSelectedOnly(false);
       return;
     }
 
@@ -863,7 +944,7 @@ export default function CampaignDetail({
         setTimeout(async () => {
           for (let i = nextIdx; i < autoDialQueueRef.current.length; i += 1) {
             const id = autoDialQueueRef.current[i];
-            const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
+            const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id) || bulkSelectedLeadsRef.current.find(l => l.id === id);
             if (!lead) continue;
             const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
             if (started) {
@@ -875,6 +956,7 @@ export default function CampaignDetail({
           setAutoDialEnabled(false);
           setAutoDialActiveId(null);
           setAutoDialQueue([]);
+          setAutoDialSelectedOnly(false);
         }, terminalError ? 800 : 400);
         return;
       }
@@ -882,6 +964,7 @@ export default function CampaignDetail({
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
       setAutoDialQueue([]);
+      setAutoDialSelectedOnly(false);
       return;
     }
 
@@ -903,7 +986,7 @@ export default function CampaignDetail({
   const startNextAutoDialLead = useCallback(async (startIdx) => {
     for (let i = startIdx; i < autoDialQueueRef.current.length; i += 1) {
       const id = autoDialQueueRef.current[i];
-      const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id);
+      const lead = campaignLeadsRef.current.find(l => l.id === id) || paginatedLeadsRef.current.find(l => l.id === id) || bulkSelectedLeadsRef.current.find(l => l.id === id);
       if (!lead) continue;
       const started = await triggerBrowserCall(lead, selectedCampaign.id, advanceAutoDial, effectiveBrowserAccountId);
       if (started) {
@@ -915,6 +998,7 @@ export default function CampaignDetail({
     setAutoDialEnabled(false);
     setAutoDialActiveId(null);
     setAutoDialQueue([]);
+    setAutoDialSelectedOnly(false);
     return false;
   }, [advanceAutoDial, effectiveBrowserAccountId, selectedCampaign.id, toast, triggerBrowserCall]);
 
@@ -954,6 +1038,7 @@ export default function CampaignDetail({
       setAutoDialEnabled(false);
       setAutoDialActiveId(null);
       setAutoDialQueue([]);
+      setAutoDialSelectedOnly(false);
       if (dispositionNextLead) {
         toast('Auto dial stopped');
       } else {
@@ -974,7 +1059,10 @@ export default function CampaignDetail({
     const started = await triggerBrowserCall(lead, selectedCampaign.id, autoDialEnabled ? advanceAutoDial : undefined, effectiveBrowserAccountId);
     if (started && autoDialEnabled) {
       setAutoDialActiveId(lead.id);
-      const ids = paginatedLeads.map(l => l.id);
+      const queueSource = autoDialSelectedOnly
+        ? (bulkSelectedLeads.length > 0 ? bulkSelectedLeads : paginatedLeads.filter(l => bulkSelectedIds.has(l.id)))
+        : paginatedLeads;
+      const ids = queueSource.map(l => l.id);
       const idx = ids.indexOf(lead.id);
       if (idx >= 0) {
         setAutoDialQueue([lead.id, ...ids.slice(idx + 1)]);
@@ -1676,16 +1764,25 @@ export default function CampaignDetail({
               const next = !autoDialEnabled;
               setAutoDialEnabled(next);
               if (next) {
-                setAutoDialQueue(paginatedLeads.map(l => l.id));
-                toast('Auto dial enabled. Start a browser call to begin.');
+                const queueLeads = selectedAutoDialLeads.length > 0 ? selectedAutoDialLeads : paginatedLeads;
+                setAutoDialSelectedOnly(selectedAutoDialLeads.length > 0);
+                setAutoDialQueue(queueLeads.map(l => l.id));
+                toast(selectedAutoDialLeads.length > 0
+                  ? `Auto dial enabled for ${selectedAutoDialLeads.length} selected lead(s). Start a browser call to begin.`
+                  : 'Auto dial enabled. Start a browser call to begin.');
               } else {
                 setAutoDialActiveId(null);
                 setAutoDialQueue([]);
+                setAutoDialSelectedOnly(false);
                 toast('Auto dial stopped');
               }
             }}
             title={autoDialActiveId ? 'Stop auto-dialing' : 'After a browser call ends, automatically dial the next filtered lead'}>
-            {autoDialActiveId ? '⏹ Stop Auto Dial' : autoDialEnabled ? '⏸ Auto Dial On' : '▶ Auto Dial'}
+            {autoDialActiveId
+              ? '⏹ Stop Auto Dial'
+              : autoDialEnabled
+                ? '⏸ Auto Dial On'
+                : `▶ Auto Dial${autoDialButtonCount ? ` (${autoDialButtonCount})` : ''}`}
           </button>
         )}
         {detailTab === 'leads' && canAssignLeads && !autoDialEnabled && (
@@ -1808,6 +1905,7 @@ export default function CampaignDetail({
           autoDialUninterrupted={autoDialUninterrupted}
           onToggleUninterrupted={setAutoDialUninterrupted}
           paginatedLeads={paginatedLeads}
+          autoDialLeads={autoDialSelectedOnly ? selectedAutoDialLeads : paginatedLeads}
           browserCallLead={browserCallLead}
           browserCallDialing={browserCallDialing}
           onStart={startBrowserCallWithAutoDial}
@@ -1815,6 +1913,7 @@ export default function CampaignDetail({
             setAutoDialEnabled(false);
             setAutoDialActiveId(null);
             setAutoDialQueue([]);
+            setAutoDialSelectedOnly(false);
             setAutoDialUninterrupted(false);
             toast('Auto dial stopped');
           }}
@@ -2289,13 +2388,92 @@ export default function CampaignDetail({
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {canAssignLeads && <th key="select" style={{ ...thStyle, width: 40, textAlign: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={bulkSelectAll || (paginatedLeads.length > 0 && paginatedLeads.every(l => bulkSelectedIds.has(l.id)))}
-                    onChange={e => selectAllVisible(e.target.checked)}
-                    style={{ width: 16, height: 16, accentColor: T.accent, cursor: 'pointer' }}
-                  />
+                {canAssignLeads && <th key="select" style={{ ...thStyle, width: 52, textAlign: 'center', position: 'relative' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowBulkSelectMenu(v => !v)}
+                    title="Bulk select leads"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 7,
+                      border: `1px solid ${(bulkSelectedIds.size > 0 || bulkSelectAll) ? T.accent : T.border}`,
+                      background: (bulkSelectedIds.size > 0 || bulkSelectAll) ? 'rgba(99,102,241,0.12)' : '#fff',
+                      color: (bulkSelectedIds.size > 0 || bulkSelectAll) ? T.accent : T.sub,
+                      cursor: bulkSelectionLoading ? 'wait' : 'pointer',
+                      fontSize: 15,
+                      fontWeight: 800,
+                      lineHeight: 1,
+                    }}
+                    disabled={bulkSelectionLoading}
+                  >
+                    {bulkSelectionLoading ? '…' : '☑'}
+                  </button>
+                  {showBulkSelectMenu && (
+                    <div style={{
+                      position: 'absolute',
+                      top: 46,
+                      left: 10,
+                      zIndex: 80,
+                      width: 250,
+                      background: '#fff',
+                      border: '1px solid rgba(199, 210, 254, 0.95)',
+                      borderRadius: 10,
+                      boxShadow: '0 16px 34px rgba(15, 23, 42, 0.14)',
+                      padding: 8,
+                      textAlign: 'left',
+                      textTransform: 'none',
+                      letterSpacing: 0,
+                    }}>
+                      <button
+                        type="button"
+                        onClick={() => selectAllVisible(true)}
+                        style={{ width: '100%', padding: '10px 12px', border: 'none', borderRadius: 8, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontWeight: 700, color: T.text, fontSize: 14, fontFamily: T.font }}
+                      >
+                        This page ({paginatedLeads.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={selectAllCampaign}
+                        style={{ width: '100%', padding: '10px 12px', border: 'none', borderRadius: 8, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontWeight: 700, color: T.text, fontSize: 14, fontFamily: T.font }}
+                      >
+                        All matching leads ({campaignLeadsTotal})
+                      </button>
+                      <div style={{ height: 1, background: T.border, margin: '7px 0 9px' }} />
+                      <label style={{ display: 'block', fontSize: 12, color: T.muted, fontWeight: 700, margin: '0 0 7px 2px' }}>
+                        First leads
+                      </label>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="1"
+                          max={campaignLeadsTotal || undefined}
+                          placeholder="100"
+                          value={bulkSelectLimit}
+                          onChange={e => setBulkSelectLimit(e.target.value)}
+                          style={{ ...inputStyle, height: 36, fontSize: 14, padding: '7px 9px', minWidth: 0, flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => fetchBulkLeadSelection(bulkSelectLimit)}
+                          disabled={!bulkSelectLimit || bulkSelectionLoading}
+                          style={{ ...btnPrimary, padding: '8px 12px', opacity: (!bulkSelectLimit || bulkSelectionLoading) ? 0.55 : 1 }}
+                        >
+                          Select
+                        </button>
+                      </div>
+                      {(bulkSelectedIds.size > 0 || bulkSelectAll) && (
+                        <button
+                          type="button"
+                          onClick={clearBulkSelection}
+                          style={{ width: '100%', marginTop: 8, padding: '10px 12px', border: 'none', borderRadius: 8, background: 'rgba(239,68,68,0.08)', textAlign: 'left', cursor: 'pointer', fontWeight: 700, color: T.red, fontSize: 14, fontFamily: T.font }}
+                        >
+                          Clear selection
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </th>}
                 {['Name','Phone','Company','Source','Executive','Status','Action'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>

@@ -77,10 +77,10 @@ func (s *Server) manualCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "mode must be 'dial' or 'web-sim'")
 		return
 	}
-	if mode == "dial" && !s.requireAnyPermission(w, r, "calls.dial", "calls.make") {
+	if mode == "dial" && !s.requirePermission(w, r, "calls.dial") {
 		return
 	}
-	if mode == "web-sim" && !s.requireAnyPermission(w, r, "calls.browser_call", "calls.make") {
+	if mode == "web-sim" && !s.requirePermission(w, r, "calls.browser_call") {
 		return
 	}
 

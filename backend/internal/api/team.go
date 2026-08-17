@@ -237,13 +237,13 @@ func (s *Server) effectivePermissionsForAuth(ac AuthClaims) ([]string, string, b
 	}
 	if !custom {
 		perms = rolePermissionKeys(user.Role)
+		perms = expandLegacyCallPermissions(perms)
 	} else {
 		perms = filterPermissionsForRole(user.Role, perms)
 	}
 	if user.Role == db.RoleAgent && !hasPermissionKey(perms, "crm.assign") {
 		perms = append(perms, "crm.assign")
 	}
-	perms = expandLegacyCallPermissions(perms)
 	return perms, user.Role, custom, nil
 }
 

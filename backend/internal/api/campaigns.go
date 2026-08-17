@@ -1373,7 +1373,7 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/human-call/{lead_id} [post]
 func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAnyPermission(w, r, "calls.browser_call", "calls.make") {
+	if !s.requirePermission(w, r, "calls.browser_call") {
 		return
 	}
 	ac := getAuth(r)
