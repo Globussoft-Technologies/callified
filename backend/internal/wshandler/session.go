@@ -428,12 +428,19 @@ func (s *CallSession) TentativeTriggerBargeIn() bool {
 }
 
 // ConfirmBargeIn marks a pending barge-in as confirmed by real STT input.
+// It also clears any pending hangup request — an interruption during the AI's
+// goodbye means the customer wants to keep talking.
 // Returns true if there was a pending barge-in to confirm.
 func (s *CallSession) ConfirmBargeIn() bool {
 	if !s.bargeInPending.CompareAndSwap(true, false) {
 		return false
 	}
-	s.Log.Info("barge-in: confirmed by STT")
+	if s.HangupRequested() {
+		s.hangupReq.Store(false)
+		s.Log.Info("barge-in: confirmed by STT; hangup cancelled")
+	} else {
+		s.Log.Info("barge-in: confirmed by STT")
+	}
 	return true
 }
 

@@ -252,9 +252,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
-		if sess.HangupRequested() {
-			return
-		}
+		// NOTE: we intentionally do NOT drop transcripts just because a hangup
+		// has been requested. The customer may interrupt the AI's goodbye and
+		// cancel the hangup via barge-in. processTranscript is the gate that
+		// decides whether to act on a post-hangup transcript.
 		// Explicit language switch request ("can you speak in kannada" etc.)
 		// must be handled even during TTS cooldown — Sarvam detects these as
 		// English but the customer clearly wants a different language.
@@ -558,9 +559,9 @@ func topKeys(m map[string]interface{}) []string {
 }
 
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing audio even if a hangup has been requested. A customer
+	// interruption during the AI's goodbye should still trigger barge-in and
+	// cancel the hangup.
 	var pcm []byte
 	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(data) {
@@ -1005,9 +1006,8 @@ func (h *Handler) leadLabel(ctx context.Context, sess *CallSession) (string, str
 }
 
 func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface{}) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing media even if a hangup has been requested so a customer
+	// can still barge-in during the AI's goodbye and cancel the hangup.
 	mediaData, _ := event["media"].(map[string]interface{})
 	if mediaData == nil {
 		return

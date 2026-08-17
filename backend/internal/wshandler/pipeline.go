@@ -82,8 +82,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// If the carrier picks up with "you have reached…" / "leave a message after the
 	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
 	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
-	if sess.HangupRequested() {
-		return // already heading for hangup; nothing more to do
+	if sess.HangupRequested() && !sess.IsBargeInActive() {
+		// Hangup was requested, but a barge-in means the customer interrupted the
+		// goodbye and wants to keep talking — let the turn through.
+		return
 	}
 	if isVoicemail(transcript) {
 		handleVoicemail(ctx, sess, transcript)
@@ -104,8 +106,9 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	sess.llmMu.Lock()
 	defer sess.llmMu.Unlock()
 	// Re-check stamp after acquiring lock: a newer transcript may have arrived
-	// while this goroutine was waiting for the lock.
-	if sess.LastTranscript() != ts || sess.HangupRequested() {
+	// while this goroutine was waiting for the lock. Allow the turn through if a
+	// barge-in is active, even if a hangup had been requested.
+	if sess.LastTranscript() != ts || (sess.HangupRequested() && !sess.IsBargeInActive()) {
 		return
 	}
 
@@ -202,18 +205,32 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 				return
 			}
 			if sentence == "" {
-				// HANGUP sentinel: wait for remaining audio then close
+				// HANGUP sentinel: wait for remaining audio then close. Abort if a
+				// barge-in cancels the hangup before playback finishes.
 				remaining := sess.PlaybackTracker.RemainingDuration()
 				sess.Log.Info("hangup: waiting for playback drain",
 					zap.Duration("remaining", remaining))
 				waitStart := time.Now()
-				select {
-				case <-time.After(remaining + 7*time.Second):
-				case <-ctx.Done():
+				deadline := time.After(remaining + 7*time.Second)
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						return
+					case <-deadline:
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						sess.WS.Close() //nolint:errcheck
+						return
+					case <-ticker.C:
+						if !sess.HangupRequested() {
+							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+							sess.Log.Info("hangup: aborted by barge-in")
+							return
+						}
+					}
 				}
-				metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
-				sess.WS.Close() //nolint:errcheck
-				return
 			}
 			// Safety: bridge sessions must never synthesise AI audio —
 			// the agent's browser mic is the audio source, not TTS.
