@@ -32,6 +32,19 @@ const tdStyle = {
   verticalAlign: 'middle',
 };
 
+const permissionDisplayOverrides = {
+  'calls.dial': {
+    label: 'AI Dial',
+    action: 'Can AI dial',
+    description: 'Show and use the single-lead AI Dial button.',
+  },
+  'calls.dial_all': {
+    label: 'AI All Dials',
+    action: 'Can bulk AI dial',
+    description: 'Show and use AI All Dials / AI All New Dials campaign actions.',
+  },
+};
+
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
   const toast = useToast();
@@ -742,6 +755,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                         <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                           {items.map(p => {
                             const checked = permissionValues.includes(p.key);
+                            const display = permissionDisplayOverrides[p.key] || p;
                             return (
                               <label key={p.key} style={{
                                 display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
@@ -756,10 +770,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
                                 />
                                 <span>
                                   <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
-                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{p.label}</span>
-                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{p.action}</span>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{display.label}</span>
+                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{display.action}</span>
                                   </span>
-                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{p.description}</span>
+                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{display.description}</span>
                                 </span>
                               </label>
                             );
