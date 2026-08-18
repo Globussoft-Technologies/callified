@@ -8,7 +8,7 @@ import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
-import { isAdmin, isExecutive } from '../../utils/roles';
+import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -385,8 +385,8 @@ export default function CampaignDetail({
   const canExportLeads = hasPermission('crm.export');
   const canAssignLeads = hasPermission('crm.assign');
   const canEditCampaign = hasPermission('campaigns.edit');
-  const canDial = hasPermission('calls.dial');
-  const canDialAll = hasPermission('calls.dial_all');
+  const canDial = !hideAiFeatures && hasPermission('calls.dial');
+  const canDialAll = !hideAiFeatures && hasPermission('calls.dial_all');
   const canBrowserCall = hasPermission('calls.browser_call');
   const canAutoDial = hasPermission('calls.auto_dial');
   const canMakeCalls = canDial || canDialAll || canBrowserCall || canAutoDial;
@@ -405,6 +405,7 @@ export default function CampaignDetail({
   // Only Executives are restricted from changing the per-machine browser call account;
   // Admins/Agents can always change it, and Executives can if granted the permission.
   const canChangeBrowserCallAccount = !isExecutive(currentUser?.role) || hasPermission('calls.browser_call_account');
+  const mustSelectBrowserCallAccount = isAgent(currentUser?.role) || isExecutive(currentUser?.role);
   const { triggerBrowserCall, browserCallLead, browserCallDialing, refreshScheduledCalls, clearDismissedScheduledCall } = useCall();
   const [callInsights, setCallInsights] = useState(null);
   const [callReviews, setCallReviews] = useState([]);
@@ -477,7 +478,10 @@ export default function CampaignDetail({
   const [selectedExotelAccountId, setSelectedExotelAccountId] = useState('');
   // If the user lacks permission to change the per-machine browser call account,
   // force the fixed campaign/lead assignment account and ignore any localStorage override.
-  const effectiveBrowserAccountId = canChangeBrowserCallAccount ? (browserAccountId || selectedExotelAccountId) : selectedExotelAccountId;
+  const effectiveBrowserAccountId = canChangeBrowserCallAccount
+    ? (mustSelectBrowserCallAccount ? browserAccountId : (browserAccountId || selectedExotelAccountId))
+    : selectedExotelAccountId;
+  const hasBrowserCallAccount = String(effectiveBrowserAccountId || '').trim() !== '';
   const effectiveBrowserAccount = orgExotelAccounts.find(a => String(a.id) === String(effectiveBrowserAccountId));
 
   const openScheduleModal = useCallback((lead, editing = false) => {
@@ -840,7 +844,7 @@ export default function CampaignDetail({
   const requireSelectedDialAccount = useCallback(() => {
     const selected = String(effectiveBrowserAccountId || '').trim();
     if (selected) return true;
-    toast('Select a browser call account before dialing');
+    toast('Select a browser call account before calling');
     return false;
   }, [effectiveBrowserAccountId, toast]);
 
@@ -1015,6 +1019,7 @@ export default function CampaignDetail({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          campaign_id: selectedCampaign.id,
           status: dispositionStatus.trim(),
           note: dispositionRemarks.trim(),
           follow_up_at: dispositionFollowUpAt || ''
@@ -1545,14 +1550,14 @@ export default function CampaignDetail({
               onChange={e => {
                 if (!canChangeBrowserCallAccount) return;
                 const v = e.target.value;
-                const override = v === selectedExotelAccountId ? '' : v;
+                const override = mustSelectBrowserCallAccount ? v : (v === selectedExotelAccountId ? '' : v);
                 setBrowserAccountId(override);
                 try {
                   localStorage.setItem(browserAccountKey(selectedCampaign.id), override);
                 } catch { /* ignore */ }
               }}
               style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420, opacity: canChangeBrowserCallAccount ? 1 : 0.6, cursor: canChangeBrowserCallAccount ? 'pointer' : 'not-allowed' }}>
-              <option value="">Use campaign default</option>
+              <option value="">{mustSelectBrowserCallAccount || !selectedExotelAccountId ? 'Select browser call account' : 'Use campaign default'}</option>
               {orgExotelAccounts.filter(a => a.app_type === 'voicebot').map(a => (
                 <option key={a.id} value={String(a.id)}>
                   {'[Exotel]'} {a.name} · {a.account_sid} · {a.caller_id}
@@ -1562,11 +1567,11 @@ export default function CampaignDetail({
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
             {effectiveBrowserAccount
-              ? `Dialing from: ${effectiveBrowserAccount.name || effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.caller_id || 'no caller ID'}${browserAccountId ? '' : ' (campaign default)'}`
+              ? `Dialing from: ${effectiveBrowserAccount.name || effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.account_sid} · ${effectiveBrowserAccount.caller_id || 'no caller ID'}${browserAccountId || mustSelectBrowserCallAccount ? '' : ' (campaign default)'}`
               : orgExotelAccounts.length === 0
                 ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
                 : canChangeBrowserCallAccount
-                  ? 'Browser calls will use the campaign default. This choice is saved only in this browser.'
+                  ? 'Select a browser call account before calling. This choice is saved only in this browser.'
                   : 'This account is fixed by the campaign/lead assignment. Contact admin to change it.'}
           </div>
         </div>
@@ -1762,6 +1767,7 @@ export default function CampaignDetail({
               display: 'flex', alignItems: 'center', gap: 6,
             }}
             onClick={() => {
+              if (!requireSelectedDialAccount()) return;
               const next = !autoDialEnabled;
               setAutoDialEnabled(next);
               if (next) {

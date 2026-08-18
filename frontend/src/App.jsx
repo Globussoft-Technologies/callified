@@ -26,7 +26,7 @@ import TeamPage from './pages/TeamPage';
 import UserManagementPage from './pages/UserManagementPage';
 import ReceptionistPage from './pages/ReceptionistPage';
 import ExotelAccountsPage from './pages/ExotelAccountsPage';
-import ExecutivesPage from './pages/ExecutivesPage';
+import DeleteLeadsPage from './pages/DeleteLeadsPage';
 import ManualDialPage from './pages/ManualDialPage';
 import InteractionHistoryPage from './pages/InteractionHistoryPage';
 import AgentPresencePage from './pages/AgentPresencePage';
@@ -252,7 +252,7 @@ export default function App() {
         } />
         <Route path="/receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
-        <Route path="/executives" element={<ExecutivesPage />} />
+        <Route path="/delete-leads" element={<DeleteLeadsPage />} />
         <Route path="/subscriptions" element={
           <RequireRole allow={['Admin', 'SuperAdmin']}>
             <SubscriptionsPage apiFetch={apiFetch} />

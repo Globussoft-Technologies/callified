@@ -843,6 +843,7 @@ func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 
 // leadDispositionRequest is the payload for saving a post-call disposition.
 type leadDispositionRequest struct {
+	CampaignID int64  `json:"campaign_id"`
 	Status     string `json:"status"`
 	Note       string `json:"note"`
 	FollowUpAt string `json:"follow_up_at"`
@@ -870,12 +871,18 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
-		return
-	}
 	var body leadDispositionRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	ac := getAuth(r)
+	if body.CampaignID > 0 {
+		if !s.canAccessCampaignLead(ac, body.CampaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	if strings.TrimSpace(body.Status) == "" {
