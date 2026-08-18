@@ -239,7 +239,7 @@ export default function App() {
             <AgentReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} />
           </AdminOnly>
         } />
-        <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}><CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
         <Route path="/team" element={
           <AdminOnly userRole={userRole}>
             <TeamPage apiFetch={apiFetch} API_URL={API_URL} />

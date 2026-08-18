@@ -682,8 +682,9 @@ export default function CampaignDetail({
       if (!res.ok) {
         throw new Error(data.error || `Failed to assign executive (${res.status})`);
       }
-      const affected = bulkSelectAll ? campaignLeadsTotal : data.updated || bulkSelectedIds.size;
-      toast(isUnassign ? `${affected} lead(s) assignment cleared` : `Executive assigned to ${affected} lead(s)`);
+      const affected = bulkSelectAll ? campaignLeadsTotal : (typeof data.updated === 'number' ? data.updated : bulkSelectedIds.size);
+      const leadLabel = affected === 1 ? 'lead' : 'leads';
+      toast(isUnassign ? `Executive unassigned from ${affected} ${leadLabel}` : `Executive assigned to ${affected} ${leadLabel}`);
       clearBulkSelection();
       fetchCampaignLeads(currentCampaignId);
     } catch (err) {
@@ -2437,7 +2438,7 @@ export default function CampaignDetail({
                         onClick={selectAllCampaign}
                         style={{ width: '100%', padding: '10px 12px', border: 'none', borderRadius: 8, background: 'transparent', textAlign: 'left', cursor: 'pointer', fontWeight: 700, color: T.text, fontSize: 14, fontFamily: T.font }}
                       >
-                        All matching leads ({campaignLeadsTotal})
+                        All leads ({campaignLeadsTotal})
                       </button>
                       <div style={{ height: 1, background: T.border, margin: '7px 0 9px' }} />
                       <label style={{ display: 'block', fontSize: 12, color: T.muted, fontWeight: 700, margin: '0 0 7px 2px' }}>

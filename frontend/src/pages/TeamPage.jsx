@@ -45,6 +45,8 @@ const permissionDisplayOverrides = {
   },
 };
 
+const manualPlanHiddenPermissionKeys = new Set(['calls.make', 'calls.dial', 'calls.dial_all']);
+
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
   const toast = useToast();
@@ -77,6 +79,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [providerAccounts, setProviderAccounts] = useState([]);
   const [selectedProviderAccountIds, setSelectedProviderAccountIds] = useState([]);
   const fileInputRef = useRef(null);
+  const hideManualPlanAiCallPermissions = Boolean(currentUser?.hide_ai_features);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
   // Only the most-recently-issued key per user is surfaced — older orphaned rows
@@ -753,7 +756,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           {module}
                         </div>
                         <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {items.map(p => {
+                          {items
+                            .filter(p => !hideManualPlanAiCallPermissions || !manualPlanHiddenPermissionKeys.has(p.key))
+                            .map(p => {
                             const checked = permissionValues.includes(p.key);
                             const display = permissionDisplayOverrides[p.key] || p;
                             return (

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -112,14 +113,23 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// OrgID==0 happens in a few legacy/test code paths; let those through
 	// so we don't break dev environments with no billing setup.
 	//
-	// Bypass: agents whose AI features are hidden and who are placing a manual
-	// browser call (IsBridge) get unlimited calls — credits are neither checked
-	// nor deducted for those calls.
+	// Bypass: manual-plan orgs and AI-hidden users placing a manual browser
+	// call (IsBridge) get unlimited calls — credits are neither checked nor
+	// deducted for those calls. The plan is stored against an Admin email, so
+	// the org-level check is what lets executives in that org dial too.
 	skipCredits := false
 	if data.OrgID > 0 {
-		if data.UserEmail != "" && data.IsBridge && i.db.ShouldHideAiFeatures(data.UserEmail) {
+		manualPlan := false
+		adminSubStatus, adminSubErr := i.db.ValidateOrgAdminSubscription(data.OrgID)
+		if adminSubErr != nil {
+			i.log.Warn("dial: ValidateOrgAdminSubscription failed", zap.Error(adminSubErr))
+		} else if adminSubStatus != nil && adminSubStatus.Active && strings.EqualFold(adminSubStatus.Plan, "manual") {
+			manualPlan = true
+		}
+
+		if data.IsBridge && ((data.UserEmail != "" && i.db.ShouldHideAiFeatures(data.UserEmail)) || manualPlan) {
 			skipCredits = true
-			i.log.Info("dial: unlimited manual call for AI-hidden user – skipping credit gate",
+			i.log.Info("dial: unlimited manual call – skipping credit gate",
 				zap.String("email", data.UserEmail),
 				zap.Int64("org_id", data.OrgID),
 				zap.Int64("lead_id", data.LeadID))
@@ -134,9 +144,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 				//    fresh orgs and test environments aren't dead-on-arrival.
 				// 3. Has prior deductions and balance=0 → genuinely exhausted.
 				sub, _ := i.db.GetSubscriptionByOrg(data.OrgID)
-				if sub != nil {
+				if sub != nil || (adminSubStatus != nil && adminSubStatus.Active) {
 					i.log.Info("dial: zero balance but active subscription – allowing call",
-						zap.Int64("org_id", data.OrgID), zap.String("plan", sub.PlanName))
+						zap.Int64("org_id", data.OrgID))
 				} else {
 					hasHistory, _ := i.db.HasCallDeductions(data.OrgID)
 					if hasHistory {
