@@ -760,6 +760,15 @@ func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallO
 					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 'connected'
 					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
 						AND cl.status IN ('completed','answered','connected') THEN 'connected'
+					WHEN EXISTS (
+						SELECT 1
+						FROM call_transcripts ct
+						WHERE ct.org_id = aa.org_id
+						  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+						  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+						  AND ct.call_duration_s > 5
+						  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+					) THEN 'connected'
 					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 'busy'
 					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled')
 						OR cl.status IN ('failed','cancelled') THEN 'failed'
@@ -773,9 +782,43 @@ func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallO
 			WHERE aa.campaign_id=?
 				AND aa.user_id=?
 				AND aa.activity_type='call'
+			UNION ALL
+			SELECT
+				CASE
+					WHEN cl.status IN ('busy') THEN 'busy'
+					WHEN cl.status IN ('failed','cancelled') THEN 'failed'
+					WHEN cl.status IN ('no-answer','no_answer','unanswered') THEN 'unanswered'
+					ELSE ''
+				END AS outcome
+			FROM call_logs cl
+			JOIN users u ON u.id=?
+			LEFT JOIN executives e ON e.org_id=cl.org_id AND LOWER(e.email)=LOWER(u.email)
+			WHERE cl.campaign_id=?
+				AND cl.status IN ('no-answer','no_answer','unanswered','busy','failed','cancelled')
+				AND (
+					EXISTS (
+						SELECT 1
+						FROM campaign_user_assignments cua
+						WHERE cua.campaign_id=cl.campaign_id AND cua.user_id=?
+					)
+					OR (e.id IS NOT NULL AND EXISTS (
+						SELECT 1
+						FROM campaign_leads campaign_lead
+						WHERE campaign_lead.campaign_id=cl.campaign_id
+						  AND campaign_lead.lead_id=cl.lead_id
+						  AND campaign_lead.executive_id=e.id
+					))
+				)
+				AND NOT EXISTS (
+					SELECT 1
+					FROM agent_activities aa2
+					WHERE aa2.org_id=cl.org_id
+						AND aa2.activity_type='call'
+						AND JSON_UNQUOTE(JSON_EXTRACT(aa2.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci = cl.call_sid
+				)
 		) outcomes
 		WHERE outcome != ''
-		GROUP BY outcome`, campaignID, userID)
+		GROUP BY outcome`, campaignID, userID, userID, campaignID, userID)
 	if err != nil {
 		return s, err
 	}
@@ -1033,6 +1076,52 @@ func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEnt
 	}
 	q += ` ORDER BY ct.created_at DESC`
 	rows, err := d.pool.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CallLogEntry
+	for rows.Next() {
+		var e CallLogEntry
+		if err := rows.Scan(&e.ID, &e.FirstName, &e.LastName, &e.Phone, &e.Source,
+			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome); err != nil {
+			return nil, err
+		}
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}
+
+// GetCampaignCallLogForUser returns the campaign call log attributed to a
+// single dashboard user. Manual/configured-account calls are matched through
+// nearby transcript rows when the provider call log is incomplete.
+func (d *DB) GetCampaignCallLogForUser(campaignID, userID int64) ([]CallLogEntry, error) {
+	q := `
+		SELECT DISTINCT
+			ct.id,
+			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
+			COALESCE(l.phone,''), COALESCE(l.source,''),
+			COALESCE(l.status,''), COALESCE(ct.call_duration_s,0), COALESCE(ct.recording_url,''),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			CASE
+				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
+				WHEN ct.call_duration_s>5 THEN 'Connected'
+				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'Busy'
+				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
+				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
+				ELSE 'No Answer'
+			END AS outcome
+		FROM call_transcripts ct
+		JOIN agent_activities aa ON aa.org_id=ct.org_id
+			AND aa.user_id=?
+			AND aa.campaign_id=ct.campaign_id
+			AND aa.activity_type='call'
+			AND aa.lead_id=ct.lead_id
+			AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.campaign_id=?
+		ORDER BY ct.created_at DESC`
+	rows, err := d.pool.Query(q, userID, campaignID)
 	if err != nil {
 		return nil, err
 	}

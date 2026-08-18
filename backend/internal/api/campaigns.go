@@ -785,7 +785,12 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	log, err := s.db.GetCampaignCallLog(campaign.ID, execIDs)
+	var log []db.CallLogEntry
+	if ac.Role == db.RoleAgent {
+		log, err = s.db.GetCampaignCallLogForUser(campaign.ID, ac.UserID)
+	} else {
+		log, err = s.db.GetCampaignCallLog(campaign.ID, execIDs)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
