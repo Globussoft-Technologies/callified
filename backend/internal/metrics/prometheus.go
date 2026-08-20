@@ -66,4 +66,52 @@ var (
 		Name: "callified_barge_in_total",
 		Help: "Total number of user barge-in events (speech detected during TTS).",
 	})
+
+	// DialAttemptsTotal counts outbound dial attempts by provider and outcome.
+	// outcome label values: success, dnd, call_hours, insufficient_credits,
+	// invalid_credentials, provider_error, unknown.
+	DialAttemptsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "callified_dial_attempts_total",
+		Help: "Total outbound dial attempts by provider and outcome.",
+	}, []string{"provider", "outcome"})
+
+	// CallStateTransitionsTotal counts valid call-state machine transitions.
+	CallStateTransitionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "callified_call_state_transitions_total",
+		Help: "Total call state transitions by from-state and to-state.",
+	}, []string{"from", "to"})
+
+	// LLMTokenUsageTotal counts input and output tokens reported by the LLM provider.
+	// direction label values: input, output.
+	LLMTokenUsageTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "callified_llm_token_usage_total",
+		Help: "Total LLM token usage by provider and direction.",
+	}, []string{"provider", "direction"})
+
+	// LLMResponseLatency records full LLM response latency for non-streaming calls.
+	LLMResponseLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "callified_llm_response_seconds",
+		Help:    "Full LLM response latency from request to final token.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"provider"})
+
+	// QueueDepth reports the current length of Redis-backed queues.
+	QueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "callified_queue_depth",
+		Help: "Current number of items in a Redis-backed queue.",
+	}, []string{"queue"})
+
+	// WebSocketConnections tracks currently open WebSocket connections by endpoint type.
+	// type label values: media, sandbox, monitor, agent.
+	WebSocketConnections = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "callified_websocket_connections",
+		Help: "Number of currently open WebSocket connections by endpoint type.",
+	}, []string{"type"})
+
+	// WebSocketConnectionDuration records WebSocket session duration by endpoint type.
+	WebSocketConnectionDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "callified_websocket_duration_seconds",
+		Help:    "WebSocket session duration from upgrade to close by endpoint type.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"type"})
 )

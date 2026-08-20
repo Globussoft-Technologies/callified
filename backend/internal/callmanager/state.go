@@ -4,23 +4,25 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/globussoft/callified-backend/internal/metrics"
 )
 
 // State represents the lifecycle of a single call.
 type State string
 
 const (
-	StatePending    State = "pending"
-	StateDialing    State = "dialing"
-	StateConnected  State = "connected"
-	StateSpeaking   State = "speaking"
-	StateListening  State = "listening"
-	StateCompleted  State = "completed"
-	StateFailed     State = "failed"
-	StateNoAnswer   State = "no_answer"
-	StateBusy       State = "busy"
-	StateVoicemail  State = "voicemail"
-	StateHangup     State = "hangup"
+	StatePending   State = "pending"
+	StateDialing   State = "dialing"
+	StateConnected State = "connected"
+	StateSpeaking  State = "speaking"
+	StateListening State = "listening"
+	StateCompleted State = "completed"
+	StateFailed    State = "failed"
+	StateNoAnswer  State = "no_answer"
+	StateBusy      State = "busy"
+	StateVoicemail State = "voicemail"
+	StateHangup    State = "hangup"
 )
 
 // IsTerminal returns true if the call has reached a final state.
@@ -50,9 +52,9 @@ var validTransitions = map[State]map[State]bool{
 
 // Manager tracks the state of one call with thread-safe transitions and timestamps.
 type Manager struct {
-	mu        sync.RWMutex
-	state     State
-	startedAt time.Time
+	mu          sync.RWMutex
+	state       State
+	startedAt   time.Time
 	transitions []Transition
 }
 
@@ -67,8 +69,8 @@ type Transition struct {
 // NewManager creates a call state manager starting in StatePending.
 func NewManager() *Manager {
 	return &Manager{
-		state:     StatePending,
-		startedAt: time.Now(),
+		state:       StatePending,
+		startedAt:   time.Now(),
 		transitions: []Transition{},
 	}
 }
@@ -91,6 +93,7 @@ func (m *Manager) Transition(newState State, reason string) error {
 		Timestamp: time.Now(),
 		Reason:    reason,
 	})
+	metrics.CallStateTransitionsTotal.WithLabelValues(string(m.state), string(newState)).Inc()
 	m.state = newState
 	return nil
 }

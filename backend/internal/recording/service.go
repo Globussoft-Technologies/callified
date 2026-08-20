@@ -96,7 +96,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 1. Save WAV to disk (if recorded server-side).
 	recordingURL := ""
 	if len(req.StereoWav) > 0 {
-		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, campaignName, req.StereoWav)
+		recordingURL = s.saveWAV(req, campaignName)
 	}
 
 	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
@@ -260,13 +260,13 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 
 // ── WAV saving ────────────────────────────────────────────────────────────────
 
-func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte) string {
-	filename := fmt.Sprintf("%s_%d.wav", sanitize(streamSid), time.Now().UnixMilli())
+func (s *Service) saveWAV(req SaveRequest, campaignName string) string {
+	filename := fmt.Sprintf("%s_%d.wav", sanitize(req.StreamSid), time.Now().UnixMilli())
 
 	// Build the object key once; OCI and S3 use the same key layout.
 	userDir := ""
-	if userEmail != "" {
-		userDir = sanitizeForPath(userEmail)
+	if req.UserEmail != "" {
+		userDir = sanitizeForPath(req.UserEmail)
 	}
 	campaignDir := ""
 	if campaignName != "" {
@@ -280,27 +280,21 @@ func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte
 		}
 	}
 
-	// OCI takes precedence when configured.
+	// OCI takes precedence when configured. Retry a few times before giving up.
 	if s.oci != nil {
-		publicURL, err := s.oci.UploadPublic(context.Background(), objectKey, data)
-		if err != nil {
-			s.log.Warn("recording: OCI upload failed", zap.Error(err))
-			// Fall through to S3 or local save.
-		} else {
+		if publicURL, ok := s.uploadWithRetry("oci", s.oci, objectKey, req.StereoWav); ok {
 			s.log.Info("recording: uploaded to OCI", zap.String("url", publicURL))
 			return publicURL
 		}
+		s.enqueueRecordingDLQ(req, objectKey, "oci")
 	}
 
 	if s.s3 != nil {
-		publicURL, err := s.s3.UploadPublic(context.Background(), objectKey, data)
-		if err != nil {
-			s.log.Warn("recording: S3 upload failed", zap.Error(err))
-			// Fall through to local save.
-		} else {
+		if publicURL, ok := s.uploadWithRetry("s3", s.s3, objectKey, req.StereoWav); ok {
 			s.log.Info("recording: uploaded to S3", zap.String("url", publicURL))
 			return publicURL
 		}
+		s.enqueueRecordingDLQ(req, objectKey, "s3")
 	}
 
 	if s.cfg.RecordingsDir == "" {
@@ -311,8 +305,8 @@ func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte
 	// email is known. Fall back to the root recordings directory otherwise.
 	baseDir := s.cfg.RecordingsDir
 	urlPrefix := "/api/recordings/"
-	if userEmail != "" {
-		userDir := sanitizeForPath(userEmail)
+	if req.UserEmail != "" {
+		userDir := sanitizeForPath(req.UserEmail)
 		baseDir = filepath.Join(baseDir, userDir)
 		urlPrefix = "/api/recordings/" + userDir + "/"
 		if campaignName != "" {
@@ -327,11 +321,101 @@ func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte
 		return ""
 	}
 	path := filepath.Join(baseDir, filename)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, req.StereoWav, 0644); err != nil {
 		s.log.Warn("recording: WriteFile failed", zap.Error(err))
 		return ""
 	}
 	return urlPrefix + filename
+}
+
+// uploadWithRetry attempts an upload up to 3 times with exponential backoff.
+func (s *Service) uploadWithRetry(provider string, uploader uploader, objectKey string, data []byte) (string, bool) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		publicURL, err := uploader.UploadPublic(context.Background(), objectKey, data)
+		if err == nil {
+			return publicURL, true
+		}
+		lastErr = err
+		s.log.Warn("recording: upload attempt failed",
+			zap.String("provider", provider),
+			zap.String("key", objectKey),
+			zap.Int("attempt", attempt+1),
+			zap.Error(err))
+	}
+	s.log.Warn("recording: upload exhausted retries",
+		zap.String("provider", provider),
+		zap.String("key", objectKey),
+		zap.Error(lastErr))
+	return "", false
+}
+
+func (s *Service) enqueueRecordingDLQ(req SaveRequest, objectKey, provider string) {
+	if s.database == nil {
+		return
+	}
+	lastErr := ""
+	if s.cfg.RecordingsDir != "" {
+		lastErr = fmt.Sprintf("upload to %s failed; local fallback saved", provider)
+	}
+	if err := s.database.EnqueueRecordingDLQ(req.OrgID, req.LeadID, req.CampaignID, req.CallSid, req.StreamSid, objectKey, provider, lastErr); err != nil {
+		s.log.Warn("recording: failed to enqueue DLQ", zap.Error(err))
+	}
+}
+
+// RetryRecordingDLQ attempts to re-upload up to `limit` pending recording DLQ
+// entries. It requires an uploader matching the original provider to be configured.
+func (s *Service) RetryRecordingDLQ(limit int) error {
+	if s.database == nil {
+		return nil
+	}
+	entries, err := s.database.GetPendingRecordingDLQ(limit)
+	if err != nil {
+		return fmt.Errorf("fetch recording dlq: %w", err)
+	}
+	for _, e := range entries {
+		var uploader uploader
+		switch e.Provider {
+		case "oci":
+			uploader = s.oci
+		case "s3":
+			uploader = s.s3
+		}
+		if uploader == nil {
+			s.log.Warn("recording dlq retry: provider not configured", zap.Int64("dlq_id", e.ID), zap.String("provider", e.Provider))
+			continue
+		}
+
+		// Read the local fallback file if available.
+		var data []byte
+		localPath := filepath.Join(s.cfg.RecordingsDir, e.ObjectKey)
+		if s.cfg.RecordingsDir != "" {
+			if b, err := os.ReadFile(localPath); err == nil {
+				data = b
+			}
+		}
+		if len(data) == 0 {
+			s.log.Warn("recording dlq retry: local file missing", zap.Int64("dlq_id", e.ID), zap.String("path", localPath))
+			_ = s.database.IncrementRecordingDLQAttempts(e.ID)
+			continue
+		}
+
+		if _, ok := s.uploadWithRetry(e.Provider, uploader, e.ObjectKey, data); ok {
+			if err := s.database.DeleteRecordingDLQ(e.ID); err != nil {
+				s.log.Warn("recording dlq retry: delete failed", zap.Error(err))
+			}
+			s.log.Info("recording dlq retry: success", zap.Int64("dlq_id", e.ID), zap.String("provider", e.Provider))
+			continue
+		}
+
+		if err := s.database.IncrementRecordingDLQAttempts(e.ID); err != nil {
+			s.log.Warn("recording dlq retry: increment attempts failed", zap.Error(err))
+		}
+	}
+	return nil
 }
 
 // ── Gemini analysis ───────────────────────────────────────────────────────────

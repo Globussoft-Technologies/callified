@@ -7,6 +7,8 @@ import (
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/globussoft/callified-backend/internal/metrics"
 )
 
 // DialJob is the payload stored in the Redis-backed dial queue.
@@ -210,6 +212,22 @@ func (s *Store) ResumeDialQueue(ctx context.Context, campaignID int64) error {
 	}
 	state.Paused = false
 	return s.SetDialState(ctx, state)
+}
+
+// UpdateQueueDepthMetrics refreshes Prometheus queue-depth gauges for the
+// global dial queue, retry queue, and per-campaign dial state counts.
+func (s *Store) UpdateQueueDepthMetrics(ctx context.Context) {
+	if s.rdb == nil {
+		metrics.QueueDepth.WithLabelValues("dial").Set(0)
+		metrics.QueueDepth.WithLabelValues("retry").Set(0)
+		return
+	}
+	if n, err := s.rdb.LLen(ctx, key(dialQueueKey)).Result(); err == nil {
+		metrics.QueueDepth.WithLabelValues("dial").Set(float64(n))
+	}
+	if n, err := s.rdb.ZCard(ctx, key(dialRetryKey)).Result(); err == nil {
+		metrics.QueueDepth.WithLabelValues("retry").Set(float64(n))
+	}
 }
 
 // AbortDialQueue marks a campaign queue as aborted and drains remaining jobs.

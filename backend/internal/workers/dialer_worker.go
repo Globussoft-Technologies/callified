@@ -63,6 +63,7 @@ func (w *DialerWorker) tick(ctx context.Context) error {
 	if _, err := w.store.PollDialRetries(ctx, 100); err != nil {
 		w.log.Warn("dialer_worker: retry poll failed", zap.Error(err))
 	}
+	w.store.UpdateQueueDepthMetrics(ctx)
 
 	// 2. Enforce the minimum gap between dials.
 	if remaining := w.minGap - time.Since(w.lastDial); remaining > 0 {
