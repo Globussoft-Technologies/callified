@@ -15,6 +15,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/metrics"
+	"github.com/globussoft/callified-backend/internal/trace"
 )
 
 // pcmRMS returns the root-mean-square of a PCM-16 LE buffer (range 0–32767).
@@ -135,6 +137,16 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	metrics.WebSocketConnections.WithLabelValues("agent").Inc()
+	defer metrics.WebSocketConnections.WithLabelValues("agent").Dec()
+	wsStart := time.Now()
+	defer func() {
+		metrics.WebSocketConnectionDuration.WithLabelValues("agent").Observe(time.Since(wsStart).Seconds())
+	}()
+
+	traceID := trace.FromContext(r.Context())
+	log := h.log.With(zap.String("trace_id", traceID), zap.String("call_sid", callSid))
+
 	send := func(v any) {
 		b, _ := json.Marshal(v)
 		conn.WriteMessage(websocket.TextMessage, b) //nolint:errcheck
@@ -145,7 +157,7 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	// Wait up to 60 s for the Exotel session to register (call is ringing).
 	sess, ok := h.lookupSession(callSid, 60*time.Second)
 	if !ok {
-		h.log.Warn("agent: session not found", zap.String("call_sid", callSid))
+		log.Warn("agent: session not found", zap.String("call_sid", callSid))
 		send(map[string]string{"type": "error", "msg": "call not found — lead may not have answered yet"})
 		return
 	}
@@ -157,7 +169,7 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	bridgeDeadline := time.Now().Add(3 * time.Second)
 	for !sess.IsBridge {
 		if time.Now().After(bridgeDeadline) {
-			h.log.Warn("agent: session found but IsBridge never set", zap.String("call_sid", callSid))
+			log.Warn("agent: session found but IsBridge never set", zap.String("call_sid", callSid))
 			send(map[string]string{"type": "error", "msg": "not a browser-call session"})
 			return
 		}
@@ -169,7 +181,7 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	// alive and both goroutines write agent audio to the same Exotel WS — the
 	// customer hears two voices simultaneously.
 	if !sess.agentConnected.CompareAndSwap(false, true) {
-		h.log.Warn("agent: duplicate connection rejected", zap.String("call_sid", callSid))
+		log.Warn("agent: duplicate connection rejected", zap.String("call_sid", callSid))
 		send(map[string]string{"type": "error", "msg": "another agent tab is already connected to this call"})
 		return
 	}
@@ -187,7 +199,7 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		frameKey = "streamSid"
 	}
 
-	h.log.Info("agent browser connected — waiting for customer to answer",
+	log.Info("agent browser connected — waiting for customer to answer",
 		zap.String("call_sid", callSid),
 		zap.String("stream_sid", streamSid),
 		zap.Bool("use_ulaw", useUlaw),

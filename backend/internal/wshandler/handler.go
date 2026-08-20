@@ -25,6 +25,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/recording"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/stt"
+	"github.com/globussoft/callified-backend/internal/trace"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -104,6 +105,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	wsType := "media"
+	if strings.HasPrefix(r.URL.Path, "/ws/sandbox") {
+		wsType = "sandbox"
+	}
+	metrics.WebSocketConnections.WithLabelValues(wsType).Inc()
+	defer metrics.WebSocketConnections.WithLabelValues(wsType).Dec()
+	wsStart := time.Now()
+	defer func() {
+		metrics.WebSocketConnectionDuration.WithLabelValues(wsType).Observe(time.Since(wsStart).Seconds())
+	}()
+
+	traceID := trace.FromContext(r.Context())
+	sessionLog := h.log.With(zap.String("trace_id", traceID))
+
 	// Extract initial identity from query params (may be overridden by "start" event)
 	streamSid := q.Get("stream_sid")
 	if streamSid == "" {
@@ -114,7 +129,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
 	}
 
-	sess := NewCallSession(streamSid, conn, h.log)
+	sess := NewCallSession(streamSid, conn, sessionLog)
 	if isTataStream {
 		sess.Provider = "tata"
 		sess.IsExotel = false

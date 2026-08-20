@@ -102,6 +102,13 @@ func (s *Server) SetWAAgent(agent *wa.Agent) {
 	s.waAgent = agent
 }
 
+// SetDispatcher wires a shared webhook dispatcher after construction. When set,
+// it overrides the dispatcher created in New so recording-service webhooks and
+// API-managed webhooks share the same retry/DLQ state.
+func (s *Server) SetDispatcher(d *webhook.Dispatcher) {
+	s.dispatcher = d
+}
+
 // S3 returns the S3 client (nil when not configured). Used by main.go to wire
 // the same client into the recording service.
 func (s *Server) S3() *storage.S3Client { return s.s3 }

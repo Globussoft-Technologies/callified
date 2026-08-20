@@ -26,6 +26,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/rag"
 	"github.com/globussoft/callified-backend/internal/recording"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
+	"github.com/globussoft/callified-backend/internal/trace"
 	"github.com/globussoft/callified-backend/internal/wa"
 	"github.com/globussoft/callified-backend/internal/webhook"
 	"github.com/globussoft/callified-backend/internal/workers"
@@ -48,7 +49,11 @@ func main() {
 	store := rstore.New(cfg.RedisURL, logger)
 
 	// MySQL database
-	database, dbErr := apidb.New(cfg.DSN())
+	database, dbErr := apidb.New(cfg.DSN(), apidb.PoolConfig{
+		MaxOpenConns:    cfg.DBMaxOpenConns,
+		MaxIdleConns:    cfg.DBMaxIdleConns,
+		ConnMaxLifetime: cfg.DBConnMaxLifetime,
+	})
 	if dbErr != nil {
 		logger.Warn("MySQL unavailable — REST API endpoints and recording analysis disabled", zap.Error(dbErr))
 	} else {
@@ -61,10 +66,11 @@ func main() {
 	// Prompt builder + recording service (Phase 3C / Phase 4)
 	var promptBuilder *prompt.Builder
 	var recordingSvc *recording.Service
+	var webhookDispatcher *webhook.Dispatcher
 	if database != nil {
 		promptBuilder = prompt.NewBuilder(database)
-		disp := webhook.New(database, logger)
-		recordingSvc = recording.New(database, llmProvider, disp, cfg, logger)
+		webhookDispatcher = webhook.New(database, logger)
+		recordingSvc = recording.New(database, llmProvider, webhookDispatcher, cfg, logger)
 	}
 
 	// WebSocket handler — shared across /media-stream and /ws/sandbox
@@ -91,8 +97,7 @@ func main() {
 	// Dial initiator (Phase 2) — shares dispatcher with recording service
 	var initiator *dial.Initiator
 	if database != nil && recordingSvc != nil {
-		// re-use the webhook dispatcher already created above for recording
-		initiator = dial.New(cfg, store, database, webhook.New(database, logger), logger)
+		initiator = dial.New(cfg, store, database, webhookDispatcher, logger)
 		wsHandler.SetInitiator(initiator)
 	}
 
@@ -103,6 +108,9 @@ func main() {
 	var apiServer *api.Server
 	if database != nil {
 		apiServer = api.New(database, cfg, store, initiator, llmProvider, logger)
+		if webhookDispatcher != nil {
+			apiServer.SetDispatcher(webhookDispatcher)
+		}
 		waAgent := wa.NewAgent(database, llmProvider, ragClient, logger)
 		apiServer.SetWAAgent(waAgent)
 		apiServer.SetWSHandler(wsHandler) // enables GET /api/active-calls
@@ -133,7 +141,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: mux,
+		Handler: trace.Middleware(mux),
 		// No read/write timeout — WebSocket connections are long-lived
 		IdleTimeout: 120 * time.Second,
 	}
@@ -152,6 +160,42 @@ func main() {
 		go workers.NewRetryWorker(database, initiator, logger).Run(workerCtx)
 		go workers.NewDialerWorker(database, store, initiator, logger).Run(workerCtx)
 		go workers.NewCRMPoller(database, logger).Run(workerCtx)
+	}
+
+	// Webhook DLQ retry worker (Phase 5) — runs every 60 seconds.
+	if database != nil && webhookDispatcher != nil {
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					if err := webhookDispatcher.RetryDLQ(workerCtx, 50); err != nil {
+						logger.Warn("webhook dlq retry worker error", zap.Error(err))
+					}
+				}
+			}
+		}()
+	}
+
+	// Recording upload DLQ retry worker (Phase 5) — runs every 5 minutes.
+	if recordingSvc != nil {
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+					if err := recordingSvc.RetryRecordingDLQ(50); err != nil {
+						logger.Warn("recording dlq retry worker error", zap.Error(err))
+					}
+				}
+			}
+		}()
 	}
 
 	go func() {
