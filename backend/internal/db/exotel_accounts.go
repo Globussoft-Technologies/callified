@@ -19,8 +19,8 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 			api_key VARCHAR(512) NOT NULL,
 			api_token VARCHAR(512) NOT NULL,
 			api_secret VARCHAR(512) DEFAULT '',
-			account_sid VARCHAR(255) NOT NULL,
-			caller_id VARCHAR(50) NOT NULL,
+			account_sid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+			caller_id VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
 			app_id VARCHAR(255) DEFAULT '',
 			app_type VARCHAR(20) DEFAULT 'exoml',
 			direction VARCHAR(20) DEFAULT 'outbound',
@@ -30,7 +30,7 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 			INDEX idx_org_id (org_id),
 			INDEX idx_user_org (user_id, org_id),
 			CONSTRAINT fk_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func (d *DB) EnsureUserAllowedExotelAccountsTable() error {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (user_id, exotel_account_id),
 			INDEX idx_exotel_account_id (exotel_account_id)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	return err
 }

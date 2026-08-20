@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/callmanager"
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
@@ -24,6 +25,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/recording"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/stt"
+	"github.com/globussoft/callified-backend/internal/trace"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -103,6 +105,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	wsType := "media"
+	if strings.HasPrefix(r.URL.Path, "/ws/sandbox") {
+		wsType = "sandbox"
+	}
+	metrics.WebSocketConnections.WithLabelValues(wsType).Inc()
+	defer metrics.WebSocketConnections.WithLabelValues(wsType).Dec()
+	wsStart := time.Now()
+	defer func() {
+		metrics.WebSocketConnectionDuration.WithLabelValues(wsType).Observe(time.Since(wsStart).Seconds())
+	}()
+
+	traceID := trace.FromContext(r.Context())
+	sessionLog := h.log.With(zap.String("trace_id", traceID))
+
 	// Extract initial identity from query params (may be overridden by "start" event)
 	streamSid := q.Get("stream_sid")
 	if streamSid == "" {
@@ -113,7 +129,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
 	}
 
-	sess := NewCallSession(streamSid, conn, h.log)
+	sess := NewCallSession(streamSid, conn, sessionLog)
 	if isTataStream {
 		sess.Provider = "tata"
 		sess.IsExotel = false
@@ -394,6 +410,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// only ever showed turns starting from the user's first utterance.
 		sess.BroadcastTranscript("agent", sess.GreetingText)
 		sess.AppendHistory("model", sess.GreetingText)
+		sess.MarkGreetingDelivered()
+		sess.TransitionCallState(callmanager.StateSpeaking, "greeting queued")
 	}
 	sess.SendGreeting = sendGreeting
 
@@ -573,6 +591,7 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	case "media":
 		h.handleMediaEvent(sess, event)
 	case "stop":
+		sess.TransitionCallState(callmanager.StateCompleted, "carrier stop event")
 		return true
 	}
 	return false
@@ -861,6 +880,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 						sess.SendGreeting()
 					}
 				}
+				sess.TransitionCallState(callmanager.StateConnected, "start event received")
 			}
 			if sess.IsInbound && !sess.IsBridge {
 				if h.promptBuilder != nil {
@@ -1126,6 +1146,14 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		name, phone := h.leadLabel(ctx, sess)
 		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"completed", fmt.Sprintf("%ds call", durS))
+		// Phase 3: structured domain event for real-time dashboards.
+		h.store.PublishDomainEvent(ctx, rstore.DomainEvent{
+			Type:       rstore.EventCallCompleted,
+			OrgID:      sess.OrgID,
+			CampaignID: sess.CampaignID,
+			LeadID:     sess.LeadID,
+			Duration:   int64(durS),
+		})
 	}
 
 	h.store.CleanupCall(ctx, sess.StreamSid)

@@ -38,7 +38,7 @@ func (d *DB) EnsureOrganizationsTable() error {
 			tts_language VARCHAR(10) DEFAULT 'hi',
 			timezone VARCHAR(100) DEFAULT 'Asia/Kolkata',
 			onboarding_completed TINYINT(1) DEFAULT 0
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func (d *DB) EnsureProductsTable() error {
 			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_org_id (org_id),
 			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err
@@ -263,6 +263,7 @@ func (d *DB) EnsureProductsTable() error {
 		{"call_flow_instructions", "LONGTEXT"},
 		{"image_urls", "LONGTEXT"},
 		{"manual_images", "LONGTEXT"},
+		{"opening_script_id", "BIGINT DEFAULT NULL"},
 	}
 	for _, col := range columns {
 		_, alterErr := d.pool.Exec(fmt.Sprintf("ALTER TABLE products ADD COLUMN %s %s", col.name, col.def))
@@ -289,26 +290,32 @@ type Product struct {
 	ManualNotes          string         `json:"manual_notes"`
 	AgentPersona         string         `json:"agent_persona"`
 	CallFlowInstructions string         `json:"call_flow_instructions"`
+	OpeningScriptID      int64          `json:"opening_script_id"`
 	CreatedAt            string         `json:"created_at"`
-	ImageURLs            []string       `json:"image_urls"`     // scraped from website
-	ManualImages         []ProductImage `json:"manual_images"`  // manually uploaded via UI
+	ImageURLs            []string       `json:"image_urls"`    // scraped from website
+	ManualImages         []ProductImage `json:"manual_images"` // manually uploaded via UI
 }
 
 const productCols = `id, org_id, name,
 	COALESCE(website_url,''), COALESCE(scraped_info,''), COALESCE(manual_notes,''),
 	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''),
+	COALESCE(opening_script_id,0),
 	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),
 	COALESCE(image_urls,'[]'), COALESCE(manual_images,'[]')`
 
 func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	p := &Product{}
 	var imageURLsJSON, manualImagesJSON string
+	var openingScriptID sql.NullInt64
 	err := row.Scan(&p.ID, &p.OrgID, &p.Name,
 		&p.WebsiteURL, &p.ScrapedInfo, &p.ManualNotes,
-		&p.AgentPersona, &p.CallFlowInstructions, &p.CreatedAt,
+		&p.AgentPersona, &p.CallFlowInstructions, &openingScriptID, &p.CreatedAt,
 		&imageURLsJSON, &manualImagesJSON)
 	if err != nil {
 		return p, err
+	}
+	if openingScriptID.Valid {
+		p.OpeningScriptID = openingScriptID.Int64
 	}
 	if imageURLsJSON != "" && imageURLsJSON != "[]" {
 		_ = json.Unmarshal([]byte(imageURLsJSON), &p.ImageURLs)
@@ -387,23 +394,29 @@ func (d *DB) GetProductByOrgAndName(orgID int64, name string) (*Product, error) 
 }
 
 // CreateProduct inserts a new product. Returns the new ID.
-func (d *DB) CreateProduct(orgID int64, name, websiteURL, manualNotes string) (int64, error) {
+func (d *DB) CreateProduct(orgID int64, name, websiteURL, manualNotes string, openingScriptID int64) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO products (org_id, name, website_url, manual_notes) VALUES (?,?,?,?)`,
-		orgID, name, nullString(websiteURL), nullString(manualNotes))
+		`INSERT INTO products (org_id, name, website_url, manual_notes, opening_script_id) VALUES (?,?,?,?,?)`,
+		orgID, name, nullString(websiteURL), nullString(manualNotes), nullInt64(openingScriptID))
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
 }
 
-// UpdateProduct updates mutable product fields. Pass empty to skip a field.
-func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes string) error {
+// UpdateProduct updates mutable product fields. Pass nil for openingScriptID to
+// leave it unchanged, or a pointer to an int64 to set/clear it (0 clears to NULL).
+func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes string, openingScriptID *int64) error {
 	var parts []string
 	var args []any
 	if name != "" {
 		parts = append(parts, "name=?")
 		args = append(args, name)
+	}
+	if websiteURL != "" || scrapedInfo != "" || manualNotes != "" {
+		// Allow explicit empty strings for notes/URLs by checking pointer presence is
+		// not possible here; we treat non-empty as update and skip empty. Callers that
+		// need to clear should use a dedicated endpoint.
 	}
 	if websiteURL != "" {
 		parts = append(parts, "website_url=?")
@@ -416,6 +429,10 @@ func (d *DB) UpdateProduct(id int64, name, websiteURL, scrapedInfo, manualNotes 
 	if manualNotes != "" {
 		parts = append(parts, "manual_notes=?")
 		args = append(args, manualNotes)
+	}
+	if openingScriptID != nil {
+		parts = append(parts, "opening_script_id=?")
+		args = append(args, nullInt64(*openingScriptID))
 	}
 	if len(parts) == 0 {
 		return nil

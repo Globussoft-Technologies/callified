@@ -11,6 +11,9 @@ import (
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
+
+	"github.com/globussoft/callified-backend/internal/metrics"
+	"github.com/globussoft/callified-backend/internal/trace"
 )
 
 // maxMonitorKeyLen caps stream_sid / call_sid length. Real Twilio/Exotel SIDs
@@ -159,11 +162,21 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	metrics.WebSocketConnections.WithLabelValues("monitor").Inc()
+	defer metrics.WebSocketConnections.WithLabelValues("monitor").Dec()
+	wsStart := time.Now()
+	defer func() {
+		metrics.WebSocketConnectionDuration.WithLabelValues("monitor").Observe(time.Since(wsStart).Seconds())
+	}()
+
+	traceID := trace.FromContext(r.Context())
+	log := h.log.With(zap.String("trace_id", traceID), zap.String("stream_sid", key))
+
 	// Try an immediate lookup first; if the caller is monitoring by call_sid
 	// on an outbound dial we may need to wait for the media stream to open.
 	sess, ok := h.lookupSession(key, 30*time.Second)
 	if !ok {
-		h.log.Warn("monitor: session not found", zap.String("key", key))
+		log.Warn("monitor: session not found", zap.String("key", key))
 		conn.WriteMessage( //nolint:errcheck
 			websocket.TextMessage,
 			[]byte(`{"error":"session not found"}`),
@@ -178,7 +191,7 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 	sess.AddMonitor(conn)
 	defer sess.RemoveMonitor(conn)
 
-	h.log.Info("monitor connected",
+	log.Info("monitor connected",
 		zap.String("key", key),
 		zap.String("stream_sid", streamSid),
 	)
@@ -199,7 +212,7 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 			text, _ := data["text"].(string)
 			if text != "" {
 				h.store.PushWhisper(r.Context(), streamSid, text)
-				h.log.Info("monitor whisper injected",
+				log.Info("monitor whisper injected",
 					zap.String("stream_sid", streamSid),
 					zap.String("text", text),
 				)
@@ -213,7 +226,7 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 			if sess.IsExotel {
 				sendClearEvent(sess)
 			}
-			h.log.Info("monitor takeover activated", zap.String("stream_sid", streamSid))
+			log.Info("monitor takeover activated", zap.String("stream_sid", streamSid))
 
 		case "audio_chunk":
 			// Manager sends base64 audio directly to the phone (takeover mode).

@@ -133,22 +133,22 @@ CREATE TABLE IF NOT EXISTS call_logs (
   lead_id BIGINT DEFAULT NULL,
   campaign_id BIGINT DEFAULT NULL,
   org_id BIGINT NOT NULL,
-  call_sid VARCHAR(255) DEFAULT NULL,
+  call_sid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
   provider VARCHAR(100) DEFAULT NULL,
-  phone VARCHAR(50) DEFAULT NULL,
+  phone VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
   status VARCHAR(50) DEFAULT NULL,
   recording_url TEXT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_call_sid (call_sid),
   INDEX idx_org_id (org_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS org_credits (
   org_id BIGINT PRIMARY KEY,
   balance_paise BIGINT NOT NULL DEFAULT 0,
   rate_per_min_paise INT DEFAULT 500,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS credit_transactions (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -163,13 +163,13 @@ CREATE TABLE IF NOT EXISTS credit_transactions (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_org_id (org_id),
   INDEX idx_reference (reference)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS wa_channel_configs (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   org_id BIGINT NOT NULL,
   provider VARCHAR(50) NOT NULL,
-  phone_number VARCHAR(50) NOT NULL,
+  phone_number VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   api_key VARCHAR(512) DEFAULT NULL,
   app_id VARCHAR(512) DEFAULT NULL,
   webhook_url TEXT DEFAULT NULL,
@@ -183,12 +183,12 @@ CREATE TABLE IF NOT EXISTS wa_channel_configs (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_wa_channel_configs_org_provider_phone (org_id, provider, phone_number),
   INDEX idx_wa_channel_configs_org (org_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS whatsapp_conversations (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   org_id BIGINT NOT NULL,
-  phone VARCHAR(50) NOT NULL,
+  phone VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
   provider VARCHAR(50) DEFAULT NULL,
   last_message TEXT DEFAULT NULL,
   message_count INT DEFAULT 0,
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_conversations (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_whatsapp_conv_org_phone (org_id, phone),
   INDEX idx_whatsapp_conv_updated (updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS whatsapp_messages (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS whatsapp_messages (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uk_whatsapp_msg_provider (provider_msg_id),
   INDEX idx_whatsapp_msg_conv (conversation_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS wa_blast_jobs (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS wa_blast_jobs (
   errors_json JSON DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_wa_blast_campaign (campaign_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- ============================================================
 -- 3. Seed a default Exotel provider account per org and link voice campaigns
@@ -248,7 +248,7 @@ CREATE TABLE IF NOT EXISTS org_exotel_accounts (
   app_type VARCHAR(20) DEFAULT 'exoml',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_org_id (org_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 INSERT INTO org_exotel_accounts (org_id, provider, name, api_key, api_token, account_sid, caller_id, app_id, app_type)
 SELECT o.id, 'exotel', 'Default Exotel', '4c5043337462f99685f986366569898a5cd2561727468003',

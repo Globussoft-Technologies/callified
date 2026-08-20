@@ -4,6 +4,7 @@ package wshandler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/callmanager"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
@@ -118,6 +120,11 @@ type CallSession struct {
 	AgentName    string
 	Language     string
 
+	// ConversationState tracks the call's progress so the LLM can respect one-turn,
+	// one-question, greeting-done, and language constraints. Guarded by stateMu.
+	conversationState ConversationState
+	stateMu           sync.Mutex
+
 	// Deferred-init hooks. Real Exotel calls connect with empty URL params
 	// (the campaign context arrives later via the Redis "start" event), so
 	// STT and the greeting must wait until handleStartEvent has finalised
@@ -136,9 +143,13 @@ type CallSession struct {
 	ttsMu       sync.RWMutex
 	ttsInstance tts.Provider
 
-	CallStart time.Time
-	WS        *websocket.Conn
-	Log       *zap.Logger
+	CallStart   time.Time
+	WS          *websocket.Conn
+	Log         *zap.Logger
+
+	// CallManager tracks the lifecycle state of the call (dialing, connected,
+	// speaking, listening, completed, failed, etc.).
+	CallManager *callmanager.Manager
 }
 
 var langLabels = map[string]string{
@@ -239,6 +250,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
 		monitorConns:    make(map[*websocket.Conn]struct{}),
+		CallManager:     callmanager.NewManager(),
 	}
 	s.dgAlive.Store(true)
 	return s
@@ -345,6 +357,38 @@ func (s *CallSession) UpdateStreamType() {
 
 // TrySetGreeting atomically marks greeting as sent. Returns true only the first call.
 func (s *CallSession) TrySetGreeting() bool { return s.greetingSent.CompareAndSwap(false, true) }
+
+// MarkGreetingDelivered should be called after the greeting audio has actually
+// been queued. It appends a guard to the system prompt so the LLM does not
+// re-greet the user on the next turn.
+func (s *CallSession) MarkGreetingDelivered() {
+	s.llmMu.Lock()
+	defer s.llmMu.Unlock()
+	guard := "\n\n[CONVERSATION STATE: The opening greeting has already been delivered. Do NOT greet the user again. Do NOT say 'Hello' or re-introduce yourself. Continue the conversation by asking the first question from the call flow instructions.]"
+	if !strings.Contains(s.SystemPrompt, "CONVERSATION STATE: The opening greeting has already been delivered") {
+		s.SystemPrompt += guard
+	}
+	s.MarkGreetingDone()
+}
+
+// TransitionCallState moves the call to a new state and logs any error. It is a
+// convenience wrapper around callmanager.Manager.Transition.
+func (s *CallSession) TransitionCallState(new callmanager.State, reason string) {
+	if s.CallManager == nil {
+		return
+	}
+	if err := s.CallManager.Transition(new, reason); err != nil {
+		s.Log.Warn("call state transition rejected", zap.String("to", string(new)), zap.String("reason", reason), zap.Error(err))
+	}
+}
+
+// CallState returns the current lifecycle state of the call.
+func (s *CallSession) CallState() callmanager.State {
+	if s.CallManager == nil {
+		return callmanager.StatePending
+	}
+	return s.CallManager.State()
+}
 
 func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
@@ -520,6 +564,105 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	copy(snap, s.ChatHistory)
 	s.historyMu.Unlock()
 	return snap
+}
+
+// ConversationState tracks dynamic call progress for the LLM.
+type ConversationState struct {
+	GreetingDone   bool     `json:"greeting_done"`
+	Language       string   `json:"language"`
+	QuestionsAsked []string `json:"questions_asked"`
+	TurnCount      int      `json:"turn_count"`
+}
+
+// State returns a copy of the conversation state (thread-safe).
+func (s *CallSession) State() ConversationState {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	out := s.conversationState
+	out.QuestionsAsked = append([]string(nil), s.conversationState.QuestionsAsked...)
+	return out
+}
+
+// SetState replaces the conversation state (thread-safe).
+func (s *CallSession) SetState(st ConversationState) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.conversationState = st
+}
+
+// MarkGreetingDone records that the opening greeting has been delivered.
+func (s *CallSession) MarkGreetingDone() {
+	s.stateMu.Lock()
+	s.conversationState.GreetingDone = true
+	s.stateMu.Unlock()
+}
+
+// IncrementTurn increases the turn count.
+func (s *CallSession) IncrementTurn() {
+	s.stateMu.Lock()
+	s.conversationState.TurnCount++
+	s.stateMu.Unlock()
+}
+
+// RecordQuestion appends a question to the asked list.
+func (s *CallSession) RecordQuestion(q string) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if q == "" {
+		return
+	}
+	s.conversationState.QuestionsAsked = append(s.conversationState.QuestionsAsked, q)
+}
+
+// UpdateConversationStateMarker appends a concise state marker to the system prompt
+// so the LLM knows which questions have already been asked and whether the greeting
+// has been delivered. It is idempotent: identical markers are not duplicated.
+func (s *CallSession) UpdateConversationStateMarker() {
+	s.stateMu.Lock()
+	st := s.conversationState
+	st.QuestionsAsked = append([]string(nil), s.conversationState.QuestionsAsked...)
+	s.stateMu.Unlock()
+
+	s.llmMu.Lock()
+	defer s.llmMu.Unlock()
+
+	var b strings.Builder
+	b.WriteString("\n\n[CONVERSATION STATE]")
+	if st.GreetingDone {
+		b.WriteString(" The opening greeting has already been delivered. Do NOT greet the user again.")
+	}
+	if st.TurnCount > 0 {
+		b.WriteString(" Turn count: ")
+		b.WriteString(fmt.Sprintf("%d", st.TurnCount))
+		b.WriteString(".")
+	}
+	if len(st.QuestionsAsked) > 0 {
+		b.WriteString(" Questions already asked: ")
+		for i, q := range st.QuestionsAsked {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			b.WriteString(q)
+		}
+		b.WriteString(".")
+	}
+	b.WriteString(" Do NOT ask a question that has already been asked.")
+
+	marker := b.String()
+	if strings.Contains(s.SystemPrompt, "[CONVERSATION STATE]") {
+		// Replace existing marker block.
+		start := strings.Index(s.SystemPrompt, "[CONVERSATION STATE]")
+		rest := s.SystemPrompt[start:]
+		var end int
+		if idx := strings.Index(rest, "\n\n["); idx > 0 {
+			end = start + idx
+		} else {
+			end = len(s.SystemPrompt)
+		}
+		s.SystemPrompt = s.SystemPrompt[:start] + marker + s.SystemPrompt[end:]
+		return
+	}
+	s.SystemPrompt += marker
 }
 
 // MaxTokens returns a token budget based on transcript length, clamped

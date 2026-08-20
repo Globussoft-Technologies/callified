@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
@@ -6,6 +6,8 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { useCall } from '../../contexts/CallContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { CALLIFIED_EVENT_NAME } from '../../constants/events';
+import { useLeads, useCallLogs } from '../../hooks/useQueries';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isExecutive } from '../../utils/roles';
@@ -358,14 +360,14 @@ function AuthAudioPlayer({ src, style }) {
 
 export default function CampaignDetail({
   selectedCampaign, setSelectedCampaign,
-  campaignLeads, callLog, detailTab, setDetailTab,
+  campaignLeads: campaignLeadsProp, callLog: callLogProp, detailTab, setDetailTab,
   handleBack, fetchCampaignLeads, fetchCallLog, fetchCampaigns,
   statusBadge, getProductName, getCampaignStats,
   campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
   INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead, handleDeleteLead,
-  campaignLeadsTotal,
+  campaignLeadsTotal: campaignLeadsTotalProp,
   handleViewTranscripts,
   onCampaignDial, onCampaignWebCall,
   dialingId, webCallActive,
@@ -439,13 +441,32 @@ export default function CampaignDetail({
   const [currentPage, setCurrentPage] = useState(1);
   const [jumpPage, setJumpPage] = useState('');
 
+  // React Query hooks for server state.
+  const leadsParams = useMemo(() => ({
+    page: currentPage,
+    limit: PAGE_SIZE,
+    search: leadSearch.trim(),
+    executiveIds: execFilter,
+    scheduleFrom,
+    scheduleTo,
+  }), [currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo]);
+  const { data: leadsData } = useLeads(currentCampaignId, leadsParams);
+  const campaignLeads = leadsData?.leads ?? campaignLeadsProp;
+  const campaignLeadsTotal = typeof leadsData?.total === 'number' ? leadsData.total : campaignLeadsTotalProp;
+  const { data: callLogData } = useCallLogs(currentCampaignId, { executiveIds: detailExecutiveFilter });
+  const callLog = callLogProp ?? callLogData ?? [];
+
   // ── Auto-dialer state (Browser Call only) ───────────────────────────────────
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const [autoDialQueue, setAutoDialQueue] = useState([]);
   const [autoDialActiveId, setAutoDialActiveId] = useState(null);
   // Uninterrupted mode: skip the post-call disposition modal and auto-advance
   // to the next lead until the queue is exhausted.
-  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(false);
+  const [autoDialUninterrupted, setAutoDialUninterrupted] = useState(true);
+
+  // ── AI dial queue state (server-side Redis queue) ────────────────────────────
+  const [aiQueueState, setAiQueueState] = useState(null);
+  const [aiQueuePolling, setAiQueuePolling] = useState(false);
 
   // ── Disposition modal state (post-call before next auto-dial) ───────────────
   const [showDispositionModal, setShowDispositionModal] = useState(false);
@@ -514,23 +535,6 @@ export default function CampaignDetail({
     if (detailTab === 'calllog' && !canViewTranscripts && !canViewRecordings) setDetailTab('leads');
     if ((detailTab === 'insights' || detailTab === 'retries') && (!canViewReports || hideAiFeatures)) setDetailTab('leads');
   }, [detailTab, canViewTranscripts, canViewRecordings, canViewReports, hideAiFeatures, setDetailTab]);
-
-  // Server-side pagination: fetch the current page with active filters.
-  const loadCampaignLeads = useCallback(() => {
-    if (!selectedCampaign?.id) return;
-    fetchCampaignLeads(selectedCampaign.id, {
-      page: currentPage,
-      limit: PAGE_SIZE,
-      search: leadSearch.trim(),
-      executiveIds: execFilter,
-      scheduledFrom: scheduleFrom,
-      scheduledTo: scheduleTo,
-    });
-  }, [selectedCampaign?.id, currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo, fetchCampaignLeads]);
-
-  useEffect(() => {
-    loadCampaignLeads();
-  }, [loadCampaignLeads]);
 
   // Reset to page 1 whenever filters/search change so the user doesn't land on
   // an empty page after narrowing the list.
@@ -636,6 +640,55 @@ export default function CampaignDetail({
       return ids;
     });
   }, [paginatedLeads, autoDialEnabled, autoDialActiveId]);
+
+  // Poll the server-side Redis dial queue for this campaign so the UI can show
+  // progress and pause/resume/abort controls while AI auto-dial is running.
+  useEffect(() => {
+    if (!selectedCampaign?.id) return;
+    const fetchState = async () => {
+      try {
+        const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/status`);
+        if (!res.ok) return;
+        const state = await res.json();
+        setAiQueueState(state && state.running ? state : null);
+        setAiQueuePolling(!!(state && state.running && !state.aborted && !state.paused));
+      } catch (_) {}
+    };
+    fetchState();
+    if (!aiQueuePolling) return;
+    const interval = setInterval(fetchState, 5000);
+    return () => clearInterval(interval);
+  }, [selectedCampaign?.id, aiQueuePolling, apiFetch, API_URL]);
+
+  // Listen to domain events from the server-side event bus and refresh the
+  // campaign data when relevant events arrive (lead status changes, call
+  // completions, queue start/finish). This keeps the dashboard/table in sync
+  // during AI auto-dial and other background operations.
+  useEffect(() => {
+    if (!selectedCampaign?.id) return;
+    let timeout = null;
+    const handler = (ev) => {
+      const payload = ev?.detail;
+      if (!payload) return;
+      const relevantTypes = ['LEAD_STATUS_CHANGED', 'CALL_COMPLETED', 'CAMPAIGN_DIAL_STARTED', 'CAMPAIGN_DIAL_FINISHED'];
+      if (!relevantTypes.includes(payload.type)) return;
+      if (payload.campaign_id && payload.campaign_id !== selectedCampaign.id) return;
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        fetchCampaignLeads(selectedCampaign.id);
+        fetchCallLog(selectedCampaign.id);
+        // Trigger a queue status refresh if a queue event arrived.
+        if (['CAMPAIGN_DIAL_STARTED', 'CAMPAIGN_DIAL_FINISHED'].includes(payload.type)) {
+          setAiQueuePolling(true);
+        }
+      }, 500);
+    };
+    window.addEventListener(CALLIFIED_EVENT_NAME, handler);
+    return () => {
+      window.removeEventListener(CALLIFIED_EVENT_NAME, handler);
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [selectedCampaign?.id, fetchCampaignLeads, fetchCallLog]);
 
   const [editingNote, setEditingNote] = useState(null);
   const [generatedNote, setGeneratedNote] = useState(null);
@@ -975,7 +1028,7 @@ export default function CampaignDetail({
       );
     }
     prevWebCallActiveRef.current = webCallActive;
-  }, [webCallActive]);
+  }, [webCallActive, selectedCampaign.id, fetchCallLog]);
 
   // Pre-fill date/time to current time every time the modal opens for a lead.
   useEffect(() => {
@@ -1060,6 +1113,30 @@ export default function CampaignDetail({
     onCampaignWebCall(lead, campaignId);
   };
 
+  // AI dial queue controls
+  const handlePauseAIQueue = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/pause`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue paused'); setAiQueueState(s => s ? { ...s, paused: true } : s); }
+      else { toast('Failed to pause queue'); }
+    } catch (_) { toast('Network error'); }
+  };
+  const handleResumeAIQueue = async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/resume`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue resumed'); setAiQueueState(s => s ? { ...s, paused: false } : s); setAiQueuePolling(true); }
+      else { toast('Failed to resume queue'); }
+    } catch (_) { toast('Network error'); }
+  };
+  const handleAbortAIQueue = async () => {
+    if (!await confirm({ message: 'Stop the AI auto-dial queue and discard remaining calls?' })) return;
+    try {
+      const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/dial-queue/abort`, { method: 'POST' });
+      if (res.ok) { toast('AI dial queue aborted'); setAiQueueState(null); setAiQueuePolling(false); }
+      else { toast('Failed to abort queue'); }
+    } catch (_) { toast('Network error'); }
+  };
+
   // Auto-dismiss success toast after 4 s
   useEffect(() => {
     if (qaStatus?.type === 'success') {
@@ -1111,12 +1188,12 @@ export default function CampaignDetail({
     setRetriesLoading(false);
   };
 
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter);
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailTab, selectedCampaign.id, detailExecutiveFilter]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // Load call outcome stats whenever the campaign detail is opened.
   useEffect(() => {
@@ -1748,6 +1825,51 @@ export default function CampaignDetail({
           }}
           campaignName={selectedCampaign.name}
         />
+      )}
+
+      {/* AI Dial Queue Panel — server-side Redis queue progress and controls */}
+      {aiQueueState && (
+        <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+            <div>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>
+                {aiQueueState.paused ? '⏸ AI Dial Queue Paused' : aiQueueState.aborted ? '⏹ AI Dial Queue Aborted' : '▶ AI Dial Queue Running'}
+              </h3>
+              <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>{selectedCampaign.name}</p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {aiQueueState.paused ? (
+                <button onClick={handleResumeAIQueue} style={{ ...btnGhost, color: T.green, borderColor: 'rgba(16,185,129,0.3)' }}>▶ Resume</button>
+              ) : (
+                <button onClick={handlePauseAIQueue} style={{ ...btnGhost, color: T.amber, borderColor: 'rgba(245,158,11,0.3)' }}>⏸ Pause</button>
+              )}
+              <button onClick={handleAbortAIQueue} style={{ ...btnGhost, color: T.red, borderColor: 'rgba(239,68,68,0.3)' }}>⏹ Stop</button>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Queued</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.text }}>{aiQueueState.queued_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Processed</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.green }}>{aiQueueState.processed_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Failed</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.red }}>{aiQueueState.failed_count || 0}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Retrying</div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: T.amber }}>{aiQueueState.retry_count || 0}</div>
+            </div>
+          </div>
+          {aiQueueState.last_error && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.2)`, borderRadius: 8, color: T.red, fontSize: '0.85rem' }}>
+              {aiQueueState.last_error}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Agent filter for detail tabs */}

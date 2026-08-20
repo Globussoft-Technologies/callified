@@ -97,17 +97,25 @@ var femaleVoices = map[string]bool{
 
 // Builder constructs voice call prompts from DB state.
 type Builder struct {
-	db *db.DB
+	db       *db.DB
+	registry *Registry
 }
 
-// NewBuilder creates a Builder.
+// NewBuilder creates a Builder and seeds global default templates if the DB is available.
 func NewBuilder(database *db.DB) *Builder {
-	return &Builder{db: database}
+	b := &Builder{db: database, registry: NewRegistry(database)}
+	if database != nil {
+		if err := b.registry.CreateDefaultTemplates(context.Background()); err != nil {
+			// Non-fatal: the built-in fallback prompt still works.
+			// Logger is not available here; swallow the error silently.
+		}
+	}
+	return b
 }
 
 // BuildCallContext assembles the full system prompt for a voice call.
 // This replaces the gRPC InitializeCall Python call.
-func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID int64, language string) (*CallContext, error) {
+func (b *Builder) BuildCallContext(ctx context.Context, orgID, campaignID, leadID int64, language string) (*CallContext, error) {
 	// Fetch TTS voice config first (campaign → org fallback) so we know the
 	// effective language before building the greeting and system prompt.
 	var vs db.VoiceSettings
@@ -186,7 +194,9 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	}
 
 	// Build system prompt — custom org-level override short-circuits the full
-	// template and just gets a language directive appended.
+	// template and just gets a language directive appended. Otherwise resolve the
+	// template from campaign → product → global default, and fall back to the
+	// built-in default prompt.
 	var systemPrompt string
 	if customPrompt != "" {
 		systemPrompt = customPrompt + fmt.Sprintf("\n\nIMPORTANT: Respond only in %s. Do not use English unless the user asks for it.", languageLabel(effectiveLang))
@@ -194,7 +204,13 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 			systemPrompt += fmt.Sprintf("\n\nYou are speaking with %s.", leadName)
 		}
 	} else {
-		systemPrompt = buildDefaultPrompt(pc)
+		template, err := b.registry.GetTemplateForCampaign(ctx, campaignID, effectiveLang)
+		if err == nil && template != nil {
+			systemPrompt = RenderTemplate(template.ScriptBody, pc)
+		}
+		if systemPrompt == "" {
+			systemPrompt = buildDefaultPrompt(pc)
+		}
 	}
 
 	// Append pronunciation guide so the LLM uses phonetic forms directly in its
@@ -222,6 +238,29 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+// DefaultTemplateBody renders the built-in default prompt for a language using
+// a generic context. Used to seed global prompt templates and as a fallback when
+// no org/campaign/product template is configured.
+func DefaultTemplateBody(language string) string {
+	frag, ok := langFragments[language]
+	if !ok {
+		frag = langFragments["en"]
+	}
+	pc := promptContext{
+		CompanyName:    "",
+		ProductName:    "",
+		ProductContext: "",
+		CampaignName:   "",
+		PersonaName:    "",
+		LeadFirst:      "",
+		SourceInline:   "",
+		Language:       language,
+	}
+	// Preserve the identity line fragment so the LLM sees the target register.
+	pc.CompanyName = frag.IdentityLine
+	return buildDefaultPrompt(pc)
+}
 
 // promptContext bundles every variable the system prompt needs so we can pass
 // a single value around instead of threading many parameters.

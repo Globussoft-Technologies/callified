@@ -12,7 +12,9 @@ import (
 	"github.com/globussoft/callified-backend/internal/callguard"
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/globussoft/callified-backend/internal/db"
+	"github.com/globussoft/callified-backend/internal/metrics"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
+	"github.com/globussoft/callified-backend/internal/trace"
 	"github.com/globussoft/callified-backend/internal/webhook"
 )
 
@@ -47,27 +49,29 @@ type CallData struct {
 // Initiator orchestrates the full dial sequence:
 // DND check → TRAI hours → Redis pending call → provider dial → DB log.
 type Initiator struct {
-	cfg    *config.Config
-	store  *rstore.Store
-	db     *db.DB
-	disp   *webhook.Dispatcher
-	exotel *ExotelClient
-	tata   *TataClient
-	twilio *TwilioClient
-	log    *zap.Logger
+	cfg             *config.Config
+	store           *rstore.Store
+	db              *db.DB
+	disp            *webhook.Dispatcher
+	defaultProvider Provider
+	log             *zap.Logger
+	cb              *Registry
 }
 
 // New creates an Initiator wired to the supported telephony providers.
 func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook.Dispatcher, log *zap.Logger) *Initiator {
+	defaultProv, err := NewProviderFromConfig(cfg)
+	if err != nil {
+		log.Warn("dial: default provider from config is not usable", zap.Error(err))
+	}
 	return &Initiator{
-		cfg:    cfg,
-		store:  store,
-		db:     database,
-		disp:   disp,
-		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, "", cfg.ExotelRegion, cfg.ExotelSubdomain),
-		tata:   NewTataClient(cfg.TataAPIToken, cfg.TataCallerID, cfg.TataAgentNumber, cfg.TataAPIEndpoint),
-		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
-		log:    log,
+		cfg:             cfg,
+		store:           store,
+		db:              database,
+		disp:            disp,
+		defaultProvider: defaultProv,
+		log:             log,
+		cb:              NewCircuitRegistry(DefaultCircuitBreakerConfig()),
 	}
 }
 
@@ -89,6 +93,10 @@ var ErrInsufficientCredits = fmt.Errorf("insufficient credits — please recharg
 // lookup — e.g., the manual-call REST endpoint returns it so external clients
 // can open /ws/monitor/{call_sid} before the media stream connects.
 func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error) {
+	provider := "unknown"
+	outcome := "unknown"
+	defer func() { metrics.DialAttemptsTotal.WithLabelValues(provider, outcome).Inc() }()
+
 	// 1. DND check
 	isDND, err := i.db.IsDNDNumber(data.OrgID, data.LeadPhone)
 	if err != nil {
@@ -98,6 +106,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		_ = i.db.UpdateLeadStatus(data.LeadID, "DND — do not call")
 		// Live-feed: tell the campaign detail page why this number was skipped.
 		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "dnd", "number is on DND list")
+		outcome = "dnd"
 		return "", ErrDND
 	}
 
@@ -105,6 +114,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	tz, _ := i.db.GetOrgTimezone(data.OrgID)
 	status := callguard.Check(tz)
 	if !status.Allowed {
+		outcome = "call_hours"
 		return "", fmt.Errorf("%w: %s", ErrCallHours, status.Reason)
 	}
 
@@ -147,6 +157,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 						_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
 						i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
 							"failed", "insufficient credits – recharge to continue")
+						outcome = "insufficient_credits"
 						return "", ErrInsufficientCredits
 					}
 					i.log.Info("dial: zero balance, no prior deductions – allowing call (new org)",
@@ -218,7 +229,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	if creds.Direction == "inbound" {
 		return "", fmt.Errorf("campaign provider account is inbound-only; choose an outbound account")
 	}
-	provider := creds.Provider
+	provider = creds.Provider
 	if provider == "" {
 		provider = i.cfg.DefaultProvider
 	}
@@ -230,37 +241,43 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	}
 	var callSid string
 
-	switch provider {
-	case "twilio":
-		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
-	case "tata", "smartflo", "tata_tele":
-		var tataClient *TataClient
-		if creds.IsSet() {
-			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
-		} else {
-			tataClient = i.tata
+	// Build a carrier-agnostic provider from the resolved credentials, falling
+	// back to the legacy config-level provider when no stored account is set.
+	var prov Provider
+	var provErr error
+	if creds.IsSet() {
+		acc := ProviderAccountFromExotelCreds(creds)
+		prov, provErr = NewProvider(acc)
+	} else {
+		prov = i.defaultProvider
+		if prov == nil {
+			provErr = fmt.Errorf("no campaign provider account configured and no default provider available")
 		}
-		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d",
-			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
-		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
-	default: // exotel
-		if !creds.IsSet() {
-			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
-			return "", fmt.Errorf("no Exotel credentials configured for this campaign")
-		}
-		exotelClient := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
-		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
-			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)
 	}
+	if provErr != nil {
+		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
+		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", fmt.Sprintf("%s: invalid provider account", provider))
+		outcome = "invalid_credentials"
+		return "", fmt.Errorf("invalid provider account for %s: %w", provider, provErr)
+	}
+	if err := prov.ValidateCredentials(ctx); err != nil {
+		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
+		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", fmt.Sprintf("%s: %v", provider, err))
+		outcome = "invalid_credentials"
+		return "", fmt.Errorf("provider account validation failed for %s: %w", provider, err)
+	}
+
+	flowURL, callbackURL := i.buildProviderURLs(ctx, prov.Name(), data)
+	callSid, err = i.dialWithCircuitBreaker(ctx, provider, prov, data.LeadPhone, flowURL, callbackURL)
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
 		// Live-feed: surface the dial-time failure (bad params, provider
 		// rejected, etc.) on the campaign detail page.
 		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", fmt.Sprintf("%s: %v", provider, err))
+		outcome = "provider_error"
 		return "", fmt.Errorf("dial %s: %w", provider, err)
 	}
+	outcome = "success"
 
 	// 5. Persist pending call under the call SID for webhook lookup
 	pending.ExotelCallSid = callSid
@@ -332,6 +349,35 @@ func tataStreamURL(publicURL string, leadID, campaignID, orgID int64) string {
 	return u.String()
 }
 
+// buildProviderURLs returns the flow/TwiML/ExoML URL and the status callback URL
+// for a given carrier and call context. It centralizes URL generation so the
+// Provider interface can be carrier-agnostic.
+func (i *Initiator) buildProviderURLs(ctx context.Context, providerName string, data CallData) (flowURL, callbackURL string) {
+	base := strings.TrimRight(i.cfg.PublicServerURL, "/")
+	traceQ := ""
+	if id := trace.FromContext(ctx); id != "" {
+		traceQ = "&trace_id=" + url.QueryEscape(id)
+	}
+	switch providerName {
+	case string(ProviderTata):
+		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d%s",
+			base, data.LeadID, data.CampaignID, traceQ)
+		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
+		// Tata uses callbackURL=statusURL and flowURL=streamURL in its client.
+		return streamURL, statusURL
+	case string(ProviderTwilio):
+		twimlURL := fmt.Sprintf("%s/webhook/twilio/voice", base)
+		statusURL := fmt.Sprintf("%s/webhook/twilio/status?lead_id=%d&campaign_id=%d%s",
+			base, data.LeadID, data.CampaignID, traceQ)
+		return twimlURL, statusURL
+	default: // exotel
+		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d%s",
+			base, data.LeadID, data.CampaignID, traceQ)
+		// Exotel builds its own flow URL from app_type and app_id.
+		return "", statusURL
+	}
+}
+
 // Hangup ends an in-progress carrier call. It first tries to use the same
 // provider account that placed the call (stored in Redis under the call SID),
 // then falls back to the campaign-linked account. This keeps per-machine
@@ -358,22 +404,26 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 		provider = i.cfg.DefaultProvider
 	}
 
-	switch provider {
-	case "twilio":
-		return fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
-	case "tata", "smartflo", "tata_tele":
-		var client *TataClient
-		if creds.IsSet() {
-			client = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
-		} else {
-			client = i.tata
-		}
-		return client.Hangup(ctx, callSid)
-	default: // exotel
-		if !creds.IsSet() {
-			return fmt.Errorf("no Exotel credentials configured for this campaign")
-		}
-		client := NewExotelClient(creds.APIKey, creds.APIToken, creds.AccountSID, creds.CallerID, creds.AppID, creds.AppType, creds.Region, creds.Subdomain)
-		return client.Hangup(ctx, callSid)
+	if !creds.IsSet() {
+		return fmt.Errorf("no provider credentials configured for this campaign")
 	}
+	acc := ProviderAccountFromExotelCreds(creds)
+	prov, err := NewProvider(acc)
+	if err != nil {
+		return fmt.Errorf("invalid provider account for hangup: %w", err)
+	}
+	return prov.Hangup(ctx, callSid)
+}
+
+// dialWithCircuitBreaker runs the provider InitiateCall through the per-provider
+// circuit breaker. If the breaker is open it returns immediately so the UI gets
+// a clear error instead of timing out on a failing carrier.
+func (i *Initiator) dialWithCircuitBreaker(ctx context.Context, provider string, prov Provider, phone, flowURL, callbackURL string) (string, error) {
+	var callSid string
+	err := i.cb.Call(ctx, provider, func() error {
+		var err error
+		callSid, err = prov.InitiateCall(ctx, phone, flowURL, callbackURL)
+		return err
+	})
+	return callSid, err
 }

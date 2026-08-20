@@ -34,7 +34,7 @@ func (d *DB) EnsureAPIKeysTable() error {
 			last_used_at TIMESTAMP NULL DEFAULT NULL,
 			INDEX idx_api_keys_org (org_id),
 			INDEX idx_api_keys_hash (key_hash)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return fmt.Errorf("create api_keys: %w", err)
 	}

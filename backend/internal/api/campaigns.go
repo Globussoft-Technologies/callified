@@ -136,6 +136,7 @@ type campaignCreateRequest struct {
 	LeadSource      string `json:"lead_source"`
 	Channel         string `json:"channel"`
 	ExotelAccountID int64  `json:"exotel_account_id"`
+	OpeningScriptID int64  `json:"opening_script_id"`
 }
 
 // validateCampaignName mirrors frontend/src/utils/campaignName.js. Defense
@@ -189,7 +190,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 			exotelAccountID = accounts[0].ID
 		}
 	}
-	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), exotelAccountID)
+	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), exotelAccountID, req.OpeningScriptID)
 	if err != nil {
 		s.logger.Sugar().Errorw("createCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -260,19 +261,20 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	// Attach voice settings in a merged map so we stay backwards-compatible
 	// with clients that still read c.* directly.
 	resp := map[string]any{
-		"id":           c.ID,
-		"org_id":       c.OrgID,
-		"product_id":   c.ProductID,
-		"name":         c.Name,
-		"status":       c.Status,
-		"tts_provider": c.TTSProvider,
-		"tts_voice_id": c.TTSVoiceID,
-		"tts_language": c.TTSLanguage,
-		"lead_source":  c.LeadSource,
-		"channel":      c.Channel,
-		"product_name": c.ProductName,
-		"created_at":   c.CreatedAt,
-		"stats":        c.Stats,
+		"id":                c.ID,
+		"org_id":            c.OrgID,
+		"product_id":        c.ProductID,
+		"name":              c.Name,
+		"status":            c.Status,
+		"tts_provider":      c.TTSProvider,
+		"tts_voice_id":      c.TTSVoiceID,
+		"tts_language":      c.TTSLanguage,
+		"lead_source":       c.LeadSource,
+		"channel":           c.Channel,
+		"product_name":      c.ProductName,
+		"opening_script_id": c.OpeningScriptID,
+		"created_at":        c.CreatedAt,
+		"stats":             c.Stats,
 	}
 	if vs, err := s.db.GetCampaignVoiceSettings(id); err == nil {
 		resp["voice_settings"] = map[string]string{
@@ -290,11 +292,12 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/campaigns/{id} ──────────────────────────────────────────────────
 
 type campaignUpdateRequest struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	LeadSource string `json:"lead_source"`
-	ProductID  int64  `json:"product_id"`
-	Channel    string `json:"channel"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	LeadSource      string `json:"lead_source"`
+	ProductID       int64  `json:"product_id"`
+	Channel         string `json:"channel"`
+	OpeningScriptID *int64 `json:"opening_script_id"`
 }
 
 // @Summary     Update campaign
@@ -346,7 +349,7 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Name = strings.TrimSpace(req.Name)
 	}
-	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID); err != nil {
+	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID, req.OpeningScriptID); err != nil {
 		s.logger.Sugar().Errorw("updateCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -573,12 +576,12 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 		return
 	}
 	var body struct {
-		LeadIDs     []int64 `json:"lead_ids"`
-		ExecutiveID int64   `json:"executive_id"`
-		All         bool    `json:"all"`
-		Search      string  `json:"search"`
-		ScheduledFrom string `json:"scheduled_from"`
-		ScheduledTo   string `json:"scheduled_to"`
+		LeadIDs       []int64 `json:"lead_ids"`
+		ExecutiveID   int64   `json:"executive_id"`
+		All           bool    `json:"all"`
+		Search        string  `json:"search"`
+		ScheduledFrom string  `json:"scheduled_from"`
+		ScheduledTo   string  `json:"scheduled_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -1702,9 +1705,9 @@ func (s *Server) requireCampaignView(w http.ResponseWriter, r *http.Request) *db
 }
 
 // leadAccessExecIDs returns the executive_id values a user may access inside a
-// campaign. Admins, Agents, and Team Leaders are already scoped by campaign
-// visibility, so they do not get an executive_id filter here. Executives see
-// only campaign-lead rows assigned to their executive record.
+// campaign. Admins and Team Leaders are already scoped by campaign visibility,
+// so they do not get an executive_id filter here. Agents and Executives see only
+// leads whose executive_id equals the current user's ID.
 func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 	if s.isSuperAdmin(ac.Email) {
 		return nil, false, nil
@@ -1713,22 +1716,12 @@ func (s *Server) leadAccessExecIDs(ac AuthClaims) ([]int64, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if user == nil || user.Role == db.RoleAdmin {
+	if user == nil || user.Role == db.RoleAdmin || user.Role == db.RoleTeamLeader {
 		return nil, false, nil
 	}
 
-	switch user.Role {
-	case db.RoleTeamLeader, db.RoleAgent:
-		return nil, false, nil
-	case db.RoleExecutive:
-		exec, err := s.db.GetExecutiveByEmail(ac.OrgID, user.Email)
-		if err != nil {
-			return nil, true, err
-		}
-		if exec == nil {
-			return []int64{-1}, true, nil
-		}
-		return []int64{exec.ID}, true, nil
+	if user.Role == db.RoleAgent || user.Role == db.RoleExecutive {
+		return []int64{user.ID}, true, nil
 	}
 	return nil, false, nil
 }

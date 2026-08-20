@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/config"
+	"github.com/globussoft/callified-backend/internal/metrics"
+	"github.com/globussoft/callified-backend/internal/trace"
 )
 
 // Provider routes LLM calls to Gemini or Groq and handles streaming sentence splitting.
@@ -35,6 +39,8 @@ func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 // Mirrors Python ws_handler.py _process_transcript LLM section.
 func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest, onSentence func(SentenceChunk)) error {
 	var buf strings.Builder
+	start := time.Now()
+	log := p.log.With(zap.String("trace_id", trace.FromContext(ctx)))
 
 	// All languages follow LLM_PROVIDER config.
 	useGemini := p.cfg.LLMProvider != "groq"
@@ -42,7 +48,7 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	if useGemini {
 		providerName = "gemini"
 	}
-	p.log.Info("[LLM] processing transcript",
+	log.Info("[LLM] processing transcript",
 		zap.String("provider", providerName),
 		zap.String("language", req.Language),
 		zap.Int32("max_tokens", req.MaxTokens),
@@ -54,7 +60,8 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		buf.Reset()
 		buf.WriteString(remainder)
 		for _, sent := range sentences {
-			if text, hangup := parseChunk(sent); text != "" || hangup {
+			cleaned := ApplyGuardrailsWithState(sent, req.Language, req.GreetingDone, log)
+			if text, hangup := parseChunk(cleaned); text != "" || hangup {
 				onSentence(SentenceChunk{Text: text, HasHangup: hangup})
 			}
 		}
@@ -72,12 +79,14 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	// sounds like a sentence cut off in the middle when the model stops without
 	// punctuation.
 	if remaining := strings.TrimSpace(buf.String()); remaining != "" && !errors.Is(err, ErrMaxTokens) && !req.DropIncompleteRemainder {
-		text, hangup := parseChunk(remaining)
+		cleaned := ApplyGuardrailsWithState(remaining, req.Language, req.GreetingDone, log)
+		text, hangup := parseChunk(cleaned)
 		if text != "" || hangup {
 			onSentence(SentenceChunk{Text: text, HasHangup: hangup})
 		}
 	}
 
+	recordLLMUsage(providerName, req.InputText(), buf.String(), start)
 	return err
 }
 
@@ -100,6 +109,12 @@ func (p *Provider) GenerateResponse(ctx context.Context, systemPrompt string, hi
 	}
 
 	useGemini := p.cfg.LLMProvider != "groq"
+	providerName := "gemini"
+	if !useGemini {
+		providerName = "groq"
+	}
+	start := time.Now()
+	log := p.log.With(zap.String("trace_id", trace.FromContext(ctx)))
 	var result strings.Builder
 	onToken := func(t string) { result.WriteString(t) }
 
@@ -109,13 +124,39 @@ func (p *Provider) GenerateResponse(ctx context.Context, systemPrompt string, hi
 	} else {
 		err = p.groq.StreamTokens(ctx, req, onToken)
 	}
-	return strings.TrimSpace(result.String()), err
+	recordLLMUsage(providerName, req.InputText(), result.String(), start)
+	return ApplyGuardrails(strings.TrimSpace(result.String()), req.Language, log), err
 }
 
 // GenerateText calls Gemini (non-streaming) with thinking disabled.
 // Suitable for batch extraction tasks like product scraping and prompt generation.
 func (p *Provider) GenerateText(ctx context.Context, systemPrompt, userMessage string, maxOutputTokens int) (string, error) {
-	return p.gemini.GenerateText(ctx, systemPrompt, userMessage, maxOutputTokens)
+	start := time.Now()
+	log := p.log.With(zap.String("trace_id", trace.FromContext(ctx)))
+	text, err := p.gemini.GenerateText(ctx, systemPrompt, userMessage, maxOutputTokens)
+	input := systemPrompt + "\n" + userMessage
+	recordLLMUsage("gemini", input, text, start)
+	if err != nil {
+		log.Warn("[LLM] GenerateText failed", zap.Error(err))
+	}
+	return text, err
+}
+
+// approximateTokens returns a rough token count for billing/observability.
+// Uses characters/4, which is a reasonable estimate for Indic and Latin text.
+func approximateTokens(s string) float64 {
+	return float64(utf8.RuneCountInString(s)) / 4.0
+}
+
+// recordLLMUsage records latency and approximate token usage for a completed LLM call.
+func recordLLMUsage(providerName, input, fullResponse string, start time.Time) {
+	metrics.LLMResponseLatency.WithLabelValues(providerName).Observe(time.Since(start).Seconds())
+	if input != "" {
+		metrics.LLMTokenUsageTotal.WithLabelValues(providerName, "input").Add(approximateTokens(input))
+	}
+	if fullResponse != "" {
+		metrics.LLMTokenUsageTotal.WithLabelValues(providerName, "output").Add(approximateTokens(fullResponse))
+	}
 }
 
 // parseChunk strips [HANGUP] from text and returns (cleanText, hasHangup).

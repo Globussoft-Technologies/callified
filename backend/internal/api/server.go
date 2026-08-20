@@ -102,6 +102,13 @@ func (s *Server) SetWAAgent(agent *wa.Agent) {
 	s.waAgent = agent
 }
 
+// SetDispatcher wires a shared webhook dispatcher after construction. When set,
+// it overrides the dispatcher created in New so recording-service webhooks and
+// API-managed webhooks share the same retry/DLQ state.
+func (s *Server) SetDispatcher(d *webhook.Dispatcher) {
+	s.dispatcher = d
+}
+
 // S3 returns the S3 client (nil when not configured). Used by main.go to wire
 // the same client into the recording service.
 func (s *Server) S3() *storage.S3Client { return s.s3 }
@@ -272,6 +279,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/products/{id}", s.requireAdminPermission("products.manage")(s.deleteProduct))
 	mux.HandleFunc("GET /api/products/{id}/prompt", s.requireAdminPermission("products.view")(s.getProductPrompt))
 	mux.HandleFunc("PUT /api/products/{id}/prompt", s.requireAdminPermission("products.manage")(s.updateProductPrompt))
+
+	// ── Prompt Templates ───────────────────────────────────────────────────────
+	mux.HandleFunc("GET /api/templates", auth(s.listTemplates))
+	mux.HandleFunc("POST /api/templates", s.requireAdminPermission("products.manage")(s.createTemplate))
+	mux.HandleFunc("GET /api/templates/{id}", auth(s.getTemplate))
+	mux.HandleFunc("PUT /api/templates/{id}", s.requireAdminPermission("products.manage")(s.updateTemplate))
+	mux.HandleFunc("POST /api/templates/seed-panora", s.requireAdminPermission("products.manage")(s.seedPanoraTemplates))
 	mux.HandleFunc("POST /api/products/{id}/images", s.requireAdminPermission("products.manage")(s.uploadProductImage))
 	mux.HandleFunc("PUT /api/products/{id}/images", s.requireAdminPermission("products.manage")(s.updateProductImages))
 	mux.HandleFunc("DELETE /api/products/{id}/images/{index}", s.requireAdminPermission("products.manage")(s.deleteProductImage))
@@ -312,6 +326,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
+	mux.HandleFunc("GET /api/calls/{call_id}/report", auth(s.getCallReport))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	// /check is a read-only lookup any agent might need before placing a call;
@@ -449,6 +464,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/campaigns/{id}/dial/{lead_id}", adminOrAgent(s.campaignDialLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/dial-all", adminAuth(s.campaignDialAll))
 	mux.HandleFunc("POST /api/campaigns/{id}/redial-failed", adminAuth(s.campaignRedialFailed))
+	mux.HandleFunc("GET /api/campaigns/{id}/dial-queue/status", auth(s.campaignDialQueueStatus))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/pause", adminAuth(s.campaignDialQueuePause))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/resume", adminAuth(s.campaignDialQueueResume))
+	mux.HandleFunc("POST /api/campaigns/{id}/dial-queue/abort", adminAuth(s.campaignDialQueueAbort))
 	mux.HandleFunc("POST /api/manual-call", adminOrAgent(s.manualCall))
 
 	// ── AI Receptionist (embedded — no separate process) ────────────────────
@@ -577,6 +596,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sse/ticket", auth(s.sseTicket))
 	mux.HandleFunc("GET /api/sse/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
+	mux.HandleFunc("GET /api/events", s.requireSSETicket(s.domainEventsSSE))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))
 	mux.HandleFunc("GET /api/campaign-events", s.requireSSETicket(s.campaignEventsQuery))
 	mux.HandleFunc("GET /api/sse/notifications", s.requireSSETicket(s.notificationEvents))

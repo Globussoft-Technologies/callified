@@ -16,7 +16,19 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/dial"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
+	"github.com/globussoft/callified-backend/internal/trace"
 )
+
+// withTraceFromQuery checks the request query/body for a trace_id and, if found,
+// returns a new request with that trace ID in the context. Otherwise it returns
+// the original request unchanged. This lets provider callbacks continue the
+// trace started at dial time.
+func withTraceFromQuery(r *http.Request) *http.Request {
+	if id := r.URL.Query().Get("trace_id"); id != "" {
+		return r.WithContext(trace.WithContext(r.Context(), id))
+	}
+	return r
+}
 
 // ── GET /webhook/twilio ───────────────────────────────────────────────────────
 // Twilio calls this URL when a call connects. We return TwiML that opens a
@@ -33,6 +45,7 @@ import (
 // @Success     200  {string}  string  "TwiML response"
 // @Router      /webhook/twilio [get]
 func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
+	r = withTraceFromQuery(r)
 	leadID := r.URL.Query().Get("lead_id")
 	campaignID := r.URL.Query().Get("campaign_id")
 	orgID := r.URL.Query().Get("org_id")
@@ -85,6 +98,7 @@ func (s *Server) twilioTwiML(w http.ResponseWriter, r *http.Request) {
 // @Success     200  {string}  string  "ExoML response"
 // @Router      /webhook/exotel [get]
 func (s *Server) exotelXML(w http.ResponseWriter, r *http.Request) {
+	r = withTraceFromQuery(r)
 	q := r.URL.Query()
 
 	// Look up the campaign-resolved voice settings + lead context that
@@ -238,6 +252,7 @@ func firstNonEmptyStr(vals ...string) string {
 // @Success     200  "OK"
 // @Router      /webhook/twilio/status [post]
 func (s *Server) twilioStatus(w http.ResponseWriter, r *http.Request) {
+	r = withTraceFromQuery(r)
 	if err := r.ParseForm(); err != nil {
 		w.WriteHeader(http.StatusOK) // always 200 for Twilio
 		return
@@ -344,6 +359,7 @@ func (s *Server) completeRetryIfAnswered(leadID, campaignID, orgID int64, status
 // @Success     200  "OK"
 // @Router      /webhook/exotel/status [post]
 func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
+	r = withTraceFromQuery(r)
 	// Exotel sends status callbacks as either application/x-www-form-urlencoded
 	// or multipart/form-data. ParseMultipartForm handles both.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -438,6 +454,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 // ── POST /webhook/tata/status ────────────────────────────────────────────────
 // Tata Smartflo/CloudPhone posts call lifecycle updates here.
 func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
+	r = withTraceFromQuery(r)
 	var body map[string]any
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "json") && r.Body != nil {

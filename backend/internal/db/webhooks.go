@@ -121,3 +121,60 @@ func (d *DB) LogWebhookDelivery(webhookID int64, event string, statusCode int, r
 		webhookID, event, statusCode, nullString(response))
 	return err
 }
+
+// EnqueueWebhookDLQ stores a failed webhook delivery in the dead-letter queue.
+func (d *DB) EnqueueWebhookDLQ(webhookID, orgID int64, event, payload string, statusCode int, response string) error {
+	_, err := d.pool.Exec(
+		`INSERT INTO webhook_dlq (webhook_id, org_id, event, payload, last_status_code, last_response, attempts)
+		 VALUES (?,?,?,?,?,?,1)`,
+		webhookID, orgID, event, payload, statusCode, nullString(response))
+	return err
+}
+
+// IncrementWebhookDLQAttempts increments the retry counter for a DLQ entry.
+func (d *DB) IncrementWebhookDLQAttempts(id int64) error {
+	_, err := d.pool.Exec(`UPDATE webhook_dlq SET attempts = attempts + 1, updated_at = NOW() WHERE id=?`, id)
+	return err
+}
+
+// DeleteWebhookDLQ removes a DLQ entry after successful retry.
+func (d *DB) DeleteWebhookDLQ(id int64) error {
+	_, err := d.pool.Exec(`DELETE FROM webhook_dlq WHERE id=?`, id)
+	return err
+}
+
+// WebhookDLQEntry mirrors the webhook_dlq table.
+type WebhookDLQEntry struct {
+	ID             int64  `json:"id"`
+	WebhookID      int64  `json:"webhook_id"`
+	OrgID          int64  `json:"org_id"`
+	Event          string `json:"event"`
+	Payload        string `json:"payload"`
+	LastStatusCode int    `json:"last_status_code"`
+	LastResponse   string `json:"last_response"`
+	Attempts       int    `json:"attempts"`
+	CreatedAt      string `json:"created_at"`
+}
+
+// GetPendingWebhookDLQ returns DLQ entries ordered oldest first, limited to n.
+func (d *DB) GetPendingWebhookDLQ(limit int) ([]WebhookDLQEntry, error) {
+	rows, err := d.pool.Query(`
+		SELECT id, webhook_id, org_id, event, COALESCE(payload,''), COALESCE(last_status_code,0),
+		       COALESCE(last_response,''), attempts,
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM webhook_dlq ORDER BY created_at ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []WebhookDLQEntry
+	for rows.Next() {
+		var e WebhookDLQEntry
+		if err := rows.Scan(&e.ID, &e.WebhookID, &e.OrgID, &e.Event, &e.Payload,
+			&e.LastStatusCode, &e.LastResponse, &e.Attempts, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}

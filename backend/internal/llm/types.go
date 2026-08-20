@@ -1,5 +1,7 @@
 package llm
 
+import "strings"
+
 // ChatMessage is a single conversation turn stored in session history.
 // Role is "user" for the caller or "model" for the AI agent.
 // JSON tags are lowercase so persisted transcripts match the Python shape
@@ -24,4 +26,21 @@ type TranscriptRequest struct {
 	Language                string        // e.g. "hi", "mr", "en", "ta"
 	MaxTokens               int32
 	DropIncompleteRemainder bool
+	GreetingDone            bool // if true, guardrails will strip repeated greetings
+}
+
+// InputText returns the combined input text for token-count estimation.
+func (r TranscriptRequest) InputText() string {
+	var b strings.Builder
+	b.WriteString(r.SystemPrompt)
+	b.WriteString("\n")
+	for _, m := range r.History {
+		b.WriteString(m.Role)
+		b.WriteString(": ")
+		b.WriteString(m.Text)
+		b.WriteString("\n")
+	}
+	b.WriteString("user: ")
+	b.WriteString(r.Transcript)
+	return b.String()
 }

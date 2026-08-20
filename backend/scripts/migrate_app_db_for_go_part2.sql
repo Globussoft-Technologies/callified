@@ -65,4 +65,4 @@ CREATE TABLE IF NOT EXISTS team_invites (
   UNIQUE KEY uk_team_invites_token (token),
   INDEX idx_team_invites_org_email (org_id, email),
   INDEX idx_team_invites_expires (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
