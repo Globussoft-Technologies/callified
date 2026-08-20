@@ -30,7 +30,7 @@ func (d *DB) EnsureAdminSubscriptionsTable() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			INDEX idx_admin_email (admin_email),
 			INDEX idx_expires_at (expires_at)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	return err
 }

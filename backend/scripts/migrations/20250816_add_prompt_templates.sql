@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
     INDEX idx_name (name),
     INDEX idx_active (is_active),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 ALTER TABLE products ADD COLUMN opening_script_id BIGINT DEFAULT NULL;
 ALTER TABLE products ADD CONSTRAINT fk_products_opening_script

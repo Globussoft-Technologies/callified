@@ -38,7 +38,7 @@ func (d *DB) EnsureOrganizationsTable() error {
 			tts_language VARCHAR(10) DEFAULT 'hi',
 			timezone VARCHAR(100) DEFAULT 'Asia/Kolkata',
 			onboarding_completed TINYINT(1) DEFAULT 0
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func (d *DB) EnsureProductsTable() error {
 			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_org_id (org_id),
 			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err

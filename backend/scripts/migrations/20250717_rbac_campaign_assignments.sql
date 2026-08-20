@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS campaign_user_assignments (
   INDEX idx_campaign_id (campaign_id),
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- 3. In-app notifications (persistent, mark-as-read)
 CREATE TABLE IF NOT EXISTS notifications (
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_user_id_read (user_id, is_read),
   INDEX idx_created_at (created_at DESC)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- 4. Backfill existing non-admin users to Agent
 UPDATE users SET role='Agent' WHERE role NOT IN ('Admin','SuperAdmin');

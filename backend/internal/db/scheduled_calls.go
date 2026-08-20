@@ -53,7 +53,7 @@ func (d *DB) EnsureScheduledCallsTable() error {
 			INDEX idx_scheduled_exec (executive_id),
 			FOREIGN KEY (org_id) REFERENCES organizations (id) ON DELETE CASCADE,
 			FOREIGN KEY (lead_id) REFERENCES leads (id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return err
 	}

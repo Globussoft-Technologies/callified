@@ -15,11 +15,11 @@ func (d *DB) EnsureExecutivesTable() error {
 			id BIGINT AUTO_INCREMENT PRIMARY KEY,
 			org_id BIGINT NOT NULL,
 			name VARCHAR(255) NOT NULL,
-			email VARCHAR(255) DEFAULT '',
-			phone VARCHAR(50) DEFAULT '',
+			email VARCHAR(255) COLLATE utf8mb4_0900_ai_ci DEFAULT '',
+			phone VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_org_id (org_id)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err
@@ -31,7 +31,7 @@ func (d *DB) EnsureExecutivesTable() error {
 			PRIMARY KEY (campaign_id, executive_id),
 			INDEX idx_campaign (campaign_id),
 			INDEX idx_executive (executive_id)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err

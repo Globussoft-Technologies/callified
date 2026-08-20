@@ -53,7 +53,7 @@ func (d *DB) EnsureRBACTables() error {
 			INDEX idx_campaign_id (campaign_id),
 			FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return fmt.Errorf("create campaign_user_assignments: %w", err)
 	}
@@ -71,7 +71,7 @@ func (d *DB) EnsureRBACTables() error {
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_user_id_read (user_id, is_read),
 			INDEX idx_created_at (created_at DESC)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return fmt.Errorf("create notifications: %w", err)
 	}
@@ -85,7 +85,7 @@ func (d *DB) EnsureRBACTables() error {
 			PRIMARY KEY (user_id),
 			INDEX idx_org_id (org_id),
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`)
 	if err != nil {
 		return fmt.Errorf("create user_permissions: %w", err)
 	}

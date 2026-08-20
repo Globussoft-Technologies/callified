@@ -31,7 +31,7 @@ func (d *DB) EnsureCampaignsTable() error {
 			INDEX idx_product_id (product_id),
 			FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
 			FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
 	`)
 	if err != nil {
 		return err
@@ -820,7 +820,7 @@ func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallO
 				END AS outcome
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
-				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_bin
 			WHERE aa.campaign_id=?
 				AND aa.user_id=?
 				AND aa.activity_type='call'
