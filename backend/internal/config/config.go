@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -20,11 +21,14 @@ type Config struct {
 	RedisPassword string `env:"REDIS_PASSWORD" envDefault:""`
 
 	// MySQL (Phase 4 REST API)
-	MySQLHost         string `env:"MYSQL_HOST"          envDefault:"localhost"`
-	MySQLUser         string `env:"MYSQL_USER"          envDefault:"callified"`
-	MySQLPassword     string `env:"MYSQL_PASSWORD"      envDefault:""`
-	MySQLPasswordFile string `env:"MYSQL_PASSWORD_FILE" envDefault:""`
-	MySQLDatabase     string `env:"MYSQL_DATABASE"      envDefault:"callified_ai"`
+	MySQLHost         string        `env:"MYSQL_HOST"          envDefault:"localhost"`
+	MySQLUser         string        `env:"MYSQL_USER"          envDefault:"callified"`
+	MySQLPassword     string        `env:"MYSQL_PASSWORD"      envDefault:""`
+	MySQLPasswordFile string        `env:"MYSQL_PASSWORD_FILE" envDefault:""`
+	MySQLDatabase     string        `env:"MYSQL_DATABASE"      envDefault:"callified_ai"`
+	DBMaxOpenConns    int           `env:"DB_MAX_OPEN_CONNS"   envDefault:"25"`
+	DBMaxIdleConns    int           `env:"DB_MAX_IDLE_CONNS"   envDefault:"10"`
+	DBConnMaxLifetime time.Duration `env:"DB_CONN_MAX_LIFETIME" envDefault:"5m"`
 
 	// JWT auth (shared secret with Python FastAPI)
 	JWTSecret string `env:"JWT_SECRET_KEY"`
