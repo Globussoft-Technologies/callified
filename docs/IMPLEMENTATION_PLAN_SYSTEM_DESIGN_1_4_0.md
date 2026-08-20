@@ -18,6 +18,10 @@ This document proposes a set of architectural and implementation changes for the
 - **Phase 4 (done)** — Prompt registry, AI guardrails, post-call reports, agent-specific access, lead deduplication.
   - Done: `prompt_templates` table with versioning (`20250816_add_prompt_templates.sql`), `internal/prompt/registry.go`, `internal/prompt/builder.go` resolves campaign → product → global default, Panora script seeding including `panora_v4_curiosity`, `panora_wholesale`, `panora_hotel_spa_towels`, `panora_retail`, template REST API (`/api/templates`), script selection dropdown in `ProductsTab.jsx` and `ScriptsPage.jsx`, `ApplyGuardrails` strips markdown/URLs/phones, disallowed bracket tags, repeated greetings (when `GreetingDone` is true), and enforces language-specific length limits (240 chars Indic, 200 chars English) while preserving `[HANGUP]`, `ConversationState` tracks greeting/turn/question and is injected into the LLM request, `GET /api/calls/{call_id}/report` with async analysis, `GET /api/campaigns/{id}/leads` deduplicates by phone, agents see only their own leads/calls.
   - Pending: provider fallback chains (TTS/STT/LLM) are out of scope for this branch.
+- **Phase 5 (complete)** — Scale & observability.
+  - Done: per-provider dial outcome metrics, call-state transition metrics, LLM token-usage/response-latency metrics, Redis dial/retry queue-depth gauges, WebSocket connection count/duration metrics, Phase 5 composite DB indexes (`leads`, `call_logs`, `users`), per-provider circuit breakers, DLQs for webhooks and recording uploads with background retry workers.
+  - Done: trace IDs across API → WebSocket → provider webhook → LLM (`internal/trace`, `X-Trace-ID` header, context propagation).
+  - Done: collation audit (`20250818_collation_audit.sql`), env-configurable MySQL pool (`DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, `DB_CONN_MAX_LIFETIME`), service-split evaluation with Redis pub/sub event bus design.
 
 ## Current Pain Points Observed
 
@@ -440,7 +444,7 @@ callified:campaign:{id}:completed           # terminal outcomes
 
 ### 4.4 Tracing
 
-- [ ] Add trace IDs across API → WebSocket → provider webhook → LLM.
+- [x] Add trace IDs across API → WebSocket → provider webhook → LLM.
 
 ---
 
@@ -569,25 +573,136 @@ callified:campaign:{id}:completed           # terminal outcomes
 
 ### Phase 5 — Scale & Observability (Weeks 9–10)
 
+Status as of audit on current branch (`feat/phase-4-prompt-registry-guardrails`):
+
 #### Metrics
-- [ ] 5.1 Add per-provider dial success/failure metrics.
-- [ ] 5.2 Track call state transitions.
-- [ ] 5.3 Track LLM token usage and latency.
-- [ ] 5.4 Track STT/TTS latency and queue depth.
+- [x] 5.1 Add per-provider dial success/failure metrics.  
+  **Status:** ✅ Implemented in `backend/internal/dial/initiator.go`. `callified_dial_attempts_total{provider,outcome}` is emitted on every dial attempt with outcomes: `success`, `dnd`, `call_hours`, `insufficient_credits`, `invalid_credentials`, `provider_error`, `unknown`.
+- [x] 5.2 Track call state transitions.  
+  **Status:** ✅ Implemented in `backend/internal/callmanager/state.go`. `callified_call_state_transitions_total{from,to}` is incremented on every valid transition.
+- [x] 5.3 Track LLM token usage and latency.  
+  **Status:** ✅ Implemented in `backend/internal/llm/provider.go`. `callified_llm_token_usage_total{provider,direction}` records approximate input/output tokens; `callified_llm_response_seconds{provider}` records full response latency.
+- [x] 5.4 Track STT/TTS latency and queue depth.  
+  **Status:** ✅ Implemented. STT/TTS first-byte latencies already existed; added `callified_queue_depth{queue}` for `dial` and `retry` queues (`backend/internal/redis/queue.go`); added `callified_websocket_connections{type}` and `callified_websocket_duration_seconds{type}` for `media`, `sandbox`, `monitor`, and `agent` endpoints.
 
 #### Reliability
-- [ ] 5.5 Add circuit breakers for providers.
-- [ ] 5.6 Add dead-letter queues for failed webhooks and uploads.
-- [ ] 5.7 Add trace IDs across API → WebSocket → webhook → LLM.
+- [x] 5.5 Add circuit breakers for providers.  
+  **Status:** ✅ Implemented in `backend/internal/dial/circuitbreaker.go`. Per-provider circuit breaker (`closed`/`open`/`half-open`) wraps `InitiateCall` in `backend/internal/dial/initiator.go`. Config: 5 failures to open, 2 successes to close, 30-second cooldown. Open circuits fast-fail with a clear error.
+- [x] 5.6 Add dead-letter queues for failed webhooks and uploads.  
+  **Status:** ✅ Implemented.
+  - Webhooks: `backend/internal/webhook/dispatch.go` retries 3 times with backoff, then moves failures to `webhook_dlq`. `Dispatcher.RetryDLQ()` runs every 60 seconds via a background goroutine in `cmd/audiod/main.go`.
+  - Recording uploads: `backend/internal/recording/service.go` retries OCI/S3 uploads 3 times; after exhaustion it writes a `recording_dlq` row and falls back to local disk. `Service.RetryRecordingDLQ()` runs every 5 minutes from `cmd/audiod/main.go`.
+- [x] 5.7 Add trace IDs across API → WebSocket → webhook → LLM.  
+  **Status:** ✅ Implemented.
+  - `backend/internal/trace/trace.go` provides context-scoped trace IDs (`X-Trace-ID` header / `trace_id` query param), HTTP middleware, and helper functions.
+  - `cmd/audiod/main.go` wraps the mux with `trace.Middleware`; all REST requests get a trace ID.
+  - WebSocket handlers (`handler.go`, `bridge.go`, `monitor.go`) extract the trace ID from the upgrade request and add it to session loggers.
+  - LLM provider (`internal/llm/provider.go`) logs `trace_id` in `ProcessTranscript`, `GenerateResponse`, and `GenerateText`.
+  - Webhook dispatcher (`internal/webhook/dispatch.go`) includes `trace_id` in payloads and headers; DLQ retries preserve it.
+  - Provider dial callbacks (`internal/dial/initiator.go`) append `trace_id` to status callback URLs; webhook handlers (`internal/api/dial_webhooks.go`) continue the trace on callback.
 
 #### Database
-- [ ] 5.8 Add indexes for lead/campaign/agent filtering.
-- [ ] 5.9 Audit collation mismatches.
-- [ ] 5.10 Tune MySQL connection pool.
+- [x] 5.8 Add indexes for lead/campaign/agent filtering.  
+  **Status:** ✅ Implemented. Migration `backend/scripts/migrations/20250817_phase5_indexes.sql` and auto-ensure in `backend/internal/db/db.go` create:
+  - `idx_leads_org_campaign_status` on `leads(org_id, campaign_id, status)`
+  - `idx_leads_org_executive_status` on `leads(org_id, executive_id, status)`
+  - `idx_call_logs_campaign_created` on `call_logs(campaign_id, created_at)`
+  - `idx_users_org_role` on `users(org_id, role)`
+- [x] 5.9 Audit collation mismatches.  
+  **Status:** ✅ Implemented.
+  - Migration `backend/scripts/migrations/20250818_collation_audit.sql` standardises all Go-managed and legacy call/lead/user tables to `utf8mb4_0900_ai_ci` and pins exact-match identifier columns (`leads.phone`, `call_logs.call_sid`, `call_logs.phone`, `call_transcripts.call_sid`, `whatsapp_conversations.phone`, `wa_channel_configs.phone_number`, `org_exotel_accounts.caller_id`, `org_exotel_accounts.account_sid`, `executives.phone`) to `utf8mb4_bin`.
+  - `backend/scripts/migrate_app_db_for_go.sql` and `backend/internal/db/exotel_accounts.go`, `backend/internal/db/executives.go` create new tables with the same collations.
+  - Explicit `COLLATE utf8mb4_0900_ai_ci` overrides in `backend/internal/db/agent_activities.go` and `backend/internal/db/campaigns.go` are replaced with `COLLATE utf8mb4_bin` so joins against JSON-extracted call_sids use the exact-match column collation.
+- [x] 5.10 Tune MySQL connection pool.  
+  **Status:** ✅ Implemented.
+  - `backend/internal/config/config.go` adds `DB_MAX_OPEN_CONNS`, `DB_MAX_IDLE_CONNS`, and `DB_CONN_MAX_LIFETIME` with the previous hard-coded values as defaults.
+  - `backend/internal/db/db.go` exposes `PoolConfig` and `New(dsn, poolConfig)` so the pool can be tuned per environment.
+  - `backend/cmd/audiod/main.go` passes the configured values from `cfg` into `db.New`.
+  - `backend/.env.example` documents the new variables.
+  - Pending (out of scope for this slice): periodic health check and slow-query logging.
 
 #### Architecture
-- [ ] 5.11 Evaluate splitting monolith into API / dialer / worker services.
-- [ ] 5.12 Design inter-service event bus if split proceeds.
+- [x] 5.11 Evaluate splitting monolith into API / dialer / worker services.  
+  **Status:** ✅ Evaluated. The current `audiod` binary remains a monolith for the short term; the recommended medium-term split is documented below and in the new Section 6 "Service-Split Evaluation".
+- [x] 5.12 Design inter-service event bus if split proceeds.  
+  **Status:** ✅ Designed. Redis pub/sub is the pragmatic first event bus; a persistent event store (Kafka / RabbitMQ / AWS EventBridge) is reserved for later scale.
+
+---
+
+## 6. Service-Split Evaluation
+
+### 6.1 Current monolith (`audiod`)
+
+Everything runs in a single Go binary today:
+
+| Concern | Package | Scale pressure |
+|---------|---------|----------------|
+| REST API + auth | `internal/api` | Medium — correlates with dashboard users. |
+| WebSocket media streams | `internal/wshandler` | High — one persistent connection per AI call; CPU-bound on audio resampling. |
+| Outbound dialer | `internal/dial`, `internal/callmanager` | Bursty — traffic spikes during campaign auto-dial. |
+| Background workers | `internal/workers` | Low/Medium — retry loops, schedulers, CRM pollers. |
+| Webhook dispatch | `internal/webhook` | Medium — retries and DLQ can backlog during provider outages. |
+| Recording upload | `internal/recording` | High — egress bandwidth to OCI/S3 during peak hours. |
+
+### 6.2 Recommended split
+
+A **three-service** split balances deployment independence with manageable operational overhead:
+
+1. **`callified-api`** — REST API, auth, RBAC, campaign/leads CRUD, analytics queries, webhook reception from providers.
+2. **`callified-dialer`** — WebSocket media streams, STT/TTS/LLM pipeline, outbound dial initiation, provider callbacks.
+3. **`callified-workers`** — Scheduler, retry/DLQ workers, recording upload, CRM sync, post-call analysis.
+
+### 6.3 Service boundaries and data ownership
+
+| Function | Service | Owned state | Shared read state |
+|----------|---------|-------------|-------------------|
+| Login, JWT minting, RBAC | `callified-api` | `users`, `user_permissions`, `organizations` | — |
+| Campaigns, leads, products | `callified-api` | `campaigns`, `leads`, `products` | `call_logs` (read-only for analytics) |
+| Analytics / reports | `callified-api` | materialised report tables / cache | `call_logs`, `agent_activities`, `call_transcripts` |
+| Live AI call pipeline | `callified-dialer` | in-memory `CallManager`, Redis call state | reads `campaigns`, `leads`, `org_exotel_accounts`; writes `call_logs`, `call_transcripts` |
+| Provider callbacks | `callified-dialer` | transient Twilio/Exotel/Tata sessions | reads `call_logs` |
+| Retry / DLQ | `callified-workers` | `webhook_dlq`, `recording_dlq` | reads `call_logs`, `webhooks` |
+| Scheduled calls | `callified-workers` | `scheduled_calls` | reads `campaigns`, `leads` |
+
+### 6.4 Inter-service communication
+
+**Phase 1 — Redis pub/sub (recommended now)**
+- `callified-dialer` publishes events: `call.started`, `call.ended`, `call.status_changed`.
+- `callified-api` subscribes and invalidates caches / sends SSE to dashboards.
+- `callified-workers` subscribes and triggers post-call analysis, recording upload, DLQ retries.
+- **Pros:** Already required for call state; no new infrastructure; sub-millisecond latency.
+- **Cons:** No persistence — messages are lost if a subscriber is offline; no ordering guarantees.
+
+**Phase 2 — Persistent event bus (reserved for >10k concurrent calls)**
+- Kafka / RabbitMQ / AWS EventBridge for durable, ordered call-event streams.
+- Use Redis pub/sub only for transient real-time signals; persistent bus for audit/reconciliation.
+
+### 6.5 API contract between services
+
+| Caller | Endpoint / Channel | Purpose |
+|--------|--------------------|---------|
+| `callified-dialer` | `POST callified-api/internal/calls` | Persist call start/end, update lead status, allocate credits. |
+| `callified-dialer` | `GET callified-api/internal/campaigns/{id}/config` | Fetch campaign + provider account at call start. |
+| `callified-workers` | `POST callified-api/internal/calls/{id}/analysis` | Push post-call analysis results. |
+| `callified-api` | Redis pub/sub `dialer:commands:{campaign_id}` | Trigger auto-dial batches, pause/resume. |
+
+### 6.6 Deployment and migration path
+
+1. **Extract a shared internal client package** (`internal/apiclient`) so services can call each other with mutual-TLS or signed JWTs.
+2. **Run dialer + API as separate processes behind feature flag** (`SPLIT_DIALER=true`) while still sharing the same binary build; validates routing before true split.
+3. **Move `internal/workers` to its own binary** (`cmd/workerd`) first — lowest risk, no WebSockets.
+4. **Split `internal/wshandler` and `internal/dial` into `cmd/dialerd`** once worker split is stable.
+5. **Keep MySQL + Redis shared** during transition; introduce per-service read replicas later if needed.
+
+### 6.7 Trade-off summary
+
+| Approach | Pros | Cons | Recommendation |
+|----------|------|------|----------------|
+| Keep monolith | Simplest ops; shared memory; no network partitions | Single deploy blast radius; WebSocket load crowds REST API; scaling is coarse | Short-term OK; do not scale beyond ~1k concurrent AI calls |
+| 3-service split | Independent scale; API can deploy without dialer; worker retries isolated | More services to monitor; inter-service auth/latency; needs event bus | Recommended at 1k+ concurrent calls or when 99th-percentile API latency suffers |
+| Microservices per provider | Finest scaling; isolated provider failures | Operational explosion; premature for current size | Defer |
+
+**Decision:** Stay monolith for the next 1–2 releases; complete the shared internal client and Redis event contracts now so the split is low-risk when needed.
 
 ---
 
