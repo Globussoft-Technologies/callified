@@ -1130,6 +1130,11 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 
 // finalizeCall runs post-call processing (Phase 4: native Go, no gRPC).
 func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
+	h.log.Info("finalizeCall: started",
+		zap.String("stream_sid", sess.StreamSid),
+		zap.Int64("lead_id", sess.LeadID),
+		zap.Int("chat_history_len", len(sess.ChatHistory)))
+
 	micChunks, ttsChunks := sess.DrainRecordingBuffers()
 	wavBytes := audio.BuildStereoWAV(micChunks, ttsChunks)
 

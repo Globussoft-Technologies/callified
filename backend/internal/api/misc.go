@@ -358,8 +358,10 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	// Try to determine the campaign from the lead's latest transcript so the
 	// webm recording can be grouped under recordings/<email>/<campaign>/.
 	campaignDir := ""
+	campaignID := int64(0)
 	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
 		if txs, err := s.db.GetTranscriptsByLead(leadID); err == nil && len(txs) > 0 {
+			campaignID = txs[0].CampaignID
 			if c, err := s.db.GetCampaignByID(txs[0].CampaignID); err == nil && c != nil {
 				campaignDir = sanitizeEmailForPath(c.Name)
 			}
@@ -425,11 +427,11 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Swap the stereo-WAV URL on the most recent transcript for this lead
-	// to point at the higher-quality webm instead. Poll up to ~3s because
+	// to point at the higher-quality webm instead. Poll up to ~5s because
 	// the transcript row is inserted asynchronously by finalizeCall —
 	// matches the Python handler's retry loop.
 	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
-		s.attachRecordingToLatestTranscript(r.Context(), leadID, recURL)
+		s.attachRecordingToLatestTranscript(r.Context(), leadID, campaignID, ac.OrgID, recURL)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "url": recURL})
@@ -445,11 +447,16 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 //
 // Polls because finalizeCall runs in a goroutine — the transcript row may not
 // exist yet when the browser POSTs the file.
-func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID int64, recURL string) {
-	for attempt := 0; attempt < 6; attempt++ {
-		transcripts, err := s.db.GetTranscriptsByLead(leadID)
-		if err == nil && len(transcripts) > 0 {
-			latest := transcripts[0] // ordered by created_at DESC
+func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID, campaignID, orgID int64, recURL string) {
+	since := time.Now().Add(-5 * time.Minute)
+	// Wait longer for browser web-sim calls because finalizeCall (which creates
+	// the transcript row and server-side WAV) may still be draining the WS and
+	// saving the recording. Previously we only polled 3s, so the browser upload
+	// frequently won the race and created an empty transcript row.
+	const maxAttempts = 10 // 5 seconds; finalizeCall should create the row quickly for web-sim
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		latest, err := s.db.GetRecentTranscriptForRecordingAttach(leadID, campaignID, since)
+		if err == nil && latest != nil {
 			if latest.RecordingURL != "" {
 				s.logger.Sugar().Infow("uploadRecording: server recording already attached, skipping webm",
 					"transcript_id", latest.ID, "existing", latest.RecordingURL)
@@ -470,10 +477,12 @@ func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID i
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+	s.logger.Sugar().Warnw("uploadRecording: no transcript row found after waiting, creating fallback empty row",
+		"lead_id", leadID, "campaign_id", campaignID, "url", recURL)
 	// No transcript row exists (e.g. web-sim with no server-side WAV, or
 	// finalizeCall didn't run). Create an empty row carrying the webm URL
 	// so the call still appears in the Transcripts modal as audio-only.
-	transcriptID, err := s.db.SaveCallTranscript(leadID, 0, 0, "[]", recURL, "", 0)
+	transcriptID, err := s.db.SaveCallTranscript(leadID, campaignID, orgID, "[]", recURL, "", 0)
 	if err != nil {
 		s.logger.Sugar().Warnw("uploadRecording: no transcript and create failed",
 			"lead_id", leadID, "url", recURL, "err", err)

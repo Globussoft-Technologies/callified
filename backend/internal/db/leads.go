@@ -577,6 +577,7 @@ func (d *DB) EnsureCallTranscriptColumns() error {
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_phone VARCHAR(50) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_interest VARCHAR(255) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_status VARCHAR(50) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN status VARCHAR(50) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD INDEX idx_ct_direction_org_created (direction, org_id, created_at)`)
 	return nil
 }
@@ -603,6 +604,34 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 		list = append(list, t)
 	}
 	return list, rows.Err()
+}
+
+// GetRecentTranscriptForRecordingAttach returns the freshest transcript row
+// created after since for a lead/campaign. Browser/web-sim uploads use this so
+// an older carrier recording for the same lead cannot block the new recording.
+func (d *DB) GetRecentTranscriptForRecordingAttach(leadID, campaignID int64, since time.Time) (*Transcript, error) {
+	args := []any{leadID, since}
+	q := `SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''), COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts
+		WHERE lead_id=? AND created_at >= ?`
+	if campaignID > 0 {
+		q += ` AND campaign_id=?`
+		args = append(args, campaignID)
+	}
+	q += ` ORDER BY created_at DESC LIMIT 1`
+
+	row := d.pool.QueryRow(q, args...)
+	var t Transcript
+	if err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // GetRecentCallTimeline returns the most recent call transcripts for an org (across all leads).
@@ -732,6 +761,18 @@ func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Tra
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
 func (d *DB) UpdateCallTranscriptRecording(transcriptID int64, recordingURL string) error {
 	_, err := d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
+	return err
+}
+
+// UpdateCallTranscriptContents fills in transcript, duration and language on an
+// existing row. Used when the browser upload created an empty placeholder row
+// before finalizeCall had a chance to populate it.
+func (d *DB) UpdateCallTranscriptContents(transcriptID int64, transcriptJSON string, durationS float32, ttsLanguage string) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_transcripts
+		SET transcript=?, call_duration_s=?, tts_language=?, status='completed'
+		WHERE id=?`,
+		transcriptJSON, durationS, nullString(ttsLanguage), transcriptID)
 	return err
 }
 
