@@ -115,6 +115,11 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
 
+	llmTranscript := transcript
+	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
+		llmTranscript = fmt.Sprintf("[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.] Customer said: %q", transcript)
+	}
+
 	// --- Inject whispers (manager hints) as additional context ---
 	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
 	for _, w := range whispers {
@@ -134,7 +139,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	var err error
 	if provider != nil {
 		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
-			Transcript:              transcript,
+			Transcript:              llmTranscript,
 			SystemPrompt:            sess.SystemPrompt,
 			History:                 history[:max(0, len(history)-1)], // exclude the turn we just added
 			Language:                sess.Language,

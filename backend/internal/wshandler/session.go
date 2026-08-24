@@ -61,18 +61,19 @@ type CallSession struct {
 	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
-	greetingSent    atomic.Bool
-	ttsPlaying      atomic.Bool
-	hangupReq       atomic.Bool
-	dgAlive         atomic.Bool
-	bargeInActive   atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
-	bargeInPending  atomic.Bool  // true while waiting for STT confirmation of a barge-in
-	bargeInDeadline atomic.Int64 // UnixNano; STT must confirm by this time
-	lastBargeInNano   atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
-	lastTTSEndNano    atomic.Int64 // UnixNano
-	lastAudioSentNano atomic.Int64 // UnixNano of last outbound audio frame sent
-	lastTranscript    atomic.Int64 // UnixNano — debounce timestamp
-	outboundSeq       atomic.Uint64
+	greetingSent         atomic.Bool
+	ttsPlaying           atomic.Bool
+	hangupReq            atomic.Bool
+	dgAlive              atomic.Bool
+	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
+	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
+	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
+	confirmedBargeInNano atomic.Int64 // UnixNano of last STT-confirmed barge-in
+	lastBargeInNano      atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
+	lastTTSEndNano       atomic.Int64 // UnixNano
+	lastAudioSentNano    atomic.Int64 // UnixNano of last outbound audio frame sent
+	lastTranscript       atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq          atomic.Uint64
 
 	// Serialization
 	llmMu sync.Mutex // one LLM turn at a time per session
@@ -435,6 +436,7 @@ func (s *CallSession) ConfirmBargeIn() bool {
 	if !s.bargeInPending.CompareAndSwap(true, false) {
 		return false
 	}
+	s.confirmedBargeInNano.Store(time.Now().UnixNano())
 	if s.HangupRequested() {
 		s.hangupReq.Store(false)
 		s.Log.Info("barge-in: confirmed by STT; hangup cancelled")
@@ -442,6 +444,21 @@ func (s *CallSession) ConfirmBargeIn() bool {
 		s.Log.Info("barge-in: confirmed by STT")
 	}
 	return true
+}
+
+// ConsumeRecentConfirmedBargeIn returns true once for the transcript that
+// follows an STT-confirmed barge-in. Stale confirmations are ignored so a
+// speech_start event without a final transcript cannot tag a later normal turn.
+func (s *CallSession) ConsumeRecentConfirmedBargeIn(maxAge time.Duration) bool {
+	nano := s.confirmedBargeInNano.Load()
+	if nano == 0 {
+		return false
+	}
+	if time.Since(time.Unix(0, nano)) > maxAge {
+		s.confirmedBargeInNano.CompareAndSwap(nano, 0)
+		return false
+	}
+	return s.confirmedBargeInNano.CompareAndSwap(nano, 0)
 }
 
 // CancelBargeIn cancels a pending barge-in and resets the active flag.
