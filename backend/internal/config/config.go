@@ -27,11 +27,12 @@ type Config struct {
 	JWTSecret string `env:"JWT_SECRET_KEY"`
 
 	// Subscription management
-	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""` // Email allowed to manage subscriptions
+	SuperAdminEmail string `env:"SUPER_ADMIN_EMAIL" envDefault:""`                     // Email allowed to manage subscriptions
 	SupportEmail    string `env:"SUPPORT_EMAIL"     envDefault:"support@callified.ai"` // Shown on subscription renewal prompts
 
 	// LLM providers (Phase 0)
 	GeminiAPIKey  string `env:"GEMINI_API_KEY"`
+	GeminiBaseURL string `env:"GEMINI_BASE_URL" envDefault:""`
 	GeminiModel   string `env:"GEMINI_MODEL"    envDefault:"gemini-2.5-flash"`
 	GroqAPIKey    string `env:"GROQ_API_KEY"`
 	GroqModel     string `env:"GROQ_MODEL"      envDefault:"llama-3.3-70b-versatile"`
