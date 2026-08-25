@@ -11,6 +11,7 @@ import (
 // dependency on the gorilla/websocket transitive types in tests.
 type activeCallLister interface {
 	ActiveSessions() []wshandler.ActiveSession
+	CloseCall(callSid string) bool
 }
 
 // SetWSHandler wires the WebSocket handler so /api/active-calls can list
