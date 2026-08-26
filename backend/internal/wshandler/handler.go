@@ -162,11 +162,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.sessions.Store(sess.StreamSid, sess)
 	defer func() {
 		// Accumulate talk time and log the call activity for the agent who initiated it.
-		if sess.UserEmail != "" && !sess.CallStart.IsZero() {
-			if u, err := h.db.GetUserByEmail(sess.UserEmail); err == nil && u != nil {
+		if (sess.UserID > 0 || sess.UserEmail != "") && !sess.CallStart.IsZero() {
+			userID := sess.UserID
+			orgID := sess.OrgID
+			if userID == 0 {
+				if u, err := h.db.GetUserByEmail(sess.UserEmail); err == nil && u != nil {
+					userID = u.ID
+					orgID = u.OrgID
+				}
+			}
+			if userID > 0 {
 				dur := int64(time.Since(sess.CallStart).Seconds())
 				if dur > 0 {
-					_ = h.db.AddAgentTalkTime(u.ID, dur)
+					_ = h.db.AddAgentTalkTime(userID, dur)
 				}
 				outcome := "no_answer"
 				if dur > 30 {
@@ -174,7 +182,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else if dur > 5 {
 					outcome = "connected"
 				}
-				_ = h.db.LogAgentActivity(u.ID, u.OrgID, sess.CampaignID, sess.LeadID, db.ActivityCall, map[string]any{
+				_ = h.db.LogAgentActivity(userID, orgID, sess.CampaignID, sess.LeadID, db.ActivityCall, map[string]any{
 					"duration_s": dur,
 					"outcome":    outcome,
 					"call_sid":   sess.CallSid,
@@ -380,7 +388,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if useDualSTT {
 				dual := stt.NewDualClient(h.cfg.DeepgramAPIKey, sess.Language, "hi", h.log)
 				dual.OnTranscript = onTranscript
-				dual.OnSpeechStarted = onSpeechStarted
+				// BARGE-IN DISABLED: OnSpeechStarted left nil.
 				go func() {
 					defer wg.Done()
 					dual.Run(ctx, sess.AudioIn)
@@ -388,7 +396,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} else {
 				dgClient := stt.NewClient(h.cfg.DeepgramAPIKey, sess.Language, h.log)
 				dgClient.OnTranscript = onTranscript
-				dgClient.OnSpeechStarted = onSpeechStarted
+				// BARGE-IN DISABLED: OnSpeechStarted left nil.
 				go func() {
 					defer wg.Done()
 					dgClient.Run(ctx, sess.AudioIn)
@@ -744,6 +752,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		// event because WebSocket connections cannot send Authorization headers.
 		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
 			sess.UserEmail = email
+			if u, err := h.db.GetUserByEmail(email); err == nil && u != nil {
+				sess.UserID = u.ID
+			}
 		}
 		if phone := pickStr(startData,
 			"from", "From", "caller", "Caller", "caller_id", "callerId", "caller_id_number", "callerIdNumber",
@@ -854,6 +865,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				// deduction can be skipped for unlimited manual calls.
 				sess.SkipCredits = info.SkipCredits
 				sess.UserEmail = info.UserEmail
+				sess.UserID = info.UserID
 				// Rebuild SystemPrompt and GreetingText now that we know the
 				// real campaign/org/lead. The initial initializeCall ran
 				// before the start event with all-zero IDs (Exotel's Passthru

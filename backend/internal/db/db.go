@@ -41,6 +41,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureOrgExotelAccountsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure org exotel accounts table: %w", err)
 	}
+	if err := d.EnsureUserAllowedExotelAccountsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure user allowed exotel accounts table: %w", err)
+	}
 	if err := d.EnsureProductsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure products table: %w", err)
 	}
@@ -64,6 +67,9 @@ func New(dsn string) (*DB, error) {
 	}
 	if err := d.EnsureCallTranscriptColumns(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure call transcript columns: %w", err)
+	}
+	if err := d.EnsureAPIKeysTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure API keys table: %w", err)
 	}
 	return d, nil
 }

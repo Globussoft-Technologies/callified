@@ -1,6 +1,6 @@
 # Callified API Flow — Login → Campaigns → Leads → AI Dial
 
-This document describes the end-to-end API flow for authenticating with email/password, listing campaigns, adding a lead, triggering an AI call, and retrieving the call summary.
+This document describes the end-to-end API flow for authenticating with email/password, listing campaigns, adding a lead, enrolling it in a campaign, deleting a lead, triggering an AI/browser call, retrieving the call transcript and AI review, and retrieving call outcomes (duration, recording, sentiment, summary, cost).
 
 ---
 
@@ -155,12 +155,23 @@ Authorization: Bearer <access_token>
   "first_name": "Rahul",
   "last_name": "Sharma",
   "phone": "011-1234-5678",
+  "company": "Acme Inc",
   "source": "Website",
-  "interest": "AI Sales Bot"
+  "interest": "AI Sales Bot",
+  "executive_id": 0
 }
 ```
 
-> Phone formats accepted after the landline fix:
+> Fields:
+> - `first_name` (required) — lead first name.
+> - `last_name` (optional) — lead last name.
+> - `phone` (required) — valid Indian phone number.
+> - `company` (optional) — company or organisation name.
+> - `source` (optional) — lead source, e.g. `Website`, `CSV`, `Manual`.
+> - `interest` (optional) — product or interest note.
+> - `executive_id` (optional) — assign the lead to a specific agent/executive user ID.
+
+> Phone formats accepted:
 > - `9876543210` (10-digit mobile)
 > - `01112345678` (landline with STD code)
 > - `+919876543210` / `+91-11-1234-5678`
@@ -226,9 +237,50 @@ Authorization: Bearer <access_token>
 
 ---
 
-## Step 4 — AI dial the lead
+### 3c. Delete a lead
 
-Trigger an outbound AI call to the lead using the campaign's voice settings.
+Permanently remove a lead from the organisation. The lead is also removed from any campaigns it was enrolled in.
+
+**Endpoint**
+
+```http
+DELETE /api/leads/{lead_id}
+```
+
+**Headers**
+
+```
+Authorization: Bearer <access_token>
+```
+
+**Request body**
+
+None.
+
+**Example response — 200 OK**
+
+```json
+{
+  "deleted": true
+}
+```
+
+### Postman — delete lead
+
+1. Method: `DELETE`.
+2. URL: `https://app.callified.ai/api/leads/101`.
+3. **Headers**: `Authorization: Bearer <access_token>`.
+4. Click **Send**.
+
+---
+
+## Step 4 — Call the lead
+
+There are three ways to call a lead: AI dial inside a campaign, browser (agent bridge) call inside a campaign, or single lead dial outside a campaign context.
+
+### 4a. AI dial inside a campaign
+
+Trigger an outbound AI call to a specific lead using the campaign's voice settings.
 
 **Endpoint**
 
@@ -260,6 +312,99 @@ None.
 2. URL: `https://app.callified.ai/api/campaigns/42/dial/101` (replace IDs as needed).
 3. **Headers**: `Authorization: Bearer <access_token>`.
 4. **Body**: none.
+5. Click **Send**.
+
+---
+
+### 4b. Browser (agent bridge) call inside a campaign
+
+Trigger an outbound call where the audio is bridged to the agent's browser. The agent connects via `/ws/agent?call_sid=...`.
+
+**Endpoint**
+
+```http
+POST /api/campaigns/{campaign_id}/leads/{lead_id}/browser-call
+```
+
+**Headers**
+
+```
+Content-Type: application/json
+Authorization: Bearer <access_token>
+```
+
+**Request body (optional)**
+
+```json
+{
+  "exotel_account_id": 1,
+  "scheduled_call_id": 0
+}
+```
+
+> - `exotel_account_id` — optional Exotel account to use.
+> - `scheduled_call_id` — optional scheduled callback ID to claim and connect.
+
+**Example response — 200 OK**
+
+```json
+{
+  "call_sid": "EXotel123abc",
+  "agent_url": "/ws/agent?call_sid=EXotel123abc",
+  "status": "dialing"
+}
+```
+
+### Postman — browser call
+
+1. Method: `POST`.
+2. URL: `https://app.callified.ai/api/campaigns/42/leads/101/browser-call`.
+3. **Headers**: `Content-Type: application/json`, `Authorization: Bearer <access_token>`.
+4. **Body** (optional): `{"exotel_account_id": 1}`.
+5. Click **Send**.
+6. Use the returned `agent_url` to open the agent WebSocket.
+
+---
+
+### 4c. Single lead dial outside a campaign
+
+Dial a lead directly without a campaign path. Optionally pass a campaign ID in the body to use that campaign's voice settings.
+
+**Endpoint**
+
+```http
+POST /api/dial/{lead_id}
+```
+
+**Headers**
+
+```
+Content-Type: application/json
+Authorization: Bearer <access_token>
+```
+
+**Request body (optional)**
+
+```json
+{
+  "campaign_id": 42
+}
+```
+
+**Example response — 200 OK**
+
+```json
+{
+  "dialed": true
+}
+```
+
+### Postman — single lead dial
+
+1. Method: `POST`.
+2. URL: `https://app.callified.ai/api/dial/101`.
+3. **Headers**: `Content-Type: application/json`, `Authorization: Bearer <access_token>`.
+4. **Body** (optional): `{"campaign_id": 42}`.
 5. Click **Send**.
 
 ---
@@ -359,29 +504,157 @@ TOKEN=$(curl -s -X POST https://app.callified.ai/api/auth/login \
   -d '{"email":"admin@example.com","password":"your-password"}' | jq -r '.access_token')
 
 # 2. List campaigns
-curl -s https://app.callified.ai/api/campaigns \
-  -H "Authorization: Bearer $TOKEN" | jq '.[] | {id, name, status}'
+CAMPAIGN_ID=$(curl -s https://app.callified.ai/api/campaigns \
+  -H "Authorization: Bearer $TOKEN" | jq '.[0].id')
 
 # 3a. Create lead (Delhi landline example)
 LEAD_ID=$(curl -s -X POST https://app.callified.ai/api/leads \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"first_name":"Rahul","last_name":"Sharma","phone":"011-1234-5678","source":"Website"}' | jq -r '.id')
+  -d '{"first_name":"Rahul","last_name":"Sharma","phone":"011-1234-5678","company":"Acme Inc","source":"Website","interest":"AI Sales Bot"}' | jq -r '.id')
 
-# 3b. Add lead to campaign 42
-curl -s -X POST https://app.callified.ai/api/campaigns/42/leads \
+# 3b. Add lead to campaign
+curl -s -X POST https://app.callified.ai/api/campaigns/$CAMPAIGN_ID/leads \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"lead_ids\":[$LEAD_ID]}"
 
-# 4. AI dial
-curl -s -X POST https://app.callified.ai/api/campaigns/42/dial/$LEAD_ID \
+# 4a. AI dial inside campaign
+curl -s -X POST https://app.callified.ai/api/campaigns/$CAMPAIGN_ID/dial/$LEAD_ID \
   -H "Authorization: Bearer $TOKEN"
 
-# 5. Get transcripts
+# 4b. Browser (agent bridge) call inside campaign
+curl -s -X POST https://app.callified.ai/api/campaigns/$CAMPAIGN_ID/leads/$LEAD_ID/browser-call \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"exotel_account_id": 1}'
+
+# 4c. Single lead dial outside campaign (optionally pass campaign_id for voice settings)
+curl -s -X POST https://app.callified.ai/api/dial/$LEAD_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"campaign_id\":$CAMPAIGN_ID}"
+
+# 5a. Get transcripts
 curl -s https://app.callified.ai/api/leads/$LEAD_ID/transcripts \
   -H "Authorization: Bearer $TOKEN"
+
+# 5b. Get AI review for first transcript
+TRANSCRIPT_ID=$(curl -s https://app.callified.ai/api/leads/$LEAD_ID/transcripts \
+  -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+curl -s https://app.callified.ai/api/transcripts/$TRANSCRIPT_ID/review \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. Delete lead
+curl -s -X DELETE https://app.callified.ai/api/leads/$LEAD_ID \
+  -H "Authorization: Bearer $TOKEN"
 ```
+
+## Step 6 — Retrieve call outcome, duration, recording, sentiment, and summary
+
+After a call ends, the details you need are stored across a few tables. There is no single endpoint that returns everything yet.
+
+| Detail | Source | API endpoint |
+|--------|--------|--------------|
+| Outcome, duration, recording | `call_transcripts` + `leads.status` | `GET /api/campaigns/{campaign_id}/call-log` |
+| Sentiment, summary, quality score | `call_reviews` | `GET /api/transcripts/{transcript_id}/review` |
+| Cost (credit deduction) | `credit_transactions` | `GET /api/billing/credits/transactions` (org-wide, last 50) |
+
+### 6a. Get call log for a campaign
+
+**Endpoint**
+
+```http
+GET /api/campaigns/{campaign_id}/call-log
+```
+
+**Example response — 200 OK**
+
+```json
+[
+  {
+    "id": 501,
+    "first_name": "Rahul",
+    "last_name": "Sharma",
+    "phone": "9876543210",
+    "source": "Website",
+    "lead_status": "contacted",
+    "call_duration_s": 56.7,
+    "recording_url": "/recordings/rec_abc.wav",
+    "created_at": "2026-07-27 14:22:10",
+    "outcome": "Connected"
+  }
+]
+```
+
+### 6b. Get sentiment and summary for a call
+
+Use the `id` from the call log as the `transcript_id`.
+
+**Endpoint**
+
+```http
+GET /api/transcripts/{transcript_id}/review
+```
+
+**Example response — 200 OK**
+
+```json
+{
+  "id": 55,
+  "transcript_id": 501,
+  "sentiment": "positive",
+  "summary": "Customer showed strong interest and agreed to a demo.",
+  "appointment_booked": true,
+  "failure_reason": "",
+  "quality_score": 8.5
+}
+```
+
+### 6c. Get call cost (org-wide ledger)
+
+**Endpoint**
+
+```http
+GET /api/billing/credits/transactions
+```
+
+**Example response — 200 OK**
+
+```json
+[
+  {
+    "id": 123,
+    "org_id": 1,
+    "delta_paise": -470,
+    "balance_after_paise": 1999530,
+    "type": "exotel_abc123",
+    "reference": "exotel_abc123",
+    "call_duration_s": 56.7,
+    "rate_per_min_paise": 500,
+    "created_at": "2026-07-27 14:22:10"
+  }
+]
+```
+
+> `delta_paise` is negative for call charges. The `type`/`reference` field is the `call_sid`, but the call-log API does not currently expose `call_sid`, so matching a specific call to its cost requires backend changes.
+
+### 6d. Webhook after a call
+
+You can also receive a `call.completed` webhook. The payload includes:
+
+```json
+{
+  "transcript_id": 501,
+  "lead_id": 101,
+  "campaign_id": 42,
+  "duration_s": 56.7,
+  "sentiment": "positive",
+  "appointment_booked": true
+}
+```
+
+Then call `GET /api/transcripts/{transcript_id}/review` to fetch the full summary.
 
 ---
 

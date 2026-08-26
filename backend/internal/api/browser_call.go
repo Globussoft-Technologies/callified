@@ -11,9 +11,37 @@ import (
 	"github.com/globussoft/callified-backend/internal/dial"
 )
 
+// BrowserCallRequest is the optional body for POST /api/campaigns/{id}/leads/{lead_id}/browser-call.
+type BrowserCallRequest struct {
+	ExotelAccountID int64 `json:"exotel_account_id"`
+	ScheduledCallID int64 `json:"scheduled_call_id"`
+}
+
+// BrowserCallResponse is returned by POST /api/campaigns/{id}/leads/{lead_id}/browser-call.
+type BrowserCallResponse struct {
+	CallSid  string `json:"call_sid"`
+	AgentURL string `json:"agent_url"`
+	Status   string `json:"status"`
+}
+
 // browserCall initiates a browser-to-phone call for a specific campaign lead.
 //
-// POST /api/campaigns/{id}/leads/{lead_id}/browser-call
+// @Summary     Browser call for campaign lead
+// @Description Initiates a browser-to-phone (agent bridge) call for a specific lead. The agent opens the returned agent_url via WebSocket to receive audio.
+// @Tags        dialing
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id        path  int64                true  "Campaign ID"
+// @Param       lead_id   path  int64                true  "Lead ID"
+// @Param       body      body  BrowserCallRequest   false "Optional Exotel account or scheduled callback ID"
+// @Success     200  {object}  BrowserCallResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     409  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/campaigns/{id}/leads/{lead_id}/browser-call [post]
 //
 // The call flow:
 //  1. Exotel dials the lead's phone (1 leg = 1x cost vs. 2x for bridge/human call).
@@ -22,6 +50,9 @@ import (
 //     detects IsBridge=true and skips the AI pipeline, relaying audio to the
 //     agent browser instead.
 func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.make") {
+		return
+	}
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -40,7 +71,7 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
-	if !s.canAccessLead(ac, lead.ID) {
+	if !s.canAccessCampaignLead(ac, campaignID, lead.ID) {
 		writeError(w, http.StatusNotFound, "lead not found")
 		return
 	}
@@ -61,10 +92,7 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 
 	leadName := strings.TrimSpace(lead.FirstName + " " + lead.LastName)
 
-	var body struct {
-		ExotelAccountID int64 `json:"exotel_account_id"`
-		ScheduledCallID int64 `json:"scheduled_call_id"`
-	}
+	var body BrowserCallRequest
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	var scheduledByUserID int64
@@ -92,17 +120,18 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    leadName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  campaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: provider,
-		TTSVoiceID:  voiceID,
-		TTSLanguage: lang,
+		LeadID:          lead.ID,
+		LeadName:        leadName,
+		LeadPhone:       lead.Phone,
+		CampaignID:      campaignID,
+		OrgID:           ac.OrgID,
+		Interest:        lead.Interest,
+		TTSProvider:     provider,
+		TTSVoiceID:      voiceID,
+		TTSLanguage:     lang,
 		IsBridge:        true,
 		UserEmail:       ac.Email,
+		UserID:          userIDForDial(ac),
 		ExotelAccountID: body.ExotelAccountID,
 	}
 
@@ -123,9 +152,9 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"call_sid":  callSid,
-		"agent_url": fmt.Sprintf("/ws/agent?call_sid=%s", callSid),
-		"status":    "dialing",
+	writeJSON(w, http.StatusOK, BrowserCallResponse{
+		CallSid:  callSid,
+		AgentURL: fmt.Sprintf("/ws/agent?call_sid=%s", callSid),
+		Status:   "dialing",
 	})
 }

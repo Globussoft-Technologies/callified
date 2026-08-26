@@ -42,6 +42,7 @@ export default function CampaignModals({
 
   const [editNameTouched, setEditNameTouched] = useState(false);
   const [showAllRejected, setShowAllRejected] = useState(false);
+  const MAX_VISIBLE_REJECTED = 50;
   const editNameError = validateCampaignName(editCampaignForm?.name);
   const showEditNameError = editNameTouched && !!editNameError;
 
@@ -65,8 +66,28 @@ export default function CampaignModals({
     setNameTouched(false);
     setShowCreateModal(false);
     if (setSelectedTemplate) setSelectedTemplate(null);
-    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
+    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
     if (setCreateError) setCreateError('');
+  };
+
+  const downloadRejectedCSV = (rejected) => {
+    if (!Array.isArray(rejected) || rejected.length === 0) return;
+    const header = 'Row,First Name,Phone,Reason\n';
+    const rows = rejected.map(r => [
+      r.row ?? '',
+      (r.first_name || '').replace(/"/g, '""'),
+      (r.phone || '').replace(/"/g, '""'),
+      (r.reason || '').replace(/"/g, '""'),
+    ].map(v => `"${v}"`).join(',')).join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `rejected_leads_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -205,49 +226,21 @@ export default function CampaignModals({
                     {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
-                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.some(a => (a.direction || 'outbound') !== 'inbound') && (
+                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.some(a => a.app_type === 'voicebot' && (a.direction || 'outbound') !== 'inbound') && (
                   <div style={{marginBottom: '1.5rem'}}>
                     <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                      Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
+                      Provider Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved browser calling credentials)</span>
                     </label>
                     <select className="form-input" value={createForm.exotel_account_id || ''}
                       onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
                       style={{width: '100%'}}>
                       <option value="">-- Use default / set later --</option>
-                      {orgExotelAccounts.filter(a => (a.direction || 'outbound') !== 'inbound').map(a => (
+                      {orgExotelAccounts.filter(a => a.app_type === 'voicebot' && (a.direction || 'outbound') !== 'inbound').map(a => (
                         <option key={a.id} value={a.id}>
-                          {a.name} · {a.account_sid} · {a.caller_id}
+                          {a.name || a.account_sid} · {a.caller_id || 'no caller ID'}
                         </option>
                       ))}
                     </select>
-                  </div>
-                )}
-                {executives && executives.length > 0 && (
-                  <div style={{marginBottom: '1.5rem'}}>
-                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                      Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
-                    </label>
-                    <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
-                      {executives.map(e => {
-                        const ids = createForm.executive_ids || [];
-                        const checked = ids.includes(e.id) || ids.includes(String(e.id));
-                        return (
-                          <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
-                            <input type="checkbox" checked={checked}
-                              onChange={() => {
-                                const val = String(e.id);
-                                setCreateForm(f => ({
-                                  ...f,
-                                  executive_ids: checked
-                                    ? (f.executive_ids || []).filter(id => String(id) !== val)
-                                    : [...(f.executive_ids || []), val]
-                                }));
-                              }} />
-                            {e.name}
-                          </label>
-                        );
-                      })}
-                    </div>
                   </div>
                 )}
                 {createError && (
@@ -362,15 +355,16 @@ export default function CampaignModals({
                     {(() => {
                       const imported = csvImportResult.imported || 0;
                       const added = csvImportResult.added_to_campaign || 0;
-                      const rejectedCount = Array.isArray(csvImportResult.rejected) ? csvImportResult.rejected.length : 0;
+                      const rejectedArrayCount = Array.isArray(csvImportResult.rejected) ? csvImportResult.rejected.length : 0;
+                      const rejectedTotal = csvImportResult.rejected_total || rejectedArrayCount;
                       const success = imported > 0 || added > 0;
                       return (
                         <div style={{padding: '12px 14px', borderRadius: 8, marginBottom: '0.75rem', fontSize: '0.9rem',
                           background: success ? 'rgba(16,185,129,0.1)' : 'rgba(148,163,184,0.1)',
-                          border: `1px solid ${success ? 'rgba(16,185,129,0.3)' : 'rgba(148,163,184,0.3)'}`,
+                          border: `1px solid ${success ? 'rgba(16,185,129,0.3)' : 'rgba(148,163,184,0.3)' }`,
                           color: success ? '#34d399' : '#94a3b8'}}>
                           Imported {imported} new lead{imported !== 1 ? 's' : ''}, {added} added to campaign.
-                          {rejectedCount > 0 ? ` ${rejectedCount} rejected.` : ''}
+                          {rejectedTotal > 0 ? ` ${rejectedTotal} rejected.` : ''}
                         </div>
                       );
                     })()}
@@ -378,11 +372,23 @@ export default function CampaignModals({
                       const rejected = Array.isArray(csvImportResult.rejected) ? csvImportResult.rejected : [];
                       const errors = Array.isArray(csvImportResult.errors) ? csvImportResult.errors : [];
                       if (rejected.length === 0 && errors.length === 0) return null;
-                      const visible = showAllRejected ? rejected : rejected.slice(0, 5);
+                      const rejectedTotal = csvImportResult.rejected_total || rejected.length;
+                      const initialCap = 5;
+                      const visible = showAllRejected ? rejected.slice(0, MAX_VISIBLE_REJECTED) : rejected.slice(0, initialCap);
+                      const hasMore = rejected.length > initialCap;
+                      const truncated = rejected.length > MAX_VISIBLE_REJECTED;
+                      const isBackendCapped = rejectedTotal > rejected.length;
                       return (
                         <div style={{border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, overflow: 'hidden'}}>
-                          <div style={{padding: '10px 12px', background: 'rgba(239,68,68,0.08)', color: '#f87171', fontSize: '0.85rem', fontWeight: 600}}>
-                            Rejected rows {rejected.length > 0 ? `(${rejected.length})` : ''}
+                          <div style={{padding: '10px 12px', background: 'rgba(239,68,68,0.08)', color: '#f87171', fontSize: '0.85rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                            <span>Rejected rows {rejectedTotal > 0 ? `(${rejectedTotal})` : ''}</span>
+                            {rejected.length > 0 && (
+                              <button
+                                onClick={() => downloadRejectedCSV(rejected)}
+                                style={{background: 'transparent', border: 'none', color: '#f87171', textDecoration: 'underline', fontSize: '0.75rem', cursor: 'pointer'}}>
+                                Download CSV
+                              </button>
+                            )}
                           </div>
                           <div style={{maxHeight: 240, overflowY: 'auto'}}>
                             <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem'}}>
@@ -405,12 +411,22 @@ export default function CampaignModals({
                                 ))}
                               </tbody>
                             </table>
-                            {rejected.length > 5 && (
+                            {hasMore && (
                               <button
                                 onClick={() => setShowAllRejected(v => !v)}
                                 style={{width: '100%', background: 'rgba(255,255,255,0.03)', border: 'none', borderTop: '1px solid rgba(255,255,255,0.05)', color: '#94a3b8', padding: '8px', fontSize: '0.78rem', cursor: 'pointer'}}>
-                                {showAllRejected ? 'Show less' : `Show ${rejected.length - 5} more`}
+                                {showAllRejected ? `Show first ${initialCap} rows` : `Show ${Math.min(rejected.length - initialCap, MAX_VISIBLE_REJECTED - initialCap)} more`}
                               </button>
+                            )}
+                            {truncated && showAllRejected && (
+                              <div style={{padding: '8px', color: '#94a3b8', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center'}}>
+                                Showing first {MAX_VISIBLE_REJECTED} of {rejectedTotal} rejected rows. Use the Download CSV button above for the sample list.
+                              </div>
+                            )}
+                            {isBackendCapped && !truncated && (
+                              <div style={{padding: '8px', color: '#94a3b8', fontSize: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.05)', textAlign: 'center'}}>
+                                Download CSV contains a sample of {rejected.length} rows from {rejectedTotal} total rejected rows.
+                              </div>
                             )}
                             {errors.length > 0 && (
                               <div style={{padding: '10px 12px', color: '#fca5a5', fontSize: '0.8rem', borderTop: '1px solid rgba(255,255,255,0.05)'}}>
@@ -511,34 +527,6 @@ export default function CampaignModals({
                   {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                 </select>
               </div>
-              {executives && executives.length > 0 && (
-                <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
-                  </label>
-                  <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
-                    {executives.map(e => {
-                      const ids = editCampaignForm.executive_ids || [];
-                      const checked = ids.includes(e.id) || ids.includes(String(e.id));
-                      return (
-                        <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
-                          <input type="checkbox" checked={checked}
-                            onChange={() => {
-                              const val = String(e.id);
-                              setEditCampaignForm(f => ({
-                                ...f,
-                                executive_ids: checked
-                                  ? (f.executive_ids || []).filter(id => String(id) !== val)
-                                  : [...(f.executive_ids || []), val]
-                              }));
-                            }} />
-                          {e.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
                 <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>

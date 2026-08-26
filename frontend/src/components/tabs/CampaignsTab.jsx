@@ -16,7 +16,7 @@ export default function CampaignsTab({
   INDIAN_VOICES, INDIAN_LANGUAGES,
   dialingId, webCallActive, orgTimezone
 }) {
-  const { fetchSseTicket, currentUser } = useAuth();
+  const { fetchSseTicket, currentUser, hasPermission } = useAuth();
   const toast = useToast();
   const confirm = useConfirm();
   const location = useLocation();
@@ -37,6 +37,8 @@ export default function CampaignsTab({
   const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
+  const [agents, setAgents] = useState([]);
+  const [detailExecutiveFilter, setDetailExecutiveFilter] = useState([]);
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [addLeadsSearch, setAddLeadsSearch] = useState('');
   const [addLeadsResults, setAddLeadsResults] = useState([]);
@@ -66,7 +68,8 @@ export default function CampaignsTab({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     fetchCampaigns();
-    apiFetch(`${API_URL}/exotel-accounts`)
+    apiFetch(`${API_URL}/exotel-accounts/options`)
+      .then(r => r.ok ? r.json() : [])
       .then(d => setOrgExotelAccounts(Array.isArray(d) ? d : []))
       .catch(() => {});
     apiFetch(`${API_URL}/executives`)
@@ -74,6 +77,21 @@ export default function CampaignsTab({
       .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin(currentUser?.role)) {
+      setAgents([]);
+      setDetailExecutiveFilter([]);
+      return;
+    }
+    apiFetch(`${API_URL}/team`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => {
+        const team = Array.isArray(d) ? d : [];
+        setAgents(team.filter(u => u.role === 'Agent'));
+      })
+      .catch(() => setAgents([]));
+  }, [apiFetch, API_URL, currentUser?.role]);
 
   // Open a specific campaign's detail directly when ?id=N is in the URL —
   // lets the CRM dashboard's "Active Campaigns" cards navigate straight into
@@ -148,8 +166,9 @@ export default function CampaignsTab({
       setAutoOpened(true);
       setSelectedCampaign(target);
       setView('detail');
+      setDetailExecutiveFilter([]);
       fetchCampaignLeads(target.id);
-      fetchCallLog(target.id);
+      fetchCallLog(target.id, []);
       fetchCampVoice(target.id);
       startEventStream(target.id).catch(() => {});
       setDetailTab('leads');
@@ -177,9 +196,12 @@ export default function CampaignsTab({
     } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
   }, [apiFetch, API_URL]);
 
-  const fetchCallLog = async (campaignId) => {
+  const fetchCallLog = async (campaignId, executiveIds = []) => {
     try {
-      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log`);
+      const params = new URLSearchParams();
+      if (executiveIds?.length) params.set('executive_ids', executiveIds.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log${query}`);
       if (!res.ok) { setCallLog([]); return; }
       const data = await res.json();
       setCallLog(Array.isArray(data) ? data : []);
@@ -239,11 +261,12 @@ export default function CampaignsTab({
     if (routeCampaignId && campaign?.id !== parseInt(routeCampaignId, 10)) {
       navigate(`/campaigns/${campaign.id}`, { replace: true });
     }
+    setDetailExecutiveFilter([]);
     const detail = await fetchCampaignDetail(campaign.id);
     setSelectedCampaign(detail ? { ...campaign, ...detail } : campaign);
     setView('detail');
     fetchCampaignLeads(campaign.id);
-    fetchCallLog(campaign.id);
+    fetchCallLog(campaign.id, []);
     fetchCampVoice(campaign.id);
     startEventStream(campaign.id).catch(() => {});
     setDetailTab('leads');
@@ -361,19 +384,10 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
+      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
-      if (createForm.executive_ids?.length > 0 && newCampaign?.id) {
-        try {
-          await apiFetch(`${API_URL}/campaigns/${newCampaign.id}/executives`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ executive_ids: createForm.executive_ids })
-          });
-        } catch (e) { console.error('assign executives failed', e); }
-      }
       fetchCampaigns();
     } catch (err) {
       console.error(err);
@@ -431,15 +445,6 @@ export default function CampaignsTab({
           channel: editCampaignForm.channel || 'voice'
         })
       });
-      try {
-        await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}/executives`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            executive_ids: (editCampaignForm.executive_ids || []).map(id => parseInt(id, 10)).filter(id => id > 0)
-          })
-        });
-      } catch (e) { console.error('assign executives failed', e); }
       setShowEditCampaignModal(false);
       fetchCampaigns();
       if (selectedCampaign?.id === editCampaignForm.id) {
@@ -458,6 +463,10 @@ export default function CampaignsTab({
 
   // ── Campaign-user assignment (Admin only) ─────────────────────────────────
   const userRole = currentUser?.role || 'Agent';
+  const canViewCampaigns = hasPermission('campaigns.view');
+  const canCreateCampaigns = hasPermission('campaigns.create');
+  const canEditCampaigns = hasPermission('campaigns.edit');
+  const canDeleteCampaigns = hasPermission('campaigns.delete');
 
   const openAssignModal = async (campaign) => {
     setAssignCampaign(campaign);
@@ -471,7 +480,7 @@ export default function CampaignsTab({
       let users = [];
       if (usersRes.ok) {
         const allUsers = await usersRes.json();
-        users = (allUsers || []).filter(u => u.role === 'Agent' || u.role === 'TeamLeader');
+        users = (allUsers || []).filter(u => u.role === 'Agent' || u.role === 'Executive' || u.role === 'TeamLeader');
       }
       setAssignableUsers(users);
       if (assignedRes.ok) {
@@ -569,6 +578,20 @@ export default function CampaignsTab({
       fetchCampaignLeads(selectedCampaign.id);
       fetchCampaigns();
     } catch (e) { console.error(e); }
+  };
+
+  const handleDeleteLead = async (leadId) => {
+    try {
+      const res = await apiFetch(`${API_URL}/leads/${leadId}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Delete failed (${res.status})`, 'error');
+        return;
+      }
+      fetchCampaignLeads(selectedCampaign.id);
+      fetchCampaigns();
+      toast('Lead deleted');
+    } catch (e) { console.error(e); toast('Delete failed', 'error'); }
   };
 
   const handleEditLead = (lead) => {
@@ -754,6 +777,7 @@ export default function CampaignsTab({
           handleLeadStatusChange={handleLeadStatusChange}
           handleEditLead={handleEditLead}
           handleRemoveLead={handleRemoveLead}
+          handleDeleteLead={handleDeleteLead}
           handleViewTranscripts={handleViewTranscripts}
           onCampaignDial={onCampaignDial}
           onCampaignWebCall={onCampaignWebCall}
@@ -768,6 +792,9 @@ export default function CampaignsTab({
           orgTimezone={orgTimezone}
           handleEditCampaign={handleEditCampaign}
           executives={executives}
+          agents={agents}
+          detailExecutiveFilter={detailExecutiveFilter}
+          setDetailExecutiveFilter={setDetailExecutiveFilter}
         />
         <CampaignModals
           showCreateModal={false}
@@ -836,6 +863,27 @@ export default function CampaignsTab({
     background: bg, color, fontSize: 12, fontWeight: 600,
     cursor: 'pointer', fontFamily: 'inherit',
   });
+  const browserProviderLabel = (campaign) => {
+    if (campaign.channel === 'whatsapp') return 'WhatsApp';
+    const accountId = campaign.exotel_account_id || campaign.exotelAccountId;
+    if (!accountId) return 'Org default';
+    const account = orgExotelAccounts.find(a => String(a.id) === String(accountId));
+    if (!account) return `Account #${accountId}`;
+    const rawProvider = account.provider || 'Exotel';
+    const provider = String(rawProvider).charAt(0).toUpperCase() + String(rawProvider).slice(1);
+    const name = account.name || account.account_sid || `Account #${account.id}`;
+    return `${provider} · ${name}${account.caller_id ? ` · ${account.caller_id}` : ''}`;
+  };
+
+  if (!canViewCampaigns) {
+    return (
+      <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
+        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
+          You do not have permission to view campaigns.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
@@ -844,11 +892,13 @@ export default function CampaignsTab({
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
           Campaigns
         </h2>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-          + Create Campaign
-        </button>
+        {canCreateCampaigns && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
+            + Create Campaign
+          </button>
+        )}
       </div>
 
       {campaigns.length === 0 ? (
@@ -869,21 +919,25 @@ export default function CampaignsTab({
                     {campaign.name}
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    {isAdmin(userRole) && (
+                    {isAdmin(userRole) && canEditCampaigns && (
                       <button onClick={(e) => { e.stopPropagation(); openAssignModal(campaign); }}
                         style={smallBtn('#eff6ff', '#2563eb', '#bfdbfe')}>
                         Assign Users
                       </button>
                     )}
-                    <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                      style={smallBtn('#fff', '#374151', '#e5e7eb')}>
-                      Edit
-                    </button>
-                    <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
-                      disabled={deleting}
-                      style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
-                      {deleting ? '…' : 'Delete'}
-                    </button>
+                    {canEditCampaigns && (
+                      <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
+                        style={smallBtn('#fff', '#374151', '#e5e7eb')}>
+                        Edit
+                      </button>
+                    )}
+                    {canDeleteCampaigns && (
+                      <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
+                        disabled={deleting}
+                        style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
+                        {deleting ? '…' : 'Delete'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -902,6 +956,10 @@ export default function CampaignsTab({
                     </span>
                   )}
                   {statusBadge(campaign.status || 'active')}
+                </div>
+
+                <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.35 }}>
+                  <span style={{ fontWeight: 700, color: '#374151' }}>Browser Provider:</span> {browserProviderLabel(campaign)}
                 </div>
 
                 {/* Stats */}
@@ -1011,7 +1069,7 @@ export default function CampaignsTab({
                       onChange={() => toggleUserSelection(u.id)}
                     />
                     <span style={{ flex: 1 }}>{u.full_name || u.email}</span>
-                    <span style={{ fontSize: 11, color: '#9ca3af' }}>{u.role === 'TeamLeader' ? 'Team Leader' : 'Agent'}</span>
+                    <span style={{ fontSize: 11, color: '#9ca3af' }}>{u.role === 'TeamLeader' ? 'Team Leader' : u.role}</span>
                   </label>
                 ))}
               </div>

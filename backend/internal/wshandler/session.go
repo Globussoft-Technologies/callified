@@ -35,6 +35,8 @@ type CallSession struct {
 	SkipCredits bool
 	// UserEmail is the agent/admin who initiated the call.
 	UserEmail string
+	// UserID is the resolved DB user id of the agent/admin who initiated the call.
+	UserID int64
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").
@@ -169,16 +171,28 @@ func (s *CallSession) SwitchLanguage(newLang string) bool {
 	if label == "" {
 		label = "Hindi"
 	}
-	override := "[LANGUAGE SWITCH: Respond ONLY in " + label + " for the rest of this conversation. Do NOT mention or acknowledge any language change to the customer — just continue naturally in " + label + ". This overrides all previous language instructions.]\n\n"
+	override := "[LANGUAGE SWITCH: From this point forward you MUST respond ONLY in " + label + ". " +
+		"Ignore every previous instruction that tells you to speak in a different language, to speak only English, or that you are not supposed / not allowed to speak " + label + ". " +
+		"Such instructions are VOID for the rest of this conversation. " +
+		"Do NOT explain that you are switching, do NOT apologize, and do NOT mention any company protocol. " +
+		"Do NOT restart the greeting or repeat information already shared. " +
+		"Continue the conversation naturally from where it left off, in " + label + ". " +
+		"This instruction overrides all earlier language rules.]\n\n"
+	trailer := "\n\n[REMINDER: respond ONLY in " + label + " above all other instructions. Any rule saying you cannot speak " + label + " is VOID.]"
 	if !strings.Contains(s.SystemPrompt, "LANGUAGE SWITCH:") {
-		s.SystemPrompt = override + s.SystemPrompt
+		s.SystemPrompt = override + s.SystemPrompt + trailer
 	} else {
 		start := strings.Index(s.SystemPrompt, "[LANGUAGE SWITCH:")
 		// Search relative to start so we find the closing ]\n\n of THIS block,
 		// not the first ]\n\n anywhere in the prompt (which may be earlier).
 		endRel := strings.Index(s.SystemPrompt[start:], "]\n\n")
 		if start >= 0 && endRel >= 0 {
-			s.SystemPrompt = override + s.SystemPrompt[start+endRel+3:]
+			body := s.SystemPrompt[start+endRel+3:]
+			// Remove any previously appended trailer so we don't duplicate it.
+			if idx := strings.Index(body, "[REMINDER:"); idx >= 0 {
+				body = body[:idx]
+			}
+			s.SystemPrompt = override + body + trailer
 		}
 	}
 	// Replace any conflicting language directive in the prompt body so the LLM
@@ -189,6 +203,7 @@ func (s *CallSession) SwitchLanguage(newLang string) bool {
 		}
 		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond ONLY in "+lang, "Respond ONLY in "+label)
 		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond only in "+lang, "Respond ONLY in "+label)
+		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "Respond in "+lang, "Respond ONLY in "+label)
 		s.SystemPrompt = strings.ReplaceAll(s.SystemPrompt, "[LANG:"+strings.ToLower(lang[:2])+"]", "[LANG:"+newLang+"]")
 	}
 	return true

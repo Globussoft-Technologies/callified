@@ -290,6 +290,10 @@ export function CallProvider({ children }) {
           // Insufficient credits — show the themed recharge modal instead
           // of native confirm() (which renders in the OS theme and clashes).
           setRechargePrompt(msg);
+        } else if (/dnd/i.test(msg)) {
+          // DND blocks already render an inline "🚫 DND — number blocked"
+          // badge on the row + a transient flash from handleDialClick.
+          // The native alert() here was duplicate noise — drop it silently.
         } else {
           alert(msg);
         }
@@ -324,7 +328,9 @@ export function CallProvider({ children }) {
   const triggerBrowserCall = useCallback(async (lead, campaignId, onEnded, exotelAccountId, scheduledCallId) => {
     if (!lead || !campaignId) return false;
     const accountId = exotelAccountId && !isNaN(exotelAccountId) ? parseInt(exotelAccountId, 10) : getBrowserAccountId(campaignId);
-    if (!accountId) {
+    // Scheduled callbacks may rely on the campaign's default provider account,
+    // so only require an explicit account for manual browser calls.
+    if (!accountId && !scheduledCallId) {
       toast({ message: 'Select a browser call account before calling', kind: 'error' });
       return false;
     }
@@ -390,6 +396,41 @@ export function CallProvider({ children }) {
     }
     setScheduledCallbackPreview(null);
   }, [scheduledCallbackPreview, dismissScheduledCall]);
+
+  // Poll for due manual scheduled calls. Calls scheduled by the current user
+  // open a preview modal with customer details, remarks, and call history;
+  // the agent must click Start Call to connect. Everyone else just sees a reminder.
+  const fetchDueManualCalls = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
+      if (!res.ok) return;
+      const calls = await res.json();
+      setDueManualCalls(calls || []);
+
+      const myUserId = currentUser?.id;
+      if (!myUserId) return;
+      // Only show one preview at a time and don't interrupt an active call.
+      if (scheduledCallbackPreview || browserCallLead || browserCallDialing) return;
+      // Respect client-side dismissal so a dismissed callback does not
+      // reappear after a refresh while the backend row is still pending.
+      const visibleCalls = (calls || []).filter(c => !dismissedIds.has(c.id));
+      for (const call of visibleCalls) {
+        if (call.scheduled_by_user_id !== myUserId) continue;
+        if (triggeredScheduledRef.current.has(call.id)) continue;
+        if (!call.campaign_id || !call.lead_id) continue;
+        triggeredScheduledRef.current.add(call.id);
+        setScheduledCallbackPreview(call);
+        break;
+      }
+    } catch (e) {
+      console.error('[scheduled-calls] poll failed', e);
+    }
+  }, [apiFetch, currentUser?.id, scheduledCallbackPreview, browserCallLead, browserCallDialing, dismissedIds]);
+
+  const handleRescheduled = useCallback((callId) => {
+    fetchDueManualCalls();
+    if (callId) clearDismissedScheduledCall(callId);
+  }, [fetchDueManualCalls, clearDismissedScheduledCall]);
 
   const handleBrowserCallEnded = useCallback((status, errorMsg) => {
     const cb = browserCallEndedCbRef.current;
@@ -575,33 +616,6 @@ export function CallProvider({ children }) {
     }
   }, [apiFetch, webCallActive, orgProducts, activeVoiceProvider, activeVoiceId, activeLanguage]);
 
-  // Poll for due manual scheduled calls. Calls scheduled by the current user
-  // open a preview modal with customer details, remarks, and call history;
-  // the agent must click Start Call to connect. Everyone else just sees a reminder.
-  const fetchDueManualCalls = useCallback(async () => {
-    try {
-      const res = await apiFetch(`${API_URL}/scheduled-calls?mode=manual&status=pending&due=true`);
-      if (!res.ok) return;
-      const calls = await res.json();
-      setDueManualCalls(calls || []);
-
-      const myUserId = currentUser?.id;
-      if (!myUserId) return;
-      // Only show one preview at a time and don't interrupt an active call.
-      if (scheduledCallbackPreview || browserCallLead || browserCallDialing) return;
-      for (const call of calls) {
-        if (call.scheduled_by_user_id !== myUserId) continue;
-        if (triggeredScheduledRef.current.has(call.id)) continue;
-        if (!call.campaign_id || !call.lead_id) continue;
-        triggeredScheduledRef.current.add(call.id);
-        setScheduledCallbackPreview(call);
-        break;
-      }
-    } catch (e) {
-      console.error('[scheduled-calls] poll failed', e);
-    }
-  }, [apiFetch, currentUser?.id, scheduledCallbackPreview, browserCallLead, browserCallDialing]);
-
   useEffect(() => {
     if (!currentUser?.id) return;
     fetchDueManualCalls();
@@ -660,8 +674,11 @@ export function CallProvider({ children }) {
           call={scheduledCallbackPreview}
           onStart={startScheduledCallback}
           onDismiss={dismissScheduledCallbackPreview}
+          onRescheduled={handleRescheduled}
           apiFetch={apiFetch}
           API_URL={API_URL}
+          currentUser={currentUser}
+          toast={toast}
         />
       )}
 

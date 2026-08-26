@@ -2,7 +2,9 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/wshandler"
 )
 
@@ -26,6 +28,7 @@ func (s *Server) SetWSHandler(h activeCallLister) {
 // @Tags        calls
 // @Produce     json
 // @Security    BearerAuth
+// @Param       user_id  query  int64  false  "Filter by agent user ID (Agent role can only request self)"
 // @Success     200  {object}  object{count=int,active_calls=array}
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -39,12 +42,25 @@ func (s *Server) activeCalls(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	userIDFilter, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	// Agents/Executives can only see their own active calls.
+	if db.IsAgentLikeRole(ac.Role) {
+		if userIDFilter != 0 && userIDFilter != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		userIDFilter = ac.UserID
+	}
 	sessions := s.wsHandler.ActiveSessions()
 	filtered := sessions[:0]
 	for _, sess := range sessions {
-		if sess.OrgID == ac.OrgID {
-			filtered = append(filtered, sess)
+		if sess.OrgID != ac.OrgID {
+			continue
 		}
+		if userIDFilter > 0 && sess.UserID != userIDFilter {
+			continue
+		}
+		filtered = append(filtered, sess)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"count":        len(filtered),

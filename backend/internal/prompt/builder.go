@@ -139,11 +139,10 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	}
 
 	// Fetch lead details
-	var leadName, leadInterest, leadSource string
+	var leadName, leadSource string
 	if leadID > 0 {
 		if lead, err := b.db.GetLeadByID(leadID); err == nil && lead != nil {
 			leadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
-			leadInterest = lead.Interest
 			leadSource = lead.Source
 		}
 	}
@@ -182,7 +181,6 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		CampaignName:         campaignName,
 		PersonaName:          personaName,
 		LeadFirst:            firstWord(leadName),
-		LeadInterest:         leadInterest,
 		SourceInline:         sourceInline,
 		Language:             effectiveLang,
 	}
@@ -194,9 +192,6 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		systemPrompt = customPrompt + fmt.Sprintf("\n\nIMPORTANT: Respond only in %s. Do not use English unless the user asks for it.", languageLabel(effectiveLang))
 		if leadName != "" && !strings.Contains(systemPrompt, leadName) {
 			systemPrompt += fmt.Sprintf("\n\nYou are speaking with %s.", leadName)
-		}
-		if leadInterest != "" {
-			systemPrompt += fmt.Sprintf("\nLead interest: %s", leadInterest)
 		}
 	} else {
 		systemPrompt = buildDefaultPrompt(pc)
@@ -238,7 +233,6 @@ type promptContext struct {
 	CampaignName         string
 	PersonaName          string
 	LeadFirst            string
-	LeadInterest         string
 	SourceInline         string
 	Language             string
 }
@@ -295,10 +289,10 @@ func buildDefaultPrompt(pc promptContext) string {
 
 	// Core rules — universal, English.
 	b.WriteString(`## CORE RULES (STRICT)
-1. NO HALLUCINATION. Only use facts from PRODUCT KNOWLEDGE below. Never invent addresses, phone numbers, pricing, distances, timings, or amenities. If unknown, say the senior will share details in the meeting.
-2. ONE QUESTION ONLY. Ask exactly ONE question per response. Never combine two questions in the same reply. Wait for the customer's answer before asking the next question. WRONG: "Apartment venuma? Ungal budget enna?" (TWO QUESTIONS! WRONG!) RIGHT: "Apartment, villa, plot, or commercial — which type?" Then wait. Then ask budget separately.
+1. NO HALLUCINATION. Only use facts from PRODUCT KNOWLEDGE below. Never invent addresses, phone numbers, pricing, terms, locations, timings, or features. If unknown, say the senior will share details in the meeting.
+2. ONE QUESTION ONLY. Ask exactly ONE question per response. Never combine two questions in the same reply. Wait for the customer's answer before asking the next question. WRONG: "Which option do you want? What is your budget?" (TWO QUESTIONS!) RIGHT: "Which option do you prefer — A or B?" Then wait. Then ask the next question separately.
 3. NO MARKDOWN. No *, **, #, bullets, or numbered lists — TTS reads the characters literally. Plain text only.
-4. NUMBERS IN WORDS. Say "two and a half crore", not "2.5 Cr". Say "five PM", not "5 PM".
+4. NUMBERS IN WORDS. Say "two and a half crore", not "2.5 Cr". Say "five PM", not "5 PM". Say "sixty seconds", not "60-second" or "60 seconds". Never use digit-hyphen-word combinations like "60-second", "30-day", or "15-minute" — always write them as words: "sixty second", "thirty day", "fifteen minute".
 5. LEAD NAME. The lead is "` + leadFirst + `". Use this exact spelling. Never change, abbreviate, or guess another name.
 6. [HANGUP] TAG. End every final turn with the literal English string [HANGUP] after your goodbye text. Never translate it. Never wrap it in extra brackets. Without [HANGUP] the call does not end.
 7. FUTURE DATES ONLY. Offer "today", "tomorrow", "day after". Never offer past dates.
@@ -322,7 +316,10 @@ func buildDefaultPrompt(pc promptContext) string {
 	if frag.BannedWords != "" {
 		fmt.Fprintf(&b, "- Banned formal/written register (use casual alternatives instead): %s\n", frag.BannedWords)
 	}
-	b.WriteString("- English words (e.g. meeting, project, free, okay, sorry, thank you) mix in naturally — that is how real sales calls sound.\n\n")
+	b.WriteString("- English words (e.g. meeting, project, free, okay, sorry, thank you) mix in naturally — that is how real sales calls sound.\n")
+	b.WriteString("- NEVER comment on, correct, or acknowledge the customer's language or accent. Just continue naturally in the configured language.\n")
+	b.WriteString("- ONLY switch language if the customer explicitly asks, for example: 'speak in Hindi', 'Kannada dalli mathadi', 'Punjabi mein bolo'.\n")
+	b.WriteString("- If the customer speaks a few words in another language, do NOT switch. Keep replying in the configured language.\n\n")
 
 	// Product knowledge.
 	b.WriteString("## PRODUCT KNOWLEDGE\n")
@@ -335,9 +332,6 @@ func buildDefaultPrompt(pc promptContext) string {
 	}
 	if pc.ProductContext != "" {
 		fmt.Fprintf(&b, "\n%s\n", pc.ProductContext)
-	}
-	if pc.LeadInterest != "" {
-		fmt.Fprintf(&b, "\nLead's stated interest: %s\n", pc.LeadInterest)
 	}
 	return b.String()
 }

@@ -29,6 +29,22 @@ definitions:
       ok:
         type: boolean
     type: object
+  api.BrowserCallRequest:
+    properties:
+      exotel_account_id:
+        type: integer
+      scheduled_call_id:
+        type: integer
+    type: object
+  api.BrowserCallResponse:
+    properties:
+      agent_url:
+        type: string
+      call_sid:
+        type: string
+      status:
+        type: string
+    type: object
   api.DeletedResponse:
     properties:
       deleted:
@@ -462,6 +478,10 @@ definitions:
         type: integer
       scheduled_call_id:
         type: integer
+      scheduled_call_mode:
+        type: string
+      scheduled_call_notes:
+        type: string
       source:
         type: string
       status:
@@ -3301,6 +3321,62 @@ paths:
       summary: Remove lead from campaign
       tags:
       - campaigns
+  /api/campaigns/{id}/leads/{lead_id}/browser-call:
+    post:
+      consumes:
+      - application/json
+      description: Initiates a browser-to-phone (agent bridge) call for a specific
+        lead. The agent opens the returned agent_url via WebSocket to receive audio.
+      parameters:
+      - description: Campaign ID
+        format: int64
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Lead ID
+        format: int64
+        in: path
+        name: lead_id
+        required: true
+        type: integer
+      - description: Optional Exotel account or scheduled callback ID
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/api.BrowserCallRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.BrowserCallResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Browser call for campaign lead
+      tags:
+      - dialing
   /api/campaigns/{id}/redial-failed:
     post:
       description: Queues outbound calls for all leads in a campaign with "Call Failed"

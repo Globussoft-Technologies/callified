@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -16,14 +17,24 @@ import (
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {object}  db.FullDashboardStats
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/dashboard [get]
 func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
-	stats, err := s.db.GetFullDashboardStats(ac.OrgID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsDashboard", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	stats, err := s.db.GetFullDashboardStats(ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("analyticsDashboard", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -38,14 +49,24 @@ func (s *Server) analyticsDashboard(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {array}   db.LanguagePerf
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/languages [get]
 func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
-	langs, err := s.db.GetLanguagePerformance(ac.OrgID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsLanguages", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	langs, err := s.db.GetLanguagePerformance(ac.OrgID, execIDs, apply)
 	if err != nil {
 		s.logger.Sugar().Errorw("analyticsLanguages", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -60,13 +81,17 @@ func (s *Server) analyticsLanguages(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     text/csv
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Param       campaign_id    query  int64   false  "Campaign ID (0 = all campaigns)"
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {file}    binary
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/export [get]
 func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -76,7 +101,14 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsExportCSV", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -105,13 +137,17 @@ func (s *Server) analyticsExportCSV(w http.ResponseWriter, r *http.Request) {
 // @Tags        analytics
 // @Produce     text/html
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID (0 = all campaigns)"
+// @Param       campaign_id    query  int64   false  "Campaign ID (0 = all campaigns)"
+// @Param       executive_ids  query  string  false  "Comma-separated executive IDs"
 // @Success     200  {string}  string  "HTML report"
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/report [get]
 func (s *Server) analyticsExportReport(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
@@ -121,7 +157,14 @@ func (s *Server) analyticsExportReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("analyticsExportReport", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	rows, err := s.db.GetCampaignAnalyticsForExport(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -149,7 +192,8 @@ th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f5f5f5}</s
 // @Tags        analytics
 // @Produce     json
 // @Security    BearerAuth
-// @Param       campaign_id  query  int64  false  "Campaign ID"
+// @Param       campaign_id    query  int64  false  "Campaign ID"
+// @Param       executive_ids  query  string false  "Comma-separated executive IDs"
 // @Success     200  {array}   object
 // @Failure     401  {object}  ErrorResponse
 // @Failure     403  {object}  ErrorResponse
@@ -160,12 +204,231 @@ func (s *Server) scoredLeads(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
 
-	leads, err := s.db.GetScoredLeads(ac.OrgID, campaignID)
+	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
+	if err != nil {
+		s.logger.Sugar().Errorw("scoredLeads", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	leads, err := s.db.GetScoredLeads(ac.OrgID, campaignID, execIDs, apply)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, emptyJSON(leads))
+}
+
+// GET /api/analytics/agent-lead-summary
+// @Summary     Agent lead summary
+// @Description Returns assigned lead and call outcome summaries by agent/executive for the selected date range.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
+// @Param       to           query  string  false  "End date (YYYY-MM-DD)"
+// @Param       campaign_id  query  int64   false  "Campaign ID (0 = all)"
+// @Param       user_id      query  int64   false  "Agent/user ID"
+// @Success     200  {array} db.AgentLeadSummary
+// @Failure     400  {object} ErrorResponse
+// @Failure     401  {object} ErrorResponse
+// @Failure     403  {object} ErrorResponse
+// @Failure     500  {object} ErrorResponse
+// @Router      /api/analytics/agent-lead-summary [get]
+func (s *Server) agentLeadSummary(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
+	ac := getAuth(r)
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	if fromStr == "" {
+		fromStr = time.Now().UTC().Format("2006-01-02")
+	}
+	if toStr == "" {
+		toStr = fromStr
+	}
+	from, err := time.Parse("2006-01-02", fromStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid from date")
+		return
+	}
+	to, err := time.Parse("2006-01-02", toStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid to date")
+		return
+	}
+	to = to.Add(24*time.Hour - time.Second)
+
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
+	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	if db.IsAgentLikeRole(ac.Role) {
+		if userID != 0 && userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		userID = ac.UserID
+	}
+
+	rows, err := s.db.GetAgentLeadSummary(ac.OrgID, from, to, campaignID, userID)
+	if err != nil {
+		s.logger.Sugar().Errorw("agentLeadSummary", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(rows))
+}
+
+// GET /api/analytics/user-detail/{id}
+// @Summary     User performance detail
+// @Description Returns a single user's profile, assigned campaigns, leads, recordings, and activity stats. Requires reports.view permission.
+// @Tags        analytics
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id           path   int64   true   "User ID"
+// @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
+// @Param       to           query  string  false  "End date (YYYY-MM-DD)"
+// @Param       campaign_id  query  int64   false  "Campaign ID to filter leads (0 = all)"
+// @Param       leads_page   query  int64   false  "Leads page number"
+// @Param       leads_limit  query  int64   false  "Leads page size (max 100)"
+// @Param       recordings_page   query  int64  false  "Recordings page number"
+// @Param       recordings_limit  query  int64  false  "Recordings page size (max 100)"
+// @Success     200  {object}  db.UserDetailResponse
+// @Failure     400  {object}  ErrorResponse
+// @Failure     401  {object}  ErrorResponse
+// @Failure     403  {object}  ErrorResponse
+// @Failure     404  {object}  ErrorResponse
+// @Failure     500  {object}  ErrorResponse
+// @Router      /api/analytics/user-detail/{id} [get]
+func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
+	ac := getAuth(r)
+	userID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	// Agents/Executives can only view their own detail.
+	if db.IsAgentLikeRole(ac.Role) {
+		if userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+	}
+
+	profile, err := s.db.GetUserByIDInOrgWithRole(userID, ac.OrgID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if profile == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	fromStr := r.URL.Query().Get("from")
+	toStr := r.URL.Query().Get("to")
+	var from, to time.Time
+	if fromStr != "" {
+		from, _ = time.Parse("2006-01-02", fromStr)
+	}
+	if toStr != "" {
+		to, _ = time.Parse("2006-01-02", toStr)
+	}
+
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
+		writeError(w, http.StatusNotFound, "campaign not found")
+		return
+	}
+
+	leadsPage := int64(1)
+	if p, err := strconv.ParseInt(r.URL.Query().Get("leads_page"), 10, 64); err == nil && p > 0 {
+		leadsPage = p
+	}
+	leadsLimit := int64(20)
+	if l, err := strconv.ParseInt(r.URL.Query().Get("leads_limit"), 10, 64); err == nil && l > 0 {
+		if l > 100 {
+			l = 100
+		}
+		leadsLimit = l
+	}
+	leadsOffset := (leadsPage - 1) * leadsLimit
+
+	recordingsPage := int64(1)
+	if p, err := strconv.ParseInt(r.URL.Query().Get("recordings_page"), 10, 64); err == nil && p > 0 {
+		recordingsPage = p
+	}
+	recordingsLimit := int64(20)
+	if l, err := strconv.ParseInt(r.URL.Query().Get("recordings_limit"), 10, 64); err == nil && l > 0 {
+		if l > 100 {
+			l = 100
+		}
+		recordingsLimit = l
+	}
+	recordingsOffset := (recordingsPage - 1) * recordingsLimit
+
+	campaigns, err := s.db.GetUserAssignedCampaigns(ac.OrgID, userID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	assignedLeads, err := s.db.CountUserAssignedLeads(ac.OrgID, userID, campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	stats, err := s.db.GetUserActivityStats(ac.OrgID, userID, from, to)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	stats.AssignedLeads = assignedLeads
+	stats.AssignedCampaigns = int64(len(campaigns))
+
+	leads, err := s.db.GetUserAssignedLeads(ac.OrgID, userID, leadsLimit, leadsOffset, campaignID)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	recordings, recTotal, err := s.db.GetUserRecordings(ac.OrgID, userID, from, to, recordingsLimit, recordingsOffset)
+	if err != nil {
+		s.logger.Sugar().Errorw("userDetail", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := db.UserDetailResponse{
+		Profile:    *profile,
+		Stats:      stats,
+		Campaigns:  emptyJSON(campaigns),
+		Leads:      emptyJSON(leads),
+		Recordings: emptyJSON(recordings),
+	}
+	resp.LeadPagination.Page = leadsPage
+	resp.LeadPagination.Limit = leadsLimit
+	resp.LeadPagination.Total = assignedLeads
+	resp.RecordingPagination.Page = recordingsPage
+	resp.RecordingPagination.Limit = recordingsLimit
+	resp.RecordingPagination.Total = recTotal
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func formatSeconds(sec int64) string {
@@ -192,12 +455,16 @@ func formatSeconds(sec int64) string {
 // @Param       from         query  string  false  "Start date (YYYY-MM-DD)"
 // @Param       to           query  string  false  "End date (YYYY-MM-DD)"
 // @Param       campaign_id  query  int64   false  "Campaign ID (0 = all)"
+// @Param       user_id      query  int64   false  "Agent user ID (Agent role can only request self)"
 // @Success     200  {file}  binary
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/analytics/agent-report [get]
 func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.download") {
+		return
+	}
 	ac := getAuth(r)
 
 	fromStr := r.URL.Query().Get("from")
@@ -223,18 +490,29 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 	campaignIDStr := r.URL.Query().Get("campaign_id")
 	campaignID, _ := strconv.ParseInt(campaignIDStr, 10, 64)
 
+	userIDStr := r.URL.Query().Get("user_id")
+	userID, _ := strconv.ParseInt(userIDStr, 10, 64)
+	// Agents/Executives may only view their own report.
+	if db.IsAgentLikeRole(ac.Role) {
+		if userID != 0 && userID != ac.UserID {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		userID = ac.UserID
+	}
+
 	if campaignID > 0 && !s.canViewCampaign(ac, campaignID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 
-	summary, err := s.db.GetAgentActivitySummary(ac.OrgID, from, to, campaignID)
+	summary, err := s.db.GetAgentActivitySummary(ac.OrgID, from, to, campaignID, userID)
 	if err != nil {
 		s.logger.Sugar().Errorw("agentReportXLSX", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	detail, err := s.db.GetAgentActivityDetail(ac.OrgID, from, to, campaignID)
+	detail, err := s.db.GetAgentActivityDetail(ac.OrgID, from, to, campaignID, userID)
 	if err != nil {
 		s.logger.Sugar().Errorw("agentReportXLSX", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -362,8 +640,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Status Updates", Categories: rangeRef("Summary", "A", "A", 2, lastRow), Values: rangeRef("Summary", "M", "M", 2, lastRow)},
 				{Name: "Notes Added", Categories: rangeRef("Summary", "A", "A", 2, lastRow), Values: rangeRef("Summary", "N", "N", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Agent Activity Summary"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Agent Activity Summary"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -377,8 +655,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Busy", Categories: rangeRef("Call Activity", "A", "A", 2, lastRow), Values: rangeRef("Call Activity", "F", "F", 2, lastRow)},
 				{Name: "Failed", Categories: rangeRef("Call Activity", "A", "A", 2, lastRow), Values: rangeRef("Call Activity", "G", "G", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Call Outcome Breakdown"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Call Outcome Breakdown"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -389,8 +667,8 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 				{Name: "Talk Time (s)", Categories: rangeRef("Efficiency", "A", "A", 2, lastRow), Values: rangeRef("Efficiency", "C", "C", 2, lastRow)},
 				{Name: "Idle Time (s)", Categories: rangeRef("Efficiency", "A", "A", 2, lastRow), Values: rangeRef("Efficiency", "G", "G", 2, lastRow)},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Talk Time vs Idle Time"}}},
-			Legend: excelize.ChartLegend{Position: "bottom"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Talk Time vs Idle Time"}}},
+			Legend:    excelize.ChartLegend{Position: "bottom"},
 			Dimension: excelize.ChartDimension{Width: 560, Height: 320},
 		})
 
@@ -400,10 +678,10 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 			Series: []excelize.ChartSeries{
 				{Name: "Outcomes", Categories: "'Outcomes'!$G$2:$G$5", Values: "'Outcomes'!$H$2:$H$5"},
 			},
-			Title: excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Total Outcomes"}}},
-			Legend: excelize.ChartLegend{Position: "right"},
+			Title:     excelize.ChartTitle{Paragraph: []excelize.RichTextRun{{Text: "Total Outcomes"}}},
+			Legend:    excelize.ChartLegend{Position: "right"},
 			Dimension: excelize.ChartDimension{Width: 480, Height: 320},
-			PlotArea: excelize.ChartPlotArea{ShowPercent: true, ShowCatName: false, ShowSerName: false, ShowVal: false},
+			PlotArea:  excelize.ChartPlotArea{ShowPercent: true, ShowCatName: false, ShowSerName: false, ShowVal: false},
 		})
 	}
 
