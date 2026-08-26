@@ -551,6 +551,7 @@ type Transcript struct {
 	LeadID        int64           `json:"lead_id"`
 	CampaignID    int64           `json:"campaign_id"`
 	OrgID         int64           `json:"org_id"`
+	CallSid       string          `json:"call_sid"`
 	Transcript    json.RawMessage `json:"transcript"`
 	RecordingURL  string          `json:"recording_url"`
 	TTSLanguage   string          `json:"tts_language"`
@@ -583,7 +584,9 @@ func (d *DB) EnsureCallTranscriptColumns() error {
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_interest VARCHAR(255) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_status VARCHAR(50) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN status VARCHAR(50) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN call_sid VARCHAR(255) DEFAULT NULL`)
 	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD INDEX idx_ct_direction_org_created (direction, org_id, created_at)`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD INDEX idx_ct_call_sid (call_sid)`)
 	return nil
 }
 
@@ -711,18 +714,42 @@ func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]Inboun
 // that populates sess.OrgID, so without the fallback every web-sim row would
 // land with org_id=NULL and get filtered out of the Analytics dashboard.
 func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
+	return d.SaveCallTranscriptWithCallSid(leadID, campaignID, orgID, "", transcriptJSON, recordingURL, ttsLanguage, durationS)
+}
+
+// SaveCallTranscriptWithCallSid inserts a call transcript and stores the exact
+// call/stream SID so async browser recording uploads attach to the right row.
+func (d *DB) SaveCallTranscriptWithCallSid(leadID, campaignID, orgID int64, callSid, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
 	if orgID == 0 && leadID > 0 {
 		_ = d.pool.QueryRow(`SELECT org_id FROM leads WHERE id=?`, leadID).Scan(&orgID)
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, transcript, recording_url, tts_language, call_duration_s)
-		 VALUES (?,?,?,?,?,?,?)`,
+		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, call_sid, transcript, recording_url, tts_language, call_duration_s)
+		 VALUES (?,?,?,?,?,?,?,?)`,
 		nullInt64(leadID), nullInt64(campaignID), nullInt64(orgID),
-		transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
+		nullString(callSid), transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// GetTranscriptByCallSid fetches the newest transcript row for one exact call SID.
+func (d *DB) GetTranscriptByCallSid(callSid string) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
+		       COALESCE(call_sid,''), COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''), COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts WHERE call_sid=? ORDER BY id DESC LIMIT 1`, callSid)
+	var t Transcript
+	if err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.CallSid, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // GetTranscriptByID fetches a single transcript by its primary key.

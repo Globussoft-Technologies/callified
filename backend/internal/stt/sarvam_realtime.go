@@ -90,9 +90,7 @@ func (c *SarvamRealtimeClient) Run(ctx context.Context, audioIn <-chan []byte) {
 		for {
 			select {
 			case <-ctx.Done():
-				c.sendJSON(conn, map[string]string{"event": "end"})
-				<-recvDone
-				conn.Close()
+				c.finishConnection(conn, recvDone)
 				return
 
 			case <-recvDone:
@@ -107,9 +105,7 @@ func (c *SarvamRealtimeClient) Run(ctx context.Context, audioIn <-chan []byte) {
 
 			case pcm, ok := <-audioIn:
 				if !ok {
-					c.sendJSON(conn, map[string]string{"event": "end"})
-					<-recvDone
-					conn.Close()
+					c.finishConnection(conn, recvDone)
 					return
 				}
 				msg := map[string]string{
@@ -134,6 +130,16 @@ func (c *SarvamRealtimeClient) Run(ctx context.Context, audioIn <-chan []byte) {
 			case <-time.After(500 * time.Millisecond):
 			}
 		}
+	}
+}
+
+func (c *SarvamRealtimeClient) finishConnection(conn *websocket.Conn, recvDone <-chan struct{}) {
+	_ = c.sendJSON(conn, map[string]string{"event": "end"})
+	select {
+	case <-recvDone:
+	case <-time.After(1500 * time.Millisecond):
+		_ = conn.Close()
+		<-recvDone
 	}
 }
 

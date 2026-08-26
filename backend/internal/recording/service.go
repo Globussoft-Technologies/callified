@@ -130,7 +130,17 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// for a recent placeholder row for this lead+campaign and populate it
 	// instead of creating a second, duplicate row.
 	var transcriptID int64
-	placeholder, _ := s.database.GetRecentTranscriptForRecordingAttach(req.LeadID, req.CampaignID, time.Now().Add(-5*time.Minute))
+	callSid := strings.TrimSpace(req.CallSid)
+	if callSid == "" {
+		callSid = strings.TrimSpace(req.StreamSid)
+	}
+	var placeholder *db.Transcript
+	if callSid != "" {
+		placeholder, _ = s.database.GetTranscriptByCallSid(callSid)
+	}
+	if placeholder == nil && callSid == "" {
+		placeholder, _ = s.database.GetRecentTranscriptForRecordingAttach(req.LeadID, req.CampaignID, time.Now().Add(-5*time.Minute))
+	}
 	if placeholder != nil && string(placeholder.Transcript) == "[]" {
 		if err := s.database.UpdateCallTranscriptContents(placeholder.ID, transcriptJSON, req.DurationS, req.TTSLanguage); err != nil {
 			s.log.Error("recording: failed to populate placeholder transcript", zap.Int64("transcript_id", placeholder.ID), zap.Error(err))
@@ -152,7 +162,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	}
 	if transcriptID == 0 {
 		var err error
-		transcriptID, err = s.database.SaveCallTranscript(req.LeadID, req.CampaignID, req.OrgID, transcriptJSON, recordingURL, req.TTSLanguage, req.DurationS)
+		transcriptID, err = s.database.SaveCallTranscriptWithCallSid(req.LeadID, req.CampaignID, req.OrgID, callSid, transcriptJSON, recordingURL, req.TTSLanguage, req.DurationS)
 		if err != nil {
 			s.log.Error("recording: SaveCallTranscript failed", zap.Error(err))
 			return
