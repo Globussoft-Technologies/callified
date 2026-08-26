@@ -39,6 +39,9 @@ type SaveRequest struct {
 	// UserEmail is the agent/admin who initiated the call; recordings are saved
 	// under a per-user subfolder.
 	UserEmail string
+	// IsInbound means the call started without a lead; post-call analysis should
+	// extract customer details and attach the transcript to a lead when possible.
+	IsInbound bool
 }
 
 // Service handles post-call analysis.
@@ -124,13 +127,49 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		zap.Int("turn_count", turnCount),
 		zap.Float32("duration_s", req.DurationS))
 
+	if req.IsInbound {
+		if err := s.database.UpdateCallTranscriptDirection(transcriptID, "inbound"); err != nil {
+			s.log.Warn("recording: mark inbound transcript failed", zap.Int64("transcript_id", transcriptID), zap.Error(err))
+		}
+	}
+
+	if req.IsInbound && req.LeadID == 0 && s.llm != nil && len(req.ChatHistory) > 0 {
+		if leadID, phone, err := s.upsertInboundLead(ctx, req.OrgID, transcriptID, req.ChatHistory, req.LeadPhone); err != nil {
+			s.log.Warn("recording: inbound lead extraction failed", zap.Error(err))
+		} else if leadID > 0 {
+			req.LeadID = leadID
+			if phone != "" {
+				req.LeadPhone = phone
+			}
+			s.log.Info("recording: inbound transcript attached to lead",
+				zap.Int64("transcript_id", transcriptID),
+				zap.Int64("lead_id", leadID))
+		}
+	}
+
 	// 4. Run Gemini analysis (non-critical — log and continue on failure).
+	//
+	// Skip analysis entirely for very short / one-sided calls: a 2-3 second
+	// hang-up or a no-reply greeting has nothing meaningful to analyze, and
+	// asking Gemini to score it tends to produce inflated 4/5 + positive
+	// because Gemini judges the agent's intro instead of the call outcome.
+	// Skipping means no call_reviews row is saved, so the UI's conclusion
+	// card naturally stays hidden for these calls.
+	userTurns := 0
+	for _, m := range req.ChatHistory {
+		if strings.EqualFold(m.Role, "user") {
+			userTurns++
+		}
+	}
+	shouldAnalyze := s.llm != nil && len(req.ChatHistory) > 0 && req.DurationS >= 10 && userTurns >= 1
+
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
 		OrgID:        req.OrgID,
 		Sentiment:    "neutral",
 	}
-	if s.llm != nil && len(req.ChatHistory) > 0 {
+	analyzed := false
+	if shouldAnalyze {
 		if a, err := s.analyzeCall(ctx, req.ChatHistory); err != nil {
 			s.log.Warn("recording: Gemini analysis failed", zap.Error(err))
 		} else {
@@ -142,12 +181,23 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.WhatWentWrong = a.WhatWentWrong
 			review.Summary = a.Summary
 			review.Insights = a.Insights
+			review.PromptImprovementSuggestion = a.PromptImprovementSuggestion
+			analyzed = true
 		}
+	} else {
+		s.log.Info("recording: skipping Gemini analysis (short/one-sided)",
+			zap.Int64("transcript_id", transcriptID),
+			zap.Float32("duration_s", req.DurationS),
+			zap.Int("user_turns", userTurns))
 	}
 
-	// 5. Save call review.
-	if err := s.database.SaveCallReview(review); err != nil {
-		s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+	// 5. Save call review only when Gemini actually produced commentary.
+	// Saving an empty-default row would render in the UI as a misleading
+	// "0/5 neutral / no appointment" card with no real conclusion.
+	if analyzed {
+		if err := s.database.SaveCallReview(review); err != nil {
+			s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+		}
 	}
 
 	// 5b. Deduct call duration from the org's prepaid credit balance.
@@ -187,11 +237,11 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// 7. Fire call.completed webhook.
 	if s.dispatcher != nil {
 		s.dispatcher.Dispatch(ctx, req.OrgID, "call.completed", map[string]any{
-			"transcript_id":     transcriptID,
-			"lead_id":           req.LeadID,
-			"campaign_id":       req.CampaignID,
-			"duration_s":        req.DurationS,
-			"sentiment":         review.Sentiment,
+			"transcript_id":      transcriptID,
+			"lead_id":            req.LeadID,
+			"campaign_id":        req.CampaignID,
+			"duration_s":         req.DurationS,
+			"sentiment":          review.Sentiment,
 			"appointment_booked": review.AppointmentBooked,
 		})
 	}
@@ -302,22 +352,48 @@ type analysis struct {
 	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
 }
 
-const analysisSystemPrompt = `You are a sales call quality analyst. Analyze the provided transcript and return ONLY a JSON object with these exact keys:
-- "quality_score": float 0-5 (overall agent quality, where 5 is excellent)
-- "sentiment": "positive", "neutral", or "negative" (customer sentiment at end)
-- "appointment_booked": true or false
-- "failure_reason": string (why the call didn't convert, empty string if it did)
-- "what_went_well": string (1 sentence on what the agent did well)
-- "what_went_wrong": string (1 sentence on what the agent could improve)
-- "summary": string (1-2 sentence call summary)
-- "insights": string (key coaching insight for the agent)
-Return ONLY valid JSON. No markdown, no explanation. Keep each string under 200 chars.`
-
 // AnalyzeCall is the public wrapper around analyzeCall. Used by the API
-// layer for on-demand conclusion generation without importing internal types.
+// layer to (re)generate a call conclusion on demand when the post-call
+// pipeline skipped it (short/one-sided call) or the operator hits a
+// "Regenerate" button. Keeps the same prompt and parsing as the post-call
+// path so the conclusion card stays consistent regardless of who triggered it.
 func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
 	return s.analyzeCall(ctx, history)
 }
+
+// Strict prompt: every prose field MUST be populated (never empty, never
+// omitted), score MUST be an integer 1-5, and the analysis is always written
+// in English regardless of the transcript language.
+//
+// Crucially, the score must reflect CALL OUTCOME (did the customer engage and
+// move toward an appointment?), not just agent technique. A 3-second one-sided
+// greeting where the customer never spoke is a FAILED call and must score
+// 1-2 with neutral sentiment — regardless of how well the AI delivered its
+// intro. Previously Gemini was scoring these 4/5 + positive because it judged
+// the agent's performance instead of the call outcome.
+const analysisSystemPrompt = `You are a sales call quality analyst scoring CALL OUTCOME, not agent technique. Analyze the provided transcript and return ONLY a JSON object with EVERY field populated in English (no nulls, no empty strings, no omitted keys):
+
+SCORING RULES — apply STRICTLY:
+- If the customer never spoke (0 user turns / only the AI delivered a greeting): "quality_score" must be 1 or 2, "sentiment" must be "neutral", "appointment_booked" must be false. The customer's silence is the call outcome — never call this "positive" no matter how well the agent introduced themselves.
+- If the customer spoke only 1-2 short words ("hello", "yes", "ok") and the call ended: score 2. Sentiment "neutral".
+- If the customer engaged but refused or pushed back: score 2-3. Sentiment "negative" or "annoyed" depending on tone.
+- If the customer engaged and the conversation progressed but no booking happened: score 3-4. Sentiment based on customer's actual tone.
+- Only score 5 when an appointment was booked AND the customer sounded positive.
+
+FIELDS:
+- "quality_score": integer 1-5 only (NEVER outside 1-5)
+- "sentiment": "positive" | "neutral" | "negative" | "annoyed" — measure the CUSTOMER's tone, not the agent's
+- "appointment_booked": true or false (true only if a specific date/time was confirmed)
+- "failure_reason": 1 sentence in English on why the call didn't convert; if it did, write "N/A — appointment booked". For no-reply calls, write e.g. "Customer did not respond after greeting — likely hung up or wrong number"
+- "what_went_well": 1-2 sentences in English on what the agent did right. If nothing meaningful happened (no reply), say "Agent delivered greeting clearly but had no chance to engage the customer"
+- "what_went_wrong": 1-2 sentences on what the agent could improve. For no-reply calls, say "No opportunity to engage — call ended before any customer interaction"
+- "summary": 1-2 sentence summary referencing what specifically happened in THIS transcript
+- "insights": 1 coaching insight in English for next time
+- "prompt_improvement_suggestion": 1 specific, actionable instruction to add to the AI system prompt to improve future calls of this kind
+
+The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language. Reference specific things from THIS transcript — never write generic filler.
+
+Return ONLY valid JSON. No markdown, no explanation. Keep each string under 240 chars.`
 
 func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
 	transcript := formatTranscript(history)
@@ -355,6 +431,186 @@ func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*
 		a.Sentiment = "neutral"
 	}
 	return &a, nil
+}
+
+type inboundLeadExtraction struct {
+	FirstName  string `json:"first_name"`
+	LastName   string `json:"last_name"`
+	Phone      string `json:"phone"`
+	Interest   string `json:"interest"`
+	Company    string `json:"company"`
+	Status     string `json:"status"`
+	FollowNote string `json:"follow_up_note"`
+}
+
+const inboundLeadExtractionPrompt = `Extract CRM lead details from an inbound receptionist call.
+Return ONLY a valid JSON object with these exact keys:
+- "first_name": string
+- "last_name": string
+- "phone": string, preferably E.164 if clearly available, otherwise the exact spoken number
+- "interest": short customer requirement
+- "company": customer company if mentioned, else empty
+- "status": one of "new", "Qualified", "Appointment Booked", "Not Interested"
+- "follow_up_note": one concise CRM note
+If a field was not provided, use an empty string. Do not invent details.`
+
+func (s *Service) upsertInboundLead(ctx context.Context, orgID, transcriptID int64, history []llm.ChatMessage, fallbackPhone string) (int64, string, error) {
+	raw, err := s.llm.GenerateResponse(ctx, inboundLeadExtractionPrompt, []llm.ChatMessage{{
+		Role: "user",
+		Text: "Transcript:\n\n" + formatTranscript(history),
+	}}, 900)
+	if err != nil {
+		return 0, "", err
+	}
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "```") {
+		raw = raw[strings.Index(raw, "\n")+1:]
+		raw = strings.TrimSuffix(strings.TrimSpace(raw), "```")
+	}
+	var ex inboundLeadExtraction
+	if err := json.Unmarshal([]byte(raw), &ex); err != nil {
+		return 0, "", fmt.Errorf("inbound extraction JSON parse: %w", err)
+	}
+	ex.FirstName = strings.TrimSpace(ex.FirstName)
+	ex.LastName = strings.TrimSpace(ex.LastName)
+	ex.Phone = strings.TrimSpace(ex.Phone)
+	fallbackPhone = strings.TrimSpace(fallbackPhone)
+	ex.Interest = strings.TrimSpace(ex.Interest)
+	ex.Company = strings.TrimSpace(ex.Company)
+	ex.Status = strings.TrimSpace(ex.Status)
+	ex.FollowNote = strings.TrimSpace(ex.FollowNote)
+	applyInboundTranscriptFallback(&ex, history)
+	if ex.Phone == "" {
+		ex.Phone = fallbackPhone
+	}
+	if ex.Status == "" {
+		ex.Status = "new"
+	}
+	if err := s.database.UpdateCallTranscriptInboundDetails(transcriptID, ex.FirstName, ex.LastName, ex.Phone, ex.Interest, ex.Status); err != nil {
+		s.log.Warn("recording: save inbound transcript details failed", zap.Int64("transcript_id", transcriptID), zap.Error(err))
+	}
+
+	var leadID int64
+	if ex.Phone != "" {
+		if existing, err := s.database.GetLeadByPhoneOrg(ex.Phone, orgID, nil, false); err != nil {
+			return 0, ex.Phone, err
+		} else if existing != nil {
+			leadID = existing.ID
+			first := coalesceString(ex.FirstName, existing.FirstName)
+			last := coalesceString(ex.LastName, existing.LastName)
+			interest := coalesceString(ex.Interest, existing.Interest)
+			company := coalesceString(ex.Company, existing.Company)
+			if _, err := s.database.UpdateLead(leadID, first, last, existing.Phone, "Inbound Call", interest, company, existing.ExecutiveID, orgID); err != nil {
+				return 0, ex.Phone, err
+			}
+		}
+	}
+	if leadID == 0 && (ex.FirstName != "" || ex.LastName != "" || ex.Phone != "" || ex.Interest != "" || ex.Company != "") {
+		id, err := s.database.CreateLead(ex.FirstName, ex.LastName, ex.Phone, "Inbound Call", ex.Interest, ex.Company, 0, orgID)
+		if err != nil {
+			s.log.Warn("recording: inbound lead create failed, keeping transcript leadless", zap.Error(err))
+			return 0, ex.Phone, nil
+		}
+		leadID = id
+	}
+	if leadID > 0 {
+		_ = s.database.UpdateLeadDisposition(leadID, ex.Status, ex.FollowNote, "")
+		_ = s.database.UpdateCallTranscriptLead(transcriptID, leadID)
+	}
+	return leadID, ex.Phone, nil
+}
+
+func applyInboundTranscriptFallback(ex *inboundLeadExtraction, history []llm.ChatMessage) {
+	for _, turn := range history {
+		if turn.Role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(turn.Text)
+		if text == "" {
+			continue
+		}
+		if ex.Phone == "" {
+			if phone := extractPhoneDigits(text); phone != "" {
+				ex.Phone = phone
+			}
+		}
+		if name := extractSpokenName(text); name != "" {
+			// Later corrections like "Sorry, this is Sri" should win over an
+			// earlier misheard name.
+			ex.FirstName = name
+			ex.LastName = ""
+		}
+	}
+}
+
+func extractPhoneDigits(text string) string {
+	var digits strings.Builder
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	raw := digits.String()
+	if strings.HasPrefix(raw, "91") && len(raw) == 12 {
+		raw = raw[2:]
+	}
+	if strings.HasPrefix(raw, "0") && len(raw) > 10 {
+		raw = strings.TrimPrefix(raw, "0")
+	}
+	if len(raw) == 10 {
+		return raw
+	}
+	return ""
+}
+
+func extractSpokenName(text string) string {
+	lower := strings.ToLower(text)
+	prefixes := []string{
+		"sorry, this is ",
+		"sorry this is ",
+		"my name is ",
+		"this is ",
+		"i am ",
+		"i'm ",
+		"name is ",
+	}
+	for _, prefix := range prefixes {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(text[idx+len(prefix):])
+		if rest == "" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.Trim(fields[0], ".,!?;:\"'()[]{}")
+		if name != "" && containsASCIILetter(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func containsASCIILetter(s string) bool {
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
+}
+
+func coalesceString(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ── WA appointment confirmation ───────────────────────────────────────────────

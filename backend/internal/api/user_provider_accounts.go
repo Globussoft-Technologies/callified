@@ -21,6 +21,7 @@ type providerAccountRequest struct {
 	CallerID   string `json:"caller_id"`
 	AppID      string `json:"app_id"`
 	AppType    string `json:"app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"region"`
 	Subdomain  string `json:"subdomain"`
 }
@@ -32,6 +33,7 @@ func normalizeProviderAccountRequest(req *providerAccountRequest) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
+	req.Direction = normalizeProviderDirection(req.Direction)
 }
 
 // canManageUserProviderAccounts decides whether the caller may read or mutate
@@ -133,7 +135,7 @@ func (s *Server) createUserProviderAccount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	normalizeProviderAccountRequest(&req)
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+	if errMsg := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -174,7 +176,7 @@ func (s *Server) updateUserProviderAccount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	normalizeProviderAccountRequest(&req)
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+	if errMsg := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -254,7 +256,7 @@ func (s *Server) createMyProviderAccount(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	normalizeProviderAccountRequest(&req)
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+	if errMsg := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}

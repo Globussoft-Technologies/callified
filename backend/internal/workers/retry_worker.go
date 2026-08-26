@@ -85,7 +85,10 @@ func (rw *RetryWorker) tick(ctx context.Context) {
 				rw.log.Info("retry_worker: exhausted", zap.Int64("lead_id", r.LeadID))
 			}
 		} else {
-			_ = rw.db.UpdateRetryStatus(r.ID, "completed")
+			exhausted, _ := rw.db.IncrRetryAttempt(r.ID)
+			if exhausted {
+				rw.log.Info("retry_worker: exhausted", zap.Int64("lead_id", r.LeadID))
+			}
 		}
 	}
 	if len(retries) > 0 {

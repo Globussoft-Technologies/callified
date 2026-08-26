@@ -129,7 +129,7 @@ func (s *Server) maybeCreateUserProviderAccount(userID, orgID int64, pa *provide
 		return
 	}
 	normalizeProviderAccountRequest(pa)
-	if errMsg := validateProviderAccount(pa.Provider, pa.Name, pa.APIKey, pa.APIToken, pa.APISecret, pa.AccountSID, pa.CallerID); errMsg != "" {
+	if errMsg := validateProviderAccount(pa.Provider, pa.Direction, pa.Name, pa.APIKey, pa.APIToken, pa.APISecret, pa.AccountSID, pa.CallerID, pa.AppID); errMsg != "" {
 		return
 	}
 	if pa.Provider == "exotel" && pa.AppType != "exoml" && pa.AppType != "voicebot" {

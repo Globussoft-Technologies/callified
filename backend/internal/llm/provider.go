@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"go.uber.org/zap"
@@ -35,8 +36,8 @@ func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest, onSentence func(SentenceChunk)) error {
 	var buf strings.Builder
 
-	// Marathi always uses Gemini; all others follow LLM_PROVIDER config
-	useGemini := req.Language == "mr" || p.cfg.LLMProvider != "groq"
+	// All languages follow LLM_PROVIDER config.
+	useGemini := p.cfg.LLMProvider != "groq"
 	providerName := "groq"
 	if useGemini {
 		providerName = "gemini"
@@ -66,8 +67,11 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		err = p.groq.StreamTokens(ctx, req, onToken)
 	}
 
-	// Flush any text left in the buffer after stream ends (no trailing punctuation)
-	if remaining := strings.TrimSpace(buf.String()); remaining != "" {
+	// Flush any text left in the buffer after stream ends (no trailing punctuation).
+	// Realtime inbound calls should not speak this remainder, because it often
+	// sounds like a sentence cut off in the middle when the model stops without
+	// punctuation.
+	if remaining := strings.TrimSpace(buf.String()); remaining != "" && !errors.Is(err, ErrMaxTokens) && !req.DropIncompleteRemainder {
 		text, hangup := parseChunk(remaining)
 		if text != "" || hangup {
 			onSentence(SentenceChunk{Text: text, HasHangup: hangup})

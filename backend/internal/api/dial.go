@@ -162,20 +162,26 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var body struct {
+		ExotelAccountID int64 `json:"exotel_account_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    lead.FirstName + " " + lead.LastName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  campaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: vs.TTSProvider,
-		TTSVoiceID:  vs.TTSVoiceID,
-		TTSLanguage: vs.TTSLanguage,
-		UserEmail:   ac.Email,
-		UserID:      userIDForDial(ac),
+		LeadID:          lead.ID,
+		LeadName:        lead.FirstName + " " + lead.LastName,
+		LeadPhone:       lead.Phone,
+		CampaignID:      campaignID,
+		OrgID:           ac.OrgID,
+		Interest:        lead.Interest,
+		TTSProvider:     vs.TTSProvider,
+		TTSVoiceID:      vs.TTSVoiceID,
+		TTSLanguage:     vs.TTSLanguage,
+		UserEmail:       ac.Email,
+		UserID:          userIDForDial(ac),
+		ExotelAccountID: body.ExotelAccountID,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -226,6 +232,11 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	campaignID := campaign.ID
 	force := r.URL.Query().Get("force") == "true"
 
+	var body struct {
+		ExotelAccountID int64 `json:"exotel_account_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
 	executiveIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaignID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve lead scope")
@@ -269,16 +280,17 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	queue := make([]dial.CallData, 0, len(dialable))
 	for _, l := range dialable {
 		queue = append(queue, dial.CallData{
-			LeadID:      l.ID,
-			LeadName:    l.FirstName + " " + l.LastName,
-			LeadPhone:   l.Phone,
-			CampaignID:  campaignID,
-			OrgID:       ac.OrgID,
-			Interest:    l.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
-			UserEmail:   ac.Email,
+			LeadID:          l.ID,
+			LeadName:        l.FirstName + " " + l.LastName,
+			LeadPhone:       l.Phone,
+			CampaignID:      campaignID,
+			OrgID:           ac.OrgID,
+			Interest:        l.Interest,
+			TTSProvider:     vs.TTSProvider,
+			TTSVoiceID:      vs.TTSVoiceID,
+			TTSLanguage:     vs.TTSLanguage,
+			UserEmail:       ac.Email,
+			ExotelAccountID: body.ExotelAccountID,
 		})
 	}
 

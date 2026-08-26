@@ -1213,6 +1213,21 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64, execIDs []int64) ([]R
 
 // GetCampaignVoiceSettings returns TTS settings, falling back to org defaults.
 func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
+	// Direct-dial paths can call this with campaignID=0 (no campaign context),
+	// in which case there's no row to read — fall straight through to the
+	// platform default. Without this the caller (dial.Initiator) ends up with
+	// an all-empty VoiceSettings, writes empty strings to the Redis pending
+	// call, and the WS handler then never starts STT (which it gates on
+	// `sess.Language != ""` post-Redis hydration). The phone audibly rings,
+	// the user says hello, no transcripts get recorded. Returning the
+	// platform default keeps the call functional.
+	if campaignID <= 0 {
+		return VoiceSettings{
+			TTSProvider: DefaultTTSProvider,
+			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage: DefaultTTSLanguage,
+		}, nil
+	}
 	var orgID int64
 	var provider, voiceID, lang sql.NullString
 	err := d.pool.QueryRow(
@@ -1220,7 +1235,14 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 		FROM campaigns WHERE id=?`, campaignID,
 	).Scan(&provider, &voiceID, &lang, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return VoiceSettings{}, nil
+		// Same reasoning as the campaignID<=0 branch: a missing campaign row
+		// must still produce a usable language so STT can start. Without this
+		// fallback the dial succeeds but the transcript comes back empty.
+		return VoiceSettings{
+			TTSProvider: DefaultTTSProvider,
+			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage: DefaultTTSLanguage,
+		}, nil
 	}
 	if err != nil {
 		return VoiceSettings{}, err
@@ -1262,6 +1284,7 @@ func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error
 	return err
 }
 
+
 func coalesceStr(s, def string) string {
 	if s == "" {
 		return def
@@ -1269,14 +1292,15 @@ func coalesceStr(s, def string) string {
 	return s
 }
 
-// ExotelCreds holds per-campaign telephony credentials (Exotel or Twilio).
+// ExotelCreds holds per-campaign telephony credentials.
 // Field mapping:
 //
 //	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
 //	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
+//	Tata: APIKey=Bearer/API Token, CallerID=DID/Caller ID, AppID=Agent Number, Subdomain=Click-to-Call endpoint override
 type ExotelCreds struct {
 	AccountID  int64  `json:"-"`
-	Provider   string // "exotel" or "twilio"; empty means exotel
+	Provider   string // "exotel", "twilio", "tata"/"smartflo"/"tata_tele"; empty means exotel
 	APIKey     string `json:"exotel_api_key"`
 	APIToken   string `json:"exotel_api_token"`
 	APISecret  string // Twilio only
@@ -1284,6 +1308,7 @@ type ExotelCreds struct {
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 	AppType    string `json:"exotel_app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"exotel_region"`    // Exotel region: in, us, sg, etc.
 	Subdomain  string `json:"exotel_subdomain"` // Exotel account subdomain override
 }
@@ -1292,6 +1317,12 @@ type ExotelCreds struct {
 func (e ExotelCreds) IsSet() bool {
 	if e.Provider == "twilio" {
 		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
+	}
+	if e.Provider == "tata" || e.Provider == "smartflo" || e.Provider == "tata_tele" {
+		if e.Direction == "inbound" {
+			return e.APIKey != "" && e.CallerID != ""
+		}
+		return e.APIKey != "" && e.CallerID != "" && e.AppID != ""
 	}
 	// exotel: AppID is required for voice app routing
 	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""

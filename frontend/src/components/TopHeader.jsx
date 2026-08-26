@@ -7,7 +7,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatDateTime } from '../utils/dateFormat';
 
 // Tabs that should be hidden when AI features are disabled for the user.
-const AI_TAB_IDS = new Set(['analytics', 'monitor', 'knowledge', 'sandbox', 'whatsapp', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'exotel-accounts']);
+// Note: exotel-accounts is reachable from Settings for manual accounts, so it is hidden here to avoid duplication.
+const AI_TAB_IDS = new Set(['monitor', 'knowledge', 'sandbox', 'whatsapp', 'ai-receptionist', 'receptionist', 'billing', 'logs', 'integrations', 'ops', 'dnd', 'scheduled', 'campaign-progress', 'exotel-accounts']);
 
 const AGENT_TABS = [
   { id: 'campaigns', label: 'Campaigns', path: '/campaigns', testid: 'tab-campaigns' },
@@ -45,7 +46,7 @@ const MORE_ADMIN_TABS = [
   { id: 'settings',     label: 'Settings',        path: '/settings',     testid: 'tab-settings' },
   { id: 'logs',         label: 'Live Logs',       path: '/logs',         testid: 'tab-logs' },
   { id: 'team',         label: 'Team',            path: '/team',         testid: 'tab-team' },
-  { id: 'receptionist', label: 'Receptionist',    path: '/receptionist', testid: 'tab-receptionist' },
+  { id: 'ai-receptionist', label: 'AI Receptionist', path: '/ai-receptionist', testid: 'tab-ai-receptionist' },
 ];
 
 const TAB_PERMISSION = {

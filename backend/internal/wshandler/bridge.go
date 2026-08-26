@@ -296,11 +296,17 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 					audioBytes = framePCM
 				}
 				if !sess.HangupRequested() {
-					frame, _ := json.Marshal(map[string]interface{}{
+					frameData := map[string]interface{}{
 						"event":  "media",
 						frameKey: streamSid,
 						"media":  map[string]string{"payload": base64.StdEncoding.EncodeToString(audioBytes)},
-					})
+					}
+					if sess.Provider == "tata" {
+						frameData["streamSid"] = streamSid
+						frameData["stream_sid"] = streamSid
+						frameData["sequenceNumber"] = sess.outboundSeq.Add(1)
+					}
+					frame, _ := json.Marshal(frameData)
 					sess.SendText(frame) //nolint:errcheck
 				}
 				nextFrameTime = nextFrameTime.Add(20 * time.Millisecond)
@@ -374,6 +380,14 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 			if !chOk {
 				send(map[string]string{"type": "hangup"})
 				return
+			}
+			if sess.Provider == "tata" && !connectedSent {
+				connectedSent = true
+				customerAudioReady.Store(true)
+				fallback.Stop()
+				h.log.Info("bridge: tata media started — sending connected",
+					zap.String("call_sid", callSid))
+				send(map[string]string{"type": "status", "status": "connected"})
 			}
 			// Always forward customer audio so agent can hear ringing/speech.
 			outMsg, _ := json.Marshal(map[string]string{

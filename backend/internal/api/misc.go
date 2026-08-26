@@ -692,6 +692,219 @@ func (s *Server) debugCallTimeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(timeline))
 }
 
+// ── GET /api/receptionist/calls ──────────────────────────────────────────────
+// Returns post-call inbound receptionist rows: customer name, phone, transcript
+// and recording URL after extraction has created or matched a CRM lead.
+
+func (s *Server) listReceptionistCalls(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	calls, err := s.db.GetRecentInboundReceptionistCalls(ac.OrgID, 50)
+	if err != nil {
+		s.logger.Sugar().Errorw("listReceptionistCalls", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	for i := range calls {
+		changed := fillReceptionistCallFromTranscript(&calls[i])
+		if changed {
+			_ = s.db.UpdateCallTranscriptInboundDetails(
+				calls[i].TranscriptID,
+				calls[i].FirstName,
+				calls[i].LastName,
+				calls[i].Phone,
+				calls[i].Interest,
+				calls[i].Status,
+			)
+		}
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(calls))
+}
+
+type persistedReceptionistTurn struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+func fillReceptionistCallFromTranscript(call *db.InboundReceptionistCall) bool {
+	if call == nil || len(call.Transcript) == 0 {
+		return false
+	}
+	originalName := strings.TrimSpace(call.FirstName + " " + call.LastName)
+	originalPhone := call.Phone
+	var turns []persistedReceptionistTurn
+	if err := json.Unmarshal(call.Transcript, &turns); err != nil {
+		return false
+	}
+	for _, turn := range turns {
+		if !strings.EqualFold(turn.Role, "User") && !strings.EqualFold(turn.Role, "Customer") {
+			continue
+		}
+		text := strings.TrimSpace(turn.Text)
+		if text == "" {
+			continue
+		}
+		if call.Phone == "" {
+			if phone := extractReceptionistPhone(text); phone != "" {
+				call.Phone = phone
+			}
+		}
+		if name := extractReceptionistName(text); name != "" {
+			call.FirstName = name
+			call.LastName = ""
+		}
+	}
+	return originalName != strings.TrimSpace(call.FirstName+" "+call.LastName) || originalPhone != call.Phone
+}
+
+func extractReceptionistPhone(text string) string {
+	var digits strings.Builder
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	raw := digits.String()
+	if strings.HasPrefix(raw, "91") && len(raw) == 12 {
+		raw = raw[2:]
+	}
+	if strings.HasPrefix(raw, "0") && len(raw) > 10 {
+		raw = strings.TrimPrefix(raw, "0")
+	}
+	if len(raw) == 10 {
+		return raw
+	}
+	return ""
+}
+
+func extractReceptionistName(text string) string {
+	lower := strings.ToLower(text)
+	for _, prefix := range []string{
+		"sorry, this is ",
+		"sorry this is ",
+		"my name is ",
+		"this is ",
+		"i am ",
+		"i'm ",
+		"name is ",
+	} {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(text[idx+len(prefix):])
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.Trim(fields[0], ".,!?;:\"'()[]{}")
+		if name != "" && receptionistNameHasLetter(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func receptionistNameHasLetter(s string) bool {
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
+}
+
+type receptionistCallUpdateRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+	Interest  string `json:"interest"`
+	Status    string `json:"status"`
+}
+
+func (s *Server) updateReceptionistCall(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	transcriptID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	call, err := s.db.GetReceptionistCallByTranscript(ac.OrgID, transcriptID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateReceptionistCall: fetch", "err", err, "transcript_id", transcriptID)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if call == nil {
+		writeError(w, http.StatusNotFound, "call not found")
+		return
+	}
+	var req receptionistCallUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	first := strings.TrimSpace(req.FirstName)
+	last := strings.TrimSpace(req.LastName)
+	phone := normalizePhone(strings.TrimSpace(req.Phone))
+	interest := strings.TrimSpace(req.Interest)
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "new"
+	}
+	if err := s.db.UpdateCallTranscriptInboundDetails(transcriptID, first, last, phone, interest, status); err != nil {
+		s.logger.Sugar().Errorw("updateReceptionistCall: update transcript fields", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	leadID := call.LeadID
+	if leadID == 0 {
+		if first == "" && last == "" && phone == "" && interest == "" {
+			writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+			return
+		}
+		id, err := s.db.CreateLead(first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
+		if err != nil {
+			if isDuplicateEntryError(err) && phone != "" {
+				existing, findErr := s.db.GetLeadByPhoneOrg(phone, ac.OrgID, nil, false)
+				if findErr != nil || existing == nil {
+					writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists"})
+					return
+				}
+				leadID = existing.ID
+			} else {
+				s.logger.Sugar().Errorw("updateReceptionistCall: create lead", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		} else {
+			leadID = id
+		}
+		if err := s.db.UpdateCallTranscriptLead(transcriptID, leadID); err != nil {
+			s.logger.Sugar().Errorw("updateReceptionistCall: attach lead", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	updated, err := s.db.UpdateLead(leadID, first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
+	if err != nil {
+		if isDuplicateEntryError(err) {
+			writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists for another lead"})
+			return
+		}
+		s.logger.Sugar().Errorw("updateReceptionistCall: update lead", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	_ = s.db.UpdateLeadDisposition(leadID, status, "", "")
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "lead_id": leadID})
+}
+
 // ── GET /api/debug/recording-config ──────────────────────────────────────────
 // Reports whether the post-call WAV pipeline is wired correctly. Mostly a
 // diagnostic for the empty-`recording_url` case where saveWAV silently
@@ -920,8 +1133,8 @@ func (s *Server) trialSignup(w http.ResponseWriter, r *http.Request) {
 		"ok":          true,
 		"provisioned": true,
 		"credentials": map[string]any{
-			"username": req.Email,
-			"password": password,
+			"username":  req.Email,
+			"password":  password,
 			"login_url": "https://app.callified.ai",
 		},
 	})
