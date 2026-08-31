@@ -256,33 +256,44 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Send goroutine: accumulate PCM and emit one 20 ms frame every 20 ms.
-	// 20 ms @ 8 kHz, 16-bit = 160 samples = 320 bytes.
-	// The frame clock is aligned to the first received browser chunk so the
-	// start of speech isn't split across tick boundaries.
+	// Send goroutine: accumulate PCM and emit exactly one 20 ms frame on each
+	// 20 ms tick. Tata/Exotel play inbound media in real time; sending queued
+	// browser chunks as a burst makes the carrier buffer audio and the customer
+	// hears the agent several seconds late.
 	const pcmFrameSize = 320
 	go func() {
 		var buf []byte
-		var nextFrameTime time.Time
-		started := false
+		appendPCM := func(pcm []byte) {
+			buf = append(buf, pcm...)
+			// Keep only the latest ~200 ms if the browser/network bursts.
+			if len(buf) > pcmFrameSize*10 {
+				buf = buf[len(buf)-pcmFrameSize*10:]
+			}
+		}
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+
 		for {
-			if !started {
+			if len(buf) < pcmFrameSize {
 				select {
 				case pcm, ok := <-agentPCM:
 					if !ok {
 						return
 					}
-					buf = append(buf, pcm...)
-					started = true
-					nextFrameTime = time.Now().Add(20 * time.Millisecond)
+					appendPCM(pcm)
 					continue
 				case <-agentDone:
 					return
 				}
 			}
 
-			// If we have a full frame, send it on the aligned clock.
-			if len(buf) >= pcmFrameSize {
+			select {
+			case pcm, ok := <-agentPCM:
+				if !ok {
+					return
+				}
+				appendPCM(pcm)
+			case <-ticker.C:
 				framePCM := buf[:pcmFrameSize]
 				buf = buf[pcmFrameSize:]
 				// Record agent audio for the server-side stereo WAV.
@@ -308,29 +319,6 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 					}
 					frame, _ := json.Marshal(frameData)
 					sess.SendText(frame) //nolint:errcheck
-				}
-				nextFrameTime = nextFrameTime.Add(20 * time.Millisecond)
-				continue
-			}
-
-			sleep := time.Until(nextFrameTime)
-			if sleep < 0 {
-				sleep = 0
-			}
-			select {
-			case pcm, ok := <-agentPCM:
-				if !ok {
-					return
-				}
-				buf = append(buf, pcm...)
-				// Cap buffer at ~200 ms to prevent backlog on network bursts.
-				if len(buf) > pcmFrameSize*10 {
-					buf = buf[len(buf)-pcmFrameSize*10:]
-				}
-			case <-time.After(sleep):
-				// No full frame yet; advance the clock so we don't spin.
-				if len(buf) < pcmFrameSize {
-					nextFrameTime = time.Now().Add(20 * time.Millisecond)
 				}
 			case <-agentDone:
 				return
@@ -373,7 +361,8 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 	var firstMediaTime time.Time
 	rmsWindow := make([]float64, 0, 50) // rolling RMS history
 
-	// Exotel → Agent relay loop. Also detects customer speech to trigger "connected".
+	// Exotel/Tata → Agent relay loop. Also detects customer speech to trigger
+	// "connected" for legacy Exotel streams.
 	for {
 		select {
 		case pcm, chOk := <-sess.BridgeCh:
@@ -381,12 +370,14 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 				send(map[string]string{"type": "hangup"})
 				return
 			}
-			if sess.Provider == "tata" && !connectedSent {
+			if (sess.Provider == "tata" || (sess.Provider == "exotel" && !useUlaw)) && !connectedSent {
 				connectedSent = true
 				customerAudioReady.Store(true)
 				fallback.Stop()
-				h.log.Info("bridge: tata media started — sending connected",
-					zap.String("call_sid", callSid))
+				h.log.Info("bridge: media started — sending connected",
+					zap.String("call_sid", callSid),
+					zap.String("provider", sess.Provider),
+					zap.Bool("use_ulaw", useUlaw))
 				send(map[string]string{"type": "status", "status": "connected"})
 			}
 			// Always forward customer audio so agent can hear ringing/speech.

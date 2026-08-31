@@ -485,6 +485,9 @@ func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := mapTataStatus(callStatus)
+	if status == "in-progress" && tataStatusHasTerminalMarker(value, body) {
+		status = "completed"
+	}
 	rawLower := strings.ToLower(callStatus)
 	if status == "in-progress" || rawLower == "answered" || rawLower == "connected" || rawLower == "in-progress" || rawLower == "inprogress" {
 		s.store.MarkBridgeAnswered(r.Context(), callSid)
@@ -520,6 +523,11 @@ func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
 			})
 			s.completeRetryIfAnswered(cl.LeadID, cl.CampaignID, cl.OrgID, status)
 			s.enqueueRetryIfFailed(cl.LeadID, cl.CampaignID, cl.OrgID, status)
+			if s.wsHandler != nil && s.wsHandler.CloseCall(callSid) {
+				s.logger.Info("tataStatus: closed active media stream for terminal status",
+					zap.String("call_sid", callSid),
+					zap.String("status", status))
+			}
 		}
 	}
 
@@ -642,6 +650,22 @@ func mapTataStatus(s string) string {
 	default:
 		return s
 	}
+}
+
+func tataStatusHasTerminalMarker(value func(...string) string, body map[string]any) bool {
+	if value("end_stamp", "endStamp", "EndStamp", "end_time", "endTime", "EndTime") != "" {
+		return true
+	}
+	flowText := strings.ToLower(value("call_flow", "callFlow", "CallFlow"))
+	if body != nil {
+		if v, ok := body["call_flow"]; ok {
+			flowText += " " + strings.ToLower(fmt.Sprint(v))
+		}
+		if v, ok := body["callFlow"]; ok {
+			flowText += " " + strings.ToLower(fmt.Sprint(v))
+		}
+	}
+	return strings.Contains(flowText, "hangup") || strings.Contains(flowText, "ended")
 }
 
 // fetchAndSaveRecording downloads a recording URL with up to 6 retries (10s backoff)

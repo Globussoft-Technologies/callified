@@ -109,23 +109,69 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	//    we still persist the row so the call shows up in the Transcripts modal
 	//    and the WebM-upload path has a row to attach its URL to. Without this,
 	//    calls with audio but no STT/LLM turns silently disappeared from the UI.
-	if turnCount == 0 && recordingURL == "" {
+	// Browser web-sim calls are always persisted: the browser uploads the
+	// actual recording separately and the row must exist for that attachment.
+	isWebSim := strings.HasPrefix(req.StreamSid, "web_sim_")
+	if turnCount == 0 && recordingURL == "" && !isWebSim {
 		s.log.Info("recording: skipping empty transcript",
 			zap.String("stream_sid", req.StreamSid),
 			zap.Int("raw_turns", len(req.ChatHistory)))
 		return
 	}
-
-	// 4. Persist transcript row — same INSERT columns as Python save_call_transcript.
-	transcriptID, err := s.database.SaveCallTranscript(req.LeadID, req.CampaignID, req.OrgID, transcriptJSON, recordingURL, req.TTSLanguage, req.DurationS)
-	if err != nil {
-		s.log.Error("recording: SaveCallTranscript failed", zap.Error(err))
-		return
+	if isWebSim && turnCount == 0 {
+		s.log.Warn("recording: web-sim call has empty chat history",
+			zap.String("stream_sid", req.StreamSid),
+			zap.Int64("lead_id", req.LeadID),
+			zap.Int("raw_turns", len(req.ChatHistory)))
 	}
-	s.log.Info("recording: transcript saved",
-		zap.Int64("transcript_id", transcriptID),
-		zap.Int("turn_count", turnCount),
-		zap.Float32("duration_s", req.DurationS))
+
+	// 4. Persist transcript row. For browser web-sim calls the browser upload
+	// often creates an empty placeholder row before we get here (race). Check
+	// for a recent placeholder row for this lead+campaign and populate it
+	// instead of creating a second, duplicate row.
+	var transcriptID int64
+	callSid := strings.TrimSpace(req.CallSid)
+	if callSid == "" {
+		callSid = strings.TrimSpace(req.StreamSid)
+	}
+	var placeholder *db.Transcript
+	if callSid != "" {
+		placeholder, _ = s.database.GetTranscriptByCallSid(callSid)
+	}
+	if placeholder == nil && callSid == "" {
+		placeholder, _ = s.database.GetRecentTranscriptForRecordingAttach(req.LeadID, req.CampaignID, time.Now().Add(-5*time.Minute))
+	}
+	if placeholder != nil && string(placeholder.Transcript) == "[]" {
+		if err := s.database.UpdateCallTranscriptContents(placeholder.ID, transcriptJSON, req.DurationS, req.TTSLanguage); err != nil {
+			s.log.Error("recording: failed to populate placeholder transcript", zap.Int64("transcript_id", placeholder.ID), zap.Error(err))
+			// Fall through to insert a fresh row.
+		} else {
+			transcriptID = placeholder.ID
+			// If finalizeCall produced a server-side WAV and the placeholder only
+			// has the browser webm, overwrite with the higher-quality WAV.
+			if recordingURL != "" && placeholder.RecordingURL != recordingURL {
+				if err := s.database.UpdateCallTranscriptRecording(placeholder.ID, recordingURL); err != nil {
+					s.log.Warn("recording: failed to update placeholder recording URL", zap.Int64("transcript_id", placeholder.ID), zap.Error(err))
+				}
+			}
+			s.log.Info("recording: populated placeholder transcript",
+				zap.Int64("transcript_id", transcriptID),
+				zap.Int("turn_count", turnCount),
+				zap.Float32("duration_s", req.DurationS))
+		}
+	}
+	if transcriptID == 0 {
+		var err error
+		transcriptID, err = s.database.SaveCallTranscriptWithCallSid(req.LeadID, req.CampaignID, req.OrgID, callSid, transcriptJSON, recordingURL, req.TTSLanguage, req.DurationS)
+		if err != nil {
+			s.log.Error("recording: SaveCallTranscript failed", zap.Error(err))
+			return
+		}
+		s.log.Info("recording: transcript saved",
+			zap.Int64("transcript_id", transcriptID),
+			zap.Int("turn_count", turnCount),
+			zap.Float32("duration_s", req.DurationS))
+	}
 
 	if req.IsInbound {
 		if err := s.database.UpdateCallTranscriptDirection(transcriptID, "inbound"); err != nil {

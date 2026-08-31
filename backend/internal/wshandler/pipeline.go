@@ -82,8 +82,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// If the carrier picks up with "you have reached…" / "leave a message after the
 	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
 	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
-	if sess.HangupRequested() {
-		return // already heading for hangup; nothing more to do
+	if sess.HangupRequested() && !sess.IsBargeInActive() {
+		// Hangup was requested, but a barge-in means the customer interrupted the
+		// goodbye and wants to keep talking — let the turn through.
+		return
 	}
 	if isVoicemail(transcript) {
 		handleVoicemail(ctx, sess, transcript)
@@ -104,13 +106,19 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	sess.llmMu.Lock()
 	defer sess.llmMu.Unlock()
 	// Re-check stamp after acquiring lock: a newer transcript may have arrived
-	// while this goroutine was waiting for the lock.
-	if sess.LastTranscript() != ts || sess.HangupRequested() {
+	// while this goroutine was waiting for the lock. Allow the turn through if a
+	// barge-in is active, even if a hangup had been requested.
+	if sess.LastTranscript() != ts || (sess.HangupRequested() && !sess.IsBargeInActive()) {
 		return
 	}
 
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
+
+	llmTranscript := transcript
+	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
+		llmTranscript = fmt.Sprintf("[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.] Customer said: %q", transcript)
+	}
 
 	// --- Inject whispers (manager hints) as additional context ---
 	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
@@ -131,7 +139,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	var err error
 	if provider != nil {
 		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
-			Transcript:              transcript,
+			Transcript:              llmTranscript,
 			SystemPrompt:            sess.SystemPrompt,
 			History:                 history[:max(0, len(history)-1)], // exclude the turn we just added
 			Language:                sess.Language,
@@ -202,18 +210,32 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 				return
 			}
 			if sentence == "" {
-				// HANGUP sentinel: wait for remaining audio then close
+				// HANGUP sentinel: wait for remaining audio then close. Abort if a
+				// barge-in cancels the hangup before playback finishes.
 				remaining := sess.PlaybackTracker.RemainingDuration()
 				sess.Log.Info("hangup: waiting for playback drain",
 					zap.Duration("remaining", remaining))
 				waitStart := time.Now()
-				select {
-				case <-time.After(remaining + 7*time.Second):
-				case <-ctx.Done():
+				deadline := time.After(remaining + 7*time.Second)
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						return
+					case <-deadline:
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						sess.WS.Close() //nolint:errcheck
+						return
+					case <-ticker.C:
+						if !sess.HangupRequested() {
+							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+							sess.Log.Info("hangup: aborted by barge-in")
+							return
+						}
+					}
 				}
-				metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
-				sess.WS.Close() //nolint:errcheck
-				return
 			}
 			// Safety: bridge sessions must never synthesise AI audio —
 			// the agent's browser mic is the audio source, not TTS.
@@ -350,6 +372,12 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	}
 	frame, _ := json.Marshal(frameData)
 	_ = sess.SendText(frame)
+	// Track when we last sent audio so barge-in stays armed while audio is still
+	// in flight to the phone/carrier (fixes barge-in misses on long sentences).
+	sess.MarkAudioSent()
+
+	// Relay a copy of the agent's outbound audio to any attached monitors so
+	// external consumers can render / play back what the AI is saying.
 	if sess.hasMonitors() {
 		sess.BroadcastAudio("agent", payloadB64, "pcm16_8k")
 	}

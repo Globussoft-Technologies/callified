@@ -95,9 +95,21 @@ export function CallProvider({ children }) {
   const handleWebCall = useCallback(async (lead) => {
     if (webCallActive === lead.id) {
       // Disconnect active simulation
-      if (webCallWsRef.current) webCallWsRef.current.close();
-      if (webCallAudioCtxRef.current) webCallAudioCtxRef.current.close();
-      setWebCallActive(null);
+      if (webCallWsRef.current) {
+        const ws = webCallWsRef.current;
+        try {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ event: 'stop' }));
+          } else {
+            ws.close();
+          }
+        } catch { /* ignore */ }
+        setTimeout(() => {
+          try {
+            if (ws.readyState !== WebSocket.CLOSED) ws.close();
+          } catch { /* ignore */ }
+        }, 500);
+      }
       return;
     }
 
@@ -236,6 +248,7 @@ export function CallProvider({ children }) {
               const formData = new FormData();
               formData.append('file', blob, `call_${lead.id}_${Date.now()}.webm`);
               formData.append('lead_id', String(lead.id));
+              formData.append('stream_sid', sid);
               try {
                 await apiFetch(`${API_URL}/upload-recording`, { method: 'POST', body: formData });
               } catch(e) { console.error('Recording upload failed:', e); }
@@ -447,9 +460,21 @@ export function CallProvider({ children }) {
 
   const handleCampaignWebCall = useCallback(async (lead, campaignId) => {
     if (webCallActive === lead.id) {
-      if (webCallWsRef.current) webCallWsRef.current.close();
-      if (webCallAudioCtxRef.current) webCallAudioCtxRef.current.close();
-      setWebCallActive(null);
+      if (webCallWsRef.current) {
+        const ws = webCallWsRef.current;
+        try {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ event: 'stop' }));
+          } else {
+            ws.close();
+          }
+        } catch { /* ignore */ }
+        setTimeout(() => {
+          try {
+            if (ws.readyState !== WebSocket.CLOSED) ws.close();
+          } catch { /* ignore */ }
+        }, 500);
+      }
       return;
     }
     // Fetch campaign voice settings before starting call
@@ -591,6 +616,7 @@ export function CallProvider({ children }) {
               formData.append('file', blob, `call_${lead.id}_${Date.now()}.webm`);
               formData.append('lead_id', String(lead.id));
               formData.append('campaign_id', String(campaignId));
+              formData.append('stream_sid', sid);
               try {
                 const res = await apiFetch(`${API_URL}/upload-recording`, { method: 'POST', body: formData });
                 if (!res.ok) console.error(`[RECORDING] Upload failed: HTTP ${res.status}`);

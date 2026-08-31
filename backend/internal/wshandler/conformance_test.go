@@ -164,20 +164,25 @@ func TestBinaryFrameAccepted(t *testing.T) {
 
 // ─── Session unit tests ──────────────────────────────────────────────────────
 
-// TestMaxTokens verifies token allocation is based on transcript length,
-// clamped between 500 and 800.
+// TestMaxTokens verifies token allocation is based on transcript length and
+// language. Non-English languages use a higher multiplier and cap.
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words → 80) clamped to minimum 500
-	assert.Equal(t, int32(500), sess.MaxTokens("test transcript"), "short transcript should be 500")
+	// Short transcript (2 words → 60) clamped to non-English minimum 250
+	assert.Equal(t, int32(250), sess.MaxTokens("test transcript"), "short non-English transcript should be 250")
 
-	// Medium transcript (13 words → 520)
-	assert.Equal(t, int32(520), sess.MaxTokens("one two three four five six seven eight nine ten eleven twelve thirteen"))
+	// Medium transcript (10 words → 300)
+	assert.Equal(t, int32(300), sess.MaxTokens("one two three four five six seven eight nine ten"))
 
-	// Long transcript (>20 words → >800) clamped to maximum 800
+	// Long transcript (>20 words → >600) clamped to non-English maximum 900
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
-	assert.Equal(t, int32(800), sess.MaxTokens(longText), "long transcript should be 800")
+	assert.Equal(t, int32(630), sess.MaxTokens(longText), "long non-English transcript should be 630")
+
+	// English should keep the lower multiplier and cap.
+	sess.Language = "en"
+	assert.Equal(t, int32(150), sess.MaxTokens("test transcript"), "short English transcript should be 150")
+	assert.Equal(t, int32(400), sess.MaxTokens(longText), "long English transcript should be 400")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).

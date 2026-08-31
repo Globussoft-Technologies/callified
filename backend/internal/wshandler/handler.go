@@ -260,9 +260,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
-		if sess.HangupRequested() {
-			return
-		}
+		// NOTE: we intentionally do NOT drop transcripts just because a hangup
+		// has been requested. The customer may interrupt the AI's goodbye and
+		// cancel the hangup via barge-in. processTranscript is the gate that
+		// decides whether to act on a post-hangup transcript.
 		// Explicit language switch request ("can you speak in kannada" etc.)
 		// must be handled even during TTS cooldown — Sarvam detects these as
 		// English but the customer clearly wants a different language.
@@ -275,13 +276,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// picks these up as speech but they are not real customer replies.
 		// Agent keeps waiting for a meaningful response.
 		if isFillerSound(text) {
-			sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			// If a barge-in is pending, a filler sound means the user did not
+			// actually intend to interrupt — cancel the barge-in so TTS can resume.
+			if sess.CancelBargeIn() {
+				sess.Log.Info("barge-in: cancelled by filler sound", zap.String("text", text))
+			} else {
+				sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			}
 			return
+		}
+		// A real transcript confirms any pending barge-in before we apply the
+		// normal TTS cooldown filter.
+		if sess.IsBargeInPending() {
+			sess.ConfirmBargeIn()
 		}
 		// Suppress transcripts while TTS is playing or within 1s of it ending
 		// to prevent the agent's own voice from looping back as customer input.
-		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
-		if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
+		// Skip this check when a barge-in was just confirmed — the user intentionally
+		// interrupted the agent.
+		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
 			sess.Log.Debug("transcript dropped: TTS cooldown",
 				zap.Bool("tts_playing", sess.IsTTSPlaying()),
 				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
@@ -293,8 +306,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 		}
 	}
-	// BARGE-IN DISABLED — handler removed; STT OnSpeechStarted left nil so no
-	// speech-started callbacks fire. Energy-VAD barge-in is also commented below.
+	onSpeechStarted := func() {
+		// Sarvam ASR detected the start of human speech. If a barge-in is already
+		// pending from energy VAD, confirm it immediately — Sarvam's own speech
+		// detector is a stronger signal than waiting for the first partial transcript.
+		// Otherwise try to trigger a fresh barge-in.
+		if sess.IsBargeInPending() {
+			sess.ConfirmBargeIn()
+			sess.Log.Info("barge-in: confirmed by Sarvam speech_start")
+		} else {
+			sess.TryBargeIn("SpeechStarted")
+		}
+	}
 
 	var wg sync.WaitGroup
 
@@ -319,16 +342,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// g2: STT goroutine.
-		// Sarvam STT is used for Indian-language calls — it auto-detects language
-		// per utterance (te-IN, hi-IN, etc.). Language switching is now triggered
-		// ONLY by explicit customer requests (e.g. "speak in Hindi") handled in
-		// onTranscript; Sarvam's detected language is no longer used to auto-switch.
+		// Sarvam realtime STT is used for Indian-language calls — it streams
+		// audio over a WebSocket and emits partial transcripts, which let us
+		// confirm a barge-in within the first few hundred milliseconds instead
+		// of waiting for a full utterance to be POSTed to the batch API.
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
+		onLangDetected := func(transcript string, detectedLang string) {
+			// Auto language switching is disabled. The customer must explicitly
+			// ask for a language switch (handled in onTranscript via
+			// isExplicitLangSwitch). We still log detections for debugging.
+			sess.Log.Debug("lang: detected but not auto-switching",
+				zap.String("detected", detectedLang),
+				zap.String("text", transcript))
+		}
+		onPartialTranscript := func(text string) {
+			// Partial transcripts are not sent to the LLM pipeline; they only
+			// confirm that the user's interruption was real speech. Use a
+			// stricter filter than isFillerSound so short partial words like
+			// "he" / "my" / "no" (often the beginning of a real interruption)
+			// still confirm the barge-in.
+			if isKnownFiller(text) {
+				if sess.CancelBargeIn() {
+					sess.Log.Info("barge-in: cancelled by filler partial", zap.String("text", text))
+				}
+				return
+			}
+			if sess.IsBargeInPending() {
+				sess.ConfirmBargeIn()
+			}
+		}
 		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
-			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
+			sarvamClient := stt.NewSarvamRealtimeClient(h.cfg.SarvamAPIKey, h.log)
 			sarvamClient.OnTranscript = onTranscript
-			// BARGE-IN DISABLED: OnSpeechStarted left nil.
+			sarvamClient.OnSpeechStarted = onSpeechStarted
+			sarvamClient.OnPartialTranscript = onPartialTranscript
+			sarvamClient.OnTranscriptWithLang = onLangDetected
 			go func() {
 				defer wg.Done()
 				sarvamClient.Run(ctx, sess.AudioIn)
@@ -518,9 +567,9 @@ func topKeys(m map[string]interface{}) []string {
 }
 
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing audio even if a hangup has been requested. A customer
+	// interruption during the AI's goodbye should still trigger barge-in and
+	// cancel the hangup.
 	var pcm []byte
 	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(data) {
@@ -529,6 +578,12 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(data)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
@@ -539,18 +594,14 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -899,27 +950,6 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	}
 }
 
-// bargeInEnergyThreshold is the mean-square PCM energy level above which we
-// treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
-// value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
-// Raised to 1_000_000 (RMS≈1000): TTS echo was measuring ~280K and falsely
-// triggering barge-in, cancelling the agent's greeting mid-sentence.
-const bargeInEnergyThreshold int64 = 1_000_000
-
-// pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
-func pcmEnergy(pcm []byte) int64 {
-	n := len(pcm) / 2
-	if n == 0 {
-		return 0
-	}
-	var sum int64
-	for i := 0; i+1 < len(pcm); i += 2 {
-		s := int64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
-		sum += s * s
-	}
-	return sum / int64(n)
-}
-
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if v != "" {
@@ -988,9 +1018,8 @@ func (h *Handler) leadLabel(ctx context.Context, sess *CallSession) (string, str
 }
 
 func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface{}) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing media even if a hangup has been requested so a customer
+	// can still barge-in during the AI's goodbye and cancel the hangup.
 	mediaData, _ := event["media"].(map[string]interface{})
 	if mediaData == nil {
 		return
@@ -1012,11 +1041,13 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		}
 		pcm = audio.UlawToPCM(raw)
 	} else {
-		// PCM-16 LE — Voicebot applet, browser web-sim. The echo canceller
-		// is currently μ-law-keyed, so it's skipped here; AI-vs-user
-		// overlap is bounded by the mic-muting logic in the client and the
-		// nextPlayTime arithmetic on the synthesis side.
-		pcm = raw
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(raw)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
+		pcm = raw // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
 		// Record customer audio for the server-side stereo WAV, then relay
@@ -1026,17 +1057,14 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default:
@@ -1114,6 +1142,11 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 
 // finalizeCall runs post-call processing (Phase 4: native Go, no gRPC).
 func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
+	h.log.Info("finalizeCall: started",
+		zap.String("stream_sid", sess.StreamSid),
+		zap.Int64("lead_id", sess.LeadID),
+		zap.Int("chat_history_len", len(sess.ChatHistory)))
+
 	micChunks, ttsChunks := sess.DrainRecordingBuffers()
 	wavBytes := audio.BuildStereoWAV(micChunks, ttsChunks)
 
