@@ -377,11 +377,26 @@ func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest, 
 	return n > 0, nil
 }
 
-// DeleteLead deletes a lead scoped to the given org. Returns true if deleted.
+// DeleteLead deletes a lead scoped to the given org and removes it from all
+// campaigns it is enrolled in. Returns true if deleted.
 func (d *DB) DeleteLead(id, orgID int64) (bool, error) {
-	res, err := d.pool.Exec(
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM campaign_leads WHERE lead_id=?`, id); err != nil {
+		return false, err
+	}
+
+	res, err := tx.Exec(
 		`DELETE FROM leads WHERE id=? AND (org_id=? OR org_id IS NULL)`, id, orgID)
 	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()

@@ -112,9 +112,11 @@ type AgentLeadSummary struct {
 func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, userID int64) ([]AgentLeadSummary, error) {
 	callCampaignFilter := ""
 	outcomeCampaignFilter := ""
+	providerCampaignFilter := ""
 	if campaignID > 0 {
 		callCampaignFilter = "AND aa.campaign_id=?"
 		outcomeCampaignFilter = "AND aa.campaign_id=?"
+		providerCampaignFilter = "AND cl.campaign_id=?"
 	}
 	userFilter := ""
 	if userID > 0 {
@@ -132,12 +134,12 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 			0 AS called_leads,
 			0 AS qualified,
 			COALESCE(outcomes.appointments, 0) AS appointments,
-			COALESCE(calls.total_calls, 0) AS total_calls,
-			COALESCE(calls.connected, 0) AS connected,
+			COALESCE(calls.total_calls, 0) + COALESCE(provider_calls.total_calls, 0) AS total_calls,
+			COALESCE(calls.connected, 0) + COALESCE(provider_calls.connected, 0) AS connected,
 			COALESCE(calls.completed, 0) AS completed,
-			COALESCE(calls.unanswered, 0) AS unanswered,
-			COALESCE(calls.busy, 0) AS busy,
-			COALESCE(calls.failed, 0) AS failed,
+			COALESCE(calls.unanswered, 0) + COALESCE(provider_calls.unanswered, 0) AS unanswered,
+			COALESCE(calls.busy, 0) + COALESCE(provider_calls.busy, 0) AS busy,
+			COALESCE(calls.failed, 0) + COALESCE(provider_calls.failed, 0) AS failed,
 			COALESCE(calls.recordings, 0) AS recordings,
 			COALESCE(outcomes.notes_added, 0) AS notes_added
 		FROM users u
@@ -149,13 +151,42 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 					OR (
 						JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
 						AND cl.status IN ('completed','answered','connected')
+					)
+					OR EXISTS (
+						SELECT 1
+						FROM call_transcripts ct
+						WHERE ct.org_id = aa.org_id
+						  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+						  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+						  AND ct.call_duration_s > 5
+						  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
 					) THEN 1 ELSE 0 END) AS connected,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END) AS completed,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
-					AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled') THEN 1 ELSE 0 END) AS unanswered,
+					AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled')
+					AND NOT EXISTS (
+						SELECT 1
+						FROM call_transcripts ct
+						WHERE ct.org_id = aa.org_id
+						  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+						  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+						  AND ct.call_duration_s > 5
+						  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+					) THEN 1 ELSE 0 END) AS unanswered,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 1 ELSE 0 END) AS busy,
 				SUM(CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled') OR cl.status IN ('failed','cancelled') THEN 1 ELSE 0 END) AS failed,
-				SUM(CASE WHEN cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings
+				SUM(CASE WHEN (
+					(cl.recording_url IS NOT NULL AND cl.recording_url != '')
+					OR EXISTS (
+						SELECT 1
+						FROM call_transcripts ct
+						WHERE ct.org_id = aa.org_id
+						  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+						  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+						  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+						  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+					)
+				) THEN 1 ELSE 0 END) AS recordings
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
 				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci
@@ -166,6 +197,48 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 				%s
 			GROUP BY aa.user_id
 		) calls ON calls.user_id=u.id
+		LEFT JOIN (
+			SELECT
+				attributed.user_id,
+				COUNT(*) AS total_calls,
+				SUM(CASE WHEN attributed.status IN ('completed','answered','connected') THEN 1 ELSE 0 END) AS connected,
+				SUM(CASE WHEN attributed.status IN ('no-answer','no_answer','unanswered') THEN 1 ELSE 0 END) AS unanswered,
+				SUM(CASE WHEN attributed.status='busy' THEN 1 ELSE 0 END) AS busy,
+				SUM(CASE WHEN attributed.status IN ('failed','cancelled') THEN 1 ELSE 0 END) AS failed
+			FROM (
+				SELECT DISTINCT u2.id AS user_id, cl.id, cl.status
+				FROM call_logs cl
+				JOIN users u2 ON u2.org_id=cl.org_id AND u2.role IN ('Agent','Executive','TeamLeader')
+				LEFT JOIN executives e ON e.org_id=cl.org_id AND LOWER(e.email)=LOWER(u2.email)
+				WHERE cl.org_id=?
+					AND cl.created_at >= ?
+					AND cl.created_at <= ?
+					%s
+					AND cl.status IN ('completed','answered','connected','no-answer','no_answer','unanswered','busy','failed','cancelled')
+					AND (
+						EXISTS (
+							SELECT 1
+							FROM campaign_user_assignments cua
+							WHERE cua.campaign_id=cl.campaign_id AND cua.user_id=u2.id
+						)
+						OR (e.id IS NOT NULL AND EXISTS (
+							SELECT 1
+							FROM campaign_leads campaign_lead
+							WHERE campaign_lead.campaign_id=cl.campaign_id
+							  AND campaign_lead.lead_id=cl.lead_id
+							  AND campaign_lead.executive_id=e.id
+						))
+					)
+					AND NOT EXISTS (
+						SELECT 1
+						FROM agent_activities aa2
+						WHERE aa2.org_id=cl.org_id
+							AND aa2.activity_type='call'
+							AND JSON_UNQUOTE(JSON_EXTRACT(aa2.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci = cl.call_sid
+					)
+			) attributed
+			GROUP BY attributed.user_id
+		) provider_calls ON provider_calls.user_id=u.id
 		LEFT JOIN (
 			SELECT
 				aa.user_id,
@@ -182,9 +255,13 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 		WHERE u.org_id=?
 			AND u.role IN ('Agent','Executive','TeamLeader')
 			%s
-		ORDER BY u.full_name, u.email`, callCampaignFilter, outcomeCampaignFilter, userFilter)
+		ORDER BY u.full_name, u.email`, callCampaignFilter, providerCampaignFilter, outcomeCampaignFilter, userFilter)
 
 	finalArgs := []any{orgID, from, to}
+	if campaignID > 0 {
+		finalArgs = append(finalArgs, campaignID)
+	}
+	finalArgs = append(finalArgs, orgID, from, to)
 	if campaignID > 0 {
 		finalArgs = append(finalArgs, campaignID)
 	}
@@ -248,14 +325,41 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 					JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
 					AND cl.status IN ('completed','answered','connected')
 				)
+				OR EXISTS (
+					SELECT 1
+					FROM call_transcripts ct
+					WHERE ct.org_id = aa.org_id
+					  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+					  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+					  AND ct.call_duration_s > 5
+					  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				)
 			) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call'
 				AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
-				AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled') THEN 1 ELSE 0 END), 0),
+				AND COALESCE(cl.status,'') NOT IN ('completed','answered','connected','busy','failed','cancelled')
+				AND NOT EXISTS (
+					SELECT 1
+					FROM call_transcripts ct
+					WHERE ct.org_id = aa.org_id
+					  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+					  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+					  AND ct.call_duration_s > 5
+					  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND (JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy') THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='call' AND (JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='failed' OR cl.status IN ('failed','cancelled')) THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN aa.activity_type='call' THEN COALESCE((
+				SELECT ct.call_duration_s
+				FROM call_transcripts ct
+				WHERE ct.org_id = aa.org_id
+				  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+				  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+				  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				ORDER BY ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)), ct.id DESC
+				LIMIT 1
+			), JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')), 0) ELSE 0 END), 0),
 			COALESCE((SELECT p.total_idle_time_s FROM agent_presence p WHERE p.user_id=u.id LIMIT 1), 0) AS idle_time_s,
 			COALESCE(SUM(CASE WHEN aa.activity_type='break' THEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.duration_s')) ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type='status_update' THEN 1 ELSE 0 END), 0),
@@ -369,7 +473,18 @@ func (d *DB) GetUserAssignedCampaigns(orgID, userID int64) ([]UserAssignedCampai
 				aa.campaign_id,
 				SUM(CASE WHEN aa.activity_type = 'call' THEN 1 ELSE 0 END) AS total_calls,
 				SUM(CASE WHEN aa.activity_type = 'call'
-						AND cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END) AS recordings,
+						AND (
+							(cl.recording_url IS NOT NULL AND cl.recording_url != '')
+							OR EXISTS (
+								SELECT 1
+								FROM call_transcripts ct
+								WHERE ct.org_id = aa.org_id
+								  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+								  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+								  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+								  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+							)
+						) THEN 1 ELSE 0 END) AS recordings,
 				SUM(CASE WHEN aa.activity_type = 'status_update'
 						AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.new_status')) = 'Appointment Set' THEN 1 ELSE 0 END) AS appointments,
 				SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END) AS notes
@@ -477,7 +592,30 @@ func (d *DB) GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64
 	rows, err := d.pool.Query(fmt.Sprintf(`
 		SELECT
 			l.id, l.org_id, l.first_name, COALESCE(l.last_name, ''), l.phone,
-			COALESCE(l.source, ''), COALESCE(l.status, 'new'), COALESCE(l.follow_up_note, ''),
+			COALESCE(l.source, ''),
+			COALESCE((
+				SELECT CASE LOWER(COALESCE(cl.status, ''))
+					WHEN 'completed' THEN 'Completed'
+					WHEN 'answered' THEN 'Connected'
+					WHEN 'connected' THEN 'Connected'
+					WHEN 'no-answer' THEN 'No Answer'
+					WHEN 'no_answer' THEN 'No Answer'
+					WHEN 'busy' THEN 'Busy'
+					WHEN 'failed' THEN 'Failed'
+					WHEN 'cancelled' THEN 'Cancelled'
+					WHEN 'dialing' THEN 'Calling'
+					WHEN 'initiated' THEN 'Calling'
+					ELSE NULL
+				END
+				FROM call_logs cl
+				WHERE cl.org_id = l.org_id
+				  AND cl.lead_id = l.id
+				  AND COALESCE(cl.campaign_id, 0) = c.id
+				  AND COALESCE(cl.status, '') != ''
+				ORDER BY cl.created_at DESC, cl.id DESC
+				LIMIT 1
+			), CASE WHEN LOWER(COALESCE(l.status, '')) = 'calling' THEN 'None' ELSE COALESCE(l.status, 'new') END),
+			COALESCE(l.follow_up_note, ''),
 			COALESCE(l.follow_up_at, ''),
 			COALESCE(l.interest, ''), COALESCE(l.company, ''), COALESCE(l.external_id, ''),
 			COALESCE(l.crm_provider, ''), COALESCE(l.executive_id, 0),
@@ -547,10 +685,21 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 	countQ := fmt.Sprintf(`
 		SELECT COUNT(*)
 		FROM agent_activities aa
-		JOIN call_logs cl ON cl.org_id = aa.org_id
+		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
 			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
 		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
-			AND cl.recording_url IS NOT NULL AND cl.recording_url != ''
+			AND (
+				(cl.recording_url IS NOT NULL AND cl.recording_url != '')
+				OR EXISTS (
+					SELECT 1
+					FROM call_transcripts ct
+					WHERE ct.org_id = aa.org_id
+					  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+					  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+					  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+					  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				)
+			)
 			%s`, dateFilter)
 	if err := d.pool.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -558,22 +707,52 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 
 	q := fmt.Sprintf(`
 		SELECT
-			cl.id, cl.lead_id, COALESCE(cl.campaign_id, 0), cl.org_id,
-			COALESCE(cl.call_sid, ''), COALESCE(cl.phone, ''), COALESCE(cl.provider, ''),
-			COALESCE(cl.status, ''), COALESCE(cl.recording_url, ''),
-			DATE_FORMAT(cl.created_at, '%%Y-%%m-%%d %%H:%%i:%%s'),
+			COALESCE(cl.id, aa.id), COALESCE(cl.lead_id, aa.lead_id, 0), COALESCE(cl.campaign_id, aa.campaign_id, 0), aa.org_id,
+			COALESCE(cl.call_sid, JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')), ''), COALESCE(cl.phone, l.phone, ''), COALESCE(cl.provider, ''),
+			COALESCE(cl.status, JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.outcome')), ''),
+			COALESCE(NULLIF(cl.recording_url, ''), (
+				SELECT ct.recording_url
+				FROM call_transcripts ct
+				WHERE ct.org_id = aa.org_id
+				  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+				  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+				  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+				  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				ORDER BY ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)), ct.id DESC
+				LIMIT 1
+			), ''),
+			COALESCE(DATE_FORMAT(cl.created_at, '%%Y-%%m-%%d %%H:%%i:%%s'), DATE_FORMAT(aa.created_at, '%%Y-%%m-%%d %%H:%%i:%%s')),
 			COALESCE(CONCAT(l.first_name, ' ', COALESCE(l.last_name, '')), ''),
 			COALESCE(c.name, ''),
-			COALESCE(ct.call_duration_s, 0),
+			COALESCE((
+				SELECT ct.call_duration_s
+				FROM call_transcripts ct
+				WHERE ct.org_id = aa.org_id
+				  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+				  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+				  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				ORDER BY ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)), ct.id DESC
+				LIMIT 1
+			), CAST(JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.duration_s')) AS DECIMAL(10,2)), 0),
 			DATE_FORMAT(aa.created_at, '%%Y-%%m-%%d %%H:%%i:%%s')
 		FROM agent_activities aa
-		JOIN call_logs cl ON cl.org_id = aa.org_id
+		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
 			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
-		LEFT JOIN leads l ON l.id = cl.lead_id
-		LEFT JOIN campaigns c ON c.id = cl.campaign_id
-		LEFT JOIN call_transcripts ct ON ct.call_sid COLLATE utf8mb4_0900_ai_ci = cl.call_sid
+		LEFT JOIN leads l ON l.id = COALESCE(cl.lead_id, aa.lead_id)
+		LEFT JOIN campaigns c ON c.id = COALESCE(cl.campaign_id, aa.campaign_id)
 		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
-			AND cl.recording_url IS NOT NULL AND cl.recording_url != ''
+			AND (
+				(cl.recording_url IS NOT NULL AND cl.recording_url != '')
+				OR EXISTS (
+					SELECT 1
+					FROM call_transcripts ct
+					WHERE ct.org_id = aa.org_id
+					  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+					  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+					  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+					  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+				)
+			)
 			%s
 		ORDER BY aa.created_at DESC
 		LIMIT ? OFFSET ?`, dateFilter)
@@ -627,7 +806,18 @@ func (d *DB) GetUserActivityStats(orgID, userID int64, from, to time.Time) (User
 		SELECT
 			COALESCE(SUM(CASE WHEN aa.activity_type = 'call' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type = 'call'
-					AND cl.recording_url IS NOT NULL AND cl.recording_url != '' THEN 1 ELSE 0 END), 0),
+					AND (
+						(cl.recording_url IS NOT NULL AND cl.recording_url != '')
+						OR EXISTS (
+							SELECT 1
+							FROM call_transcripts ct
+							WHERE ct.org_id = aa.org_id
+							  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+							  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+							  AND ct.recording_url IS NOT NULL AND ct.recording_url != ''
+							  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+						)
+					) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type = 'status_update'
 					AND JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.new_status')) = 'Appointment Set' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN aa.activity_type = 'note' THEN 1 ELSE 0 END), 0)

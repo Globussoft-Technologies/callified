@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -16,16 +17,14 @@ var ErrMaxTokens = errors.New("llm stopped at max output tokens")
 // GeminiClient calls Google Gemini via REST SSE streaming.
 type GeminiClient struct {
 	apiKey  string
-	model   string
 	baseURL string
+	model   string
 	http    *http.Client
 }
 
 func NewGeminiClient(apiKey, model, baseURL string) *GeminiClient {
-	if baseURL == "" {
-		baseURL = "https://generativelanguage.googleapis.com/v1beta"
-	}
-	return &GeminiClient{apiKey: apiKey, model: model, baseURL: baseURL, http: &http.Client{}}
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return &GeminiClient{apiKey: apiKey, baseURL: base, model: model, http: &http.Client{}}
 }
 
 // --- request types ---
@@ -117,15 +116,15 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 		return "", fmt.Errorf("gemini: marshal: %w", err)
 	}
 
-	url := fmt.Sprintf(
-		"%s/models/%s:generateContent?key=%s",
-		g.baseURL, g.model, g.apiKey,
-	)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	endpoint, bearerAuth := g.endpoint("generateContent", false)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if bearerAuth {
+		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
+	}
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -191,15 +190,15 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 		return fmt.Errorf("gemini: marshal: %w", err)
 	}
 
-	url := fmt.Sprintf(
-		"%s/models/%s:streamGenerateContent?key=%s&alt=sse",
-		g.baseURL, g.model, g.apiKey,
-	)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	endpoint, bearerAuth := g.endpoint("streamGenerateContent", true)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if bearerAuth {
+		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
+	}
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -252,4 +251,23 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 		return ErrMaxTokens
 	}
 	return nil
+}
+
+func (g *GeminiClient) endpoint(method string, stream bool) (string, bool) {
+	if g.baseURL != "" {
+		endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s", g.baseURL, url.PathEscape(g.model), method)
+		if stream {
+			endpoint += "?alt=sse"
+		}
+		return endpoint, true
+	}
+
+	endpoint := fmt.Sprintf(
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:%s?key=%s",
+		url.PathEscape(g.model), method, url.QueryEscape(g.apiKey),
+	)
+	if stream {
+		endpoint += "&alt=sse"
+	}
+	return endpoint, false
 }

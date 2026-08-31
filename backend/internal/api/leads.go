@@ -411,6 +411,32 @@ func (s *Server) getLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	campaignID, _ := strconv.ParseInt(r.URL.Query().Get("campaign_id"), 10, 64)
+	if campaignID > 0 {
+		ac := getAuth(r)
+		campaign, err := s.db.GetCampaignByID(campaignID)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLead: campaign", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if campaign == nil || campaign.OrgID != ac.OrgID || !s.canViewCampaign(ac, campaignID) || !s.canAccessCampaignLead(ac, campaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+		lead, err := s.db.GetLeadByID(id)
+		if err != nil {
+			s.logger.Sugar().Errorw("getLead: lead", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if lead == nil || lead.OrgID != ac.OrgID {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, lead)
+		return
+	}
 	lead := s.requireLeadAccess(w, r, id)
 	if lead == nil {
 		return
@@ -817,6 +843,7 @@ func (s *Server) updateLeadNote(w http.ResponseWriter, r *http.Request) {
 
 // leadDispositionRequest is the payload for saving a post-call disposition.
 type leadDispositionRequest struct {
+	CampaignID int64  `json:"campaign_id"`
 	Status     string `json:"status"`
 	Note       string `json:"note"`
 	FollowUpAt string `json:"follow_up_at"`
@@ -844,12 +871,18 @@ func (s *Server) updateLeadDisposition(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
-		return
-	}
 	var body leadDispositionRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	ac := getAuth(r)
+	if body.CampaignID > 0 {
+		if !s.canAccessCampaignLead(ac, body.CampaignID, id) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else if s.requireLeadAccess(w, r, id) == nil {
 		return
 	}
 	if strings.TrimSpace(body.Status) == "" {

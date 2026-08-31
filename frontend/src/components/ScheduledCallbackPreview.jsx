@@ -67,13 +67,20 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
     setAutoStarting(false);
     (async () => {
       try {
-        const [leadRes, txRes] = await Promise.all([
-          apiFetch(`${API_URL}/leads/${call.lead_id}`),
-          apiFetch(`${API_URL}/leads/${call.lead_id}/transcripts`),
-        ]);
-        if (!leadRes.ok || !txRes.ok) throw new Error('Failed to load preview');
+        const leadQs = call.campaign_id ? `?campaign_id=${encodeURIComponent(call.campaign_id)}` : '';
+        const leadRes = await apiFetch(`${API_URL}/leads/${call.lead_id}${leadQs}`);
+        if (!leadRes.ok) throw new Error('Failed to load preview');
         const leadData = await leadRes.json();
-        const txData = await txRes.json();
+        let txData = [];
+        try {
+          const qs = call.campaign_id ? `?campaign_id=${encodeURIComponent(call.campaign_id)}` : '';
+          const txRes = await apiFetch(`${API_URL}/leads/${call.lead_id}/transcripts${qs}`);
+          if (txRes.ok) {
+            txData = await txRes.json();
+          }
+        } catch {
+          txData = [];
+        }
         if (!cancelled) {
           setLead(leadData);
           setTranscripts(Array.isArray(txData) ? txData : []);

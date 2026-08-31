@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/globussoft/callified-backend/internal/db"
@@ -20,7 +21,8 @@ import (
 // @Security    BearerAuth
 // @Param       mode    query     string  false  "Filter by mode: ai | manual"
 // @Param       status  query     string  false  "Filter by status: pending | dialing | completed | failed | cancelled"
-// @Param       due     query     bool    false  "If true, return only calls due now (scheduled_at <= NOW() + 30s)"
+// @Param       due     query     bool    false  "If true, return only calls due within lead_time_seconds"
+// @Param       lead_time_seconds query int false "Seconds before scheduled_at to return due calls; defaults to 10"
 // @Success     200     {array}   object
 // @Failure     401     {object}  ErrorResponse
 // @Failure     403     {object}  ErrorResponse
@@ -42,7 +44,19 @@ func (s *Server) listScheduledCalls(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if q.Get("due") == "true" {
-		calls, err = s.db.GetDueManualScheduledCalls(ac.OrgID, u.ID, 30)
+		leadTimeSeconds := 10
+		if raw := q.Get("lead_time_seconds"); raw != "" {
+			if n, parseErr := strconv.Atoi(raw); parseErr == nil {
+				if n < 0 {
+					n = 0
+				}
+				if n > 120 {
+					n = 120
+				}
+				leadTimeSeconds = n
+			}
+		}
+		calls, err = s.db.GetDueManualScheduledCalls(ac.OrgID, u.ID, leadTimeSeconds)
 	} else if isAdmin {
 		calls, err = s.db.GetScheduledCallsByOrg(ac.OrgID)
 	} else {
@@ -123,13 +137,28 @@ func (s *Server) createScheduledCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lead := s.requireLeadAccess(w, r, body.LeadID)
-	if lead == nil {
-		return
-	}
 	if body.CampaignID > 0 && !s.canViewCampaign(ac, body.CampaignID) {
 		writeError(w, http.StatusNotFound, "campaign not found")
 		return
+	}
+	var lead *db.Lead
+	if body.CampaignID > 0 {
+		var err error
+		lead, err = s.db.GetLeadByID(body.LeadID)
+		if err != nil {
+			s.logger.Sugar().Errorw("createScheduledCall: lead lookup", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if lead == nil || lead.OrgID != ac.OrgID || !s.canAccessCampaignLead(ac, body.CampaignID, body.LeadID) {
+			writeError(w, http.StatusNotFound, "lead not found")
+			return
+		}
+	} else {
+		lead = s.requireLeadAccess(w, r, body.LeadID)
+		if lead == nil {
+			return
+		}
 	}
 	if body.ExecutiveID > 0 {
 		exec, err := s.db.GetExecutiveByID(body.ExecutiveID, ac.OrgID)

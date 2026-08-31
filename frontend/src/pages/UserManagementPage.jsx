@@ -335,7 +335,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
           <form onSubmit={handleCreate}>
             <Field label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} required />
             <Field label="Full Name" value={form.full_name} onChange={v => setForm({ ...form, full_name: v })} />
-            <Field label="Password" type="password" value={form.password} onChange={v => setForm({ ...form, password: v })} required />
+            <Field label="Password" type="password" value={form.password} onChange={v => setForm({ ...form, password: v })} required revealable />
             {isAdmin(userRole) && (
               <>
                 <Select label="Role" value={form.role} onChange={v => setForm({ ...form, role: v })} options={[
@@ -466,17 +466,48 @@ function Modal({ title, children, onClose }) {
   );
 }
 
-function Field({ label, type = 'text', value, onChange, required }) {
+function Field({ label, type = 'text', value, onChange, required, revealable = false }) {
+  const [showValue, setShowValue] = useState(false);
+  const inputType = revealable && type === 'password' && showValue ? 'text' : type;
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.sub, marginBottom: 6 }}>{label}</label>
-      <input
-        type={type}
-        style={inputStyle}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        required={required}
-      />
+      <div style={{ position: 'relative' }}>
+        <input
+          type={inputType}
+          style={revealable ? { ...inputStyle, paddingRight: 42 } : inputStyle}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required={required}
+        />
+        {revealable && type === 'password' && (
+          <button
+            type="button"
+            onClick={() => setShowValue(v => !v)}
+            aria-label={showValue ? 'Hide password' : 'Show password'}
+            title={showValue ? 'Hide password' : 'Show password'}
+            style={{
+              position: 'absolute',
+              right: 8,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 28,
+              height: 28,
+              border: 'none',
+              borderRadius: 6,
+              background: 'transparent',
+              color: T.muted,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 15,
+            }}
+          >
+            {showValue ? '🙈' : '👁'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
