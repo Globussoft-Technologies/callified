@@ -339,6 +339,12 @@ func userResponse(s *Server, user *db.User) map[string]any {
 			orgName = org.Name
 		}
 	}
+	hideAiFeatures := s.db.ShouldHideAiFeatures(user.Email)
+	if !hideAiFeatures && user.OrgID > 0 {
+		if sub, err := s.db.ValidateOrgAdminSubscription(user.OrgID); err == nil && sub != nil && sub.Active && strings.EqualFold(sub.Plan, "manual") {
+			hideAiFeatures = true
+		}
+	}
 	return map[string]any{
 		"id":               user.ID,
 		"email":            user.Email,
@@ -347,7 +353,7 @@ func userResponse(s *Server, user *db.User) map[string]any {
 		"org_id":           user.OrgID,
 		"org_name":         orgName,
 		"is_super_admin":   s.isSuperAdmin(user.Email),
-		"hide_ai_features": s.db.ShouldHideAiFeatures(user.Email),
+		"hide_ai_features": hideAiFeatures,
 	}
 }
 

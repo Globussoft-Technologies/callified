@@ -59,6 +59,9 @@ func userIDForDial(ac AuthClaims) int64 {
 // @Failure     502   {object}  ErrorResponse  "provider error"
 // @Router      /api/dial/{lead_id} [post]
 func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.dial") {
+		return
+	}
 	leadID, err := parseID(r, "lead_id")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid lead_id")
@@ -134,7 +137,7 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     502  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial/{lead_id} [post]
 func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "calls.make") {
+	if !s.requirePermission(w, r, "calls.dial") {
 		return
 	}
 	ac := getAuth(r)
@@ -218,9 +221,10 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/dial-all [post]
 func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "calls.make") {
+	if !s.requirePermission(w, r, "calls.dial_all") {
 		return
 	}
+	ac := getAuth(r)
 	campaign := s.requireCampaignView(w, r)
 	if campaign == nil {
 		return
@@ -233,7 +237,12 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	leads, err := s.db.GetCampaignLeads(campaignID)
+	executiveIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaignID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve lead scope")
+		return
+	}
+	leads, err := s.db.GetCampaignLeadsFiltered(campaignID, executiveIDs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list leads")
 		return
@@ -263,7 +272,6 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
-	ac := getAuth(r)
 
 	// Detach from the HTTP request's context — the queue runs for minutes
 	// after the HTTP response returns. Using r.Context() would cancel every
@@ -353,7 +361,7 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/redial-failed [post]
 func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "calls.make") {
+	if !s.requirePermission(w, r, "calls.dial_all") {
 		return
 	}
 	campaign := s.requireCampaignView(w, r)

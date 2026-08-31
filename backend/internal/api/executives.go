@@ -23,7 +23,7 @@ type executiveUpdateRequest struct {
 
 // listExecutives returns all executives for the authenticated org.
 func (s *Server) listExecutives(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "executives.manage") {
+	if !s.requireAnyPermission(w, r, "executives.manage", "crm.assign", "campaigns.assign_users") {
 		return
 	}
 	ac := getAuth(r)

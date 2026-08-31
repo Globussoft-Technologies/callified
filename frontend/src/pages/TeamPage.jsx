@@ -32,6 +32,21 @@ const tdStyle = {
   verticalAlign: 'middle',
 };
 
+const permissionDisplayOverrides = {
+  'calls.dial': {
+    label: 'AI Dial',
+    action: 'Can AI dial',
+    description: 'Show and use the single-lead AI Dial button.',
+  },
+  'calls.dial_all': {
+    label: 'AI All Dials',
+    action: 'Can bulk AI dial',
+    description: 'Show and use AI All Dials / AI All New Dials campaign actions.',
+  },
+};
+
+const manualPlanHiddenPermissionKeys = new Set(['calls.make', 'calls.dial', 'calls.dial_all']);
+
 export default function TeamPage({ apiFetch, API_URL }) {
   const { currentUser } = useAuth();
   const toast = useToast();
@@ -49,6 +64,9 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [resetMember, setResetMember] = useState(null);
   const [resetForm, setResetForm] = useState({ password: '', confirm: '' });
+  const [showInvitePassword, setShowInvitePassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetError, setResetError] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [permissionMember, setPermissionMember] = useState(null);
@@ -61,6 +79,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
   const [providerAccounts, setProviderAccounts] = useState([]);
   const [selectedProviderAccountIds, setSelectedProviderAccountIds] = useState([]);
   const fileInputRef = useRef(null);
+  const hideManualPlanAiCallPermissions = Boolean(currentUser?.hide_ai_features);
 
   // API keys keyed by member user_id (encoded in the key name as "team:<user_id>:...").
   // Only the most-recently-issued key per user is surfaced — older orphaned rows
@@ -471,6 +490,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
     if (resetLoading) return;
     setResetMember(null);
     setResetForm({ password: '', confirm: '' });
+    setShowResetPassword(false);
+    setShowResetConfirm(false);
     setResetError('');
   };
 
@@ -594,10 +615,13 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   onChange={e => setInviteForm({ ...inviteForm, email: e.target.value })}
                   style={inputStyle}
                 />
-                <input
-                  placeholder="Password" type="password" required value={inviteForm.password}
+                <PasswordInput
+                  placeholder="Password"
+                  required
+                  value={inviteForm.password}
                   onChange={e => setInviteForm({ ...inviteForm, password: e.target.value })}
-                  style={inputStyle}
+                  visible={showInvitePassword}
+                  onToggle={() => setShowInvitePassword(v => !v)}
                 />
                 <select
                   value={inviteForm.role}
@@ -651,16 +675,22 @@ export default function TeamPage({ apiFetch, API_URL }) {
             </p>
             <form onSubmit={handleResetPassword}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <input
-                  placeholder="New password" type="password" required value={resetForm.password}
+                <PasswordInput
+                  placeholder="New password"
+                  required
+                  value={resetForm.password}
                   onChange={e => setResetForm({ ...resetForm, password: e.target.value })}
-                  style={inputStyle}
+                  visible={showResetPassword}
+                  onToggle={() => setShowResetPassword(v => !v)}
                   autoFocus
                 />
-                <input
-                  placeholder="Confirm password" type="password" required value={resetForm.confirm}
+                <PasswordInput
+                  placeholder="Confirm password"
+                  required
+                  value={resetForm.confirm}
                   onChange={e => setResetForm({ ...resetForm, confirm: e.target.value })}
-                  style={inputStyle}
+                  visible={showResetConfirm}
+                  onToggle={() => setShowResetConfirm(v => !v)}
                 />
                 {resetError && (
                   <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
@@ -726,8 +756,11 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           {module}
                         </div>
                         <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {items.map(p => {
+                          {items
+                            .filter(p => !hideManualPlanAiCallPermissions || !manualPlanHiddenPermissionKeys.has(p.key))
+                            .map(p => {
                             const checked = permissionValues.includes(p.key);
+                            const display = permissionDisplayOverrides[p.key] || p;
                             return (
                               <label key={p.key} style={{
                                 display: 'grid', gridTemplateColumns: '18px 1fr', gap: 9,
@@ -742,10 +775,10 @@ export default function TeamPage({ apiFetch, API_URL }) {
                                 />
                                 <span>
                                   <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
-                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{p.label}</span>
-                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{p.action}</span>
+                                    <span style={{ color: T.text, fontWeight: 700, fontSize: 13 }}>{display.label}</span>
+                                    <span style={{ color: T.accent, fontWeight: 700, fontSize: 11, whiteSpace: 'nowrap' }}>{display.action}</span>
                                   </span>
-                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{p.description}</span>
+                                  <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.35, marginTop: 2 }}>{display.description}</span>
                                 </span>
                               </label>
                             );
@@ -1082,6 +1115,59 @@ export default function TeamPage({ apiFetch, API_URL }) {
           </table>
         )}
       </div>
+    </div>
+  );
+}
+
+function PasswordInput({ value, onChange, visible, onToggle, placeholder, required = false, autoFocus = false }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <input
+        placeholder={placeholder}
+        type={visible ? 'text' : 'password'}
+        required={required}
+        value={value}
+        onChange={onChange}
+        style={{ ...inputStyle, paddingRight: 42 }}
+        autoFocus={autoFocus}
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={visible ? 'Hide password' : 'Show password'}
+        title={visible ? 'Hide password' : 'Show password'}
+        style={{
+          position: 'absolute',
+          right: 8,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          width: 28,
+          height: 28,
+          border: 'none',
+          borderRadius: 6,
+          background: 'transparent',
+          color: T.muted,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+        }}
+      >
+        {visible ? (
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 3l18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <path d="M9.9 5.2A9.7 9.7 0 0 1 12 5c5.2 0 8.5 4.5 9.5 6.3a1.4 1.4 0 0 1 0 1.4 16 16 0 0 1-2.1 2.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M6.6 6.8a16.2 16.2 0 0 0-4.1 4.5 1.4 1.4 0 0 0 0 1.4C3.5 14.5 6.8 19 12 19c1.4 0 2.7-.3 3.8-.9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        ) : (
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M2.5 11.3C3.5 9.5 6.8 5 12 5s8.5 4.5 9.5 6.3a1.4 1.4 0 0 1 0 1.4C20.5 14.5 17.2 19 12 19s-8.5-4.5-9.5-6.3a1.4 1.4 0 0 1 0-1.4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" />
+          </svg>
+        )}
+      </button>
     </div>
   );
 }

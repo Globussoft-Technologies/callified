@@ -26,7 +26,7 @@ import TeamPage from './pages/TeamPage';
 import UserManagementPage from './pages/UserManagementPage';
 import ReceptionistPage from './pages/ReceptionistPage';
 import ExotelAccountsPage from './pages/ExotelAccountsPage';
-import ExecutivesPage from './pages/ExecutivesPage';
+import DeleteLeadsPage from './pages/DeleteLeadsPage';
 import ManualDialPage from './pages/ManualDialPage';
 import InteractionHistoryPage from './pages/InteractionHistoryPage';
 import AgentPresencePage from './pages/AgentPresencePage';
@@ -239,7 +239,7 @@ export default function App() {
             <AgentReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} />
           </AdminOnly>
         } />
-        <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
+        <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}><CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
         <Route path="/team" element={
           <AdminOnly userRole={userRole}>
             <TeamPage apiFetch={apiFetch} API_URL={API_URL} />
@@ -253,7 +253,7 @@ export default function App() {
         <Route path="/ai-receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
         <Route path="/receptionist" element={<Navigate to="/ai-receptionist" replace />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
-        <Route path="/executives" element={<ExecutivesPage />} />
+        <Route path="/delete-leads" element={<DeleteLeadsPage />} />
         <Route path="/subscriptions" element={
           <RequireRole allow={['Admin', 'SuperAdmin']}>
             <SubscriptionsPage apiFetch={apiFetch} />

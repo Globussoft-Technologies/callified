@@ -50,7 +50,7 @@ type BrowserCallResponse struct {
 //     detects IsBridge=true and skips the AI pipeline, relaying audio to the
 //     agent browser instead.
 func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "calls.make") {
+	if !s.requirePermission(w, r, "calls.browser_call") {
 		return
 	}
 	campaign := s.requireCampaignView(w, r)

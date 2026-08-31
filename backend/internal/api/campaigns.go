@@ -573,12 +573,12 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 		return
 	}
 	var body struct {
-		LeadIDs     []int64 `json:"lead_ids"`
-		ExecutiveID int64   `json:"executive_id"`
-		All         bool    `json:"all"`
-		Search      string  `json:"search"`
-		ScheduledFrom string `json:"scheduled_from"`
-		ScheduledTo   string `json:"scheduled_to"`
+		LeadIDs       []int64 `json:"lead_ids"`
+		ExecutiveID   int64   `json:"executive_id"`
+		All           bool    `json:"all"`
+		Search        string  `json:"search"`
+		ScheduledFrom string  `json:"scheduled_from"`
+		ScheduledTo   string  `json:"scheduled_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -785,7 +785,12 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	log, err := s.db.GetCampaignCallLog(campaign.ID, execIDs)
+	var log []db.CallLogEntry
+	if ac.Role == db.RoleAgent {
+		log, err = s.db.GetCampaignCallLogForUser(campaign.ID, ac.UserID)
+	} else {
+		log, err = s.db.GetCampaignCallLog(campaign.ID, execIDs)
+	}
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1373,7 +1378,7 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/campaigns/{id}/human-call/{lead_id} [post]
 func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "calls.make") {
+	if !s.requirePermission(w, r, "calls.browser_call") {
 		return
 	}
 	ac := getAuth(r)

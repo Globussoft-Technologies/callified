@@ -22,11 +22,8 @@ type GeminiClient struct {
 	http    *http.Client
 }
 
-func NewGeminiClient(apiKey, model string, baseURL ...string) *GeminiClient {
-	base := ""
-	if len(baseURL) > 0 {
-		base = strings.TrimRight(strings.TrimSpace(baseURL[0]), "/")
-	}
+func NewGeminiClient(apiKey, model, baseURL string) *GeminiClient {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	return &GeminiClient{apiKey: apiKey, baseURL: base, model: model, http: &http.Client{}}
 }
 
