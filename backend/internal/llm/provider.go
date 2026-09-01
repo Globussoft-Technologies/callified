@@ -122,5 +122,27 @@ func (p *Provider) GenerateText(ctx context.Context, systemPrompt, userMessage s
 func parseChunk(text string) (string, bool) {
 	hasHangup := strings.Contains(text, "[HANGUP]")
 	clean := strings.TrimSpace(strings.ReplaceAll(text, "[HANGUP]", ""))
+	clean = stripBracketedMeta(clean)
 	return clean, hasHangup
+}
+
+// stripBracketedMeta removes non-spoken model side-notes such as
+// "[The user said ...]" that occasionally leak from the LLM. The voice path
+// must speak only customer-facing text; [HANGUP] is handled before this runs.
+func stripBracketedMeta(text string) string {
+	for {
+		start := strings.Index(text, "[")
+		if start == -1 {
+			return strings.TrimSpace(text)
+		}
+		end := strings.Index(text[start:], "]")
+		if end == -1 {
+			if start == 0 {
+				return ""
+			}
+			return strings.TrimSpace(text[:start])
+		}
+		end += start
+		text = strings.TrimSpace(text[:start] + " " + text[end+1:])
+	}
 }
