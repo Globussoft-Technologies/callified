@@ -169,11 +169,11 @@ func TestBinaryFrameAccepted(t *testing.T) {
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words → 72) clamped to non-English minimum 360
-	assert.Equal(t, int32(360), sess.MaxTokens("test transcript"), "short non-English transcript should be 360")
+	// Short transcript (2 words -> 72) clamped to non-English minimum 700.
+	assert.Equal(t, int32(700), sess.MaxTokens("test transcript"), "short non-English transcript should be 700")
 
-	// Medium transcript (10 words → 360)
-	assert.Equal(t, int32(360), sess.MaxTokens("one two three four five six seven eight nine ten"))
+	// Medium transcript (10 words -> 360) is still clamped to the minimum.
+	assert.Equal(t, int32(700), sess.MaxTokens("one two three four five six seven eight nine ten"))
 
 	// Long transcript (>20 words → 756)
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
@@ -236,6 +236,22 @@ func TestMaxDurationClosingLineAdaptsToFinalReply(t *testing.T) {
 	answer := maxDurationClosingLineForReply("en", "Education")
 	assert.Contains(t, answer, "Got it, thank you for sharing.")
 	assert.NotContains(t, answer, "?")
+}
+
+func TestFillerSoundsDoNotCountAsSpeech(t *testing.T) {
+	for _, text := range []string{
+		"hmm", "mm-hmm", "Mm-hmm.", "mhm", "uhh", "ఉమ్.",
+	} {
+		assert.True(t, isFillerSound(text), text)
+		assert.True(t, isKnownFiller(text), text)
+	}
+	assert.False(t, isFillerSound("hello"))
+	assert.False(t, isFillerSound("హలో."))
+	assert.False(t, isFillerSound("okay"))
+	assert.False(t, isFillerSound("haan"))
+	assert.False(t, isFillerSound("no"))
+	assert.False(t, isFillerSound("okay tell me more"))
+	assert.False(t, isFillerSound("hello, who is speaking"))
 }
 
 // TestMsSinceTTSEnd_BeforeFirstMark returns 9999 (no TTS yet).

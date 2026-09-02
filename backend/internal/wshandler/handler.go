@@ -287,6 +287,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if sess.CancelBargeIn() {
 				sess.Log.Info("barge-in: cancelled by filler sound", zap.String("text", text))
 			} else {
+				sess.SetBargeIn(false)
 				sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
 			}
 			return

@@ -700,8 +700,8 @@ func (s *CallSession) MaxTokens(transcript string) int32 {
 	perWord, minTok, maxTok := int32(24), int32(260), int32(600)
 	if !isEnglish {
 		perWord = 36
-		minTok = 360
-		maxTok = 1100
+		minTok = 700
+		maxTok = 1400
 	}
 	words := len(strings.Fields(transcript))
 	tokens := int32(words) * perWord

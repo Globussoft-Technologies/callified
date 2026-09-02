@@ -140,7 +140,17 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
 		llmTranscript = fmt.Sprintf("[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.] Customer said: %q", transcript)
 	}
-	repeatDecision := sess.RepeatedQuestionDecision(transcript)
+	repeatIntent := ""
+	if provider != nil {
+		intentCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+		if key, keyErr := provider.ClassifyRepeatIntent(intentCtx, transcript, sess.Language); keyErr == nil {
+			repeatIntent = key
+		} else {
+			sess.Log.Debug("repeat-question: intent classification failed", zap.Error(keyErr))
+		}
+		cancel()
+	}
+	repeatDecision := sess.RepeatedQuestionDecisionWithKey(transcript, repeatIntent)
 	allowHangupForTurn := repeatDecision.AllowHangup
 	if instruction := repeatDecision.Instruction; instruction != "" {
 		if llmTranscript == transcript {

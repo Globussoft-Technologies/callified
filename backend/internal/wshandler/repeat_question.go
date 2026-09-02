@@ -28,7 +28,14 @@ type repeatQuestionDecision struct {
 }
 
 func (s *CallSession) RepeatedQuestionDecision(text string) repeatQuestionDecision {
+	return s.RepeatedQuestionDecisionWithKey(text, "")
+}
+
+func (s *CallSession) RepeatedQuestionDecisionWithKey(text, intentKey string) repeatQuestionDecision {
 	norm := normalizeQuestionText(text)
+	if key := normalizeQuestionText(intentKey); key != "" && key != "none" {
+		norm = "intent " + key
+	}
 	if len([]rune(norm)) < repeatQuestionMinRuneCount || isFillerSound(norm) {
 		return repeatQuestionDecision{AllowHangup: true}
 	}
