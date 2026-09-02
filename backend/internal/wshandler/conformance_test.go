@@ -223,6 +223,21 @@ func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {
 	assert.False(t, sess.ConsumeMaxDurationWaitReply())
 }
 
+func TestMaxDurationClosingLineAdaptsToFinalReply(t *testing.T) {
+	provide := maxDurationClosingLineForReply("en", "It's been 100 employees, can you provide?")
+	assert.Contains(t, provide, "Yes, we can help with that.")
+	assert.NotContains(t, provide, "?")
+
+	question := maxDurationClosingLineForReply("en", "Okay tell me what varies for corporate and other sections?")
+	assert.Contains(t, question, "employee count")
+	assert.Contains(t, question, "access points")
+	assert.NotContains(t, question, "?")
+
+	answer := maxDurationClosingLineForReply("en", "Education")
+	assert.Contains(t, answer, "Got it, thank you for sharing.")
+	assert.NotContains(t, answer, "?")
+}
+
 // TestMsSinceTTSEnd_BeforeFirstMark returns 9999 (no TTS yet).
 func TestMsSinceTTSEnd_BeforeFirstMark(t *testing.T) {
 	sess := &CallSession{}

@@ -120,7 +120,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	sess.AppendHistory("user", transcript)
 
 	if sess.ConsumeMaxDurationWaitReply() {
-		closeLine := maxDurationClosingLine(sess.Language)
+		closeLine := maxDurationClosingLineForReply(sess.Language, transcript)
 		sess.RequestMaxDurationClose()
 		sess.BroadcastTranscript("agent", closeLine)
 		sess.AppendHistory("model", closeLine)
@@ -226,6 +226,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	}
 }
 
+type callHangupper interface {
+	Hangup(ctx context.Context, callSid string, campaignID int64) error
+}
+
 // runTTSWorker reads sentences from sess.TTSSentences, calls the TTS provider,
 // and sends the resulting PCM audio to the phone via the WebSocket.
 // An empty sentence ("") is the HANGUP sentinel: drain + grace period + close.
@@ -235,7 +239,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 // the Redis-hydrated campaign uses a different provider than the pre-loaded
 // default. Without this, a call whose campaign is configured for SmallestAI
 // but whose default was Sarvam would always synthesise via Sarvam.
-func runTTSWorker(ctx context.Context, sess *CallSession) {
+func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHangupper) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -262,6 +266,15 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 						return
 					case <-deadline:
 						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						if initiator != nil && sess.CallSid != "" {
+							hangupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							if err := initiator.Hangup(hangupCtx, sess.CallSid, sess.CampaignID); err != nil {
+								sess.Log.Warn("hangup: carrier hangup failed",
+									zap.String("call_sid", sess.CallSid),
+									zap.Error(err))
+							}
+							cancel()
+						}
 						sess.WS.Close() //nolint:errcheck
 						return
 					case <-ticker.C:

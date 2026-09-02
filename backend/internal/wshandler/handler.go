@@ -427,7 +427,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runTTSWorker(ctx, sess)
+		runTTSWorker(ctx, sess, h.initiator)
 	}()
 
 	// Greeting closure — dispatched here for web-sim (we already have the
@@ -1242,6 +1242,43 @@ func maxDurationClosingLine(language string) string {
 	default:
 		return "Alright, thank you. Our senior employee will contact you with more details. Have a great day."
 	}
+}
+
+func maxDurationClosingLineForReply(language, reply string) string {
+	if language != "" && language != "en" {
+		return maxDurationClosingLine(language)
+	}
+	reply = strings.ToLower(strings.TrimSpace(reply))
+	switch {
+	case strings.Contains(reply, "can you provide") || strings.Contains(reply, "do you provide") || strings.Contains(reply, "can you help"):
+		return "Yes, we can help with that. Our senior employee will contact you with more details. Have a great day."
+	case isCustomerQuestion(reply):
+		return "Good question. It usually depends on employee count, locations, access points, and attendance process. Our senior employee will contact you with more details. Have a great day."
+	case reply != "":
+		return "Got it, thank you for sharing. Our senior employee will contact you with more details. Have a great day."
+	default:
+		return maxDurationClosingLine(language)
+	}
+}
+
+func isCustomerQuestion(text string) bool {
+	text = strings.TrimSpace(strings.ToLower(text))
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "?") {
+		return true
+	}
+	for _, prefix := range []string{
+		"what ", "why ", "when ", "where ", "who ", "which ", "how ",
+		"can ", "could ", "do ", "does ", "did ", "is ", "are ", "will ", "would ", "should ",
+		"tell me", "explain", "clarify",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) forceMaxDurationCloseIfNoReply(ctx context.Context, sess *CallSession) {
