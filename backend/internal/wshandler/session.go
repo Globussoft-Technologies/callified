@@ -71,6 +71,7 @@ type CallSession struct {
 	maxDurationSoftClose atomic.Bool
 	maxDurationWaitReply atomic.Bool
 	maxDurationClosing   atomic.Bool
+	finalCloseReq        atomic.Bool
 	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
@@ -386,10 +387,20 @@ func (s *CallSession) RequestMaxDurationClose() {
 	s.RequestHangup()
 }
 func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
-func (s *CallSession) StopDG()                    { s.dgAlive.Store(false) }
-func (s *CallSession) DGAlive() bool              { return s.dgAlive.Load() }
-func (s *CallSession) SetBargeIn(v bool)          { s.bargeInActive.Store(v) }
-func (s *CallSession) IsBargeInActive() bool      { return s.bargeInActive.Load() }
+func (s *CallSession) RequestFinalClose() {
+	s.finalCloseReq.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.SetBargeInPending(false)
+	s.SetBargeIn(false)
+	s.RequestHangup()
+}
+func (s *CallSession) IsFinalClosing() bool {
+	return s.finalCloseReq.Load() || s.IsMaxDurationClosing()
+}
+func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
+func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
+func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
+func (s *CallSession) IsBargeInActive() bool { return s.bargeInActive.Load() }
 
 // TriggerBargeIn is called by energy VAD when mic energy exceeds the threshold
 // while TTS is playing. Returns false if barge-in was triggered too recently
@@ -403,6 +414,11 @@ func (s *CallSession) TriggerBargeIn() bool {
 	if !s.lastBargeInNano.CompareAndSwap(last, now) {
 		return false // another goroutine won the race
 	}
+	s.interruptActiveTTS()
+	return true
+}
+
+func (s *CallSession) interruptActiveTTS() {
 	s.SetBargeIn(true)
 	s.DrainTTSSentences()
 	go func() {
@@ -417,10 +433,9 @@ func (s *CallSession) TriggerBargeIn() bool {
 	} else if s.IsExotel {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
 	}
-	if frame != nil {
+	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
 	}
-	return true
 }
 
 // TryBargeIn attempts to trigger a tentative barge-in when customer speech is
@@ -428,7 +443,7 @@ func (s *CallSession) TriggerBargeIn() bool {
 // be playing or recently finished (within 800ms of TTS end or 2000ms of last
 // audio sent), and it respects the cooldown/active/pending guards.
 func (s *CallSession) TryBargeIn(source string) bool {
-	if s.IsMaxDurationClosing() {
+	if s.IsFinalClosing() {
 		return false
 	}
 	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
@@ -459,7 +474,12 @@ func (s *CallSession) BargeInDeadline() int64 { return s.bargeInDeadline.Load() 
 // STT must confirm the interruption with a real transcript within 4s;
 // otherwise the barge-in is automatically cancelled so the AI can continue.
 func (s *CallSession) TentativeTriggerBargeIn() bool {
-	if !s.TriggerBargeIn() {
+	now := time.Now().UnixNano()
+	last := s.lastBargeInNano.Load()
+	if now-last < 500*int64(time.Millisecond) {
+		return false
+	}
+	if !s.lastBargeInNano.CompareAndSwap(last, now) {
 		return false
 	}
 	s.SetBargeInPending(true)
@@ -484,11 +504,12 @@ func (s *CallSession) ConfirmBargeIn() bool {
 	if !s.bargeInPending.CompareAndSwap(true, false) {
 		return false
 	}
-	if s.IsMaxDurationClosing() {
+	if s.IsFinalClosing() {
 		s.SetBargeIn(false)
-		s.Log.Info("barge-in: ignored during max-duration close")
+		s.Log.Info("barge-in: ignored during final close")
 		return true
 	}
+	s.interruptActiveTTS()
 	s.confirmedBargeInNano.Store(time.Now().UnixNano())
 	if s.HangupRequested() {
 		s.hangupReq.Store(false)
@@ -697,7 +718,7 @@ func (s *CallSession) MaxTokens(transcript string) int32 {
 		return tokens
 	}
 
-	perWord, minTok, maxTok := int32(24), int32(260), int32(600)
+	perWord, minTok, maxTok := int32(34), int32(500), int32(900)
 	if !isEnglish {
 		perWord = 36
 		minTok = 700

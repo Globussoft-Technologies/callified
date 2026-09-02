@@ -179,10 +179,11 @@ func TestMaxTokens(t *testing.T) {
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
 	assert.Equal(t, int32(756), sess.MaxTokens(longText), "long non-English transcript should be 756")
 
-	// English should keep the lower multiplier and cap.
+	// English keeps a lower cap than Indian languages but needs enough room
+	// for side questions and pricing turns without hitting max output.
 	sess.Language = "en"
-	assert.Equal(t, int32(260), sess.MaxTokens("test transcript"), "short English transcript should be 260")
-	assert.Equal(t, int32(504), sess.MaxTokens(longText), "long English transcript should be 504")
+	assert.Equal(t, int32(500), sess.MaxTokens("test transcript"), "short English transcript should be 500")
+	assert.Equal(t, int32(714), sess.MaxTokens(longText), "long English transcript should be 714")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).
@@ -213,6 +214,35 @@ func TestMaxDurationCloseCannotBeCancelledByBargeIn(t *testing.T) {
 	assert.False(t, sess.IsBargeInActive())
 }
 
+func TestFinalCloseCannotBeCancelledByBargeIn(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.SetBargeInPending(true)
+	sess.SetBargeIn(true)
+	sess.RequestFinalClose()
+
+	assert.False(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.HangupRequested())
+	assert.True(t, sess.IsFinalClosing())
+	assert.False(t, sess.IsBargeInActive())
+	assert.False(t, sess.IsBargeInPending())
+	assert.False(t, sess.TryBargeIn("unit-test"))
+}
+
+func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+
+	assert.True(t, sess.TentativeTriggerBargeIn())
+	assert.True(t, sess.IsBargeInPending())
+	assert.False(t, sess.IsBargeInActive())
+	assert.False(t, cancelled)
+
+	assert.True(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.IsBargeInActive())
+	assert.True(t, cancelled)
+}
+
 func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {
 	sess := NewCallSession("test_stream", nil, zap.NewNop())
 
@@ -240,7 +270,7 @@ func TestMaxDurationClosingLineAdaptsToFinalReply(t *testing.T) {
 
 func TestFillerSoundsDoNotCountAsSpeech(t *testing.T) {
 	for _, text := range []string{
-		"hmm", "mm-hmm", "Mm-hmm.", "mhm", "uhh", "ఉమ్.",
+		"hmm", "mm-hmm", "Mm-hmm.", "mhm", "uhh", "ఉమ్.", ".", "...", "?",
 	} {
 		assert.True(t, isFillerSound(text), text)
 		assert.True(t, isKnownFiller(text), text)
@@ -250,6 +280,7 @@ func TestFillerSoundsDoNotCountAsSpeech(t *testing.T) {
 	assert.False(t, isFillerSound("okay"))
 	assert.False(t, isFillerSound("haan"))
 	assert.False(t, isFillerSound("no"))
+	assert.False(t, isFillerSound("ok"))
 	assert.False(t, isFillerSound("okay tell me more"))
 	assert.False(t, isFillerSound("hello, who is speaking"))
 }

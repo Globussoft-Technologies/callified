@@ -35,6 +35,9 @@ func isFillerSound(text string) bool {
 		return false // multi-word transcripts are always real speech
 	}
 	word := normalizeFillerWord(words[0])
+	if word == "" {
+		return strings.TrimSpace(text) != ""
+	}
 	if _, ok := fillerSounds[word]; ok {
 		return true
 	}
@@ -46,6 +49,9 @@ func isFillerSound(text string) bool {
 // or "my", which are often the beginning of a real interruption.
 func isKnownFiller(text string) bool {
 	word := normalizeFillerWord(text)
+	if word == "" {
+		return strings.TrimSpace(text) != ""
+	}
 	_, ok := fillerSounds[word]
 	return ok
 }

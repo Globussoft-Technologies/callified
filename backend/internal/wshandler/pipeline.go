@@ -78,14 +78,14 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 // already waited 150ms and confirmed it's still current before calling us.
 // Mirrors Python's _process_transcript in ws_handler.py.
 func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
-	if sess.IsMaxDurationClosing() {
+	if sess.IsFinalClosing() {
 		return
 	}
 	// --- Voicemail detection (highest priority — runs before LLM, takeover, etc.) ---
 	// If the carrier picks up with "you have reached…" / "leave a message after the
 	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
 	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
-	if sess.HangupRequested() && !sess.IsBargeInActive() {
+	if sess.HangupRequested() && (!sess.IsBargeInActive() || sess.IsFinalClosing()) {
 		// Hangup was requested, but a barge-in means the customer interrupted the
 		// goodbye and wants to keep talking — let the turn through.
 		return
@@ -111,7 +111,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// Re-check stamp after acquiring lock: a newer transcript may have arrived
 	// while this goroutine was waiting for the lock. Allow the turn through if a
 	// barge-in is active, even if a hangup had been requested.
-	if sess.LastTranscript() != ts || (sess.HangupRequested() && !sess.IsBargeInActive()) {
+	if sess.LastTranscript() != ts || (sess.HangupRequested() && (!sess.IsBargeInActive() || sess.IsFinalClosing())) {
 		return
 	}
 
@@ -136,9 +136,14 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 		return
 	}
 
-	llmTranscript := transcript
+	// Turn-level control notes (barge-in guidance, repeated-question handling,
+	// manager whispers) are injected into the SYSTEM instruction for this
+	// request only — never into the customer's user-turn message. Notes placed
+	// in the user turn are treated as conversation content and the model
+	// paraphrases them aloud to the customer; system-level notes stay silent.
+	var turnNotes []string
 	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
-		llmTranscript = fmt.Sprintf("[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.] Customer said: %q", transcript)
+		turnNotes = append(turnNotes, "[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.]")
 	}
 	repeatIntent := ""
 	if provider != nil {
@@ -153,17 +158,20 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	repeatDecision := sess.RepeatedQuestionDecisionWithKey(transcript, repeatIntent)
 	allowHangupForTurn := repeatDecision.AllowHangup
 	if instruction := repeatDecision.Instruction; instruction != "" {
-		if llmTranscript == transcript {
-			llmTranscript = instruction + " Customer said: " + fmt.Sprintf("%q", transcript)
-		} else {
-			llmTranscript = instruction + " " + llmTranscript
-		}
+		turnNotes = append(turnNotes, instruction)
 	}
 
-	// --- Inject whispers (manager hints) as additional context ---
+	// --- Manager whispers: current-turn context only, not chat history ---
 	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
 	for _, w := range whispers {
-		sess.AppendHistory("user", "[Manager hint]: "+w)
+		turnNotes = append(turnNotes, "[Manager hint]: "+w)
+	}
+
+	systemPrompt := sess.SystemPrompt
+	if len(turnNotes) > 0 {
+		systemPrompt = sess.SystemPrompt +
+			"\n\n[TURN CONTROL NOTES — internal system data. NEVER speak, translate, paraphrase, summarize, or acknowledge any of this. It is invisible to the customer. Customer-facing reply only.]\n" +
+			strings.Join(turnNotes, "\n")
 	}
 
 	history := sess.HistorySnapshot()
@@ -177,14 +185,14 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	var err error
 	if provider != nil {
 		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
-			Transcript:              llmTranscript,
-			SystemPrompt:            sess.SystemPrompt,
+			Transcript:              transcript,
+			SystemPrompt:            systemPrompt,
 			History:                 history[:max(0, len(history)-1)], // exclude the turn we just added
 			Language:                sess.Language,
 			MaxTokens:               sess.MaxTokens(transcript),
 			DropIncompleteRemainder: sess.IsInbound,
 		}, func(chunk llm.SentenceChunk) {
-			if sess.IsMaxDurationClosing() {
+			if sess.IsFinalClosing() {
 				return
 			}
 			if firstChunk && chunk.Text != "" {
@@ -198,7 +206,11 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			if chunk.HasHangup {
 				if allowHangupForTurn {
 					hasHangup = true
-					sess.RequestHangup()
+					if repeatDecision.FinalClose {
+						sess.RequestFinalClose()
+					} else {
+						sess.RequestHangup()
+					}
 				} else {
 					sess.Log.Warn("repeat-question: suppressed early hangup")
 				}
@@ -288,7 +300,7 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 						sess.WS.Close() //nolint:errcheck
 						return
 					case <-ticker.C:
-						if !sess.HangupRequested() && !sess.IsMaxDurationClosing() {
+						if !sess.HangupRequested() && !sess.IsFinalClosing() {
 							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 							sess.Log.Info("hangup: aborted by barge-in")
 							return

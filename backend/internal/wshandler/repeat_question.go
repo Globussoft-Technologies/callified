@@ -25,6 +25,7 @@ type repeatQuestion struct {
 type repeatQuestionDecision struct {
 	Instruction string
 	AllowHangup bool
+	FinalClose  bool
 }
 
 func (s *CallSession) RepeatedQuestionDecision(text string) repeatQuestionDecision {
@@ -82,6 +83,7 @@ func (s *CallSession) RepeatedQuestionDecisionWithKey(text, intentKey string) re
 		return repeatQuestionDecision{
 			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not blame the customer and do not say you already answered. Give the short direct answer one last time, say the line may not be clear, say a senior teammate will follow up and explain better, thank them, and end with [HANGUP].]", count),
 			AllowHangup: true,
+			FinalClose:  true,
 		}
 	case count >= repeatQuestionEscalateAt:
 		return repeatQuestionDecision{

@@ -306,6 +306,7 @@ func buildDefaultPrompt(pc promptContext) string {
 13. ADVANCE ONLY AFTER ANSWER. You may only proceed to the next call-flow question after the customer answered the current one. An interruption, side question, or unclear reply does not count as an answer.
 14. REPEATED CUSTOMER QUESTIONS. If the customer asks the same question repeatedly, answer it in simpler words instead of repeating the same sentence. Do not say "I already answered", "multiple times", "unable to answer", or blame the customer. On the customer's third total ask of the same question, offer a senior callback and continue the call; do not end or use [HANGUP]. On the customer's fourth total ask of the same question, say a senior teammate will follow up, thank them, and close with [HANGUP].
 15. NO ACKNOWLEDGEMENT-ONLY ANSWERS. If the customer asks a product, company, price, or process question, never reply with only "sure", "certainly", "okay", the customer's name, or the translated equivalent in any language. Give the direct answer immediately in one or two short spoken sentences.
+16. INTERNAL NOTES ARE INVISIBLE. Any text in square brackets [...] — including TURN CONTROL NOTES and instructions about repeated questions, interruptions, or manager hints — is internal system data. NEVER speak it, translate it, paraphrase it, summarize it, or acknowledge it in any way. Reply only with the customer-facing answer or question.
 `)
 
 	// Per-language rule extras (forward signals, rejection detection, direct

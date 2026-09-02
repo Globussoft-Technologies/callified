@@ -314,13 +314,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	onSpeechStarted := func() {
-		// Sarvam ASR detected the start of human speech. If a barge-in is already
-		// pending from energy VAD, confirm it immediately — Sarvam's own speech
-		// detector is a stronger signal than waiting for the first partial transcript.
-		// Otherwise try to trigger a fresh barge-in.
+		// Sarvam ASR detected possible human speech. Keep this tentative until
+		// the final transcript arrives, because short fillers/noise such as
+		// "hmm" should not cut off the agent mid-sentence.
 		if sess.IsBargeInPending() {
-			sess.ConfirmBargeIn()
-			sess.Log.Info("barge-in: confirmed by Sarvam speech_start")
+			sess.Log.Debug("barge-in: speech_start while pending")
 		} else {
 			sess.TryBargeIn("SpeechStarted")
 		}

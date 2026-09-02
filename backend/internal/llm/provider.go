@@ -36,6 +36,7 @@ func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 // Mirrors Python ws_handler.py _process_transcript LLM section.
 func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest, onSentence func(SentenceChunk)) error {
 	var buf strings.Builder
+	metaFilter := newBracketedMetaFilter()
 
 	// All languages follow LLM_PROVIDER config.
 	useGemini := p.cfg.LLMProvider != "groq"
@@ -50,6 +51,10 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	)
 
 	onToken := func(token string) {
+		token = metaFilter.Write(token)
+		if token == "" {
+			return
+		}
 		buf.WriteString(token)
 		sentences, remainder := SplitBuffer(buf.String())
 		buf.Reset()
@@ -80,6 +85,41 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	}
 
 	return err
+}
+
+type bracketedMetaFilter struct {
+	inBracket bool
+	pending   strings.Builder
+}
+
+func newBracketedMetaFilter() *bracketedMetaFilter {
+	return &bracketedMetaFilter{}
+}
+
+func (f *bracketedMetaFilter) Write(token string) string {
+	var out strings.Builder
+	for _, r := range token {
+		if f.inBracket {
+			f.pending.WriteRune(r)
+			if r == ']' {
+				pending := f.pending.String()
+				if strings.EqualFold(strings.TrimSpace(pending), "[HANGUP]") {
+					out.WriteString("[HANGUP]")
+				}
+				f.pending.Reset()
+				f.inBracket = false
+			}
+			continue
+		}
+		if r == '[' {
+			f.inBracket = true
+			f.pending.Reset()
+			f.pending.WriteRune(r)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // ClassifyRepeatIntent returns a stable semantic key for repeated-question
@@ -179,6 +219,7 @@ func parseChunk(text string) (string, bool) {
 	hasHangup := strings.Contains(text, "[HANGUP]")
 	clean := strings.TrimSpace(strings.ReplaceAll(text, "[HANGUP]", ""))
 	clean = stripBracketedMeta(clean)
+	clean = stripLeakedControlNarration(clean)
 	return clean, hasHangup
 }
 
@@ -201,4 +242,96 @@ func stripBracketedMeta(text string) string {
 		end += start
 		text = strings.TrimSpace(text[:start] + " " + text[end+1:])
 	}
+}
+
+func stripLeakedControlNarration(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimLeft(text, ": \t\r\n]")
+	if !looksLikeControlNarration(text) {
+		return text
+	}
+
+	lower := strings.ToLower(text)
+	for _, anchor := range []string{
+		"i will keep it simple.",
+		"i need to re-ask it.",
+		"i need to re-ask.",
+		"before moving to the next step in the call flow.",
+		"the next step in the call flow.",
+		"call flow.",
+	} {
+		if idx := strings.Index(lower, anchor); idx >= 0 {
+			if rest := cleanControlNarrationRemainder(text[idx+len(anchor):]); rest != "" {
+				return rest
+			}
+		}
+	}
+
+	for _, boundary := range []string{". ", "] "} {
+		searchFrom := 0
+		for {
+			idx := strings.Index(text[searchFrom:], boundary)
+			if idx < 0 {
+				break
+			}
+			cut := searchFrom + idx + len(boundary)
+			rest := cleanControlNarrationRemainder(text[cut:])
+			if rest != "" && !looksLikeControlNarration(rest) {
+				return rest
+			}
+			searchFrom = cut
+		}
+	}
+	return ""
+}
+
+func cleanControlNarrationRemainder(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.TrimLeft(text, ": \t\r\n]")
+	return strings.TrimSpace(text)
+}
+
+func looksLikeControlNarration(text string) bool {
+	text = strings.TrimSpace(strings.TrimLeft(text, ": \t\r\n]"))
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	prefixes := []string{
+		"the customer",
+		"customer",
+		"the agent",
+		"agent",
+		"i need to",
+		"it seems",
+	}
+	hasPrefix := false
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(lower, prefix) {
+			hasPrefix = true
+			break
+		}
+	}
+	if !hasPrefix {
+		return false
+	}
+	markers := []string{
+		"customer's response",
+		"customer response",
+		"customer said",
+		"customer interrupted",
+		"does not directly answer",
+		"previous question",
+		"current question",
+		"qualifying question",
+		"call flow",
+		"re-ask",
+		"unclear",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
