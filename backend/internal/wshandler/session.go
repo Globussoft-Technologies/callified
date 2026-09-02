@@ -67,6 +67,10 @@ type CallSession struct {
 	ttsPlaying           atomic.Bool
 	hangupReq            atomic.Bool
 	dgAlive              atomic.Bool
+	maxDurationStarted   atomic.Bool
+	maxDurationSoftClose atomic.Bool
+	maxDurationWaitReply atomic.Bool
+	maxDurationClosing   atomic.Bool
 	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
@@ -114,14 +118,19 @@ type CallSession struct {
 	historyMu   sync.Mutex
 	ChatHistory []llm.ChatMessage
 
+	// Recent customer utterances used to keep repeated questions from looping.
+	repeatMu        sync.Mutex
+	recentQuestions []repeatQuestion
+
 	// Voice config — populated after InitializeCall gRPC returns
-	SystemPrompt string
-	GreetingText string
-	TTSProvider  string
-	TTSVoiceID   string
-	TTSLanguage  string
-	AgentName    string
-	Language     string
+	SystemPrompt           string
+	GreetingText           string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
+	AgentName              string
+	Language               string
 
 	// Deferred-init hooks. Real Exotel calls connect with empty URL params
 	// (the campaign context arrives later via the Redis "start" event), so
@@ -356,10 +365,31 @@ func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
 func (s *CallSession) RequestHangup()        { s.hangupReq.Store(true) }
 func (s *CallSession) HangupRequested() bool { return s.hangupReq.Load() }
-func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
-func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
-func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
-func (s *CallSession) IsBargeInActive() bool { return s.bargeInActive.Load() }
+func (s *CallSession) TryStartMaxDurationTimer() bool {
+	return s.maxDurationStarted.CompareAndSwap(false, true)
+}
+func (s *CallSession) RequestMaxDurationSoftClose() { s.maxDurationSoftClose.Store(true) }
+func (s *CallSession) IsMaxDurationSoftClosing() bool {
+	return s.maxDurationSoftClose.Load()
+}
+func (s *CallSession) RequestMaxDurationWaitReply() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(true)
+}
+func (s *CallSession) ConsumeMaxDurationWaitReply() bool {
+	return s.maxDurationWaitReply.CompareAndSwap(true, false)
+}
+func (s *CallSession) RequestMaxDurationClose() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.maxDurationClosing.Store(true)
+	s.RequestHangup()
+}
+func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
+func (s *CallSession) StopDG()                    { s.dgAlive.Store(false) }
+func (s *CallSession) DGAlive() bool              { return s.dgAlive.Load() }
+func (s *CallSession) SetBargeIn(v bool)          { s.bargeInActive.Store(v) }
+func (s *CallSession) IsBargeInActive() bool      { return s.bargeInActive.Load() }
 
 // TriggerBargeIn is called by energy VAD when mic energy exceeds the threshold
 // while TTS is playing. Returns false if barge-in was triggered too recently
@@ -398,6 +428,9 @@ func (s *CallSession) TriggerBargeIn() bool {
 // be playing or recently finished (within 800ms of TTS end or 2000ms of last
 // audio sent), and it respects the cooldown/active/pending guards.
 func (s *CallSession) TryBargeIn(source string) bool {
+	if s.IsMaxDurationClosing() {
+		return false
+	}
 	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
 	if !recentTTS || s.IsBargeInActive() || s.IsBargeInPending() {
 		return false
@@ -450,6 +483,11 @@ func (s *CallSession) TentativeTriggerBargeIn() bool {
 func (s *CallSession) ConfirmBargeIn() bool {
 	if !s.bargeInPending.CompareAndSwap(true, false) {
 		return false
+	}
+	if s.IsMaxDurationClosing() {
+		s.SetBargeIn(false)
+		s.Log.Info("barge-in: ignored during max-duration close")
+		return true
 	}
 	s.confirmedBargeInNano.Store(time.Now().UnixNano())
 	if s.HangupRequested() {
@@ -659,11 +697,11 @@ func (s *CallSession) MaxTokens(transcript string) int32 {
 		return tokens
 	}
 
-	perWord, minTok, maxTok := int32(20), int32(150), int32(400)
+	perWord, minTok, maxTok := int32(24), int32(260), int32(600)
 	if !isEnglish {
-		perWord = 30
-		minTok = 250
-		maxTok = 900
+		perWord = 36
+		minTok = 360
+		maxTok = 1100
 	}
 	words := len(strings.Fields(transcript))
 	tokens := int32(words) * perWord

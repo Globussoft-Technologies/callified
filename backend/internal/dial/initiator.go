@@ -18,16 +18,17 @@ import (
 
 // CallData holds the information needed to initiate one outbound call.
 type CallData struct {
-	LeadID      int64
-	LeadName    string
-	LeadPhone   string
-	CampaignID  int64
-	OrgID       int64
-	Interest    string
-	Language    string
-	TTSProvider string
-	TTSVoiceID  string
-	TTSLanguage string
+	LeadID                 int64
+	LeadName               string
+	LeadPhone              string
+	CampaignID             int64
+	OrgID                  int64
+	Interest               string
+	Language               string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
 	// IsBridge=true routes the call to browser-to-phone mode: the Exotel stream is
 	// relayed to the agent's browser WebSocket instead of the AI pipeline.
 	IsBridge bool
@@ -167,19 +168,20 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 
 	// 3. Store pending call info in Redis (wshandler reads this on stream connect)
 	pending := rstore.PendingCallInfo{
-		Name:        data.LeadName,
-		Phone:       data.LeadPhone,
-		LeadID:      data.LeadID,
-		OrgID:       data.OrgID,
-		Interest:    data.Interest,
-		CampaignID:  data.CampaignID,
-		TTSProvider: data.TTSProvider,
-		TTSVoiceID:  data.TTSVoiceID,
-		TTSLanguage: data.TTSLanguage,
-		IsBridge:    data.IsBridge,
-		SkipCredits: skipCredits,
-		UserEmail:   data.UserEmail,
-		UserID:      data.UserID,
+		Name:                   data.LeadName,
+		Phone:                  data.LeadPhone,
+		LeadID:                 data.LeadID,
+		OrgID:                  data.OrgID,
+		Interest:               data.Interest,
+		CampaignID:             data.CampaignID,
+		TTSProvider:            data.TTSProvider,
+		TTSVoiceID:             data.TTSVoiceID,
+		TTSLanguage:            data.TTSLanguage,
+		MaxCallDurationSeconds: data.MaxCallDurationSeconds,
+		IsBridge:               data.IsBridge,
+		SkipCredits:            skipCredits,
+		UserEmail:              data.UserEmail,
+		UserID:                 data.UserID,
 	}
 
 	// 4. Resolve provider credentials.

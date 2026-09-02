@@ -508,6 +508,7 @@ export function CallProvider({ children }) {
         tts_provider: campVoice.tts_provider || activeVoiceProvider,
         voice: campVoice.tts_voice_id || activeVoiceId,
         tts_language: campVoice.tts_language || activeLanguage,
+        max_call_duration_seconds: String(campVoice.max_call_duration_seconds || 0),
         campaign_id: String(campaignId),
       }).toString();
 

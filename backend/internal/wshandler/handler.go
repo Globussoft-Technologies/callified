@@ -155,6 +155,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("voice"); v != "" {
 		sess.TTSVoiceID = v
 	}
+	if d := q.Get("max_call_duration_seconds"); d != "" {
+		fmt.Sscanf(d, "%d", &sess.MaxCallDurationSeconds)
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -257,6 +260,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and merges by confidence within 300ms — recovers Hindi misclassified by
 	// Deepgram's "multi" mode. Mirrors main-branch ws_handler.py 4aa3fa3.
 	onTranscript := func(text string) {
+		if sess.IsMaxDurationClosing() {
+			return
+		}
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
@@ -462,6 +468,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		startSTT()
 		sendGreeting()
 	}
+	h.startMaxCallDurationTimer(ctx, sess)
 
 	// --- g1: WebSocket message loop ---
 	done := h.messageLoop(ctx, sess)
@@ -861,6 +868,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					sess.TTSLanguage = info.TTSLanguage
 					sess.Language = info.TTSLanguage
 				}
+				if info.MaxCallDurationSeconds > 0 {
+					sess.MaxCallDurationSeconds = info.MaxCallDurationSeconds
+				}
 				// Carry credit-bypass flag from the dial initiator so post-call
 				// deduction can be skipped for unlimited manual calls.
 				sess.SkipCredits = info.SkipCredits
@@ -911,6 +921,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					if sess.SendGreeting != nil {
 						sess.SendGreeting()
 					}
+					h.startMaxCallDurationTimer(ctx, sess)
 				}
 			}
 			if sess.IsInbound && !sess.IsBridge {
@@ -930,6 +941,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				if sess.SendGreeting != nil {
 					sess.SendGreeting()
 				}
+				h.startMaxCallDurationTimer(ctx, sess)
 			}
 		}
 	}
@@ -1119,6 +1131,9 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 		sess.TTSLanguage = callCtx.TTSLanguage
 		sess.Language = callCtx.TTSLanguage // drives Deepgram language + LLM prompt language
 	}
+	if hasRealContext && sess.MaxCallDurationSeconds == 0 && callCtx.MaxCallDurationSeconds > 0 {
+		sess.MaxCallDurationSeconds = callCtx.MaxCallDurationSeconds
+	}
 	if callCtx.AgentName != "" {
 		sess.AgentName = callCtx.AgentName
 	}
@@ -1138,6 +1153,159 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 		}
 	}
 	return nil
+}
+
+func (h *Handler) startMaxCallDurationTimer(ctx context.Context, sess *CallSession) {
+	if sess.IsBridge || sess.MaxCallDurationSeconds <= 0 || !sess.TryStartMaxDurationTimer() {
+		return
+	}
+	limit := time.Duration(sess.MaxCallDurationSeconds) * time.Second
+	wait := limit - time.Since(sess.CallStart)
+	if wait < 0 {
+		wait = 0
+	}
+	softLead := maxDurationSoftLead(limit)
+	softWait := wait - softLead
+	sess.Log.Info("max call duration: timer started",
+		zap.Duration("limit", limit),
+		zap.Duration("wait", wait),
+		zap.Duration("soft_lead", softLead))
+
+	go func() {
+		hardWait := wait
+		if softWait > 0 {
+			softTimer := time.NewTimer(softWait)
+			select {
+			case <-ctx.Done():
+				softTimer.Stop()
+				return
+			case <-softTimer.C:
+				sess.RequestMaxDurationSoftClose()
+				sess.Log.Info("max call duration: wrap-up mode started",
+					zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+			}
+			hardWait = softLead
+		} else {
+			sess.RequestMaxDurationSoftClose()
+		}
+		timer := time.NewTimer(hardWait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if sess.HangupRequested() {
+			return
+		}
+		sess.RequestMaxDurationWaitReply()
+		sess.Log.Info("max call duration: waiting for final customer reply",
+			zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+		go h.forceMaxDurationCloseIfNoReply(ctx, sess)
+	}()
+}
+
+func maxDurationSoftLead(limit time.Duration) time.Duration {
+	if limit <= 45*time.Second {
+		return 8 * time.Second
+	}
+	lead := limit / 5
+	if lead < 10*time.Second {
+		return 10 * time.Second
+	}
+	if lead > 30*time.Second {
+		return 30 * time.Second
+	}
+	return lead
+}
+
+func maxDurationClosingLine(language string) string {
+	switch language {
+	case "hi":
+		return "ठीक है, धन्यवाद. मैं अभी यहीं रोकता हूँ. हमारी टीम आगे की जानकारी के साथ follow up करेगी."
+	case "mr":
+		return "ठीक आहे, धन्यवाद. मी आत्ता इथेच थांबतो. आमची टीम पुढील माहिती घेऊन follow up करेल."
+	case "te":
+		return "సరే, ధన్యవాదాలు. నేను ఇప్పటికి ఇక్కడే ఆపుతాను. మా టీమ్ మరిన్ని వివరాలతో follow up చేస్తుంది."
+	case "ta":
+		return "சரி, நன்றி. நான் இப்போது இங்கே நிறுத்துகிறேன். எங்கள் team மேலும் விவரங்களுடன் follow up செய்யும்."
+	case "kn":
+		return "ಸರಿ, ಧನ್ಯವಾದಗಳು. ನಾನು ಈಗ ಇಲ್ಲಿಯೇ ನಿಲ್ಲಿಸುತ್ತೇನೆ. ನಮ್ಮ team ಹೆಚ್ಚಿನ ವಿವರಗಳೊಂದಿಗೆ follow up ಮಾಡುತ್ತದೆ."
+	case "bn":
+		return "ঠিক আছে, ধন্যবাদ. আমি এখন এখানেই থামছি. আমাদের team আরও details নিয়ে follow up করবে."
+	case "gu":
+		return "બરાબર, આભાર. હું અત્યારે અહીં જ અટકું છું. અમારી team વધુ માહિતી સાથે follow up કરશે."
+	case "pa":
+		return "ਠੀਕ ਹੈ, ਧੰਨਵਾਦ. ਮੈਂ ਹੁਣ ਇੱਥੇ ਹੀ ਰੁਕਦਾ ਹਾਂ. ਸਾਡੀ team ਹੋਰ ਜਾਣਕਾਰੀ ਨਾਲ follow up ਕਰੇਗੀ."
+	case "ml":
+		return "ശരി, നന്ദി. ഞാൻ ഇപ്പോൾ ഇവിടെ നിർത്തുന്നു. കൂടുതൽ വിവരങ്ങളുമായി ഞങ്ങളുടെ team follow up ചെയ്യും."
+	default:
+		return "Alright, thank you. Our senior employee will contact you with more details. Have a great day."
+	}
+}
+
+func (h *Handler) forceMaxDurationCloseIfNoReply(ctx context.Context, sess *CallSession) {
+	delay := sess.PlaybackTracker.RemainingDuration() + 25*time.Second
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	if sess.HangupRequested() || sess.IsMaxDurationClosing() || !sess.ConsumeMaxDurationWaitReply() {
+		return
+	}
+	closeLine := maxDurationClosingLine(sess.Language)
+	sess.Log.Info("max call duration: closing without final reply",
+		zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+	sess.RequestMaxDurationClose()
+	sess.BroadcastTranscript("agent", closeLine)
+	sess.AppendHistory("model", closeLine)
+	select {
+	case sess.TTSSentences <- closeLine:
+	default:
+	}
+	select {
+	case sess.TTSSentences <- "":
+	default:
+	}
+	go h.forceMaxDurationHangup(sess, closeLine)
+}
+
+func (h *Handler) forceMaxDurationHangup(sess *CallSession, spokenLine string) {
+	delay := sess.PlaybackTracker.RemainingDuration() + estimateSpeechDuration(spokenLine) + 4*time.Second
+	time.Sleep(delay)
+	if !sess.IsMaxDurationClosing() {
+		return
+	}
+	if sess.WS != nil {
+		_ = sess.WS.Close()
+	}
+	if h.initiator != nil && sess.CallSid != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.initiator.Hangup(ctx, sess.CallSid, sess.CampaignID); err != nil {
+			sess.Log.Warn("max call duration: carrier hangup failed",
+				zap.String("call_sid", sess.CallSid),
+				zap.Error(err))
+		}
+	}
+}
+
+func estimateSpeechDuration(text string) time.Duration {
+	words := len(strings.Fields(text))
+	if words == 0 {
+		words = len([]rune(text)) / 8
+	}
+	d := time.Duration(words) * 350 * time.Millisecond
+	if d < 2*time.Second {
+		return 2 * time.Second
+	}
+	if d > 10*time.Second {
+		return 10 * time.Second
+	}
+	return d
 }
 
 // finalizeCall runs post-call processing (Phase 4: native Go, no gRPC).

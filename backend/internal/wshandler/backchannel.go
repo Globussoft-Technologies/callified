@@ -138,4 +138,3 @@ func isExplicitLangSwitch(text string) (targetLang string, ok bool) {
 	}
 	return "", false
 }
-

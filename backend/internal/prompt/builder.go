@@ -15,11 +15,12 @@ type CallContext struct {
 	SystemPrompt string
 	GreetingText string
 	// Voice config — populated from campaign/org voice settings
-	TTSProvider string
-	TTSVoiceID  string
-	TTSLanguage string
-	AgentName   string // org name, used for WA/email confirmations
-	PersonaName string // voice persona name (e.g. "आदित्य"), used inside greeting + system prompt
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
+	AgentName              string // org name, used for WA/email confirmations
+	PersonaName            string // voice persona name (e.g. "आदित्य"), used inside greeting + system prompt
 }
 
 // ── voice identity data ───────────────────────────────────────────────────────
@@ -211,13 +212,14 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	greeting := buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang)
 
 	return &CallContext{
-		SystemPrompt: systemPrompt,
-		GreetingText: greeting,
-		TTSProvider:  vs.TTSProvider,
-		TTSVoiceID:   vs.TTSVoiceID,
-		TTSLanguage:  vs.TTSLanguage,
-		AgentName:    coalesce(orgName, "Callified AI"),
-		PersonaName:  personaName,
+		SystemPrompt:           systemPrompt,
+		GreetingText:           greeting,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		AgentName:              coalesce(orgName, "Callified AI"),
+		PersonaName:            personaName,
 	}, nil
 }
 
@@ -302,6 +304,8 @@ func buildDefaultPrompt(pc promptContext) string {
 11. NEVER REVEAL YOU ARE AN AI. If asked, deflect naturally and stay in character.
 12. VALIDATE OPTION ANSWERS. When you ask a question with specific options, the customer's reply must clearly match one of those options before you move on. Do not guess, assume, or infer an answer from unrelated replies. If the reply is off-topic, unclear, a joke, or a question back, respond briefly if needed and re-ask the same option question politely. If the customer rejects one option, ask again with the remaining relevant options. If the customer asks to switch language, switch language and re-ask the same question.
 13. ADVANCE ONLY AFTER ANSWER. You may only proceed to the next call-flow question after the customer answered the current one. An interruption, side question, or unclear reply does not count as an answer.
+14. REPEATED CUSTOMER QUESTIONS. If the customer asks the same question repeatedly, answer it in simpler words instead of repeating the same sentence. Do not say "I already answered", "multiple times", "unable to answer", or blame the customer. On the customer's third total ask of the same question, offer a senior callback and continue the call; do not end or use [HANGUP]. On the customer's fourth total ask of the same question, say a senior teammate will follow up, thank them, and close with [HANGUP].
+15. NO ACKNOWLEDGEMENT-ONLY ANSWERS. If the customer asks a product, company, price, or process question, never reply with only "sure", "certainly", "okay", the customer's name, or the translated equivalent in any language. Give the direct answer immediately in one or two short spoken sentences.
 `)
 
 	// Per-language rule extras (forward signals, rejection detection, direct

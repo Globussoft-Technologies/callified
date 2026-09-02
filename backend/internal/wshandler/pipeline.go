@@ -78,6 +78,9 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 // already waited 150ms and confirmed it's still current before calling us.
 // Mirrors Python's _process_transcript in ws_handler.py.
 func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
+	if sess.IsMaxDurationClosing() {
+		return
+	}
 	// --- Voicemail detection (highest priority — runs before LLM, takeover, etc.) ---
 	// If the carrier picks up with "you have reached…" / "leave a message after the
 	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
@@ -114,10 +117,37 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
+	sess.AppendHistory("user", transcript)
+
+	if sess.ConsumeMaxDurationWaitReply() {
+		closeLine := maxDurationClosingLine(sess.Language)
+		sess.RequestMaxDurationClose()
+		sess.BroadcastTranscript("agent", closeLine)
+		sess.AppendHistory("model", closeLine)
+		select {
+		case sess.TTSSentences <- closeLine:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case sess.TTSSentences <- "":
+		case <-ctx.Done():
+		}
+		return
+	}
 
 	llmTranscript := transcript
 	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
 		llmTranscript = fmt.Sprintf("[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.] Customer said: %q", transcript)
+	}
+	repeatDecision := sess.RepeatedQuestionDecision(transcript)
+	allowHangupForTurn := repeatDecision.AllowHangup
+	if instruction := repeatDecision.Instruction; instruction != "" {
+		if llmTranscript == transcript {
+			llmTranscript = instruction + " Customer said: " + fmt.Sprintf("%q", transcript)
+		} else {
+			llmTranscript = instruction + " " + llmTranscript
+		}
 	}
 
 	// --- Inject whispers (manager hints) as additional context ---
@@ -126,8 +156,6 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 		sess.AppendHistory("user", "[Manager hint]: "+w)
 	}
 
-	// --- Record user transcript in history ---
-	sess.AppendHistory("user", transcript)
 	history := sess.HistorySnapshot()
 
 	// --- Call LLM (streaming) with latency tracking ---
@@ -146,6 +174,9 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			MaxTokens:               sess.MaxTokens(transcript),
 			DropIncompleteRemainder: sess.IsInbound,
 		}, func(chunk llm.SentenceChunk) {
+			if sess.IsMaxDurationClosing() {
+				return
+			}
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk
 				metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
@@ -155,8 +186,12 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 				sess.SetBargeIn(false)
 			}
 			if chunk.HasHangup {
-				hasHangup = true
-				sess.RequestHangup()
+				if allowHangupForTurn {
+					hasHangup = true
+					sess.RequestHangup()
+				} else {
+					sess.Log.Warn("repeat-question: suppressed early hangup")
+				}
 			}
 			if chunk.Text != "" {
 				responseBuilder.WriteString(chunk.Text)
@@ -211,7 +246,8 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 			}
 			if sentence == "" {
 				// HANGUP sentinel: wait for remaining audio then close. Abort if a
-				// barge-in cancels the hangup before playback finishes.
+				// barge-in cancels a normal hangup before playback finishes. A
+				// max-duration close is final and cannot be cancelled by late speech.
 				remaining := sess.PlaybackTracker.RemainingDuration()
 				sess.Log.Info("hangup: waiting for playback drain",
 					zap.Duration("remaining", remaining))
@@ -229,7 +265,7 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 						sess.WS.Close() //nolint:errcheck
 						return
 					case <-ticker.C:
-						if !sess.HangupRequested() {
+						if !sess.HangupRequested() && !sess.IsMaxDurationClosing() {
 							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 							sess.Log.Info("hangup: aborted by barge-in")
 							return

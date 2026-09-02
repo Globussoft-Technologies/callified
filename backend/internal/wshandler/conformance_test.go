@@ -169,20 +169,20 @@ func TestBinaryFrameAccepted(t *testing.T) {
 func TestMaxTokens(t *testing.T) {
 	sess := &CallSession{Language: "hi"}
 
-	// Short transcript (2 words → 60) clamped to non-English minimum 250
-	assert.Equal(t, int32(250), sess.MaxTokens("test transcript"), "short non-English transcript should be 250")
+	// Short transcript (2 words → 72) clamped to non-English minimum 360
+	assert.Equal(t, int32(360), sess.MaxTokens("test transcript"), "short non-English transcript should be 360")
 
-	// Medium transcript (10 words → 300)
-	assert.Equal(t, int32(300), sess.MaxTokens("one two three four five six seven eight nine ten"))
+	// Medium transcript (10 words → 360)
+	assert.Equal(t, int32(360), sess.MaxTokens("one two three four five six seven eight nine ten"))
 
-	// Long transcript (>20 words → >600) clamped to non-English maximum 900
+	// Long transcript (>20 words → 756)
 	longText := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone"
-	assert.Equal(t, int32(630), sess.MaxTokens(longText), "long non-English transcript should be 630")
+	assert.Equal(t, int32(756), sess.MaxTokens(longText), "long non-English transcript should be 756")
 
 	// English should keep the lower multiplier and cap.
 	sess.Language = "en"
-	assert.Equal(t, int32(150), sess.MaxTokens("test transcript"), "short English transcript should be 150")
-	assert.Equal(t, int32(400), sess.MaxTokens(longText), "long English transcript should be 400")
+	assert.Equal(t, int32(260), sess.MaxTokens("test transcript"), "short English transcript should be 260")
+	assert.Equal(t, int32(504), sess.MaxTokens(longText), "long English transcript should be 504")
 }
 
 // TestGreetingSentOnce verifies TrySetGreeting is idempotent (atomic CAS).
@@ -199,6 +199,28 @@ func TestHangupFlag(t *testing.T) {
 	assert.False(t, sess.HangupRequested())
 	sess.RequestHangup()
 	assert.True(t, sess.HangupRequested())
+}
+
+func TestMaxDurationCloseCannotBeCancelledByBargeIn(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.SetBargeInPending(true)
+	sess.SetBargeIn(true)
+	sess.RequestMaxDurationClose()
+
+	assert.True(t, sess.ConfirmBargeIn())
+	assert.True(t, sess.HangupRequested())
+	assert.True(t, sess.IsMaxDurationClosing())
+	assert.False(t, sess.IsBargeInActive())
+}
+
+func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+
+	sess.RequestMaxDurationWaitReply()
+
+	assert.True(t, sess.IsMaxDurationSoftClosing())
+	assert.True(t, sess.ConsumeMaxDurationWaitReply())
+	assert.False(t, sess.ConsumeMaxDurationWaitReply())
 }
 
 // TestMsSinceTTSEnd_BeforeFirstMark returns 9999 (no TTS yet).

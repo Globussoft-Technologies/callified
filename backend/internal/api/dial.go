@@ -98,17 +98,18 @@ func (s *Server) dialLead(w http.ResponseWriter, r *http.Request) {
 	vs, _ := s.db.GetCampaignVoiceSettings(body.CampaignID)
 
 	data := dial.CallData{
-		LeadID:      lead.ID,
-		LeadName:    lead.FirstName + " " + lead.LastName,
-		LeadPhone:   lead.Phone,
-		CampaignID:  body.CampaignID,
-		OrgID:       ac.OrgID,
-		Interest:    lead.Interest,
-		TTSProvider: vs.TTSProvider,
-		TTSVoiceID:  vs.TTSVoiceID,
-		TTSLanguage: vs.TTSLanguage,
-		UserEmail:   ac.Email,
-		UserID:      userIDForDial(ac),
+		LeadID:                 lead.ID,
+		LeadName:               lead.FirstName + " " + lead.LastName,
+		LeadPhone:              lead.Phone,
+		CampaignID:             body.CampaignID,
+		OrgID:                  ac.OrgID,
+		Interest:               lead.Interest,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		UserEmail:              ac.Email,
+		UserID:                 userIDForDial(ac),
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -170,18 +171,19 @@ func (s *Server) campaignDialLead(w http.ResponseWriter, r *http.Request) {
 	vs, _ := s.db.GetCampaignVoiceSettings(campaignID)
 
 	data := dial.CallData{
-		LeadID:          lead.ID,
-		LeadName:        lead.FirstName + " " + lead.LastName,
-		LeadPhone:       lead.Phone,
-		CampaignID:      campaignID,
-		OrgID:           ac.OrgID,
-		Interest:        lead.Interest,
-		TTSProvider:     vs.TTSProvider,
-		TTSVoiceID:      vs.TTSVoiceID,
-		TTSLanguage:     vs.TTSLanguage,
-		UserEmail:       ac.Email,
-		UserID:          userIDForDial(ac),
-		ExotelAccountID: body.ExotelAccountID,
+		LeadID:                 lead.ID,
+		LeadName:               lead.FirstName + " " + lead.LastName,
+		LeadPhone:              lead.Phone,
+		CampaignID:             campaignID,
+		OrgID:                  ac.OrgID,
+		Interest:               lead.Interest,
+		TTSProvider:            vs.TTSProvider,
+		TTSVoiceID:             vs.TTSVoiceID,
+		TTSLanguage:            vs.TTSLanguage,
+		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+		UserEmail:              ac.Email,
+		UserID:                 userIDForDial(ac),
+		ExotelAccountID:        body.ExotelAccountID,
 	}
 
 	if _, err := s.initiator.Initiate(r.Context(), data); err != nil {
@@ -280,17 +282,18 @@ func (s *Server) campaignDialAll(w http.ResponseWriter, r *http.Request) {
 	queue := make([]dial.CallData, 0, len(dialable))
 	for _, l := range dialable {
 		queue = append(queue, dial.CallData{
-			LeadID:          l.ID,
-			LeadName:        l.FirstName + " " + l.LastName,
-			LeadPhone:       l.Phone,
-			CampaignID:      campaignID,
-			OrgID:           ac.OrgID,
-			Interest:        l.Interest,
-			TTSProvider:     vs.TTSProvider,
-			TTSVoiceID:      vs.TTSVoiceID,
-			TTSLanguage:     vs.TTSLanguage,
-			UserEmail:       ac.Email,
-			ExotelAccountID: body.ExotelAccountID,
+			LeadID:                 l.ID,
+			LeadName:               l.FirstName + " " + l.LastName,
+			LeadPhone:              l.Phone,
+			CampaignID:             campaignID,
+			OrgID:                  ac.OrgID,
+			Interest:               l.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+			UserEmail:              ac.Email,
+			ExotelAccountID:        body.ExotelAccountID,
 		})
 	}
 
@@ -394,16 +397,17 @@ func (s *Server) campaignRedialFailed(w http.ResponseWriter, r *http.Request) {
 	queue := make([]dial.CallData, 0, len(leads))
 	for _, lead := range leads {
 		queue = append(queue, dial.CallData{
-			LeadID:      lead.ID,
-			LeadName:    lead.FirstName + " " + lead.LastName,
-			LeadPhone:   lead.Phone,
-			CampaignID:  campaignID,
-			OrgID:       ac.OrgID,
-			Interest:    lead.Interest,
-			TTSProvider: vs.TTSProvider,
-			TTSVoiceID:  vs.TTSVoiceID,
-			TTSLanguage: vs.TTSLanguage,
-			UserEmail:   ac.Email,
+			LeadID:                 lead.ID,
+			LeadName:               lead.FirstName + " " + lead.LastName,
+			LeadPhone:              lead.Phone,
+			CampaignID:             campaignID,
+			OrgID:                  ac.OrgID,
+			Interest:               lead.Interest,
+			TTSProvider:            vs.TTSProvider,
+			TTSVoiceID:             vs.TTSVoiceID,
+			TTSLanguage:            vs.TTSLanguage,
+			MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
+			UserEmail:              ac.Email,
 		})
 	}
 
