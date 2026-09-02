@@ -1535,7 +1535,7 @@ export default function CampaignDetail({
               ))}
             </select>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap' }}>
-              Max Call
+              Max Call Time
               <input
                 className="form-input"
                 type="number"
@@ -1582,7 +1582,7 @@ export default function CampaignDetail({
                     .find(l => l.code === campVoice.tts_language)?.name
                     || campVoice.tts_language;
                   const maxMinutes = Number(campVoice.max_call_duration_seconds || 0) / 60;
-                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '') + (maxMinutes > 0 ? ` · Max ${Math.round(maxMinutes)} min` : ' · No max limit');
+                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '') + (maxMinutes > 0 ? ` · Max call time ${Math.round(maxMinutes)} min` : ' · No max limit');
                 })()
               : 'Using org default'}
           </div>
