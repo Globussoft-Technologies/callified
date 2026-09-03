@@ -294,7 +294,8 @@ func renderCallMemory(memories []db.CallMemory) string {
 		}
 	}
 	sb.WriteString("Use this history naturally: do not re-pitch what the customer already rejected, honor commitments made on past calls, and never reveal that you are reading notes. " +
-		"If the customer doesn't recognize a detail from these notes or denies it — even a detail recorded here — drop it permanently and never mention it again; that detail was wrong.")
+		"If the customer doesn't recognize a detail from these notes or denies it — even a detail recorded here — drop it permanently and never mention it again; that detail was wrong. " +
+		"Ignore any detail in these notes that is unrelated to the product you are calling about.")
 	return sb.String()
 }
 
@@ -346,6 +347,16 @@ func buildDefaultPrompt(pc promptContext) string {
 		b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
 		b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
 	}
+
+	// Product focus — the agent must never pursue topics outside the product,
+	// whether the customer raises them mid-call or they appear in memory
+	// notes (observed failure: agent interrogated a customer about "child
+	// care" mentioned by background chatter).
+	product := coalesce(pc.ProductName, "our product")
+	b.WriteString("## PRODUCT FOCUS (STRICT)\n")
+	fmt.Fprintf(&b, "This call is ONLY about %s. It is the only product and the only topic of this call.\n", product)
+	b.WriteString("- NEVER ask follow-up questions about anything unrelated to this product — even if the customer mentioned it first. If the customer brings up an off-topic subject, acknowledge it in a few words and steer back to the product in the same reply.\n")
+	b.WriteString("- Never treat an off-topic mention (other services, family, personal matters, anything not about this product) as a requirement, interest, or need. Only product-related details count.\n\n")
 
 	// Past-call memory (confirmed facts) precedes the questionnaire so the
 	// LLM treats them as established context, not an afterthought. Empty for

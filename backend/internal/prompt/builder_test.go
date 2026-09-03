@@ -30,6 +30,8 @@ func TestRenderCallMemoryIncludesFields(t *testing.T) {
 	assert.Contains(t, out, "festival discount")
 	// Guardrail instruction must be present so the agent never speaks the notes.
 	assert.Contains(t, out, "never speak")
+	// Off-topic details from dirty notes must be ignored.
+	assert.Contains(t, out, "unrelated to the product")
 }
 
 // The memory block must precede the CALL FLOW questionnaire: confirmed
