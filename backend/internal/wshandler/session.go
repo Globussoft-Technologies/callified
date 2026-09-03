@@ -14,6 +14,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -420,6 +421,7 @@ func (s *CallSession) TriggerBargeIn() bool {
 
 func (s *CallSession) interruptActiveTTS() {
 	s.SetBargeIn(true)
+	metrics.BargeIns.Inc()
 	s.DrainTTSSentences()
 	go func() {
 		time.Sleep(3 * time.Second)
