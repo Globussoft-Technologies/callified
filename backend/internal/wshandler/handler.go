@@ -1104,6 +1104,11 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	}
 	sess.SystemPrompt = callCtx.SystemPrompt
 	sess.GreetingText = callCtx.GreetingText
+	if callCtx.CallMemoryCount > 0 {
+		sess.Log.Info("call memory injected",
+			zap.Int("entries", callCtx.CallMemoryCount),
+			zap.Int64("lead_id", sess.LeadID))
+	}
 	// Only fill in TTS fields the caller didn't already set via query params.
 	// The Sandbox / web-sim flow passes ?tts_provider=&voice=&tts_language=
 	// to override the org default for one session — without this guard, the

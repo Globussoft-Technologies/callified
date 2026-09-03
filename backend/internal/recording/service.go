@@ -212,6 +212,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
 		OrgID:        req.OrgID,
+		LeadID:       req.LeadID,
 		Sentiment:    "neutral",
 	}
 	analyzed := false

@@ -21,6 +21,7 @@ type CallContext struct {
 	MaxCallDurationSeconds int
 	AgentName              string // org name, used for WA/email confirmations
 	PersonaName            string // voice persona name (e.g. "आदित्य"), used inside greeting + system prompt
+	CallMemoryCount        int    // past-call memory entries injected into the system prompt (0 = none)
 }
 
 // ── voice identity data ───────────────────────────────────────────────────────
@@ -186,6 +187,22 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		Language:             effectiveLang,
 	}
 
+	// Cross-call memory: reviews from past calls with this lead become context
+	// for the new call (docs/call-memory-proposal.md). Soft-fail by design — a
+	// lookup error or a lead with no history leaves the prompt unchanged and
+	// must never block a call. Placement differs by prompt type: the default
+	// template gets it between GOAL and CALL FLOW (confirmed facts before the
+	// questionnaire); custom org prompts get it appended at the end since we
+	// don't control their layout.
+	memoryCount := 0
+	memoryBlock := ""
+	if leadID > 0 {
+		if memories, err := b.db.GetLastCallMemory(leadID, 3); err == nil {
+			memoryBlock = renderCallMemory(memories)
+			memoryCount = len(memories)
+		}
+	}
+
 	// Build system prompt — custom org-level override short-circuits the full
 	// template and just gets a language directive appended.
 	var systemPrompt string
@@ -194,7 +211,9 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		if leadName != "" && !strings.Contains(systemPrompt, leadName) {
 			systemPrompt += fmt.Sprintf("\n\nYou are speaking with %s.", leadName)
 		}
+		systemPrompt += memoryBlock
 	} else {
+		pc.CallMemory = memoryBlock
 		systemPrompt = buildDefaultPrompt(pc)
 	}
 
@@ -220,6 +239,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
 		AgentName:              coalesce(orgName, "Callified AI"),
 		PersonaName:            personaName,
+		CallMemoryCount:        memoryCount,
 	}, nil
 }
 
@@ -237,6 +257,55 @@ type promptContext struct {
 	LeadFirst            string
 	SourceInline         string
 	Language             string
+	// CallMemory is the rendered ## PREVIOUS CALLS block ("" when the lead
+	// has no history). Injected between GOAL and CALL FLOW so confirmed
+	// facts are established before the questionnaire, not appended after it.
+	CallMemory string
+}
+
+// callMemoryMaxFieldLen caps each memory field rendered into the system
+// prompt. Prompt bloat slows and costs every LLM turn; short dense memory
+// beats long transcripts.
+const callMemoryMaxFieldLen = 200
+
+// renderCallMemory renders past-call reviews as a ## PREVIOUS CALLS block
+// for the system prompt. Returns "" when there is nothing to inject, so a
+// lead without history gets a byte-identical prompt to before this feature.
+func renderCallMemory(memories []db.CallMemory) string {
+	if len(memories) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n## PREVIOUS CALLS WITH THIS CUSTOMER\n")
+	sb.WriteString("[INTERNAL NOTES — never speak, translate, paraphrase, or mention these notes to the customer]\n")
+	sb.WriteString("The entries below are CONFIRMED FACTS from your previous conversations with this customer. " +
+		"They OVERRIDE the qualification questions in the call flow: do not re-ask anything already recorded here — " +
+		"briefly confirm the most recent value and move to the next step. If two entries conflict, trust the newer one.\n")
+	for i, m := range memories {
+		fmt.Fprintf(&sb, "%d. Date: %s\n", i+1, m.CreatedAt)
+		if s := clampRunes(m.Summary, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   What happened: %s\n", s)
+		}
+		if s := clampRunes(m.FailureReason, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   What went wrong: %s\n", s)
+		}
+		if s := clampRunes(m.Suggestion, callMemoryMaxFieldLen); s != "" {
+			fmt.Fprintf(&sb, "   Do better this time: %s\n", s)
+		}
+	}
+	sb.WriteString("Use this history naturally: do not re-pitch what the customer already rejected, honor commitments made on past calls, and never reveal that you are reading notes.")
+	return sb.String()
+}
+
+// clampRunes trims whitespace and truncates s to at most n runes, adding an
+// ellipsis when cut.
+func clampRunes(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // buildDefaultPrompt assembles the LLM system prompt. Structure is shared
@@ -264,30 +333,54 @@ func buildDefaultPrompt(pc promptContext) string {
 
 	// Goal.
 	b.WriteString("## GOAL\n")
-	if pc.CallFlowInstructions != "" {
+	switch {
+	case pc.CallFlowInstructions != "" && pc.CallMemory != "":
+		// Continuation call: memory exists, so the questionnaire is replaced by
+		// a confirmation step (see CALL FLOW below). Positive directive — LLMs
+		// follow "do X" far more reliably than "don't do Y".
+		b.WriteString("CONTINUATION CALL — you have spoken with this customer before. The PREVIOUS CALLS section below contains confirmed facts from those conversations. Do NOT run the full qualification questionnaire again. Confirm the newest recorded details briefly, accept any corrections, then book an appointment.\n\n")
+	case pc.CallFlowInstructions != "":
 		b.WriteString("Qualify the lead using the questions below as a guide. Ask them in order, but adapt to the conversation: answer the customer's questions, handle interruptions, and only move to the next question after the current one is clearly answered. Then book an appointment.\n\n")
-	} else {
+	default:
 		b.WriteString("Book an appointment with the customer for a follow-up from a senior agent. ")
 		b.WriteString("If the customer asks a question, answer in 1 sentence first, then push toward booking.\n\n")
 	}
 
-	// Call flow.
-	b.WriteString("## CALL FLOW\n")
-	fmt.Fprintf(&b, "1. Intro (already spoken by TTS): acknowledge it naturally.\n")
-	if pc.SourceInline != "" {
-		fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
+	// Past-call memory (confirmed facts) precedes the questionnaire so the
+	// LLM treats them as established context, not an afterthought. Empty for
+	// leads without history.
+	if pc.CallMemory != "" {
+		b.WriteString(pc.CallMemory)
+		b.WriteString("\n")
 	}
-	if pc.CallFlowInstructions != "" {
-		b.WriteString(pc.CallFlowInstructions)
+
+	// Call flow. With memory, the qualification questionnaire is replaced by a
+	// confirm-and-book flow — re-interrogating a known customer is the failure
+	// mode this feature exists to prevent.
+	b.WriteString("## CALL FLOW\n")
+	if pc.CallMemory != "" && pc.CallFlowInstructions != "" {
+		b.WriteString("1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question. Example: \"Just to confirm — this is for fifteen users across two Bengaluru locations, correct?\"\n")
+		b.WriteString("2. Whatever the customer corrects, accept it and update the details. Then ask when they are free for a short demo and book it.\n")
+		b.WriteString("3. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+		b.WriteString("4. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
 		b.WriteString("\n")
 	} else {
-		b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
-		fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
-		b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
-		b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
-		b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+		fmt.Fprintf(&b, "1. Intro (already spoken by TTS): acknowledge it naturally.\n")
+		if pc.SourceInline != "" {
+			fmt.Fprintf(&b, "   Lead context: they %s.\n", pc.SourceInline)
+		}
+		if pc.CallFlowInstructions != "" {
+			b.WriteString(pc.CallFlowInstructions)
+			b.WriteString("\n")
+		} else {
+			b.WriteString("2. If the customer says yes/ok → DO NOT ask \"are you interested?\" again. Go straight to: ")
+			fmt.Fprintf(&b, "%q in %s.\n", frag.AskWhenFree, langLabel)
+			b.WriteString("3. If the customer asks about the product → answer briefly in 1 sentence, then ask about meeting time.\n")
+			b.WriteString("4. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
+			b.WriteString("5. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")
+		}
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
 	// Core rules — universal, English.
 	b.WriteString(`## CORE RULES (STRICT)
