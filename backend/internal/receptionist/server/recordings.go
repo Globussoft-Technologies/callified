@@ -200,4 +200,3 @@ func (s *Server) recordingsDeleteAll(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "deleted": n})
 }
-

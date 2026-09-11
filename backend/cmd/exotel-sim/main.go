@@ -224,13 +224,13 @@ func writeMulawWAV(path string, ulaw []byte) error {
 	if _, err := f.Write([]byte("fmt ")); err != nil {
 		return err
 	}
-	_ = binary.Write(f, binary.LittleEndian, uint32(16))     // fmt chunk size
-	_ = binary.Write(f, binary.LittleEndian, uint16(7))      // 7 = µ-law
-	_ = binary.Write(f, binary.LittleEndian, uint16(1))      // mono
-	_ = binary.Write(f, binary.LittleEndian, uint32(8000))   // sample rate
-	_ = binary.Write(f, binary.LittleEndian, uint32(8000))   // byte rate
-	_ = binary.Write(f, binary.LittleEndian, uint16(1))      // block align
-	_ = binary.Write(f, binary.LittleEndian, uint16(8))      // bits per sample
+	_ = binary.Write(f, binary.LittleEndian, uint32(16))   // fmt chunk size
+	_ = binary.Write(f, binary.LittleEndian, uint16(7))    // 7 = µ-law
+	_ = binary.Write(f, binary.LittleEndian, uint16(1))    // mono
+	_ = binary.Write(f, binary.LittleEndian, uint32(8000)) // sample rate
+	_ = binary.Write(f, binary.LittleEndian, uint32(8000)) // byte rate
+	_ = binary.Write(f, binary.LittleEndian, uint16(1))    // block align
+	_ = binary.Write(f, binary.LittleEndian, uint16(8))    // bits per sample
 	// data chunk
 	if _, err := f.Write([]byte("data")); err != nil {
 		return err
