@@ -227,6 +227,29 @@ func TestFinalCloseCannotBeCancelledByBargeIn(t *testing.T) {
 	assert.False(t, sess.TryBargeIn("unit-test"))
 }
 
+func TestShouldInferFinalCloseFromCompletedBooking(t *testing.T) {
+	tests := []string{
+		"Perfect. I'll send you an invite for a demo in the next fifteen minutes. Thank you for your time, sri.",
+		"Perfect. I've scheduled your demo for three PM today. You will receive a calendar invite shortly. Thanks for your time, sri.",
+		"మీ సమయానికి ధన్యవాదాలు.",
+		"உங்கள் நேரத்திற்கு நன்றி.",
+	}
+	for _, response := range tests {
+		assert.True(t, shouldInferFinalClose(response), response)
+	}
+}
+
+func TestShouldNotInferFinalCloseWhenConversationContinues(t *testing.T) {
+	tests := []string{
+		"Thank you for your time. Would tomorrow work for you?",
+		"Great. Are you free today for a quick demo?",
+		"Thanks for confirming your interest.",
+	}
+	for _, response := range tests {
+		assert.False(t, shouldInferFinalClose(response), response)
+	}
+}
+
 func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
 	sess := NewCallSession("test_stream", nil, zap.NewNop())
 	cancelled := false
@@ -240,6 +263,25 @@ func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
 	assert.True(t, sess.ConfirmBargeIn())
 	assert.True(t, sess.IsBargeInActive())
 	assert.True(t, cancelled)
+}
+
+func TestFinalTranscriptEchoDetectionPreservesDistinctCustomerSpeech(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.RememberAgentSpeech("GlobusCRM automates calls and follow-ups for your sales team.")
+
+	assert.True(t, sess.IsLikelyRecentAgentEcho("Globus CRM automates calls and follow ups for your sales team"))
+	assert.False(t, sess.IsLikelyRecentAgentEcho("What features and benefits will I get?"))
+}
+
+func TestRecoveredFinalTranscriptInterruptsTTS(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+	sess.SetTTSPlaying(true)
+
+	assert.True(t, sess.RecoverBargeInFromFinalTranscript())
+	assert.True(t, cancelled)
+	assert.True(t, sess.IsBargeInActive())
 }
 
 func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {

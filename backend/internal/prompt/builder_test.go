@@ -16,18 +16,16 @@ func TestRenderCallMemoryEmpty(t *testing.T) {
 func TestRenderCallMemoryIncludesFields(t *testing.T) {
 	out := renderCallMemory([]db.CallMemory{
 		{
-			CreatedAt:     "2026-09-01",
-			Summary:       "Customer asked about EMI options and said price is too high.",
-			FailureReason: "Pricing objection not handled",
-			Suggestion:    "Offer the festival discount before quoting EMI.",
+			CreatedAt: "2026-09-01",
+			Summary:   "Customer asked about EMI options and said price is too high.",
 		},
 	})
 
 	assert.Contains(t, out, "## PREVIOUS CALLS WITH THIS CUSTOMER")
 	assert.Contains(t, out, "2026-09-01")
 	assert.Contains(t, out, "EMI options")
-	assert.Contains(t, out, "Pricing objection not handled")
-	assert.Contains(t, out, "festival discount")
+	assert.NotContains(t, out, "What went wrong")
+	assert.NotContains(t, out, "Do better this time")
 	// Guardrail instruction must be present so the agent never speaks the notes.
 	assert.Contains(t, out, "never speak")
 	// Off-topic details from dirty notes must be ignored.
@@ -65,6 +63,46 @@ func TestDefaultPromptWithoutMemoryKeepsQuestionnaire(t *testing.T) {
 	assert.NotContains(t, out, "## PREVIOUS CALLS WITH THIS CUSTOMER")
 	assert.NotContains(t, out, "CONTINUATION CALL")
 	assert.Contains(t, out, "QUESTIONNAIRE")
+}
+
+func TestDefaultPromptHandlesSemanticRepeatsInMainStreamingTurn(t *testing.T) {
+	out := buildDefaultPrompt(promptContext{
+		Language:    "te",
+		CompanyName: "ACME",
+	})
+
+	// Repeat semantics belong in the main model request, which already has the
+	// full multilingual conversation history. This prevents a separate blocking
+	// classifier request from being required on the realtime voice path.
+	assert.Contains(t, out, "REPEATED CUSTOMER QUESTIONS")
+	assert.Contains(t, out, "same question repeatedly")
+	assert.Contains(t, out, "simpler words")
+	assert.Contains(t, out, "third total ask")
+	assert.Contains(t, out, "fourth total ask")
+}
+
+func TestOtherLeadSourceUsesGenericAdEnquiryInEveryLanguage(t *testing.T) {
+	tests := map[string]string{
+		"en": "see our ad and enquire",
+		"hi": "हमारा ad देखकर enquiry की थी",
+		"mr": "आमची ad बघून enquiry केली होती",
+		"bn": "আমাদের ad দেখে enquiry করেছিলেন",
+		"gu": "અમારી ad જોઈને enquiry કરી હતી",
+		"pa": "ਸਾਡਾ ad ਵੇਖ ਕੇ enquiry ਕੀਤੀ ਸੀ",
+		"ta": "எங்கள் ad பார்த்து enquiry செய்திருந்தீர்கள்",
+		"te": "మా ad చూసి enquiry చేశారు",
+		"kn": "ನಮ್ಮ ad ನೋಡಿ enquiry ಮಾಡಿದ್ದೀರಿ",
+		"ml": "ഞങ്ങളുടെ ad കണ്ട് enquiry ചെയ്തിരുന്നു",
+	}
+
+	for language, expected := range tests {
+		t.Run(language, func(t *testing.T) {
+			assert.Equal(t, expected, sourceContextInline("other", language))
+			assert.NotContains(t, strings.ToLower(buildGreeting("Sri", "GlobusCRM", "Aditya", "calling", "other", language)), "other")
+		})
+	}
+	assert.Equal(t, "other", canonicalSource("Others"))
+	assert.Equal(t, "other", canonicalSource("other source"))
 }
 
 func TestRenderCallMemoryOmitsEmptyFields(t *testing.T) {

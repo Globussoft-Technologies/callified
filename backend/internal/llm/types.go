@@ -12,8 +12,18 @@ type ChatMessage struct {
 
 // SentenceChunk is one complete sentence streamed back from the LLM.
 type SentenceChunk struct {
-	Text      string
-	HasHangup bool // LLM included [HANGUP] → end the call after this sentence
+	Text          string
+	HasHangup     bool   // LLM included [HANGUP] → end the call after this sentence
+	HangupOutcome string // structured complete_call outcome; empty for textual [HANGUP]
+}
+
+// VoiceAction is a structured control decision emitted by an LLM tool call.
+// SpokenText is still sanitized before delivery; control fields are never sent
+// to TTS or transcript storage.
+type VoiceAction struct {
+	Name       string
+	SpokenText string
+	Outcome    string
 }
 
 // TranscriptRequest carries the input for a single LLM turn.
@@ -24,4 +34,6 @@ type TranscriptRequest struct {
 	Language                string        // e.g. "hi", "mr", "en", "ta"
 	MaxTokens               int32
 	DropIncompleteRemainder bool
+	EnableVoiceActions      bool
+	OnVoiceAction           func(VoiceAction)
 }

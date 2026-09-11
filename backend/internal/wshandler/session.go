@@ -117,8 +117,10 @@ type CallSession struct {
 	ttsNewUtterance bool      // signals AppendTTSChunk to reset cursor on next chunk
 
 	// Chat history — populated by AppendHistory, read by pipeline
-	historyMu   sync.Mutex
-	ChatHistory []llm.ChatMessage
+	historyMu    sync.Mutex
+	ChatHistory  []llm.ChatMessage
+	spokenMu     sync.Mutex
+	recentSpoken []string
 
 	// Recent customer utterances used to keep repeated questions from looping.
 	repeatMu        sync.Mutex
@@ -522,6 +524,21 @@ func (s *CallSession) ConfirmBargeIn() bool {
 	return true
 }
 
+// RecoverBargeInFromFinalTranscript handles a meaningful transcript.final that
+// arrived while TTS was active even when the provider's speech-start event was
+// missed. Unlike the old cooldown drop, the customer's completed utterance is
+// preserved and the active agent speech is stopped.
+func (s *CallSession) RecoverBargeInFromFinalTranscript() bool {
+	if s.IsFinalClosing() {
+		return false
+	}
+	s.bargeInPending.Store(false)
+	s.interruptActiveTTS()
+	s.confirmedBargeInNano.Store(time.Now().UnixNano())
+	s.Log.Info("barge-in: recovered from distinct final transcript")
+	return true
+}
+
 // ConsumeRecentConfirmedBargeIn returns true once for the transcript that
 // follows an STT-confirmed barge-in. Stale confirmations are ignored so a
 // speech_start event without a final transcript cannot tag a later normal turn.
@@ -695,6 +712,44 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	copy(snap, s.ChatHistory)
 	s.historyMu.Unlock()
 	return snap
+}
+
+// RememberAgentSpeech tracks a few sentences that were actually submitted to
+// TTS. It is used to distinguish leaked agent echo from real customer speech.
+func (s *CallSession) RememberAgentSpeech(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	s.spokenMu.Lock()
+	s.recentSpoken = append(s.recentSpoken, text)
+	if len(s.recentSpoken) > 4 {
+		s.recentSpoken = append([]string(nil), s.recentSpoken[len(s.recentSpoken)-4:]...)
+	}
+	s.spokenMu.Unlock()
+}
+
+// IsLikelyRecentAgentEcho compares a final STT utterance with sentences most
+// recently sent to TTS. Audio-level echo suppression runs earlier; this is the
+// text-level last defense before accepting speech during TTS playback.
+func (s *CallSession) IsLikelyRecentAgentEcho(text string) bool {
+	candidate := normalizeQuestionText(text)
+	if len([]rune(candidate)) < 4 {
+		return false
+	}
+	s.spokenMu.Lock()
+	recent := append([]string(nil), s.recentSpoken...)
+	s.spokenMu.Unlock()
+	for i := len(recent) - 1; i >= 0; i-- {
+		spoken := normalizeQuestionText(recent[i])
+		if spoken == "" {
+			continue
+		}
+		if strings.Contains(spoken, candidate) || strings.Contains(candidate, spoken) || questionSimilarity(candidate, spoken) >= 0.72 {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxTokens returns a token budget based on transcript length and language,

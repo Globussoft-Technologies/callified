@@ -231,6 +231,7 @@ export default function CampaignModals({
                     <option value="website">Website Form</option>
                     <option value="referral">Referral</option>
                     <option value="cold">Cold Outreach</option>
+                    <option value="other">Others</option>
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
@@ -605,6 +606,7 @@ export default function CampaignModals({
                   <option value="website">Website Form</option>
                   <option value="referral">Referral</option>
                   <option value="cold">Cold Outreach</option>
+                  <option value="other">Others</option>
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>

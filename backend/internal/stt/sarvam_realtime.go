@@ -16,7 +16,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const sarvamRealtimeURL = "wss://api.sarvam.ai/speech-to-text-realtime/ws"
+const (
+	sarvamRealtimeURL             = "wss://api.sarvam.ai/speech-to-text-realtime/ws"
+	sarvamRealtimeAudioFrameBytes = 1600 // 100 ms of 8 kHz, 16-bit mono PCM
+)
 
 // SarvamRealtimeClient streams audio to Sarvam's saaras:v3-realtime WebSocket
 // endpoint and receives partial + final transcripts. It is intended to replace
@@ -108,17 +111,24 @@ func (c *SarvamRealtimeClient) Run(ctx context.Context, audioIn <-chan []byte) {
 					c.finishConnection(conn, recvDone)
 					return
 				}
-				msg := map[string]string{
-					"event": "audio_input",
-					"audio": base64.StdEncoding.EncodeToString(pcm),
-				}
-				if err := c.sendJSON(conn, msg); err != nil {
-					errorCount++
-					c.log.Warn("sarvam realtime: send error, reconnecting",
-						zap.Int("errors", errorCount), zap.Error(err))
-					<-recvDone
-					unexpectedDrop = true
-					break sendLoop
+				// Tata sometimes batches 560-700 ms of PCM into one WebSocket
+				// message. Sarvam fast mode rejects audio_input frames above 8,000
+				// bytes, which loses speech and delays transcript.final. Send
+				// sample-aligned 100 ms frames instead; the bytes and timing order
+				// are unchanged.
+				for _, frame := range splitSarvamAudioFrames(pcm) {
+					msg := map[string]string{
+						"event": "audio_input",
+						"audio": base64.StdEncoding.EncodeToString(frame),
+					}
+					if err := c.sendJSON(conn, msg); err != nil {
+						errorCount++
+						c.log.Warn("sarvam realtime: send error, reconnecting",
+							zap.Int("errors", errorCount), zap.Error(err))
+						<-recvDone
+						unexpectedDrop = true
+						break sendLoop
+					}
 				}
 			}
 		}
@@ -131,6 +141,19 @@ func (c *SarvamRealtimeClient) Run(ctx context.Context, audioIn <-chan []byte) {
 			}
 		}
 	}
+}
+
+func splitSarvamAudioFrames(pcm []byte) [][]byte {
+	if len(pcm) == 0 {
+		return nil
+	}
+	frames := make([][]byte, 0, (len(pcm)+sarvamRealtimeAudioFrameBytes-1)/sarvamRealtimeAudioFrameBytes)
+	for len(pcm) > 0 {
+		n := min(len(pcm), sarvamRealtimeAudioFrameBytes)
+		frames = append(frames, pcm[:n])
+		pcm = pcm[n:]
+	}
+	return frames
 }
 
 func (c *SarvamRealtimeClient) finishConnection(conn *websocket.Conn, recvDone <-chan struct{}) {

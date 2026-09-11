@@ -1454,6 +1454,7 @@ export default function CampaignDetail({
             <option value="website">Website</option>
             <option value="referral">Referral</option>
             <option value="cold">Cold Outreach</option>
+            <option value="other">Others</option>
           </select>
         )}
       </div>
@@ -2622,8 +2623,8 @@ export default function CampaignDetail({
                         }}
                         style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120, background: '#fff' }}>
                         <option value="">No Source</option>
-                        {['facebook','google','instagram','linkedin','website','referral','cold'].map(s => (
-                          <option key={s} value={s}>{s[0].toUpperCase() + s.slice(1)}</option>
+                        {['facebook','google','instagram','linkedin','website','referral','cold','other'].map(s => (
+                          <option key={s} value={s}>{s === 'other' ? 'Others' : s[0].toUpperCase() + s.slice(1)}</option>
                         ))}
                       </select> : (lead.source || 'No Source')}
                     </td>
