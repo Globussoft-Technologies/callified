@@ -323,10 +323,8 @@ func scanReviews(rows interface {
 // voice agent's system prompt at the start of a new call so the agent
 // knows the history with this customer (docs/call-memory-proposal.md).
 type CallMemory struct {
-	CreatedAt     string
-	Summary       string
-	FailureReason string
-	Suggestion    string // prompt_improvement_suggestion
+	CreatedAt string
+	Summary   string
 }
 
 // GetLastCallMemory returns the most recent call reviews for a lead within
@@ -342,9 +340,7 @@ func (d *DB) GetLastCallMemory(leadID, campaignID int64, limit int) ([]CallMemor
 	// resolve via their transcript.
 	rows, err := d.pool.Query(`
 		SELECT DATE_FORMAT(cr.created_at,'%Y-%m-%d'),
-		       COALESCE(NULLIF(cr.summary,''), NULLIF(cr.what_went_well,''), ''),
-		       COALESCE(cr.failure_reason,''),
-		       COALESCE(NULLIF(cr.prompt_improvement_suggestion,''), NULLIF(cr.insights,''), '')
+		       COALESCE(NULLIF(cr.summary,''), NULLIF(cr.what_went_well,''), '')
 		FROM call_reviews cr
 		JOIN call_transcripts ct ON cr.transcript_id = ct.id
 		WHERE COALESCE(cr.lead_id, ct.lead_id) = ?
@@ -358,7 +354,7 @@ func (d *DB) GetLastCallMemory(leadID, campaignID int64, limit int) ([]CallMemor
 	var list []CallMemory
 	for rows.Next() {
 		var m CallMemory
-		if err := rows.Scan(&m.CreatedAt, &m.Summary, &m.FailureReason, &m.Suggestion); err != nil {
+		if err := rows.Scan(&m.CreatedAt, &m.Summary); err != nil {
 			return nil, err
 		}
 		list = append(list, m)

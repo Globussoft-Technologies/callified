@@ -227,6 +227,29 @@ func TestFinalCloseCannotBeCancelledByBargeIn(t *testing.T) {
 	assert.False(t, sess.TryBargeIn("unit-test"))
 }
 
+func TestShouldInferFinalCloseFromCompletedBooking(t *testing.T) {
+	tests := []string{
+		"Perfect. I'll send you an invite for a demo in the next fifteen minutes. Thank you for your time, sri.",
+		"Perfect. I've scheduled your demo for three PM today. You will receive a calendar invite shortly. Thanks for your time, sri.",
+		"మీ సమయానికి ధన్యవాదాలు.",
+		"உங்கள் நேரத்திற்கு நன்றி.",
+	}
+	for _, response := range tests {
+		assert.True(t, shouldInferFinalClose(response), response)
+	}
+}
+
+func TestShouldNotInferFinalCloseWhenConversationContinues(t *testing.T) {
+	tests := []string{
+		"Thank you for your time. Would tomorrow work for you?",
+		"Great. Are you free today for a quick demo?",
+		"Thanks for confirming your interest.",
+	}
+	for _, response := range tests {
+		assert.False(t, shouldInferFinalClose(response), response)
+	}
+}
+
 func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
 	sess := NewCallSession("test_stream", nil, zap.NewNop())
 	cancelled := false

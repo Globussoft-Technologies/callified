@@ -206,11 +206,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			if chunk.HasHangup {
 				if allowHangupForTurn {
 					hasHangup = true
-					if repeatDecision.FinalClose {
-						sess.RequestFinalClose()
-					} else {
-						sess.RequestHangup()
-					}
+					// An explicit model close is terminal. It must not be
+					// cancelled by a late greeting or other barge-in while the
+					// goodbye audio is draining.
+					sess.RequestFinalClose()
 				} else {
 					sess.Log.Warn("repeat-question: suppressed early hangup")
 				}
@@ -234,7 +233,16 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	}
 
 	// --- Record AI response in history and broadcast to monitors ---
-	if resp := strings.TrimSpace(responseBuilder.String()); resp != "" {
+	resp := strings.TrimSpace(responseBuilder.String())
+	if resp != "" {
+		// The model occasionally produces an unmistakable final booking or
+		// farewell but omits the [HANGUP] control marker. Infer that terminal
+		// state conservatively so a subsequent "hello" cannot restart the flow.
+		if !hasHangup && allowHangupForTurn && shouldInferFinalClose(resp) {
+			hasHangup = true
+			sess.RequestFinalClose()
+			sess.Log.Info("hangup: inferred final close from agent response")
+		}
 		sess.AppendHistory("model", resp)
 		sess.BroadcastTranscript("agent", resp)
 	}
@@ -278,7 +286,11 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 				sess.Log.Info("hangup: waiting for playback drain",
 					zap.Duration("remaining", remaining))
 				waitStart := time.Now()
-				deadline := time.After(remaining + 7*time.Second)
+				grace := 7 * time.Second
+				if sess.IsFinalClosing() {
+					grace = time.Second
+				}
+				deadline := time.After(remaining + grace)
 				ticker := time.NewTicker(100 * time.Millisecond)
 				defer ticker.Stop()
 				for {
@@ -329,6 +341,61 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 			synthesizeAndSend(ctx, sess, provider, sentence)
 		}
 	}
+}
+
+// shouldInferFinalClose recognizes only unambiguous terminal agent responses.
+// It is a fallback for a missing [HANGUP] marker, not a general intent model.
+// A farewell followed by another question is deliberately not terminal.
+func shouldInferFinalClose(response string) bool {
+	lower := strings.ToLower(strings.TrimSpace(response))
+	if lower == "" {
+		return false
+	}
+
+	bookingMarkers := []string{
+		"scheduled your demo",
+		"scheduled the demo",
+		"demo is scheduled",
+		"demo has been scheduled",
+		"confirmed your demo",
+		"demo is confirmed",
+		"booked your demo",
+		"demo has been booked",
+		"calendar invite shortly",
+		"send you an invite for a demo",
+		"send you the invite for a demo",
+	}
+	for _, marker := range bookingMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	if strings.Contains(response, "?") {
+		return false
+	}
+	farewellMarkers := []string{
+		"thank you for your time",
+		"thanks for your time",
+		"have a good day",
+		"goodbye",
+		"आपके समय के लिए धन्यवाद",
+		"आपके समय के लिए शुक्रिया",
+		"तुमच्या वेळेबद्दल धन्यवाद",
+		"আপনার সময়ের জন্য ধন্যবাদ",
+		"તમારા સમય બદલ આભાર",
+		"ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ ਧੰਨਵਾਦ",
+		"உங்கள் நேரத்திற்கு நன்றி",
+		"మీ సమయానికి ధన్యవాదాలు",
+		"ನಿಮ್ಮ ಸಮಯಕ್ಕೆ ಧನ್ಯವಾದಗಳು",
+		"നിങ്ങളുടെ സമയത്തിന് നന്ദി",
+	}
+	for _, marker := range farewellMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // synthesizeAndSend calls the TTS provider for one sentence and streams

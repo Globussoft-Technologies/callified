@@ -286,12 +286,6 @@ func renderCallMemory(memories []db.CallMemory) string {
 		if s := clampRunes(m.Summary, callMemoryMaxFieldLen); s != "" {
 			fmt.Fprintf(&sb, "   What happened: %s\n", s)
 		}
-		if s := clampRunes(m.FailureReason, callMemoryMaxFieldLen); s != "" {
-			fmt.Fprintf(&sb, "   What went wrong: %s\n", s)
-		}
-		if s := clampRunes(m.Suggestion, callMemoryMaxFieldLen); s != "" {
-			fmt.Fprintf(&sb, "   Do better this time: %s\n", s)
-		}
 	}
 	sb.WriteString("Use this history naturally: do not re-pitch what the customer already rejected, honor commitments made on past calls, and never reveal that you are reading notes. " +
 		"If the customer doesn't recognize a detail from these notes or denies it — even a detail recorded here — drop it permanently and never mention it again; that detail was wrong. " +

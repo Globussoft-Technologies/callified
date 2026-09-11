@@ -30,9 +30,14 @@ func NewGeminiClient(apiKey, model, baseURL string) *GeminiClient {
 // --- request types ---
 
 type geminiRequest struct {
-	SystemInstruction *geminiContent   `json:"system_instruction,omitempty"`
-	Contents          []geminiContent  `json:"contents"`
-	GenerationConfig  map[string]int32 `json:"generationConfig,omitempty"`
+	SystemInstruction *geminiContent        `json:"system_instruction,omitempty"`
+	Contents          []geminiContent       `json:"contents"`
+	GenerationConfig  geminiStreamGenConfig `json:"generationConfig"`
+}
+
+type geminiStreamGenConfig struct {
+	MaxOutputTokens int32                 `json:"maxOutputTokens"`
+	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiContent struct {
@@ -51,7 +56,8 @@ type geminiStreamEvent struct {
 		FinishReason string `json:"finishReason,omitempty"`
 		Content      struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				Thought bool   `json:"thought,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -81,7 +87,8 @@ type geminiTextResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				Thought bool   `json:"thought,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -142,6 +149,9 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 	var sb strings.Builder
 	for _, cand := range result.Candidates {
 		for _, part := range cand.Content.Parts {
+			if part.Thought {
+				continue
+			}
 			sb.WriteString(part.Text)
 		}
 	}
@@ -176,8 +186,14 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	})
 
 	body := geminiRequest{
-		Contents:         contents,
-		GenerationConfig: map[string]int32{"maxOutputTokens": req.MaxTokens},
+		Contents: contents,
+		GenerationConfig: geminiStreamGenConfig{
+			MaxOutputTokens: req.MaxTokens,
+			// Voice turns need only the final spoken reply. Disabling thinking
+			// on models that support zero prevents reasoning tokens from consuming
+			// the realtime token budget. Other models still use the <SAY> gate.
+			ThinkingConfig: voiceThinkingConfig(g.model),
+		},
 	}
 	if req.SystemPrompt != "" {
 		body.SystemInstruction = &geminiContent{
@@ -238,6 +254,11 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 				hitMaxTokens = true
 			}
 			for _, part := range cand.Content.Parts {
+				// Thought summaries are internal model output, even though the API
+				// represents them as text parts. Never forward them to callers.
+				if part.Thought {
+					continue
+				}
 				if part.Text != "" {
 					onToken(part.Text)
 				}
@@ -249,6 +270,16 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	}
 	if hitMaxTokens {
 		return ErrMaxTokens
+	}
+	return nil
+}
+
+func voiceThinkingConfig(model string) *geminiThinkingConfig {
+	// Gemini 2.5 Flash and Flash-Lite support thinkingBudget=0. Pro and newer
+	// model families may require thinking, or use a different configuration;
+	// omitting the field keeps those endpoints compatible.
+	if strings.Contains(strings.ToLower(model), "gemini-2.5-flash") {
+		return &geminiThinkingConfig{ThinkingBudget: 0}
 	}
 	return nil
 }

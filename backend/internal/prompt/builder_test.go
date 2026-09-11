@@ -16,18 +16,16 @@ func TestRenderCallMemoryEmpty(t *testing.T) {
 func TestRenderCallMemoryIncludesFields(t *testing.T) {
 	out := renderCallMemory([]db.CallMemory{
 		{
-			CreatedAt:     "2026-09-01",
-			Summary:       "Customer asked about EMI options and said price is too high.",
-			FailureReason: "Pricing objection not handled",
-			Suggestion:    "Offer the festival discount before quoting EMI.",
+			CreatedAt: "2026-09-01",
+			Summary:   "Customer asked about EMI options and said price is too high.",
 		},
 	})
 
 	assert.Contains(t, out, "## PREVIOUS CALLS WITH THIS CUSTOMER")
 	assert.Contains(t, out, "2026-09-01")
 	assert.Contains(t, out, "EMI options")
-	assert.Contains(t, out, "Pricing objection not handled")
-	assert.Contains(t, out, "festival discount")
+	assert.NotContains(t, out, "What went wrong")
+	assert.NotContains(t, out, "Do better this time")
 	// Guardrail instruction must be present so the agent never speaks the notes.
 	assert.Contains(t, out, "never speak")
 	// Off-topic details from dirty notes must be ignored.
