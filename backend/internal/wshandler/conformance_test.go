@@ -265,6 +265,25 @@ func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
 	assert.True(t, cancelled)
 }
 
+func TestFinalTranscriptEchoDetectionPreservesDistinctCustomerSpeech(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.RememberAgentSpeech("GlobusCRM automates calls and follow-ups for your sales team.")
+
+	assert.True(t, sess.IsLikelyRecentAgentEcho("Globus CRM automates calls and follow ups for your sales team"))
+	assert.False(t, sess.IsLikelyRecentAgentEcho("What features and benefits will I get?"))
+}
+
+func TestRecoveredFinalTranscriptInterruptsTTS(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+	sess.SetTTSPlaying(true)
+
+	assert.True(t, sess.RecoverBargeInFromFinalTranscript())
+	assert.True(t, cancelled)
+	assert.True(t, sess.IsBargeInActive())
+}
+
 func TestMaxDurationWaitsForOneCustomerReply(t *testing.T) {
 	sess := NewCallSession("test_stream", nil, zap.NewNop())
 

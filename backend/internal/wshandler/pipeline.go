@@ -18,37 +18,11 @@ import (
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
-// runPipeline reads transcripts from sess.Transcripts, debounces them, and
-// dispatches exactly one goroutine per debounce window to call the LLM.
-// Using a pending-slot channel avoids the goroutine-per-transcript pattern
-// that previously spawned 5–8 sleeping goroutines per utterance.
-// Runs until ctx is cancelled or sess.Transcripts is closed.
+// runPipeline processes finalized customer utterances sequentially in arrival
+// order. A transcript.final is never replaced by a newer final: dropping one
+// makes the agent appear to stop or ignore a question. The channel provides
+// bounded backpressure while the LLM handles the preceding turn.
 func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider, store *rstore.Store) {
-	// pending holds the most recent transcript waiting to be dispatched.
-	// Capacity 1: new transcripts overwrite the previous one before dispatch.
-	pending := make(chan string, 1)
-
-	// Dispatcher: drains pending after a short quiet window.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case transcript, ok := <-pending:
-				if !ok {
-					return
-				}
-				// Wait for the debounce window, then check if a newer
-				// transcript replaced this one in the pipeline.
-				ts := sess.StampTranscript()
-				time.Sleep(75 * time.Millisecond)
-				if sess.LastTranscript() == ts {
-					go processTranscript(ctx, sess, transcript, ts, provider, store)
-				}
-			}
-		}
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,18 +31,15 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 			if !ok {
 				return
 			}
-			// Non-blocking send: drop the previous pending transcript if the
-			// dispatcher hasn't consumed it yet (newer utterance supersedes it).
+			ts := sess.StampTranscript()
+			timer := time.NewTimer(75 * time.Millisecond)
 			select {
-			case pending <- transcript:
-			default:
-				// Drain and replace with the newer transcript.
-				select {
-				case <-pending:
-				default:
-				}
-				pending <- transcript
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
 			}
+			processTranscript(ctx, sess, transcript, ts, provider, store)
 		}
 	}
 }
@@ -145,20 +116,21 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
 		turnNotes = append(turnNotes, "[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.]")
 	}
-	repeatIntent := ""
-	if provider != nil {
-		intentCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
-		if key, keyErr := provider.ClassifyRepeatIntent(intentCtx, transcript, sess.Language); keyErr == nil {
-			repeatIntent = key
-		} else {
-			sess.Log.Debug("repeat-question: intent classification failed", zap.Error(keyErr))
-		}
-		cancel()
-	}
-	repeatDecision := sess.RepeatedQuestionDecisionWithKey(transcript, repeatIntent)
+	// Keep repeat protection on the live path deterministic and local. The
+	// previous implementation made a separate, non-streaming LLM request here
+	// before starting the actual reply, adding as much as 2.5 seconds to every
+	// customer turn (including "yes" and appointment times). Exact and closely
+	// worded repeats are handled by the Unicode-aware local detector; semantic
+	// and cross-language paraphrases remain covered by the main model, which has
+	// full chat history and the repeated-question policy in its system prompt.
+	repeatDecision := sess.RepeatedQuestionDecision(transcript)
 	allowHangupForTurn := repeatDecision.AllowHangup
 	if instruction := repeatDecision.Instruction; instruction != "" {
 		turnNotes = append(turnNotes, instruction)
+	}
+	if isRepeatOrClarificationRequest(transcript) {
+		allowHangupForTurn = false
+		turnNotes = append(turnNotes, "[CUSTOMER REQUESTED REPETITION OR CLARIFICATION: Repeat or rephrase the previous customer-facing answer clearly. Continue the call. Do not say goodbye, do not end the call, and do not use [HANGUP].]")
 	}
 
 	// --- Manager whispers: current-turn context only, not chat history ---
@@ -194,6 +166,13 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 		}, func(chunk llm.SentenceChunk) {
 			if sess.IsFinalClosing() {
 				return
+			}
+			if chunk.HasHangup && !terminalActionAllowed(chunk.HangupOutcome, transcript, history) {
+				sess.Log.Warn("hangup: rejected by terminal action guard",
+					zap.String("outcome", chunk.HangupOutcome))
+				chunk.Text = terminalRecoveryLine(sess.Language, chunk.HangupOutcome)
+				chunk.HasHangup = false
+				chunk.HangupOutcome = ""
 			}
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk
@@ -338,6 +317,7 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 					zap.String("sentence", sentence))
 				continue
 			}
+			sess.RememberAgentSpeech(sentence)
 			synthesizeAndSend(ctx, sess, provider, sentence)
 		}
 	}

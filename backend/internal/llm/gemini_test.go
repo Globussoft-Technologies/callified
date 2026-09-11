@@ -47,3 +47,26 @@ func TestGeminiVoiceRequestKeepsOtherModelsCompatible(t *testing.T) {
 	assert.Nil(t, voiceThinkingConfig("gemini-2.5-pro"))
 	assert.Nil(t, voiceThinkingConfig("gemini-3-flash-preview"))
 }
+
+func TestGeminiStreamEventParsesCompleteCallFunction(t *testing.T) {
+	var event geminiStreamEvent
+	err := json.Unmarshal([]byte(`{
+		"candidates":[{"content":{"parts":[{"functionCall":{
+			"name":"complete_call",
+			"args":{"spoken_text":"Thank you. Goodbye.","outcome":"appointment_booked"}
+		}}]}}]
+	}`), &event)
+	require.NoError(t, err)
+	call := event.Candidates[0].Content.Parts[0].FunctionCall
+	require.NotNil(t, call)
+	assert.Equal(t, "complete_call", call.Name)
+	assert.Equal(t, "Thank you. Goodbye.", stringArg(call.Args, "spoken_text"))
+}
+
+func TestVoiceActionToolRequiresSpokenTextAndOutcome(t *testing.T) {
+	raw, err := json.Marshal(voiceActionTools())
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"complete_call"`)
+	assert.Contains(t, string(raw), `"spoken_text"`)
+	assert.Contains(t, string(raw), `"appointment_booked"`)
+}

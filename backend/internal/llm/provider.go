@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode"
 
 	"go.uber.org/zap"
@@ -14,6 +15,8 @@ import (
 var ErrMissingSpokenEnvelope = errors.New("llm response missing spoken envelope")
 var ErrEmptySpokenResponse = errors.New("llm response contained no spoken text")
 
+const defaultVoiceAttemptTimeout = 7 * time.Second
+
 const voiceOutputProtocol = `
 
 ## VOICE OUTPUT PROTOCOL (HIGHEST PRIORITY)
@@ -23,23 +26,29 @@ Do not output reasoning, analysis, rule names, call-flow commentary, memory comm
 If the call must end, put the literal [HANGUP] immediately before </SAY>.
 Only text inside <SAY> is delivered to the customer.`
 
+const voiceActionProtocol = `
+
+Only when the customer explicitly confirms BOTH the appointment day/date AND an exact clock time, declines, or asks to end the call, call the complete_call function. A day such as "today" or "tomorrow" without a clock time is incomplete: ask for the exact time and do not call complete_call. A request to repeat, clarify, or say something again is never a reason to complete the call. Put the short confirmation and goodbye in spoken_text. Do not write a final reply as normal text in that case.`
+
 // Provider routes LLM calls to Gemini or Groq and handles streaming sentence splitting.
 // Language "mr" (Marathi) always uses Gemini for better Devanagari support.
 // All other languages use LLM_PROVIDER env var (default: gemini).
 type Provider struct {
-	gemini *GeminiClient
-	groq   *GroqClient
-	cfg    *config.Config
-	log    *zap.Logger
+	gemini              *GeminiClient
+	groq                *GroqClient
+	cfg                 *config.Config
+	log                 *zap.Logger
+	voiceAttemptTimeout time.Duration
 }
 
 // NewProvider creates a Provider wired to Gemini and Groq from cfg.
 func NewProvider(cfg *config.Config, log *zap.Logger) *Provider {
 	return &Provider{
-		gemini: NewGeminiClient(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiBaseURL),
-		groq:   NewGroqClient(cfg.GroqAPIKey, cfg.GroqModel),
-		cfg:    cfg,
-		log:    log,
+		gemini:              NewGeminiClient(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiBaseURL),
+		groq:                NewGroqClient(cfg.GroqAPIKey, cfg.GroqModel),
+		cfg:                 cfg,
+		log:                 log,
+		voiceAttemptTimeout: defaultVoiceAttemptTimeout,
 	}
 }
 
@@ -57,6 +66,8 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 	providerName := "groq"
 	if useGemini {
 		providerName = "gemini"
+		req.EnableVoiceActions = true
+		req.SystemPrompt += voiceActionProtocol
 	}
 	p.log.Info("[LLM] processing transcript",
 		zap.String("provider", providerName),
@@ -64,8 +75,52 @@ func (p *Provider) ProcessTranscript(ctx context.Context, req TranscriptRequest,
 		zap.Int32("max_tokens", req.MaxTokens),
 	)
 
+	result, lastErr := p.processVoiceProvider(ctx, useGemini, providerName, req, deliver, 2)
+	if result.delivered {
+		return result.err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// A Gemini gateway may accept the HTTP connection but never emit an SSE
+	// event. Fall back only if no text was delivered, avoiding duplicate or
+	// contradictory speech after a partial response.
+	if useGemini && p.groq != nil && strings.TrimSpace(p.groq.apiKey) != "" {
+		p.log.Warn("[LLM] Gemini unavailable; falling back to Groq",
+			zap.String("language", req.Language),
+			zap.Error(lastErr),
+		)
+		fallbackReq := req
+		fallbackReq.EnableVoiceActions = false
+		fallbackReq.SystemPrompt += `
+
+For this fallback request the complete_call function is unavailable. If the call must end, put the literal [HANGUP] immediately before </SAY>.`
+		result, fallbackErr := p.processVoiceProvider(ctx, false, "groq_fallback", fallbackReq, deliver, 1)
+		if result.delivered {
+			return result.err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if fallbackErr != nil {
+			lastErr = fallbackErr
+		}
+	}
+
+	// Release the turn with a localized prompt even if all providers fail. This
+	// lets queued customer speech continue through the sequential call pipeline.
+	deliver(SentenceChunk{Text: safeVoiceRetry(req.Language)})
+	if lastErr == nil {
+		return ErrEmptySpokenResponse
+	}
+	return lastErr
+}
+
+func (p *Provider) processVoiceProvider(ctx context.Context, useGemini bool, providerName string, req TranscriptRequest, deliver func(SentenceChunk), maxAttempts int) (voiceAttemptResult, error) {
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	var result voiceAttemptResult
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		attemptReq := req
 		if attempt > 0 {
 			attemptReq.SystemPrompt += `
@@ -78,28 +133,31 @@ Your previous response could not be delivered because it did not contain a non-e
 			)
 		}
 
-		result := p.streamVoiceAttempt(ctx, useGemini, attemptReq, deliver)
+		attemptCtx, cancel := context.WithTimeout(ctx, p.voiceAttemptTimeout)
+		result = p.streamVoiceAttempt(attemptCtx, useGemini, attemptReq, deliver)
+		cancel()
 		lastErr = result.err
 		if result.delivered {
-			return result.err
+			return result, result.err
 		}
-		if errors.Is(result.err, context.Canceled) {
-			return result.err
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if errors.Is(result.err, context.DeadlineExceeded) || errors.Is(result.err, context.Canceled) {
+			lastErr = context.DeadlineExceeded
+			p.log.Warn("[LLM] live provider attempt timed out",
+				zap.String("provider", providerName),
+				zap.String("language", req.Language),
+				zap.Duration("timeout", p.voiceAttemptTimeout),
+			)
+			break
 		}
 		if result.invalidEnvelope == nil {
 			break
 		}
 		lastErr = result.invalidEnvelope
 	}
-
-	// Never fall back to raw model output: it may contain internal reasoning.
-	// After one automatic repair attempt, speak a localized recovery prompt so
-	// the call does not become silent and can progress on the next user turn.
-	deliver(SentenceChunk{Text: safeVoiceRetry(req.Language)})
-	if lastErr == nil {
-		return ErrEmptySpokenResponse
-	}
-	return lastErr
+	return result, lastErr
 }
 
 type voiceAttemptResult struct {
@@ -114,8 +172,38 @@ func (p *Provider) streamVoiceAttempt(ctx context.Context, useGemini bool, req T
 	metaFilter := newBracketedMetaFilter()
 	spokenFilter := newSpokenEnvelopeFilter()
 	result := voiceAttemptResult{}
+	actionHandled := false
+	textDeliveredBeforeAction := false
+	deliverText := func(chunk SentenceChunk) {
+		if strings.TrimSpace(chunk.Text) != "" {
+			textDeliveredBeforeAction = true
+		}
+		deliver(chunk)
+	}
+	req.OnVoiceAction = func(action VoiceAction) {
+		if actionHandled || action.Name != "complete_call" {
+			return
+		}
+		actionHandled = true
+		spoken := ""
+		if !textDeliveredBeforeAction {
+			spoken = collapseExactRepeatedVoiceText(sanitizeUntaggedVoiceResponse(action.SpokenText))
+			if spoken == "" {
+				spoken = safeFinalGoodbye(req.Language)
+			}
+		}
+		// If the model streamed normal customer-facing text and then emitted the
+		// terminal function, the function is control-only. Replaying spoken_text
+		// here would speak and persist the same goodbye twice. The pipeline still
+		// receives the outcome and can validate or reject the terminal action.
+		result.delivered = true
+		deliver(SentenceChunk{Text: spoken, HasHangup: true, HangupOutcome: action.Outcome})
+	}
 
 	onToken := func(token string) {
+		if actionHandled {
+			return
+		}
 		raw.WriteString(token)
 		// This is the hard trust boundary for the voice path. Model text before
 		// or after <SAY> may contain reasoning and is never allowed into TTS.
@@ -134,7 +222,7 @@ func (p *Provider) streamVoiceAttempt(ctx context.Context, useGemini bool, req T
 		for _, sent := range sentences {
 			if text, hangup := parseChunk(sent); text != "" || hangup {
 				result.delivered = result.delivered || text != ""
-				deliver(SentenceChunk{Text: text, HasHangup: hangup})
+				deliverText(SentenceChunk{Text: text, HasHangup: hangup})
 			}
 		}
 	}
@@ -143,6 +231,9 @@ func (p *Provider) streamVoiceAttempt(ctx context.Context, useGemini bool, req T
 		result.err = p.gemini.StreamTokens(ctx, req, onToken)
 	} else {
 		result.err = p.groq.StreamTokens(ctx, req, onToken)
+	}
+	if actionHandled {
+		return result
 	}
 	if !spokenFilter.SawEnvelope() && (result.err == nil || errors.Is(result.err, ErrMaxTokens)) {
 		// Tags are a preferred model-output convention, not a single point of
@@ -171,13 +262,35 @@ func (p *Provider) streamVoiceAttempt(ctx context.Context, useGemini bool, req T
 		text, hangup := parseChunk(remaining)
 		if text != "" || hangup {
 			result.delivered = result.delivered || text != ""
-			deliver(SentenceChunk{Text: text, HasHangup: hangup})
+			deliverText(SentenceChunk{Text: text, HasHangup: hangup})
 		}
 	}
 	if !result.delivered && result.err == nil {
 		result.invalidEnvelope = ErrEmptySpokenResponse
 	}
 	return result
+}
+
+// collapseExactRepeatedVoiceText protects the last output boundary from a
+// model returning "confirmation goodbye confirmation goodbye" inside a single
+// structured spoken_text argument. It only collapses two identical, reasonably
+// long halves; ordinary emphasis such as "yes, yes" is preserved.
+func collapseExactRepeatedVoiceText(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) < 40 {
+		return text
+	}
+	for i := len(text) / 3; i <= len(text)*2/3; i++ {
+		if i >= len(text) || (text[i] != ' ' && text[i] != '\n' && text[i] != '\t') {
+			continue
+		}
+		left := strings.TrimSpace(text[:i])
+		right := strings.TrimSpace(text[i:])
+		if len(left) >= 20 && strings.EqualFold(left, right) {
+			return left
+		}
+	}
+	return text
 }
 
 func deliverCompleteVoiceText(text string, deliver func(SentenceChunk), result *voiceAttemptResult) {
@@ -319,6 +432,31 @@ func safeVoiceRetry(language string) string {
 		return "ക്ഷമിക്കണം, ഒരിക്കൽ കൂടി പറയാമോ?"
 	default:
 		return "Sorry, could you please say that again?"
+	}
+}
+
+func safeFinalGoodbye(language string) string {
+	switch language {
+	case "hi":
+		return "धन्यवाद। आपका दिन शुभ हो।"
+	case "mr":
+		return "धन्यवाद। तुमचा दिवस चांगला जावो।"
+	case "bn":
+		return "ধন্যবাদ। আপনার দিনটি শুভ হোক।"
+	case "gu":
+		return "આભાર। તમારો દિવસ શુભ રહે।"
+	case "pa":
+		return "ਧੰਨਵਾਦ। ਤੁਹਾਡਾ ਦਿਨ ਚੰਗਾ ਰਹੇ।"
+	case "ta":
+		return "நன்றி। உங்கள் நாள் இனிதாக அமையட்டும்।"
+	case "te":
+		return "ధన్యవాదాలు। మీ రోజు శుభంగా ఉండాలి।"
+	case "kn":
+		return "ಧನ್ಯವಾದಗಳು। ನಿಮ್ಮ ದಿನ ಶುಭವಾಗಿರಲಿ।"
+	case "ml":
+		return "നന്ദി। നിങ്ങളുടെ ദിവസം നല്ലതാകട്ടെ।"
+	default:
+		return "Thank you for your time. Have a good day."
 	}
 }
 

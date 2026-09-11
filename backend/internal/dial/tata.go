@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
 
 const defaultTataClickToCallEndpoint = "https://api-smartflo.tatateleservices.com/v1/click_to_call_support"
+const defaultTataHangupEndpoint = "https://api-smartflo.tatateleservices.com/v1/call/hangup"
 
 // TataClient calls Tata Tele Smartflo/CloudPhone APIs.
 //
@@ -96,7 +98,78 @@ func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL, str
 }
 
 func (t *TataClient) Hangup(ctx context.Context, callSid string) error {
-	return fmt.Errorf("tata: hangup is not implemented until Tata call control API details are provided for call %s", callSid)
+	callSid = strings.TrimSpace(callSid)
+	if callSid == "" {
+		return fmt.Errorf("tata: hangup: missing ref id")
+	}
+	if t.apiToken == "" {
+		return fmt.Errorf("tata: hangup: missing api token")
+	}
+
+	body, err := json.Marshal(map[string]string{"ref_id": callSid})
+	if err != nil {
+		return fmt.Errorf("tata: hangup: encode request: %w", err)
+	}
+
+	// Smartflo documents Authorization as an access-token header. Accounts in
+	// this application historically stored either a raw token or a Bearer value,
+	// so try the standard Bearer form first and retry once with the raw value only
+	// when authentication is rejected.
+	token := strings.TrimSpace(t.apiToken)
+	authValues := []string{token}
+	if !strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		authValues = []string{"Bearer " + token, token}
+	}
+	var lastStatus int
+	var lastBody string
+	for idx, authorization := range authValues {
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, t.hangupEndpoint(), bytes.NewReader(body))
+		if reqErr != nil {
+			return fmt.Errorf("tata: hangup: build request: %w", reqErr)
+		}
+		req.Header.Set("Authorization", authorization)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+
+		resp, doErr := t.client.Do(req)
+		if doErr != nil {
+			return fmt.Errorf("tata: hangup: http: %w", doErr)
+		}
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("tata: hangup: read response: %w", readErr)
+		}
+		lastStatus = resp.StatusCode
+		lastBody = strings.TrimSpace(string(respBody))
+		if (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) && idx+1 < len(authValues) {
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("tata: hangup: status %d: %s", resp.StatusCode, lastBody)
+		}
+		var result struct {
+			Success *bool  `json:"success"`
+			Message string `json:"message"`
+		}
+		if len(respBody) > 0 && json.Unmarshal(respBody, &result) == nil && result.Success != nil && !*result.Success {
+			return fmt.Errorf("tata: hangup rejected: %s", result.Message)
+		}
+		return nil
+	}
+	return fmt.Errorf("tata: hangup: status %d: %s", lastStatus, lastBody)
+}
+
+func (t *TataClient) hangupEndpoint() string {
+	u, err := url.Parse(strings.TrimSpace(t.endpoint))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return defaultTataHangupEndpoint
+	}
+	u.Path = "/v1/call/hangup"
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func TataSupportPhone(phone string) string {

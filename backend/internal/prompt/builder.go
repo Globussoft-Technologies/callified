@@ -688,6 +688,8 @@ func sourceContextInline(source, language string) string {
 	switch language {
 	case "hi":
 		switch source {
+		case "other":
+			return "हमारा ad देखकर enquiry की थी"
 		case "website":
 			return "हमारी वेबसाइट पर फ़ॉर्म भरा था"
 		case "referral":
@@ -698,6 +700,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "mr":
 		switch source {
+		case "other":
+			return "आमची ad बघून enquiry केली होती"
 		case "website":
 			return "आमच्या वेबसाइटवर फॉर्म भरला होता"
 		case "referral":
@@ -708,6 +712,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "bn":
 		switch source {
+		case "other":
+			return "আমাদের ad দেখে enquiry করেছিলেন"
 		case "website":
 			return "আমাদের ওয়েবসাইটে ফর্ম ভরেছিলেন"
 		case "referral":
@@ -718,6 +724,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "gu":
 		switch source {
+		case "other":
+			return "અમારી ad જોઈને enquiry કરી હતી"
 		case "website":
 			return "અમારી વેબસાઇટ પર ફોર્મ ભર્યું હતું"
 		case "referral":
@@ -728,6 +736,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "pa":
 		switch source {
+		case "other":
+			return "ਸਾਡਾ ad ਵੇਖ ਕੇ enquiry ਕੀਤੀ ਸੀ"
 		case "website":
 			return "ਸਾਡੀ ਵੈੱਬਸਾਈਟ 'ਤੇ ਫਾਰਮ ਭਰਿਆ ਸੀ"
 		case "referral":
@@ -738,6 +748,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "ta":
 		switch source {
+		case "other":
+			return "எங்கள் ad பார்த்து enquiry செய்திருந்தீர்கள்"
 		case "website":
 			return "எங்கள் வலைத்தளத்தில் படிவம் நிரப்பியிருந்தீர்கள்"
 		case "referral":
@@ -748,6 +760,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "te":
 		switch source {
+		case "other":
+			return "మా ad చూసి enquiry చేశారు"
 		case "website":
 			return "మా వెబ్‌సైట్‌లో ఫారమ్ నింపారు"
 		case "referral":
@@ -758,6 +772,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "kn":
 		switch source {
+		case "other":
+			return "ನಮ್ಮ ad ನೋಡಿ enquiry ಮಾಡಿದ್ದೀರಿ"
 		case "website":
 			return "ನಮ್ಮ ವೆಬ್‌ಸೈಟ್‌ನಲ್ಲಿ ಫಾರ್ಮ್ ಭರ್ತಿ ಮಾಡಿದ್ದೀರಿ"
 		case "referral":
@@ -768,6 +784,8 @@ func sourceContextInline(source, language string) string {
 		}
 	case "ml":
 		switch source {
+		case "other":
+			return "ഞങ്ങളുടെ ad കണ്ട് enquiry ചെയ്തിരുന്നു"
 		case "website":
 			return "ഞങ്ങളുടെ വെബ്സൈറ്റിൽ ഫോം പൂരിപ്പിച്ചിരുന്നു"
 		case "referral":
@@ -778,6 +796,8 @@ func sourceContextInline(source, language string) string {
 		}
 	default: // English and any other language
 		switch source {
+		case "other":
+			return "see our ad and enquire"
 		case "website":
 			return "fill out the form on our website"
 		case "referral":
@@ -956,7 +976,9 @@ func canonicalSource(s string) string {
 		return "instagram"
 	case "google ads":
 		return "google"
-	case "facebook", "google", "instagram", "linkedin", "website", "referral", "cold":
+	case "others", "other source":
+		return "other"
+	case "facebook", "google", "instagram", "linkedin", "website", "referral", "cold", "other":
 		return s
 	}
 	return ""

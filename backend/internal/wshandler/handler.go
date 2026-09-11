@@ -260,7 +260,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and merges by confidence within 300ms — recovers Hindi misclassified by
 	// Deepgram's "multi" mode. Mirrors main-branch ws_handler.py 4aa3fa3.
 	onTranscript := func(text string) {
-		if sess.IsMaxDurationClosing() {
+		if sess.IsFinalClosing() {
+			return
+		}
+		if isPathologicalTranscript(text) {
+			sess.Log.Warn("transcript dropped: pathological repetition",
+				zap.Int("text_len", len(text)))
+			if sess.CancelBargeIn() {
+				sess.Log.Info("barge-in: cancelled after pathological transcript")
+			}
 			return
 		}
 		if first, elapsed := sess.MarkSTTFirst(); first {
@@ -297,15 +305,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if sess.IsBargeInPending() {
 			sess.ConfirmBargeIn()
 		}
-		// Suppress transcripts while TTS is playing or within 1s of it ending
-		// to prevent the agent's own voice from looping back as customer input.
-		// Skip this check when a barge-in was just confirmed — the user intentionally
-		// interrupted the agent.
+		// During TTS playback, discard only text that resembles sentences actually
+		// sent to TTS. A distinct transcript.final is real customer speech even if
+		// Sarvam missed vad.speech_start; preserve it and recover the interruption.
 		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
-			sess.Log.Debug("transcript dropped: TTS cooldown",
-				zap.Bool("tts_playing", sess.IsTTSPlaying()),
-				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
-			return
+			if sess.IsLikelyRecentAgentEcho(text) {
+				sess.Log.Debug("transcript dropped: matched recent TTS echo",
+					zap.String("text", text))
+				return
+			}
+			if sess.IsTTSPlaying() {
+				sess.RecoverBargeInFromFinalTranscript()
+			}
 		}
 		// Guard against send on closed channel if session tore down mid-STT.
 		select {
@@ -371,6 +382,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if sess.CancelBargeIn() {
 					sess.Log.Info("barge-in: cancelled by filler partial", zap.String("text", text))
 				}
+				return
+			}
+			if !isMeaningfulBargeInPartial(text) {
 				return
 			}
 			if sess.IsBargeInPending() {

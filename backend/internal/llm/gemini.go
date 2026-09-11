@@ -33,6 +33,22 @@ type geminiRequest struct {
 	SystemInstruction *geminiContent        `json:"system_instruction,omitempty"`
 	Contents          []geminiContent       `json:"contents"`
 	GenerationConfig  geminiStreamGenConfig `json:"generationConfig"`
+	Tools             []geminiTool          `json:"tools,omitempty"`
+}
+
+type geminiTool struct {
+	FunctionDeclarations []geminiFunctionDeclaration `json:"functionDeclarations"`
+}
+
+type geminiFunctionDeclaration struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type geminiFunctionCall struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
 }
 
 type geminiStreamGenConfig struct {
@@ -56,8 +72,9 @@ type geminiStreamEvent struct {
 		FinishReason string `json:"finishReason,omitempty"`
 		Content      struct {
 			Parts []struct {
-				Text    string `json:"text"`
-				Thought bool   `json:"thought,omitempty"`
+				Text         string              `json:"text"`
+				Thought      bool                `json:"thought,omitempty"`
+				FunctionCall *geminiFunctionCall `json:"functionCall,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -200,6 +217,9 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 			Parts: []geminiPart{{Text: req.SystemPrompt}},
 		}
 	}
+	if req.EnableVoiceActions {
+		body.Tools = voiceActionTools()
+	}
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -230,6 +250,7 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 
 	scanner := bufio.NewScanner(resp.Body)
 	hitMaxTokens := false
+	actionDelivered := false
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -259,6 +280,15 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 				if part.Thought {
 					continue
 				}
+				if !actionDelivered && part.FunctionCall != nil && req.OnVoiceAction != nil {
+					actionDelivered = true
+					req.OnVoiceAction(VoiceAction{
+						Name:       part.FunctionCall.Name,
+						SpokenText: stringArg(part.FunctionCall.Args, "spoken_text"),
+						Outcome:    stringArg(part.FunctionCall.Args, "outcome"),
+					})
+					continue
+				}
 				if part.Text != "" {
 					onToken(part.Text)
 				}
@@ -272,6 +302,35 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 		return ErrMaxTokens
 	}
 	return nil
+}
+
+func voiceActionTools() []geminiTool {
+	return []geminiTool{{
+		FunctionDeclarations: []geminiFunctionDeclaration{{
+			Name: "complete_call",
+			Description: "Finish the phone call after the customer has explicitly confirmed a demo/appointment time, declined, or asked to end. " +
+				"Do not call this while another question is needed.",
+			Parameters: map[string]any{
+				"type": "OBJECT",
+				"properties": map[string]any{
+					"spoken_text": map[string]any{
+						"type":        "STRING",
+						"description": "One short customer-facing confirmation and goodbye in the required call language.",
+					},
+					"outcome": map[string]any{
+						"type": "STRING",
+						"enum": []string{"appointment_booked", "customer_declined", "customer_requested_end"},
+					},
+				},
+				"required": []string{"spoken_text", "outcome"},
+			},
+		}},
+	}}
+}
+
+func stringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func voiceThinkingConfig(model string) *geminiThinkingConfig {

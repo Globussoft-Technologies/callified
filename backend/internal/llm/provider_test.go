@@ -2,11 +2,14 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/stretchr/testify/assert"
@@ -138,7 +141,7 @@ func TestProcessTranscriptFlushesClosedUnpunctuatedEnvelope(t *testing.T) {
 
 func TestProcessTranscriptRetriesMissingEnvelopeBeforeSpeakingFallback(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "text/event-stream")
 		output := "I should ask the customer to confirm again."
@@ -212,6 +215,140 @@ func TestOrphanVoiceEnvelopeTagsNeverReachOutput(t *testing.T) {
 	text, hangup := parseChunk(`Thank you, sri. < SAY >`)
 	assert.False(t, hangup)
 	assert.Equal(t, "Thank you, sri.", text)
+}
+
+func TestProcessTranscriptDeliversStructuredCompleteCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.NotEmpty(t, body["tools"])
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"complete_call","args":{"spoken_text":"Your demo is confirmed. Thank you.","outcome":"appointment_booked"}}}]}}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	provider := NewProvider(&config.Config{
+		GeminiAPIKey: "test-key", GeminiModel: "gemini-2.5-flash",
+		GeminiBaseURL: server.URL, LLMProvider: "gemini",
+	}, zap.NewNop())
+	var chunks []SentenceChunk
+	err := provider.ProcessTranscript(context.Background(), TranscriptRequest{
+		Transcript: "Yes, confirm it.", Language: "en", MaxTokens: 100,
+	}, func(chunk SentenceChunk) { chunks = append(chunks, chunk) })
+
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, "Your demo is confirmed. Thank you.", chunks[0].Text)
+	assert.True(t, chunks[0].HasHangup)
+	assert.Equal(t, "appointment_booked", chunks[0].HangupOutcome)
+}
+
+func TestProcessTranscriptDoesNotDuplicateTextBeforeStructuredAction(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"candidates":[{"content":{"parts":[{"text":"<SAY>Your demo is confirmed. Thank you.</SAY>"},{"functionCall":{"name":"complete_call","args":{"spoken_text":"Your demo is confirmed. Thank you.","outcome":"appointment_booked"}}}]}}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	provider := NewProvider(&config.Config{
+		GeminiAPIKey: "test-key", GeminiModel: "gemini-2.5-flash",
+		GeminiBaseURL: server.URL, LLMProvider: "gemini",
+	}, zap.NewNop())
+	var chunks []SentenceChunk
+	err := provider.ProcessTranscript(context.Background(), TranscriptRequest{
+		Transcript: "Yes, tomorrow at 4 PM.", Language: "en", MaxTokens: 100,
+	}, func(chunk SentenceChunk) { chunks = append(chunks, chunk) })
+
+	require.NoError(t, err)
+	var spoken strings.Builder
+	hangups := 0
+	for _, chunk := range chunks {
+		spoken.WriteString(chunk.Text)
+		if chunk.HasHangup {
+			hangups++
+			assert.Equal(t, "appointment_booked", chunk.HangupOutcome)
+		}
+	}
+	assert.Equal(t, "Your demo is confirmed.Thank you.", spoken.String())
+	assert.Equal(t, 1, hangups)
+}
+
+func TestCollapseExactRepeatedVoiceText(t *testing.T) {
+	confirmation := "Perfect. Your demo is confirmed for tomorrow at four PM. Thank you for your time."
+	assert.Equal(t, confirmation, collapseExactRepeatedVoiceText(confirmation+" "+confirmation))
+	assert.Equal(t, "Yes, yes.", collapseExactRepeatedVoiceText("Yes, yes."))
+}
+
+func TestProcessTranscriptTimeoutReleasesTheNextTurn(t *testing.T) {
+	var requests atomic.Int32
+	releaseFirst := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) == 1 {
+			<-releaseFirst
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"<SAY>I can hear you now.</SAY>\"}]}}]}\n\n")
+	}))
+	defer func() {
+		close(releaseFirst)
+		server.Close()
+	}()
+
+	provider := NewProvider(&config.Config{
+		GeminiAPIKey: "test-key", GeminiModel: "gemini-2.5-flash",
+		GeminiBaseURL: server.URL, LLMProvider: "gemini",
+	}, zap.NewNop())
+	provider.voiceAttemptTimeout = 50 * time.Millisecond
+
+	var first []SentenceChunk
+	err := provider.ProcessTranscript(context.Background(), TranscriptRequest{
+		Transcript: "Tell me about the features", Language: "en", MaxTokens: 100,
+	}, func(chunk SentenceChunk) { first = append(first, chunk) })
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Len(t, first, 1)
+	assert.Equal(t, safeVoiceRetry("en"), first[0].Text)
+
+	var second []SentenceChunk
+	err = provider.ProcessTranscript(context.Background(), TranscriptRequest{
+		Transcript: "Hello", Language: "en", MaxTokens: 100,
+	}, func(chunk SentenceChunk) { second = append(second, chunk) })
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, "I can hear you now.", second[0].Text)
+}
+
+func TestProcessTranscriptFallsBackToGroqBeforeSpeaking(t *testing.T) {
+	releaseGemini := make(chan struct{})
+	gemini := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-releaseGemini
+	}))
+	defer func() {
+		close(releaseGemini)
+		gemini.Close()
+	}()
+
+	groq := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"<SAY>Here are the CRM features.</SAY>\"},\"finish_reason\":null}]}\n\n")
+	}))
+	defer groq.Close()
+
+	provider := NewProvider(&config.Config{
+		GeminiAPIKey: "gemini-key", GeminiModel: "gemini-2.5-flash", GeminiBaseURL: gemini.URL,
+		GroqAPIKey: "groq-key", GroqModel: "test-model", LLMProvider: "gemini",
+	}, zap.NewNop())
+	provider.groq.baseURL = groq.URL
+	provider.voiceAttemptTimeout = 50 * time.Millisecond
+
+	var chunks []SentenceChunk
+	err := provider.ProcessTranscript(context.Background(), TranscriptRequest{
+		Transcript: "What features do you have?", Language: "en", MaxTokens: 100,
+	}, func(chunk SentenceChunk) { chunks = append(chunks, chunk) })
+
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	assert.Equal(t, "Here are the CRM features.", chunks[0].Text)
 }
 
 func testGeminiProvider(t *testing.T, output string) (*Provider, func()) {
