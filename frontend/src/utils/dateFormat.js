@@ -64,5 +64,5 @@ export function formatTime(dateStr, timezone) {
 }
 
 export function formatLastLogin(dateStr, timezone) {
-  return dateStr ? formatDateTime(dateStr, timezone) : 'Never';
+  return dateStr ? formatDateTime(dateStr, timezone) : 'Not available';
 }
