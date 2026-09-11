@@ -62,3 +62,7 @@ export function formatTime(dateStr, timezone) {
   };
   return date.toLocaleTimeString(undefined, options);
 }
+
+export function formatLastLogin(dateStr, timezone) {
+  return dateStr ? formatDateTime(dateStr, timezone) : 'Not available';
+}

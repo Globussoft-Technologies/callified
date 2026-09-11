@@ -17,10 +17,12 @@ type migrationExecResult struct {
 type migrationExecutor struct {
 	results []migrationExecResult
 	queries []string
+	args    [][]any
 }
 
-func (e *migrationExecutor) Exec(query string, _ ...any) (sql.Result, error) {
+func (e *migrationExecutor) Exec(query string, args ...any) (sql.Result, error) {
 	e.queries = append(e.queries, strings.Join(strings.Fields(query), " "))
+	e.args = append(e.args, args)
 	result := e.results[len(e.queries)-1]
 	return nil, result.err
 }

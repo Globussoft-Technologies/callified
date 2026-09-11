@@ -26,6 +26,7 @@ type AdminSubscriptionResponse struct {
 	IsActive         bool      `json:"is_active"`
 	Status           string    `json:"status"`
 	MinutesAvailable int       `json:"minutes_available"`
+	LastLoginAt      string    `json:"last_login_at,omitempty"`
 }
 
 // isSuperAdmin checks whether the given email is the configured super-admin
@@ -84,13 +85,15 @@ func (s *Server) listAdminSubscriptions(w http.ResponseWriter, r *http.Request) 
 		} else if sub.ExpiresAt.Before(now) || sub.ExpiresAt.Equal(now) {
 			statusText = "expired"
 		}
+		minutesAvailable, lastLoginAt := s.adminAccountActivity(sub.AdminEmail)
 		resp = append(resp, AdminSubscriptionResponse{
 			AdminEmail:       sub.AdminEmail,
 			ExpiresAt:        sub.ExpiresAt,
 			Plan:             sub.Plan,
 			IsActive:         sub.IsActive,
 			Status:           statusText,
-			MinutesAvailable: s.minutesAvailableForAdmin(sub.AdminEmail),
+			MinutesAvailable: minutesAvailable,
+			LastLoginAt:      lastLoginAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -184,13 +187,15 @@ func (s *Server) createOrUpdateSubscription(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	minutesAvailable, lastLoginAt := s.adminAccountActivity(req.AdminEmail)
 	writeJSON(w, http.StatusOK, AdminSubscriptionResponse{
 		AdminEmail:       req.AdminEmail,
 		ExpiresAt:        req.ExpiresAt.UTC(),
 		Plan:             req.Plan,
 		IsActive:         req.IsActive,
 		Status:           statusText,
-		MinutesAvailable: s.minutesAvailableForAdmin(req.AdminEmail),
+		MinutesAvailable: minutesAvailable,
+		LastLoginAt:      lastLoginAt,
 	})
 }
 
@@ -229,29 +234,31 @@ func (s *Server) getAdminSubscription(w http.ResponseWriter, r *http.Request) {
 		statusText = "expired"
 	}
 
+	minutesAvailable, lastLoginAt := s.adminAccountActivity(sub.AdminEmail)
 	writeJSON(w, http.StatusOK, AdminSubscriptionResponse{
 		AdminEmail:       sub.AdminEmail,
 		ExpiresAt:        sub.ExpiresAt,
 		Plan:             sub.Plan,
 		IsActive:         sub.IsActive,
 		Status:           statusText,
-		MinutesAvailable: s.minutesAvailableForAdmin(sub.AdminEmail),
+		MinutesAvailable: minutesAvailable,
+		LastLoginAt:      lastLoginAt,
 	})
 }
 
-func (s *Server) minutesAvailableForAdmin(email string) int {
+func (s *Server) adminAccountActivity(email string) (int, string) {
 	adminUser, err := s.db.GetUserByEmail(email)
 	if err != nil || adminUser == nil || adminUser.OrgID <= 0 {
-		return 0
+		return 0, ""
 	}
 	if adminUser.Role != db.RoleAdmin {
-		return 0
+		return 0, adminUser.LastLoginAt
 	}
 	credits, err := s.db.GetOrgCredit(adminUser.OrgID)
 	if err != nil || credits == nil {
-		return 0
+		return 0, adminUser.LastLoginAt
 	}
-	return credits.MinutesAvailable
+	return credits.MinutesAvailable, adminUser.LastLoginAt
 }
 
 // subscriptionError is a structured error for subscription failures.
