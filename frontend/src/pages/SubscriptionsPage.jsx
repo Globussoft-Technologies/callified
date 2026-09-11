@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
+import { formatLastLogin } from '../utils/dateFormat';
 
 export default function SubscriptionsPage({ apiFetch }) {
   const { currentUser } = useAuth();
@@ -247,6 +248,10 @@ export default function SubscriptionsPage({ apiFetch }) {
                 <span style={{ fontSize: 12, color: '#6b7280' }}>Minutes</span>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{subscription.minutes_available || 0}</div>
               </div>
+              <div>
+                <span style={{ fontSize: 12, color: '#6b7280' }}>Last Login</span>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{formatLastLogin(subscription.last_login_at)}</div>
+              </div>
             </div>
           </div>
         )}
@@ -361,6 +366,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Plan</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Status</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Minutes</th>
+                  <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Last Login</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Expires At</th>
                   <th style={{ padding: '10px 8px', color: '#374151', fontWeight: 600 }}>Actions</th>
                 </tr>
@@ -386,6 +392,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                         </span>
                       </td>
                       <td style={{ padding: '10px 8px' }}>{s.minutes_available || 0}</td>
+                      <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>{formatLastLogin(s.last_login_at)}</td>
                       <td style={{ padding: '10px 8px' }}>{new Date(s.expires_at).toLocaleString()}</td>
                       <td style={{ padding: '10px 8px' }}>
                         <button
@@ -416,7 +423,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                   ))}
                 {subscriptions.filter(s => s.admin_email.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
                   <tr>
-                    <td colSpan={6} style={{ padding: '20px 8px', textAlign: 'center', color: '#6b7280' }}>
+                    <td colSpan={7} style={{ padding: '20px 8px', textAlign: 'center', color: '#6b7280' }}>
                       {searchQuery ? 'No subscriptions match your search.' : 'No subscriptions found.'}
                     </td>
                   </tr>

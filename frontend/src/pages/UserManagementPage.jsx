@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm } from '../contexts/UIContext';
 import { isAdmin, isTeamLeader, ROLES } from '../utils/roles';
+import { formatLastLogin } from '../utils/dateFormat';
 import UserProviderAccountsModal from '../components/UserProviderAccountsModal';
 
 const T = {
@@ -258,7 +259,8 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
   const managerOptions = users.filter(u => u.role === ROLES.TEAM_LEADER || u.role === ROLES.ADMIN);
 
   const renderTable = () => (
-    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr>
           <th style={thStyle}>Name</th>
@@ -266,6 +268,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
           <th style={thStyle}>Role</th>
           <th style={thStyle}>Manager</th>
           <th style={thStyle}>Status</th>
+          <th style={thStyle}>Last Login</th>
           <th style={thStyle}>Actions</th>
         </tr>
       </thead>
@@ -290,6 +293,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                   {u.is_active !== false ? 'Active' : 'Disabled'}
                 </span>
               </td>
+              <td style={{ ...tdStyle, whiteSpace: 'nowrap' }}>{formatLastLogin(u.last_login_at)}</td>
               <td style={tdStyle}>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button style={btnSecondary} onClick={() => openEdit(u)}>Edit</button>
@@ -308,7 +312,8 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
           );
         })}
       </tbody>
-    </table>
+      </table>
+    </div>
   );
 
   return (

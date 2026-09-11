@@ -122,7 +122,8 @@ func (d *DB) GetUsersByOrg(orgID int64) ([]User, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Agent'),
 		        manager_id, COALESCE(is_active,1),
-		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), '')
+		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), ''),
+		        COALESCE(DATE_FORMAT(last_login_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE org_id=? ORDER BY full_name, email`, orgID)
 	if err != nil {
 		return nil, err
@@ -136,7 +137,8 @@ func (d *DB) GetAgentsByManager(managerID int64) ([]User, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Agent'),
 		        manager_id, COALESCE(is_active,1),
-		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), '')
+		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), ''),
+		        COALESCE(DATE_FORMAT(last_login_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE manager_id=? ORDER BY full_name, email`, managerID)
 	if err != nil {
 		return nil, err
@@ -151,11 +153,12 @@ func (d *DB) GetUserByIDInOrgWithRole(userID, orgID int64) (*User, error) {
 	row := d.pool.QueryRow(
 		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Agent'),
 		        manager_id, COALESCE(is_active,1),
-		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), '')
+		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), ''),
+		        COALESCE(DATE_FORMAT(last_login_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE id=? AND org_id=?`, userID, orgID)
 	u := &User{}
 	var managerID sql.NullInt64
-	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive, &u.CreatedAt, &u.LastLoginAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -439,7 +442,7 @@ func scanUsers(rows *sql.Rows) ([]User, error) {
 	for rows.Next() {
 		var u User
 		var managerID sql.NullInt64
-		err := rows.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive, &u.CreatedAt)
+		err := rows.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive, &u.CreatedAt, &u.LastLoginAt)
 		if err != nil {
 			return nil, err
 		}

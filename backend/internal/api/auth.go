@@ -269,6 +269,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if err := s.db.RecordUserLogin(user.ID); err != nil {
+		s.logger.Sugar().Warnw("login: failed to record last login", "err", err, "user_id", user.ID)
+	}
 	s.setSessionCookie(w, r, token)
 
 	// Response shape matches Python auth.py:220 — `user` is nested so the
