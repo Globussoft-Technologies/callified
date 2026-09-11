@@ -28,10 +28,10 @@ import (
 // All goroutines started here are bound to ctx; cancelling ctx (which
 // the WS loop does on stop/error) drains them in order:
 //
-//	1. ctx cancel
-//	2. close audioIn so Deepgram's send loop returns
-//	3. Deepgram sends CloseStream and waits for the receive loop
-//	4. inbound goroutines return
+//  1. ctx cancel
+//  2. close audioIn so Deepgram's send loop returns
+//  3. Deepgram sends CloseStream and waits for the receive loop
+//  4. inbound goroutines return
 //
 // Returns the audioIn channel that handleFrame writes to from the WS
 // loop. Buffer size is generous (~1 s of audio at 20 ms frames) so a

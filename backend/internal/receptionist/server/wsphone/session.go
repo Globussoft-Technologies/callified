@@ -23,10 +23,10 @@ type phoneSession struct {
 	ws   *websocket.Conn
 	wsMu sync.Mutex // serializes WS writes from any goroutine
 
-	streamSid string    // populated from the "start" event
-	callSid   string    // Exotel's call SID for logging/recording correlation
-	from      string    // caller's phone, e.g. "+919876543210"
-	to        string    // dialed number — receptionist's Exotel number
+	streamSid string // populated from the "start" event
+	callSid   string // Exotel's call SID for logging/recording correlation
+	from      string // caller's phone, e.g. "+919876543210"
+	to        string // dialed number — receptionist's Exotel number
 	startedAt time.Time
 
 	// Inbound audio pipeline (Stage 2). audioIn carries linear-PCM
@@ -74,10 +74,10 @@ type phoneSession struct {
 	// PCM at the same sample rate. recMu serializes writes from the
 	// WS read goroutine and the speak goroutine. transcript is the
 	// chat-bubble log written to the recording sidecar.
-	recMu       sync.Mutex
-	callerPCM   []byte
-	botPCM      []byte
-	transcript  []recordings.TranscriptLine
+	recMu      sync.Mutex
+	callerPCM  []byte
+	botPCM     []byte
+	transcript []recordings.TranscriptLine
 
 	// Wait-for-stop synchronization. cleanup() is idempotent.
 	cleanedOnce sync.Once

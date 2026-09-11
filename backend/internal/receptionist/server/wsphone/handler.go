@@ -35,8 +35,8 @@ var upgrader = websocket.Upgrader{
 //   - callSid:         carrier call SID for cross-referencing
 //   - wavBytes:        stereo PCM-16 WAV (caller=L, bot=R) for playback
 //   - transcriptJSON:  [{role:"AI"|"User", text:"…"}…] matching the
-//                      campaign-call schema so the dashboard renderer
-//                      doesn't need a special case
+//     campaign-call schema so the dashboard renderer
+//     doesn't need a special case
 //   - durationS:       float seconds, ends up in call_transcripts.call_duration_s
 //   - language:        BCP-47 tag (en / hi / mr / …)
 //
@@ -57,11 +57,11 @@ type Deps struct {
 	// the receptionist still works standalone without a database.
 	PastConversations PastConversationSink
 	// ElevenLabsKey + Voices come from env; passed in so tests can stub.
-	ElevenLabsKey      string
-	ElevenLabsVoiceID  string // default voice; per-call override possible
-	SmallestKey        string // fallback when ElevenLabs fails
-	SmallestVoiceID    string
-	DeepgramKey        string
+	ElevenLabsKey     string
+	ElevenLabsVoiceID string // default voice; per-call override possible
+	SmallestKey       string // fallback when ElevenLabs fails
+	SmallestVoiceID   string
+	DeepgramKey       string
 	// MaxCallSeconds aborts a runaway call. Defaults to 600 (10 min).
 	MaxCallSeconds int
 }
