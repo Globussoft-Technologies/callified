@@ -1569,25 +1569,19 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 		}
 	}
 
-	var savedURL string
+	objectKey := "recordings/" + filename
+	if userDir != "" {
+		objectKey = "recordings/" + userDir + "/" + filename
+		if campaignDir != "" {
+			objectKey = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+		}
+	}
 
-	if s.s3 != nil {
-		// Upload to S3 and use the public URL.
-		s3Key := "recordings/" + filename
-		if userDir != "" {
-			s3Key = "recordings/" + userDir + "/" + filename
-			if campaignDir != "" {
-				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
-			}
-		}
-		publicURL, err := s.s3.UploadPublic(ctx, s3Key, data)
-		if err != nil {
-			s.logger.Warn("downloadAndSaveHumanRecording: S3 upload failed", zap.Error(err))
-			// Fall through to local save below.
-		} else {
-			savedURL = publicURL
-			s.logger.Info("downloadAndSaveHumanRecording: uploaded to S3", zap.String("url", publicURL))
-		}
+	savedURL, provider, uploadErr := s.uploadRecordingObject(ctx, objectKey, data)
+	if uploadErr != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: remote upload failed", zap.String("provider", provider), zap.Error(uploadErr))
+	} else if savedURL != "" {
+		s.logger.Info("downloadAndSaveHumanRecording: remote upload complete", zap.String("provider", provider), zap.String("url", savedURL))
 	}
 
 	if savedURL == "" {

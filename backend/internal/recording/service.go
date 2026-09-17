@@ -59,6 +59,7 @@ type Service struct {
 	log        *zap.Logger
 	s3         uploader // nil when S3 is not configured
 	oci        uploader // nil when OCI is not configured; takes precedence over S3
+	nas        uploader // nil outside test* deployments
 }
 
 // New creates a Service.
@@ -78,6 +79,9 @@ func (s *Service) SetS3Uploader(u uploader) { s.s3 = u }
 // SetOCIUploader wires in an OCI Object Storage client after construction.
 // When set, OCI takes precedence over S3 for recording uploads.
 func (s *Service) SetOCIUploader(u uploader) { s.oci = u }
+
+// SetNASUploader wires the NAS selected for a test* deployment.
+func (s *Service) SetNASUploader(u uploader) { s.nas = u }
 
 // SaveAndAnalyze runs the full post-call pipeline asynchronously.
 // It is fire-and-forget from the WebSocket handler's perspective — call it in a goroutine.
@@ -327,7 +331,18 @@ func (s *Service) saveWAV(streamSid, userEmail, campaignName string, data []byte
 		}
 	}
 
-	// OCI takes precedence when configured.
+	// NAS is configured only for test* deployments and must take precedence.
+	if s.nas != nil {
+		publicURL, err := s.nas.UploadPublic(context.Background(), objectKey, data)
+		if err != nil {
+			s.log.Warn("recording: NAS upload failed", zap.Error(err))
+		} else {
+			s.log.Info("recording: uploaded to NAS", zap.String("url", publicURL))
+			return publicURL
+		}
+	}
+
+	// OCI takes precedence when configured for a non-test deployment.
 	if s.oci != nil {
 		publicURL, err := s.oci.UploadPublic(context.Background(), objectKey, data)
 		if err != nil {
