@@ -43,6 +43,7 @@ type Server struct {
 	recordingSvc callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
 	s3           *storage.S3Client  // nil when S3 is not configured
 	oci          *storage.OCIClient // nil when OCI is not configured
+	nas          *storage.NASClient // nil outside test* deployments
 	loginLimiter *loginRateLimiter
 }
 
@@ -87,7 +88,17 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 		loginLimiter: newLoginRateLimiter(),
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
-	if cfg.OCINamespace != "" && cfg.OCIBucket != "" && cfg.OCIAccessKeyID != "" && cfg.OCISecretAccessKey != "" {
+	if cfg.IsTestDeployment() {
+		if cfg.NASHost != "" && cfg.NASUser != "" && cfg.NASPassword != "" && cfg.NASBasePath != "" {
+			srv.nas = storage.NewNASClient(cfg.NASHost, cfg.NASPort, cfg.NASUser, cfg.NASPassword, cfg.NASBasePath, cfg.NASHostKeySHA256)
+			logger.Info("NAS recording storage enabled", zap.String("host", cfg.NASHost), zap.String("base_path", cfg.NASBasePath))
+			if cfg.NASHostKeySHA256 == "" {
+				logger.Warn("NAS_HOST_KEY_SHA256 is unset; NAS host-key verification is disabled")
+			}
+		} else {
+			logger.Error("test deployment requires NAS_HOST, NAS_USER, NAS_PASSWORD, and NAS_BASE_PATH; recordings will use local fallback")
+		}
+	} else if cfg.OCINamespace != "" && cfg.OCIBucket != "" && cfg.OCIAccessKeyID != "" && cfg.OCISecretAccessKey != "" {
 		srv.oci = storage.NewOCIClient(cfg.OCIRegion, cfg.OCINamespace, cfg.OCIBucket, cfg.OCIAccessKeyID, cfg.OCISecretAccessKey)
 		logger.Sugar().Infow("OCI storage enabled", "bucket", cfg.OCIBucket, "namespace", cfg.OCINamespace, "region", cfg.OCIRegion)
 	} else if cfg.S3Bucket != "" && cfg.AWSAccessKeyID != "" && cfg.AWSSecretAccessKey != "" {
@@ -109,6 +120,9 @@ func (s *Server) S3() *storage.S3Client { return s.s3 }
 // OCI returns the OCI Object Storage client (nil when not configured). Used by
 // main.go to wire the same client into the recording service.
 func (s *Server) OCI() *storage.OCIClient { return s.oci }
+
+// NAS returns the SFTP NAS client selected for test* deployments.
+func (s *Server) NAS() *storage.NASClient { return s.nas }
 
 // SetRecordingService wires the post-call analyzer after construction.
 // Used by the on-demand "regenerate conclusion" endpoint. Nil-safe — the

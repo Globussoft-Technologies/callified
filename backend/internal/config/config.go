@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -65,6 +67,16 @@ type Config struct {
 	OCIBucket          string `env:"OCI_BUCKET"`
 	OCIAccessKeyID     string `env:"OCI_ACCESS_KEY_ID"`
 	OCISecretAccessKey string `env:"OCI_SECRET_ACCESS_KEY"`
+
+	// NAS recording storage for development deployments. When the hostname in
+	// PUBLIC_SERVER_URL starts with "test", recordings are written here over
+	// SFTP instead of being uploaded to OCI.
+	NASHost          string `env:"NAS_HOST"`
+	NASPort          int    `env:"NAS_PORT" envDefault:"22"`
+	NASUser          string `env:"NAS_USER"`
+	NASPassword      string `env:"NAS_PASSWORD"`
+	NASBasePath      string `env:"NAS_BASE_PATH"`
+	NASHostKeySHA256 string `env:"NAS_HOST_KEY_SHA256"`
 
 	// Knowledge-base uploads (PDFs/TXT/DOCX). Files are kept on disk so
 	// users can preview/download what was indexed; the FAISS embeddings
@@ -138,6 +150,25 @@ type Config struct {
 	SSODefaultRole  string `env:"SSO_DEFAULT_ROLE" envDefault:"Agent"`
 	SSOOrgRemap     string `env:"SSO_ORG_REMAP"`
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
+}
+
+// IsTestDeployment reports whether PUBLIC_SERVER_URL's hostname starts with
+// "test" (for example, testgo2.callified.ai). URL paths never affect the
+// decision.
+func (c *Config) IsTestDeployment() bool {
+	raw := strings.TrimSpace(c.PublicServerURL)
+	if raw == "" {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		// Also accept a bare hostname in configuration.
+		parsed, err = url.Parse("//" + raw)
+		if err != nil {
+			return false
+		}
+	}
+	return strings.HasPrefix(strings.ToLower(parsed.Hostname()), "test")
 }
 
 // DSN returns a MySQL DSN string for database/sql.
