@@ -109,8 +109,30 @@ func TestAppointmentDateSurvivesClarificationTurns(t *testing.T) {
 
 func TestTerminalActionRequiresExplicitDeclineOrEnd(t *testing.T) {
 	assert.False(t, terminalActionAllowed("customer_declined", "Can you explain it?", nil))
+	assert.False(t, terminalActionAllowed("customer_declined", "No", nil))
+	assert.False(t, terminalActionAllowed("customer_declined", "No, I'm not looking for it", nil))
 	assert.True(t, terminalActionAllowed("customer_declined", "No thanks, I am not interested", nil))
-	assert.True(t, terminalActionAllowed("customer_declined", "No", nil))
 	assert.False(t, terminalActionAllowed("customer_requested_end", "Please repeat that", nil))
 	assert.True(t, terminalActionAllowed("customer_requested_end", "Please end the call", nil))
+	assert.True(t, terminalActionAllowed("customer_requested_end", "I will call you later, now I am busy", nil))
+}
+
+func TestRejectedDeclineUsesClarificationInsteadOfRetry(t *testing.T) {
+	recovery := terminalRecoveryLine("en", "customer_declined")
+	assert.Equal(t, "Understood. What solution are you looking for instead?", recovery)
+	assert.NotContains(t, recovery, "say that again")
+}
+
+func TestPlainFarewellRequiresCustomerSupportedClose(t *testing.T) {
+	assert.False(t, inferredFinalCloseAllowed("No, I'm not looking for it", nil))
+	assert.True(t, isAmbiguousRequirementCorrection("No, I'm not looking for it"))
+
+	assert.True(t, inferredFinalCloseAllowed("I'm not interested", nil))
+	assert.True(t, inferredFinalCloseAllowed("I am busy, call me later", nil))
+}
+
+func TestRejectedTerminalActionsDoNotUseGenericRetry(t *testing.T) {
+	for _, outcome := range []string{"customer_declined", "customer_requested_end", ""} {
+		assert.NotContains(t, terminalRecoveryLine("en", outcome), "say that again")
+	}
 }
