@@ -218,6 +218,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		OrgID:        req.OrgID,
 		LeadID:       req.LeadID,
 		Sentiment:    "neutral",
+		CallOutcome:  callOutcomePending,
 	}
 	analyzed := false
 	if shouldAnalyze {
@@ -227,6 +228,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.QualityScore = a.QualityScore
 			review.Sentiment = a.Sentiment
 			review.AppointmentBooked = a.AppointmentBooked
+			review.CallOutcome = a.CallOutcome
 			review.FailureReason = a.FailureReason
 			review.WhatWentWell = a.WhatWentWell
 			review.WhatWentWrong = a.WhatWentWrong
@@ -294,6 +296,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			"duration_s":         req.DurationS,
 			"sentiment":          review.Sentiment,
 			"appointment_booked": review.AppointmentBooked,
+			"call_outcome":       review.CallOutcome,
 		})
 	}
 
@@ -306,6 +309,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		zap.Int64("transcript_id", transcriptID),
 		zap.String("sentiment", review.Sentiment),
 		zap.Bool("appointment_booked", review.AppointmentBooked),
+		zap.String("call_outcome", review.CallOutcome),
 	)
 }
 
@@ -406,6 +410,7 @@ type analysis struct {
 	QualityScore                float64 `json:"quality_score"`
 	Sentiment                   string  `json:"sentiment"`
 	AppointmentBooked           bool    `json:"appointment_booked"`
+	CallOutcome                 string  `json:"call_outcome"`
 	FailureReason               string  `json:"failure_reason"`
 	WhatWentWell                string  `json:"what_went_well"`
 	WhatWentWrong               string  `json:"what_went_wrong"`
@@ -446,6 +451,10 @@ FIELDS:
 - "quality_score": integer 1-5 only (NEVER outside 1-5)
 - "sentiment": "positive" | "neutral" | "negative" | "annoyed" — measure the CUSTOMER's tone, not the agent's
 - "appointment_booked": true or false (true only if a specific date/time was confirmed)
+- "call_outcome": exactly one of "appointment_booked", "not_interested", or "pending"
+  - "appointment_booked": use only when a specific date/time was confirmed
+  - "not_interested": use only when the customer clearly and completely rejects the offer, asks not to be called, or explicitly ends the sales conversation
+  - "pending": use when the call drops, ends early, has only a greeting/ambiguous answer, needs follow-up, or finishes without a clear acceptance or clear rejection. A bare "no" answering an unrelated question is not enough for "not_interested"
 - "failure_reason": 1 sentence in English on why the call didn't convert; if it did, write "N/A — appointment booked". For no-reply calls, write e.g. "Customer did not respond after greeting — likely hung up or wrong number"
 - "what_went_well": 1-2 sentences in English on what the agent did right. If nothing meaningful happened (no reply), say "Agent delivered greeting clearly but had no chance to engage the customer"
 - "what_went_wrong": 1-2 sentences on what the agent could improve. For no-reply calls, say "No opportunity to engage — call ended before any customer interaction"
@@ -492,7 +501,32 @@ func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*
 	if a.Sentiment == "" {
 		a.Sentiment = "neutral"
 	}
+	normalizeCallOutcome(&a)
 	return &a, nil
+}
+
+const (
+	callOutcomeAppointmentBooked = "appointment_booked"
+	callOutcomeNotInterested     = "not_interested"
+	callOutcomePending           = "pending"
+)
+
+func normalizeCallOutcome(a *analysis) {
+	if a.AppointmentBooked {
+		a.CallOutcome = callOutcomeAppointmentBooked
+		return
+	}
+
+	switch strings.ToLower(strings.TrimSpace(a.CallOutcome)) {
+	case callOutcomeNotInterested:
+		a.CallOutcome = callOutcomeNotInterested
+	case callOutcomePending:
+		a.CallOutcome = callOutcomePending
+	default:
+		// Missing or unexpected model output must never turn an unfinished call
+		// into a rejection. Pending is the safe follow-up state.
+		a.CallOutcome = callOutcomePending
+	}
 }
 
 type inboundLeadExtraction struct {

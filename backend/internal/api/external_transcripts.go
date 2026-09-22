@@ -50,7 +50,7 @@ import (
 //	            "created_at":    "2026-04-28 10:01:08",
 //	            "recording_url": "/api/recordings/...wav",
 //	            "transcript":    [ {"role":"AI","text":"..."}, {"role":"User","text":"..."} ],
-//	            "conclusion":    { "quality_score": 4.0, "sentiment": "positive", ... } | null
+//	            "conclusion":    { "quality_score": 4.0, "call_outcome": "pending", ... } | null
 //	          }
 //	        ]
 //	      }
@@ -135,6 +135,7 @@ func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) 
 						"quality_score":                 review.QualityScore,
 						"sentiment":                     review.Sentiment,
 						"appointment_booked":            review.AppointmentBooked,
+						"call_outcome":                  review.CallOutcome,
 						"failure_reason":                review.FailureReason,
 						"summary":                       review.Summary,
 						"what_went_well":                review.WhatWentWell,

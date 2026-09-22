@@ -1052,6 +1052,12 @@ type CallLogEntry struct {
 // If execIDs is non-empty, only calls whose lead has one of the given
 // executive_id values (or is unassigned if 0 is included) are returned.
 func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEntry, error) {
+	return d.GetCampaignCallLogFiltered(campaignID, execIDs, CampaignActivityFilter{})
+}
+
+// GetCampaignCallLogFiltered applies the dashboard search/date controls to
+// call transcript time while preserving the legacy unfiltered method above.
+func (d *DB) GetCampaignCallLogFiltered(campaignID int64, execIDs []int64, filter CampaignActivityFilter) ([]CallLogEntry, error) {
 	q := `
 		SELECT
 			ct.id,
@@ -1073,6 +1079,10 @@ func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEnt
 		WHERE ct.campaign_id=?`
 	args := []any{campaignID}
 	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	if c, a := campaignActivityFilterClause(filter, "ct.created_at"); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
@@ -1098,6 +1108,12 @@ func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEnt
 // single dashboard user. Manual/configured-account calls are matched through
 // nearby transcript rows when the provider call log is incomplete.
 func (d *DB) GetCampaignCallLogForUser(campaignID, userID int64) ([]CallLogEntry, error) {
+	return d.GetCampaignCallLogForUserFiltered(campaignID, userID, CampaignActivityFilter{})
+}
+
+// GetCampaignCallLogForUserFiltered is the agent-scoped equivalent of
+// GetCampaignCallLogFiltered.
+func (d *DB) GetCampaignCallLogForUserFiltered(campaignID, userID int64, filter CampaignActivityFilter) ([]CallLogEntry, error) {
 	q := `
 		SELECT DISTINCT
 			ct.id,
@@ -1121,9 +1137,14 @@ func (d *DB) GetCampaignCallLogForUser(campaignID, userID int64) ([]CallLogEntry
 			AND aa.lead_id=ct.lead_id
 			AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
 		LEFT JOIN leads l ON ct.lead_id=l.id
-		WHERE ct.campaign_id=?
-		ORDER BY ct.created_at DESC`
-	rows, err := d.pool.Query(q, userID, campaignID)
+		WHERE ct.campaign_id=?`
+	args := []any{userID, campaignID}
+	if c, a := campaignActivityFilterClause(filter, "ct.created_at"); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY ct.created_at DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -196,10 +196,13 @@ export default function CampaignsTab({
     } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
   }, [apiFetch, API_URL]);
 
-  const fetchCallLog = async (campaignId, executiveIds = []) => {
+  const fetchCallLog = async (campaignId, executiveIds = [], filters = {}) => {
     try {
       const params = new URLSearchParams();
       if (executiveIds?.length) params.set('executive_ids', executiveIds.join(','));
+      if (filters.search?.trim()) params.set('search', filters.search.trim());
+      if (filters.from) params.set('from', filters.from);
+      if (filters.to) params.set('to', filters.to);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log${query}`);
       if (!res.ok) { setCallLog([]); return; }

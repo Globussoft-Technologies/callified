@@ -36,6 +36,18 @@ const btnGhost = {
   fontSize: 12, fontWeight: 600, fontFamily: T.font,
 };
 
+function toUTCActivityDate(value) {
+  if (!value) return '';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
+function currentLocalDateTime() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+}
+
 function mergeProviderAccount(accounts, account) {
   const list = Array.isArray(accounts) ? [...accounts] : [];
   if (!account?.id) return list;
@@ -448,6 +460,15 @@ export default function CampaignDetail({
   const [detailExecSearch, setDetailExecSearch] = useState('');
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
+  const activityDateMax = detailTab === 'leads' ? undefined : currentLocalDateTime();
+  const handleDetailTabChange = (tabId) => {
+    if (tabId !== 'leads') {
+      const max = currentLocalDateTime();
+      if (scheduleFrom && scheduleFrom > max) setScheduleFrom('');
+      if (scheduleTo && scheduleTo > max) setScheduleTo('');
+    }
+    setDetailTab(tabId);
+  };
   const currentCampaignId = Number(
     selectedCampaign?.id || selectedCampaign?.campaign_id || selectedCampaign?.campaignId || 0
   );
@@ -1197,6 +1218,9 @@ export default function CampaignDetail({
     try {
       const params = new URLSearchParams();
       if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      if (leadSearch.trim()) params.set('search', leadSearch.trim());
+      if (scheduleFrom) params.set('from', toUTCActivityDate(scheduleFrom));
+      if (scheduleTo) params.set('to', toUTCActivityDate(scheduleTo));
       const query = params.toString() ? `?${params.toString()}` : '';
       const [insightsRes, reviewsRes] = await Promise.all([
         apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/call-insights${query}`),
@@ -1226,6 +1250,9 @@ export default function CampaignDetail({
     try {
       const params = new URLSearchParams();
       if (detailExecutiveFilter?.length) params.set('executive_ids', detailExecutiveFilter.join(','));
+      if (leadSearch.trim()) params.set('search', leadSearch.trim());
+      if (scheduleFrom) params.set('from', toUTCActivityDate(scheduleFrom));
+      if (scheduleTo) params.set('to', toUTCActivityDate(scheduleTo));
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/retries${query}`);
       const data = await res.json();
@@ -1235,11 +1262,15 @@ export default function CampaignDetail({
   };
 
   useEffect(() => {
-    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter);
+    if (detailTab === 'calllog') fetchCallLog(selectedCampaign.id, detailExecutiveFilter, {
+      search: leadSearch,
+      from: toUTCActivityDate(scheduleFrom),
+      to: toUTCActivityDate(scheduleTo),
+    });
     if (detailTab === 'insights') fetchInsights();
     if (detailTab === 'retries') fetchRetries();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailTab, selectedCampaign.id, detailExecutiveFilter]);
+  }, [detailTab, selectedCampaign.id, detailExecutiveFilter, leadSearch, scheduleFrom, scheduleTo]);
 
   // Load call outcome stats whenever the campaign detail is opened.
   useEffect(() => {
@@ -2090,7 +2121,7 @@ export default function CampaignDetail({
           { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures || !canViewReports },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
-              onClick={() => setDetailTab(tab.id)}
+              onClick={() => handleDetailTabChange(tab.id)}
               style={{
                 padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
                 fontSize: 13, fontWeight: 600, fontFamily: T.font,
@@ -2171,7 +2202,11 @@ export default function CampaignDetail({
           <input
             type="datetime-local"
             value={scheduleFrom}
-            onChange={e => setScheduleFrom(e.target.value)}
+            max={activityDateMax}
+            onChange={e => {
+              const value = e.target.value;
+              if (!activityDateMax || !value || value <= activityDateMax) setScheduleFrom(value);
+            }}
             style={{
               padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
               fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
@@ -2181,7 +2216,11 @@ export default function CampaignDetail({
           <input
             type="datetime-local"
             value={scheduleTo}
-            onChange={e => setScheduleTo(e.target.value)}
+            max={activityDateMax}
+            onChange={e => {
+              const value = e.target.value;
+              if (!activityDateMax || !value || value <= activityDateMax) setScheduleTo(value);
+            }}
             style={{
               padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
               fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
