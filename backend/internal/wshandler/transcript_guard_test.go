@@ -47,6 +47,17 @@ func TestAppointmentTerminalActionRequiresDayAndExactTime(t *testing.T) {
 	assert.True(t, terminalActionAllowed("appointment_booked", "12 o'clock", history))
 }
 
+func TestGeminiLiveAppointmentToolRequiresCustomerSupportedDateAndTime(t *testing.T) {
+	history := []llm.ChatMessage{
+		{Role: "model", Text: "Would tomorrow at three PM work?"},
+		{Role: "user", Text: "Tell me about integrations first."},
+	}
+	assert.False(t, appointmentToolArgumentsAllowed("tomorrow", "three PM", "Airtel Money", history))
+
+	history = append(history, llm.ChatMessage{Role: "user", Text: "Tomorrow at three PM works for me."})
+	assert.True(t, appointmentToolArgumentsAllowed("tomorrow", "three PM", "Yes, confirmed", history))
+}
+
 func TestAppointmentTerminalActionAcceptsCalendarDateFromPriorTurn(t *testing.T) {
 	tests := []struct {
 		name    string

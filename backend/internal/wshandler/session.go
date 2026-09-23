@@ -22,12 +22,13 @@ import (
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
 	// Identity (set on connect / start event)
-	StreamSid string
-	CallSid   string
-	Provider  string
-	IsExotel  bool
-	IsWebSim  bool
-	IsInbound bool
+	StreamSid  string
+	CallSid    string
+	Provider   string
+	IsExotel   bool
+	IsWebSim   bool
+	IsInbound  bool
+	GeminiLive bool
 	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
 	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
 	IsBridge bool
@@ -73,6 +74,7 @@ type CallSession struct {
 	maxDurationWaitReply atomic.Bool
 	maxDurationClosing   atomic.Bool
 	finalCloseReq        atomic.Bool
+	finalCloseAudio      atomic.Bool  // native Live closing audio has started
 	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
@@ -82,10 +84,16 @@ type CallSession struct {
 	lastAudioSentNano    atomic.Int64 // UnixNano of last outbound audio frame sent
 	lastTranscript       atomic.Int64 // UnixNano — debounce timestamp
 	outboundSeq          atomic.Uint64
+	playbackEpoch        atomic.Uint64 // invalidates queued Gemini audio after barge-in
 
 	// Serialization
-	llmMu sync.Mutex // one LLM turn at a time per session
-	wsMu  sync.Mutex // serialize concurrent WebSocket writes
+	llmMu  sync.Mutex // one LLM turn at a time per session
+	wsMu   sync.Mutex // serialize concurrent WebSocket writes
+	liveMu sync.RWMutex
+	// liveResponder sends a server-side instruction into the active Gemini Live
+	// session. It is used for system events such as the maximum-duration close,
+	// where routing text through the legacy TTS queue would produce no audio.
+	liveResponder func(string) bool
 
 	// Channels (created in NewCallSession)
 	AudioIn      chan []byte // ulaw→PCM frames from WS → STT goroutine
@@ -235,6 +243,23 @@ func (s *CallSession) TTSInstance() tts.Provider {
 	s.ttsMu.RLock()
 	defer s.ttsMu.RUnlock()
 	return s.ttsInstance
+}
+
+// SetLiveResponder installs the active Gemini Live control hook. Passing nil
+// removes it when the Live session exits.
+func (s *CallSession) SetLiveResponder(fn func(string) bool) {
+	s.liveMu.Lock()
+	s.liveResponder = fn
+	s.liveMu.Unlock()
+}
+
+// RequestLiveResponse asks the active Gemini Live session to speak a response.
+// It returns false when Live is not ready or its control queue is full.
+func (s *CallSession) RequestLiveResponse(instruction string) bool {
+	s.liveMu.RLock()
+	fn := s.liveResponder
+	s.liveMu.RUnlock()
+	return fn != nil && fn(instruction)
 }
 
 // NewCallSession allocates a CallSession. streamSid may be empty at this point
@@ -387,16 +412,20 @@ func (s *CallSession) RequestMaxDurationClose() {
 	s.maxDurationSoftClose.Store(true)
 	s.maxDurationWaitReply.Store(false)
 	s.maxDurationClosing.Store(true)
+	s.finalCloseAudio.Store(false)
 	s.RequestHangup()
 }
 func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
 func (s *CallSession) RequestFinalClose() {
 	s.finalCloseReq.Store(true)
+	s.finalCloseAudio.Store(false)
 	s.maxDurationWaitReply.Store(false)
 	s.SetBargeInPending(false)
 	s.SetBargeIn(false)
 	s.RequestHangup()
 }
+func (s *CallSession) MarkFinalCloseAudioStarted()  { s.finalCloseAudio.Store(true) }
+func (s *CallSession) FinalCloseAudioStarted() bool { return s.finalCloseAudio.Load() }
 func (s *CallSession) IsFinalClosing() bool {
 	return s.finalCloseReq.Load() || s.IsMaxDurationClosing()
 }
@@ -422,6 +451,7 @@ func (s *CallSession) TriggerBargeIn() bool {
 }
 
 func (s *CallSession) interruptActiveTTS() {
+	s.playbackEpoch.Add(1)
 	s.SetBargeIn(true)
 	metrics.BargeIns.Inc()
 	s.DrainTTSSentences()
@@ -434,13 +464,15 @@ func (s *CallSession) interruptActiveTTS() {
 	var frame []byte
 	if s.IsWebSim {
 		frame, _ = json.Marshal(map[string]string{"type": "clear"})
-	} else if s.IsExotel {
+	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
 	}
 	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
 	}
 }
+
+func (s *CallSession) PlaybackEpoch() uint64 { return s.playbackEpoch.Load() }
 
 // TryBargeIn attempts to trigger a tentative barge-in when customer speech is
 // detected. Returns true if barge-in was actually triggered. It requires TTS to
@@ -453,6 +485,20 @@ func (s *CallSession) TryBargeIn(source string) bool {
 	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
 	if !recentTTS || s.IsBargeInActive() || s.IsBargeInPending() {
 		return false
+	}
+	// Gemini Live already receives the same caller audio and owns turn
+	// detection. Once local VAD confirms speech during active/recent playback,
+	// stop immediately instead of waiting for a separate STT provider that the
+	// Live pipeline intentionally does not run.
+	if s.GeminiLive {
+		if !s.TriggerBargeIn() {
+			return false
+		}
+		s.Log.Info("barge-in: triggered",
+			zap.String("source", source),
+			zap.Float64("noise_floor", s.VAD.NoiseFloor()),
+			zap.Bool("gemini_live", true))
+		return true
 	}
 	if !s.TentativeTriggerBargeIn() {
 		return false
@@ -521,6 +567,29 @@ func (s *CallSession) ConfirmBargeIn() bool {
 	} else {
 		s.Log.Info("barge-in: confirmed by STT")
 	}
+	return true
+}
+
+// ConfirmLiveInterruption handles Gemini Live's server-confirmed interruption
+// event. Unlike the text/STT pipeline, Live may report the interruption before
+// an input transcript arrives, so it must immediately stop outbound audio and
+// flush the carrier playback buffer without waiting for STT confirmation.
+func (s *CallSession) ConfirmLiveInterruption() bool {
+	s.bargeInPending.Store(false)
+	if s.IsFinalClosing() {
+		s.SetBargeIn(false)
+		s.Log.Info("barge-in: live interruption ignored during final close")
+		return false
+	}
+	if s.IsBargeInActive() {
+		return false
+	}
+	s.interruptActiveTTS()
+	s.confirmedBargeInNano.Store(time.Now().UnixNano())
+	if s.HangupRequested() {
+		s.hangupReq.Store(false)
+	}
+	s.Log.Info("barge-in: confirmed by Gemini Live")
 	return true
 }
 

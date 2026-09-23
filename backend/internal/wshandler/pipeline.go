@@ -503,6 +503,12 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 		sess.PlaybackTracker.AddBytes(len(ulaw))
 		const frameBytes = 160 // 160 bytes µ-law = 20ms @ 8 kHz
 		for off := 0; off < len(ulaw); off += frameBytes {
+			// Barge-in can arrive while a large Gemini Live audio chunk is
+			// being paced. Stop between 20 ms frames instead of sending the
+			// remainder into the carrier's playback queue.
+			if sess.IsBargeInActive() {
+				return
+			}
 			end := off + frameBytes
 			if end > len(ulaw) {
 				end = len(ulaw)
@@ -514,6 +520,7 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 				"media":     map[string]string{"payload": payloadB64},
 			})
 			_ = sess.SendText(frame)
+			sess.MarkAudioSent()
 			if sess.hasMonitors() {
 				sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
 			}

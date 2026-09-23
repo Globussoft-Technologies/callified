@@ -1537,6 +1537,7 @@ export default function CampaignDetail({
               <option value="elevenlabs">ElevenLabs</option>
               <option value="sarvam">Sarvam AI</option>
               <option value="smallest">Smallest AI</option>
+              <option value="gemini_live">Gemini Live</option>
             </select>
             <select className="form-input" value={campVoice.tts_voice_id}
               onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}

@@ -241,6 +241,28 @@ func appointmentHasDayAndTime(transcript string, history []llm.ChatMessage) bool
 	return containsAnyLiteral(context, appointmentTimeMarkers) && containsDigitOrNumberWord(context)
 }
 
+// appointmentToolArgumentsAllowed is the stricter Gemini Live booking gate.
+// The tool arguments must contain a real date and exact time, and those same
+// details must be supported by customer speech. This prevents the model from
+// turning an unrelated ASR fragment (for example a company or payment name)
+// into a spoken appointment confirmation.
+func appointmentToolArgumentsAllowed(date, clockTime, transcript string, history []llm.ChatMessage) bool {
+	date = strings.TrimSpace(date)
+	clockTime = strings.TrimSpace(clockTime)
+	if date == "" || clockTime == "" || !appointmentHasDayAndTime(date+" "+clockTime, nil) {
+		return false
+	}
+
+	customerParts := make([]string, 0, len(history)+1)
+	for _, message := range history {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			customerParts = append(customerParts, message.Text)
+		}
+	}
+	customerParts = append(customerParts, transcript)
+	return appointmentHasDayAndTime(strings.Join(customerParts, " "), nil)
+}
+
 func containsDigitOrNumberWord(text string) bool {
 	for _, r := range text {
 		if unicode.IsDigit(r) {

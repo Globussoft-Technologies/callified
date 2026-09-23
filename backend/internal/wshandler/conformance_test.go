@@ -265,6 +265,56 @@ func TestTentativeBargeInDoesNotCancelTTSUntilConfirmed(t *testing.T) {
 	assert.True(t, cancelled)
 }
 
+func TestGeminiLiveInterruptionImmediatelyCancelsPlayback(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+	sess.SetTTSPlaying(true)
+	sess.SetBargeInPending(true)
+
+	assert.True(t, sess.ConfirmLiveInterruption())
+	assert.True(t, sess.IsBargeInActive())
+	assert.False(t, sess.IsBargeInPending())
+	assert.True(t, cancelled)
+	assert.False(t, sess.ConfirmLiveInterruption(), "duplicate Live interruption must be idempotent")
+}
+
+func TestGeminiLiveServerInterruptionCancelsPlayback(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.GeminiLive = true
+	sess.SetTTSPlaying(true)
+	cancelled := false
+	sess.SetCancelTTS(func() { cancelled = true })
+
+	epoch := sess.PlaybackEpoch()
+	assert.True(t, sess.ConfirmLiveInterruption())
+	assert.True(t, sess.IsBargeInActive())
+	assert.False(t, sess.IsBargeInPending())
+	assert.True(t, cancelled)
+	assert.Greater(t, sess.PlaybackEpoch(), epoch)
+}
+
+func TestGeminiLiveUsesOnlyServerSideActivityDetection(t *testing.T) {
+	legacy := NewCallSession("legacy_stream", nil, zap.NewNop())
+	live := NewCallSession("live_stream", nil, zap.NewNop())
+	live.GeminiLive = true
+
+	assert.True(t, shouldTriggerLocalBargeIn(legacy, true))
+	assert.False(t, shouldTriggerLocalBargeIn(live, true), "Gemini Live must not also use local energy VAD")
+	assert.False(t, shouldTriggerLocalBargeIn(legacy, false))
+}
+
+func TestGeminiLiveInterruptionCannotCancelFinalClose(t *testing.T) {
+	sess := NewCallSession("test_stream", nil, zap.NewNop())
+	sess.SetBargeInPending(true)
+	sess.RequestFinalClose()
+
+	assert.False(t, sess.ConfirmLiveInterruption())
+	assert.True(t, sess.IsFinalClosing())
+	assert.False(t, sess.IsBargeInActive())
+	assert.False(t, sess.IsBargeInPending())
+}
+
 func TestFinalTranscriptEchoDetectionPreservesDistinctCustomerSpeech(t *testing.T) {
 	sess := NewCallSession("test_stream", nil, zap.NewNop())
 	sess.RememberAgentSpeech("GlobusCRM automates calls and follow-ups for your sales team.")
