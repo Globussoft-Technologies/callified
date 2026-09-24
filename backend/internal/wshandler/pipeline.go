@@ -489,6 +489,12 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // the Voicebot applet decodes the WS payload directly into its outbound RTP
 // stream without a jitter buffer in between.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
+	sendAudioFrameAtEpoch(sess, pcm8k, sess.PlaybackEpoch())
+}
+
+// sendAudioFrameAtEpoch stops paced Live audio when its playback generation is
+// invalidated by barge-in or by the language guard.
+func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64) {
 	if sess.IsBargeInActive() {
 		return
 	}
@@ -506,7 +512,7 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 			// Barge-in can arrive while a large Gemini Live audio chunk is
 			// being paced. Stop between 20 ms frames instead of sending the
 			// remainder into the carrier's playback queue.
-			if sess.IsBargeInActive() {
+			if sess.IsBargeInActive() || sess.PlaybackEpoch() != expectedEpoch {
 				return
 			}
 			end := off + frameBytes

@@ -472,6 +472,25 @@ func (s *CallSession) interruptActiveTTS() {
 	}
 }
 
+// DiscardLivePlayback drops a Gemini response rejected by the language guard.
+// Unlike barge-in, this is a server-side quality correction and must not change
+// customer-interruption state or metrics.
+func (s *CallSession) DiscardLivePlayback() {
+	s.playbackEpoch.Add(1)
+	s.DrainTTSSentences()
+	s.CancelActiveTTS()
+	s.PlaybackTracker.Reset()
+	var frame []byte
+	if s.IsWebSim {
+		frame, _ = json.Marshal(map[string]string{"type": "clear"})
+	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
+		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	}
+	if frame != nil && s.WS != nil {
+		_ = s.SendText(frame)
+	}
+}
+
 func (s *CallSession) PlaybackEpoch() uint64 { return s.playbackEpoch.Load() }
 
 // TryBargeIn attempts to trigger a tentative barge-in when customer speech is

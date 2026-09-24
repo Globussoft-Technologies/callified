@@ -368,11 +368,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				languageGuard := newLiveLanguageGuard(sess.Language)
+				appointmentGuard := newLiveAppointmentGuard()
+				responseWatchdog := newLiveResponseWatchdog(geminiLiveResponseTimeout, func(customerText string) bool {
+					if sess.IsFinalClosing() || ctx.Err() != nil {
+						return false
+					}
+					label := langLabels[languageGuard.Confirmed()]
+					if label == "" {
+						label = "English"
+					}
+					instruction := "SYSTEM SILENCE-RECOVERY EVENT: The customer spoke, but no voice response was produced. " +
+						"Reply now unmistakably and entirely in " + label + ", then continue from the same call-flow step. " +
+						"Do not mention this recovery event. Customer utterance: " + customerText
+					if !sess.RequestLiveResponse(instruction) {
+						sess.Log.Warn("gemini live: silent-turn recovery unavailable")
+						return false
+					}
+					sess.Log.Info("gemini live: recovering silent turn")
+					return true
+				})
+				defer responseWatchdog.Stop()
 				type liveAudioPacket struct {
 					epoch uint64
 					pcm   []byte
 				}
-				audioOut := make(chan liveAudioPacket, 128)
+				audioOut := make(chan liveAudioPacket, 256)
 				audioCtx, cancelAudio := context.WithCancel(ctx)
 				var audioWG sync.WaitGroup
 				audioWG.Add(1)
@@ -386,7 +407,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							if packet.epoch != sess.PlaybackEpoch() || sess.IsBargeInActive() {
 								continue
 							}
-							sendAudioFrame(sess, packet.pcm)
+							sendAudioFrameAtEpoch(sess, packet.pcm, packet.epoch)
 						}
 					}
 				}()
@@ -396,13 +417,65 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}()
 				var transcriptMu sync.Mutex
 				var inputText, outputText strings.Builder
+				var liveStateMu sync.Mutex
+				var pendingAudio []liveAudioPacket
+				outputApproved := false
+				outputRejected := false
+				audioReleased := false
+				languageCorrections := 0
+				correctionCustomer := ""
+				var languageRedirectMu sync.Mutex
+				languageRedirectActive := false
+				languageRedirectInterrupted := false
+				languageRedirectAwaitingInterrupt := false
+				provisionalLanguage := ""
+				const maxLanguageCorrections = 2
 				newOutputTurn := true
+				queueAudio := func(packet liveAudioPacket) {
+					select {
+					case audioOut <- packet:
+					case <-ctx.Done():
+					}
+				}
+				flushPendingAudio := func() {
+					for _, packet := range pendingAudio {
+						queueAudio(packet)
+					}
+					if len(pendingAudio) > 0 {
+						audioReleased = true
+					}
+					pendingAudio = nil
+				}
+				rejectOutput := func() {
+					outputRejected = true
+					outputApproved = false
+					pendingAudio = nil
+					if audioReleased {
+						sess.DiscardLivePlayback()
+						audioReleased = false
+					}
+				}
 				client := realtime.New(realtime.Config{
 					APIKey: h.cfg.GeminiAPIKey, Model: h.cfg.GeminiLiveModel,
 					Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: sess.SystemPrompt,
 					Language: sess.Language, Greeting: sess.GreetingText,
 				}, realtime.Callbacks{
+					OnInterimInputTranscript: func(text string) {
+						language, detected := languageGuard.ProvisionalCustomer(text)
+						if !detected {
+							return
+						}
+						languageRedirectMu.Lock()
+						changed := provisionalLanguage != language
+						provisionalLanguage = language
+						languageRedirectMu.Unlock()
+						if changed {
+							sess.Log.Debug("gemini live: provisional customer language",
+								zap.String("language", language))
+						}
+					},
 					OnAudio: func(pcm24k []byte) {
+						responseWatchdog.Cancel()
 						if sess.IsFinalClosing() {
 							sess.MarkFinalCloseAudioStarted()
 						}
@@ -413,15 +486,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.SetTTSPlaying(true)
 							sess.MarkTTSNewUtterance()
 							newOutputTurn = false
+							languageRedirectMu.Lock()
+							languageRedirectAwaitingInterrupt = false
+							languageRedirectMu.Unlock()
 						}
 						packet := liveAudioPacket{
 							epoch: sess.PlaybackEpoch(),
 							pcm:   audio.Decimate3x(pcm24k),
 						}
-						select {
-						case audioOut <- packet:
-						case <-ctx.Done():
+						liveStateMu.Lock()
+						if outputRejected {
+							liveStateMu.Unlock()
+							return
 						}
+						if outputApproved {
+							audioReleased = true
+							queueAudio(packet)
+						} else {
+							pendingAudio = append(pendingAudio, packet)
+						}
+						liveStateMu.Unlock()
 					},
 					OnInputTranscript: func(text string) {
 						if strings.TrimSpace(text) != "" && sess.IsBargeInPending() {
@@ -429,14 +513,107 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						transcriptMu.Lock()
 						inputText.WriteString(text)
+						currentInput := strings.TrimSpace(inputText.String())
 						transcriptMu.Unlock()
+						language, languageChanged := languageGuard.ObserveCustomer(currentInput)
+						if languageChanged {
+							sess.Log.Info("gemini live: confirmed customer language",
+								zap.String("language", language),
+								zap.String("text", currentInput))
+						}
+						appointmentAcknowledged := appointmentGuard.ObserveCustomerAcknowledgement(currentInput, sess.HistorySnapshot())
+						if appointmentAcknowledged {
+							sess.Log.Info("gemini live: final appointment acknowledgement detected")
+						}
+						redirectQueued := false
+						if languageChanged && !appointmentAcknowledged && !sess.IsFinalClosing() {
+							label := langLabels[language]
+							if label == "" {
+								label = "English"
+							}
+							instruction := "SYSTEM CONFIRMED LANGUAGE SWITCH: Respond to the immediately preceding spoken customer turn now. " +
+								"RESPOND IN " + strings.ToUpper(label) + ". YOU MUST RESPOND UNMISTAKABLY AND ENTIRELY IN " + strings.ToUpper(label) + ". " +
+								"Do not mention this instruction or the language switch. Continue from the same call-flow step."
+							languageRedirectMu.Lock()
+							languageRedirectActive = true
+							languageRedirectInterrupted = false
+							languageRedirectAwaitingInterrupt = true
+							provisionalMatched := provisionalLanguage == language
+							provisionalLanguage = ""
+							languageRedirectMu.Unlock()
+							if sess.RequestLiveResponse(instruction) {
+								redirectQueued = true
+								responseWatchdog.Cancel()
+								sess.DiscardLivePlayback()
+								sess.Log.Info("gemini live: redirected response after confirmed language switch",
+									zap.String("language", language),
+									zap.Bool("seen_in_interim", provisionalMatched))
+							} else {
+								languageRedirectMu.Lock()
+								languageRedirectActive = false
+								languageRedirectAwaitingInterrupt = false
+								languageRedirectMu.Unlock()
+								sess.Log.Warn("gemini live: language-switch redirect unavailable",
+									zap.String("language", language))
+							}
+						}
+						if !redirectQueued {
+							responseWatchdog.Arm(currentInput)
+						}
 					},
-					OnOutputTranscript: func(text string) { transcriptMu.Lock(); outputText.WriteString(text); transcriptMu.Unlock() },
+					OnOutputTranscript: func(text string) {
+						responseWatchdog.Cancel()
+						transcriptMu.Lock()
+						outputText.WriteString(text)
+						currentOutput := strings.TrimSpace(outputText.String())
+						transcriptMu.Unlock()
+						holdAppointmentOutput := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
+						languageRedirectMu.Lock()
+						holdLanguageRedirectOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
+						languageRedirectMu.Unlock()
+						liveStateMu.Lock()
+						if !outputRejected {
+							// Once a confirmed appointment receives its final "okay",
+							// hold Gemini's automatic reply. It often repeats the slot
+							// instead of completing the call; OnTurnComplete replaces it
+							// with one validated closing response.
+							if !holdAppointmentOutput && !holdLanguageRedirectOutput {
+								switch languageGuard.ValidateAgent(currentOutput, false) {
+								case liveLanguageAccept:
+									if !outputApproved {
+										outputApproved = true
+										flushPendingAudio()
+									}
+								case liveLanguageReject:
+									rejectOutput()
+								}
+							}
+						}
+						liveStateMu.Unlock()
+					},
 					OnInterrupted: func() {
-						sess.ConfirmLiveInterruption()
+						responseWatchdog.Cancel()
+						languageRedirectMu.Lock()
+						redirectInterruption := languageRedirectActive && languageRedirectAwaitingInterrupt
+						if redirectInterruption {
+							languageRedirectInterrupted = true
+							languageRedirectAwaitingInterrupt = false
+						}
+						languageRedirectMu.Unlock()
+						if redirectInterruption {
+							sess.DiscardLivePlayback()
+						} else {
+							sess.ConfirmLiveInterruption()
+						}
 						sess.SetTTSPlaying(false)
 						sess.MarkTTSEnd()
 						sess.PlaybackTracker.Reset()
+						liveStateMu.Lock()
+						pendingAudio = nil
+						outputApproved = false
+						outputRejected = false
+						audioReleased = false
+						liveStateMu.Unlock()
 						newOutputTurn = true
 					},
 					OnCompleteCall: func(request realtime.CompleteCallRequest) bool {
@@ -450,6 +627,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							)
 						}
 						if allowed {
+							appointmentGuard.MarkCompletedByTool()
 							sess.RequestFinalClose()
 						} else {
 							sess.Log.Warn("gemini live: rejected terminal action",
@@ -483,17 +661,121 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						inputText.Reset()
 						outputText.Reset()
 						transcriptMu.Unlock()
+						if language, changed := languageGuard.ObserveCustomer(user); changed {
+							sess.Log.Info("gemini live: confirmed customer language",
+								zap.String("language", language),
+								zap.String("text", user))
+						}
+						if appointmentGuard.ObserveCustomerAcknowledgement(user, sess.HistorySnapshot()) {
+							sess.Log.Info("gemini live: final appointment acknowledgement detected")
+						}
+						forceAppointmentClose := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
+						languageRedirectMu.Lock()
+						forceLanguageRedirectHold := languageRedirectActive && languageRedirectAwaitingInterrupt
+						languageRedirectMu.Unlock()
+
+						liveStateMu.Lock()
+						hadOutput := agent != "" || len(pendingAudio) > 0 || audioReleased
+						validOutput := false
+						if (forceAppointmentClose || forceLanguageRedirectHold) && hadOutput {
+							rejectOutput()
+						} else if hadOutput && !outputRejected {
+							if languageGuard.ValidateAgent(agent, true) == liveLanguageAccept {
+								outputApproved = true
+								flushPendingAudio()
+								validOutput = true
+							} else {
+								rejectOutput()
+							}
+						}
+						rejectedOutput := hadOutput && !validOutput
+						pendingAudio = nil
+						outputApproved = false
+						outputRejected = false
+						audioReleased = false
+						liveStateMu.Unlock()
+						languageRedirectMu.Lock()
+						skipInterruptedRedirectTurn := languageRedirectActive &&
+							(languageRedirectInterrupted || forceLanguageRedirectHold) &&
+							!validOutput && !forceAppointmentClose
+						if skipInterruptedRedirectTurn {
+							languageRedirectInterrupted = false
+							languageRedirectAwaitingInterrupt = false
+						}
+						if validOutput {
+							languageRedirectActive = false
+							languageRedirectInterrupted = false
+							languageRedirectAwaitingInterrupt = false
+						}
+						languageRedirectMu.Unlock()
+
 						if user != "" {
+							correctionCustomer = user
 							sess.AppendHistory("user", user)
 							sess.BroadcastTranscript("user", user)
 						}
-						if agent != "" {
+						if validOutput && agent != "" {
 							sess.AppendHistory("model", agent)
 							sess.BroadcastTranscript("agent", agent)
 							sess.RememberAgentSpeech(agent)
+							if appointmentGuard.ObserveAgentConfirmation(agent, sess.HistorySnapshot()) {
+								sess.Log.Info("gemini live: customer-supported appointment slot confirmed")
+							}
 						}
 						newOutputTurn = true
-						if sess.IsFinalClosing() && sess.FinalCloseAudioStarted() {
+						if skipInterruptedRedirectTurn {
+							sess.Log.Debug("gemini live: discarded interrupted pre-switch response")
+							responseWatchdog.Arm(correctionCustomer)
+							return
+						}
+						if forceAppointmentClose {
+							responseWatchdog.Cancel()
+							label := langLabels[languageGuard.Confirmed()]
+							if label == "" {
+								label = "English"
+							}
+							instruction := "SYSTEM VERIFIED APPOINTMENT CLOSE: Callified has validated and completed the appointment action because the customer supplied a day and exact time, " +
+								"the appointment was confirmed, and the customer has now accepted it. Do not call another tool. " +
+								"Speak exactly one short thank-you and goodbye in " + label + ". " +
+								"Do not repeat the appointment date or time. Do not ask another question."
+							if sess.RequestLiveResponse(instruction) {
+								appointmentGuard.MarkFinalPromptSent()
+								sess.RequestFinalClose()
+								sess.Log.Info("gemini live: completing appointment after final acknowledgement")
+							} else {
+								sess.Log.Warn("gemini live: appointment close response unavailable")
+							}
+							return
+						}
+						if rejectedOutput {
+							if languageCorrections < maxLanguageCorrections {
+								languageCorrections++
+								label := langLabels[languageGuard.Confirmed()]
+								if label == "" {
+									label = "English"
+								}
+								instruction := "SYSTEM LANGUAGE-CORRECTION EVENT: Reply to the customer's latest utterance now. " +
+									"You MUST respond unmistakably and entirely in " + label + ". " +
+									"Do not use another language except natural English product names. " +
+									"Do not mention this correction. Customer utterance: " + correctionCustomer
+								if sess.RequestLiveResponse(instruction) {
+									sess.Log.Warn("gemini live: blocked wrong-language response and requested correction",
+										zap.String("expected_language", languageGuard.Confirmed()),
+										zap.Int("attempt", languageCorrections))
+								} else {
+									sess.Log.Warn("gemini live: language correction unavailable")
+								}
+							} else {
+								sess.Log.Error("gemini live: wrong-language response persisted after corrections",
+									zap.String("expected_language", languageGuard.Confirmed()))
+							}
+							return
+						}
+						if validOutput {
+							languageCorrections = 0
+							correctionCustomer = ""
+						}
+						if validOutput && sess.IsFinalClosing() && sess.FinalCloseAudioStarted() {
 							select {
 							case sess.TTSSentences <- "":
 							case <-ctx.Done():

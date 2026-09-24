@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -22,6 +23,7 @@ func TestSetupEnablesNativeLiveAudioFeatures(t *testing.T) {
 	assert.Contains(t, setup, `"inputAudioTranscription":{}`)
 	assert.Contains(t, setup, `"outputAudioTranscription":{}`)
 	assert.Contains(t, setup, `"activityHandling":"START_OF_ACTIVITY_INTERRUPTS"`)
+	assert.Contains(t, setup, `"startOfSpeechSensitivity":"START_SENSITIVITY_HIGH"`)
 	assert.Contains(t, setup, `"turnCoverage":"TURN_INCLUDES_ONLY_ACTIVITY"`)
 	assert.Contains(t, setup, `"silenceDurationMs":600`)
 	assert.Contains(t, setup, `"contextWindowCompression":{"slidingWindow":{}}`)
@@ -55,20 +57,51 @@ func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
 	assert.False(t, client.RequestResponse("   "))
 }
 
+func TestLiveControlMessageInterruptsGeneration(t *testing.T) {
+	message := liveControlMessage("RESPOND IN TELUGU")
+	clientContent := message["clientContent"].(map[string]any)
+	assert.Equal(t, true, clientContent["turnComplete"])
+	turns := clientContent["turns"].([]any)
+	turn := turns[0].(map[string]any)
+	parts := turn["parts"].([]any)
+	assert.Equal(t, "RESPOND IN TELUGU", parts[0].(map[string]string)["text"])
+}
+
+func TestRealtimeAudioMessagePreservesEightKHzPCM(t *testing.T) {
+	pcm8k := []byte{0x01, 0x02, 0x7f, 0x80, 0xfe, 0xff}
+	msg := realtimeAudioMessage(pcm8k)
+	realtimeInput := msg["realtimeInput"].(map[string]any)
+	audioPart := realtimeInput["audio"].(map[string]string)
+
+	assert.Equal(t, "audio/pcm;rate=8000", audioPart["mimeType"])
+	decoded, err := base64.StdEncoding.DecodeString(audioPart["data"])
+	assert.NoError(t, err)
+	assert.Equal(t, pcm8k, decoded)
+}
+
 func TestBuildLiveSystemPromptAddsCampaignLanguageGuidance(t *testing.T) {
-	got := buildLiveSystemPrompt(`Be helpful.
+	got := buildLiveSystemPrompt(`[LANG:te]
+Be helpful.
 Respond only in Telugu.
+## LANGUAGE
+- Banned formal/written register: example
+- English words (e.g. meeting) mix in naturally.
 ONLY switch language if the customer explicitly asks.
 If they use another language, do NOT switch. Keep replying in the configured language.`, "te")
 
 	assert.Contains(t, got, "Telugu (te)")
 	assert.Contains(t, got, "controls ONLY the opening greeting")
-	assert.Contains(t, got, "customer did not explicitly ask to switch")
-	assert.Contains(t, got, "latest clearly recognized language")
-	assert.Contains(t, got, "must not make you revert")
+	assert.Contains(t, got, "explicit language request")
+	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE")
+	assert.Contains(t, got, "unambiguous native script")
+	assert.Contains(t, got, "one unclear short Latin-script phrase")
 	assert.NotContains(t, got, "Respond only in Telugu")
 	assert.NotContains(t, got, "ONLY switch language")
 	assert.NotContains(t, got, "do NOT switch")
+	assert.NotContains(t, got, "[LANG:te]")
+	assert.NotContains(t, got, "## LANGUAGE")
+	assert.NotContains(t, got, "Banned formal/written register")
+	assert.NotContains(t, got, "English words (e.g.")
 	assert.True(t, strings.HasSuffix(got, "Never announce or discuss a language switch."), "language policy must remain the final instruction")
 }
 

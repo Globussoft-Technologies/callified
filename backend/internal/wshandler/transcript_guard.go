@@ -253,6 +253,13 @@ func appointmentToolArgumentsAllowed(date, clockTime, transcript string, history
 		return false
 	}
 
+	return customerAppointmentHasDayAndTime(transcript, history)
+}
+
+// customerAppointmentHasDayAndTime deliberately ignores model messages. It is
+// used when Callified needs to make a deterministic booking decision without
+// trusting a date or time that the model may have proposed on its own.
+func customerAppointmentHasDayAndTime(transcript string, history []llm.ChatMessage) bool {
 	customerParts := make([]string, 0, len(history)+1)
 	for _, message := range history {
 		if strings.EqualFold(strings.TrimSpace(message.Role), "user") {
