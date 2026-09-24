@@ -1607,6 +1607,7 @@ export default function CampaignDetail({
               ? (() => {
                   const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
                     : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
+                    : campVoice.tts_provider === 'gemini_live' ? 'Gemini Live'
                     : 'Smallest AI';
                   const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
                     .find(v => v.id === campVoice.tts_voice_id)?.name

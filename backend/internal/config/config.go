@@ -40,7 +40,7 @@ type Config struct {
 	GroqModel       string `env:"GROQ_MODEL"        envDefault:"llama-3.3-70b-versatile"`
 	LLMProvider     string `env:"LLM_PROVIDER"      envDefault:"gemini"`
 	GeminiLiveModel string `env:"GEMINI_LIVE_MODEL" envDefault:"gemini-3.8-live"`
-	GeminiLiveVoice string `env:"GEMINI_LIVE_VOICE" envDefault:"Kore"`
+	GeminiLiveVoice string `env:"GEMINI_LIVE_VOICE" envDefault:"en-in-csagent-12"`
 	RAGServiceURL   string `env:"RAG_SERVICE_URL"   envDefault:"http://rag-service:8002"`
 
 	// Deepgram

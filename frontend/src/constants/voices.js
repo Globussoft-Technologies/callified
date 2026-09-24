@@ -13,6 +13,12 @@ export const INDIAN_LANGUAGES = [
 
 // Per-language voice recommendations (tested for quality/naturalness)
 export const VOICE_RECOMMENDATIONS = {
+  en: {
+    gemini_live: {
+      top: ['en-in-csagent-12', 'en-in-csagent-1', 'en-in-csagent-5'],
+      note: 'Indian-English voices optimized for natural sales and call-center conversations.',
+    },
+  },
   bn: {
     sarvam: {
       top: ['amit', 'advait', 'manan', 'aayan', 'neha', 'roopa', 'ishita', 'pooja'],
@@ -33,6 +39,9 @@ export const VOICE_RECOMMENDATIONS = {
 
 export const INDIAN_VOICES = {
   gemini_live: [
+    { id: 'en-in-csagent-12', name: 'Indian Sales Agent – Natural & Clear ♂' },
+    { id: 'en-in-csagent-1', name: 'Indian Call Agent – Natural & Clear ♂' },
+    { id: 'en-in-csagent-5', name: 'Indian Sales Agent – Clear & Friendly ♀' },
     { id: 'Kore', name: 'Kore – Firm' },
     { id: 'Puck', name: 'Puck – Upbeat' },
     { id: 'Charon', name: 'Charon – Informative' },
