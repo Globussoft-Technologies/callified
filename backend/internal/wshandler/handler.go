@@ -374,13 +374,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					if sess.IsFinalClosing() || ctx.Err() != nil {
 						return false
 					}
-					label := langLabels[languageGuard.Confirmed()]
-					if label == "" {
-						label = "English"
+					instruction := "SYSTEM SILENCE-RECOVERY EVENT: The customer spoke, but no voice response was produced. "
+					if expected := languageGuard.Expected(); expected != "" {
+						label := langLabels[expected]
+						if label == "" {
+							label = "English"
+						}
+						instruction += "Reply now unmistakably and entirely in " + label + ". "
+					} else {
+						instruction += "Reply naturally in the same spoken language as the customer's latest utterance, using the audio and conversation context. "
 					}
-					instruction := "SYSTEM SILENCE-RECOVERY EVENT: The customer spoke, but no voice response was produced. " +
-						"Reply now unmistakably and entirely in " + label + ", then continue from the same call-flow step. " +
-						"Do not mention this recovery event. Customer utterance: " + customerText
+					instruction += "Continue from the same call-flow step. Do not mention this recovery event. Customer utterance: " + customerText
 					if !sess.RequestLiveResponse(instruction) {
 						sess.Log.Warn("gemini live: silent-turn recovery unavailable")
 						return false
@@ -730,14 +734,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						if forceAppointmentClose {
 							responseWatchdog.Cancel()
-							label := langLabels[languageGuard.Confirmed()]
-							if label == "" {
-								label = "English"
-							}
+							label := langLabels[languageGuard.Expected()]
 							instruction := "SYSTEM VERIFIED APPOINTMENT CLOSE: Callified has validated and completed the appointment action because the customer supplied a day and exact time, " +
 								"the appointment was confirmed, and the customer has now accepted it. Do not call another tool. " +
-								"Speak exactly one short thank-you and goodbye in " + label + ". " +
-								"Do not repeat the appointment date or time. Do not ask another question."
+								"Speak exactly one short thank-you and goodbye"
+							if label != "" {
+								instruction += " in " + label
+							} else {
+								instruction += " in the same spoken language as the customer's latest utterance"
+							}
+							instruction += ". Do not repeat the appointment date or time. Do not ask another question."
 							if sess.RequestLiveResponse(instruction) {
 								appointmentGuard.MarkFinalPromptSent()
 								sess.RequestFinalClose()
@@ -750,9 +756,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if rejectedOutput {
 							if languageCorrections < maxLanguageCorrections {
 								languageCorrections++
-								label := langLabels[languageGuard.Confirmed()]
+								label := langLabels[languageGuard.Expected()]
 								if label == "" {
-									label = "English"
+									// An unconstrained turn cannot produce a wrong-language
+									// verdict, but retain a safe instruction if state changes
+									// between validation and correction.
+									label = langLabels[languageGuard.Confirmed()]
 								}
 								instruction := "SYSTEM LANGUAGE-CORRECTION EVENT: Reply to the customer's latest utterance now. " +
 									"You MUST respond unmistakably and entirely in " + label + ". " +

@@ -31,8 +31,10 @@ func TestLiveLanguageGuardKeepsLanguageForAmbiguousShortLatinText(t *testing.T) 
 func TestLiveLanguageGuardCanReturnToClearEnglish(t *testing.T) {
 	guard := newLiveLanguageGuard("kn")
 	lang, changed := guard.ObserveCustomer("Now I am doing everything manually")
-	assert.Equal(t, "en", lang)
-	assert.True(t, changed)
+	assert.Equal(t, "kn", lang)
+	assert.False(t, changed)
+	assert.Empty(t, guard.Expected())
+	assert.Equal(t, liveLanguageAccept, guard.ValidateAgent("I understand. Let me explain the next step.", false))
 }
 
 func TestLiveLanguageGuardRejectsWrongOrMixedAgentLanguage(t *testing.T) {
@@ -52,7 +54,27 @@ func TestLiveLanguageGuardAllowsEnglishProductTermsBeforeNativeScript(t *testing
 func TestLiveLanguageGuardDoesNotTreatAnyLatinLanguageAsEnglish(t *testing.T) {
 	guard := newLiveLanguageGuard("en")
 	assert.Equal(t, liveLanguageAccept, guard.ValidateAgent("Hello, how can I help you today?", false))
-	assert.Equal(t, liveLanguageReject, guard.ValidateAgent("Podemos realizar la demostración hoy", true))
+	guard.ObserveCustomer("Podemos continuar con la demostración")
+	assert.Empty(t, guard.Expected())
+	assert.Equal(t, liveLanguageAccept, guard.ValidateAgent("Podemos realizar la demostración hoy", true))
+}
+
+func TestLiveLanguageGuardLetsGeminiHandleRomanizedLanguage(t *testing.T) {
+	guard := newLiveLanguageGuard("en")
+	language, changed := guard.ObserveCustomer("Aah naaku ee roju madhyanam 12:00 ki")
+	assert.Equal(t, "en", language)
+	assert.False(t, changed)
+	assert.Empty(t, guard.Expected())
+	assert.Equal(t, liveLanguageAccept, guard.ValidateAgent("సరే, మధ్యాహ్నం పన్నెండు గంటలకు కలుద్దాం.", false))
+}
+
+func TestLiveLanguageGuardDoesNotForceEnglishFromCorruptedLatinTranscript(t *testing.T) {
+	guard := newLiveLanguageGuard("kn")
+	language, changed := guard.ObserveCustomer("Aapko Heroite Saripota the Hero Kudurthada?")
+	assert.Equal(t, "kn", language)
+	assert.False(t, changed)
+	assert.Empty(t, guard.Expected())
+	assert.Equal(t, liveLanguageAccept, guard.ValidateAgent("ಹೌದು, ವಿವರಿಸುತ್ತೇನೆ.", false))
 }
 
 func TestLiveLanguageGuardInterimDetectionDoesNotSwitchConfirmedLanguage(t *testing.T) {

@@ -20,13 +20,14 @@ const (
 type liveLanguageGuard struct {
 	mu        sync.RWMutex
 	confirmed string
+	expected  string
 }
 
 func newLiveLanguageGuard(initial string) *liveLanguageGuard {
 	if _, ok := langLabels[initial]; !ok {
 		initial = "en"
 	}
-	return &liveLanguageGuard{confirmed: initial}
+	return &liveLanguageGuard{confirmed: initial, expected: initial}
 }
 
 func (g *liveLanguageGuard) Confirmed() string {
@@ -35,11 +36,25 @@ func (g *liveLanguageGuard) Confirmed() string {
 	return g.confirmed
 }
 
+// Expected returns the language Callified may safely enforce for the current
+// customer turn. An empty value means the transcript is ambiguous (commonly a
+// Romanized Indian language), so Gemini Live must follow the audio naturally.
+func (g *liveLanguageGuard) Expected() string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.expected
+}
+
 func (g *liveLanguageGuard) ObserveCustomer(text string) (string, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	detected := detectCustomerLanguage(text, g.confirmed)
-	if detected == "" || detected == g.confirmed {
+	if detected == "" {
+		g.expected = ""
+		return g.confirmed, false
+	}
+	g.expected = detected
+	if detected == g.confirmed {
 		return g.confirmed, false
 	}
 	g.confirmed = detected
@@ -62,9 +77,6 @@ func detectCustomerLanguage(text, current string) string {
 		return explicit
 	}
 	detected := dominantSupportedScript(text, current)
-	if detected == "" && clearlyEnglish(text) {
-		return "en"
-	}
 	return detected
 }
 
@@ -82,7 +94,24 @@ func (g *liveLanguageGuard) ValidateAgent(text string, final bool) liveLanguageV
 	}
 
 	counts, latin := supportedScriptCounts(text)
-	expected := g.confirmed
+	expected := g.expected
+	if expected == "" {
+		// Gemini Live receives the original audio and can infer a Romanized or
+		// mixed language more reliably than Callified can from Latin text. Once
+		// output transcription begins, release it without imposing a language.
+		if latin >= 4 {
+			return liveLanguageAccept
+		}
+		for _, count := range counts {
+			if count >= 2 {
+				return liveLanguageAccept
+			}
+		}
+		if final {
+			return liveLanguageAccept
+		}
+		return liveLanguagePending
+	}
 	if expected == "en" {
 		for _, count := range counts {
 			if count >= 3 {
@@ -164,14 +193,6 @@ func supportedScriptCounts(text string) (map[string]int, int) {
 		}
 	}
 	return counts, latin
-}
-
-func clearlyEnglish(text string) bool {
-	words := strings.Fields(strings.ToLower(text))
-	if len(words) < 4 {
-		return false
-	}
-	return hasEnglishEvidence(text)
 }
 
 func hasEnglishEvidence(text string) bool {
