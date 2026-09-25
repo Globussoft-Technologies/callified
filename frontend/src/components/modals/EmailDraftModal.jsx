@@ -1,5 +1,6 @@
 import React from 'react';
 import { useToast } from '../../contexts/UIContext';
+import AppIcon from '../common/AppIcon';
 
 export default function EmailDraftModal({ emailDraft, setEmailDraft }) {
   const toast = useToast();
@@ -8,7 +9,7 @@ export default function EmailDraftModal({ emailDraft, setEmailDraft }) {
   return (
     <div className="modal-overlay">
       <div className="modal-content glass-panel" style={{background: 'rgba(15, 23, 42, 0.95)', border: '1px solid rgba(245, 158, 11, 0.2)'}}>
-        <h2 style={{marginTop: 0, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '8px'}}>✨ GenAI Drafted Email</h2>
+        <h2 style={{marginTop: 0, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '8px'}}><AppIcon name="mail" /> GenAI Drafted Email</h2>
         
         <div style={{background: 'rgba(0,0,0,0.3)', padding: '15px', borderRadius: '8px', marginBottom: '15px', border: '1px solid rgba(255,255,255,0.05)'}}>
           <div style={{marginBottom: '10px', fontWeight: 'bold'}}>Subject: <span style={{fontWeight: 'normal', color: '#e2e8f0'}}>{emailDraft.subject}</span></div>
@@ -21,7 +22,7 @@ export default function EmailDraftModal({ emailDraft, setEmailDraft }) {
             navigator.clipboard.writeText(`Subject: ${emailDraft.subject}\n\n${emailDraft.body}`);
             toast("Copied directly to clipboard!");
           }}>
-            📋 Copy to Clipboard
+            <AppIcon name="copy" /> Copy to Clipboard
           </button>
         </div>
       </div>

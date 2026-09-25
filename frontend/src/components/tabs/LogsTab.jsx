@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -245,7 +246,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
                 background: mode === 'activity' ? T.accent : 'transparent',
                 color: mode === 'activity' ? '#fff' : T.muted,
               }}>
-              📋 Activity
+              <AppIcon name="file" /> Activity
             </button>
             <button onClick={() => setMode('verbose')}
               style={{
@@ -254,7 +255,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
                 background: mode === 'verbose' ? T.accent : 'transparent',
                 color: mode === 'verbose' ? '#fff' : T.muted,
               }}>
-              🔧 Verbose
+              <AppIcon name="tool" /> Verbose
             </button>
           </div>
 
@@ -272,7 +273,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
               background: paused ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
               color: paused ? T.red : T.green,
             }}>
-            {paused ? '⏸ Paused' : '▶ Live'}
+            <AppIcon name={paused ? 'pause' : 'play'} /> {paused ? 'Paused' : 'Live'}
           </button>
 
           {/* Clear */}
@@ -291,7 +292,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
           ) : (
             <button onClick={() => setConfirmClear(true)}
               style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid rgba(239,68,68,0.2)`, background: 'rgba(239,68,68,0.06)', color: T.red, cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
-              🗑️ Clear
+              <AppIcon name="clear" /> Clear
             </button>
           )}
         </div>
@@ -354,7 +355,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
           <div style={{ ...card, height: '62vh', overflowY: 'auto', padding: 8 }}>
             {pageLogs.length === 0 ? (
               <div style={{ textAlign: 'center', color: T.muted, padding: '3rem' }}>
-                <div style={{ fontSize: 32, marginBottom: 12 }}>📡</div>
+                <AppIcon name="api" style={{ fontSize: 32, marginBottom: 12 }} />
                 {activityLogs.length === 0 ? (
                   streamStatus === 'error' ? (
                     <>

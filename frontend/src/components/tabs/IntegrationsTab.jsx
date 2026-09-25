@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -180,7 +181,7 @@ export default function IntegrationsTab({
                 cursor: loading || !isFormValid ? 'not-allowed' : 'pointer',
                 width: '100%',
               }}>
-              {loading ? 'Connecting...' : '⚡ Save Connection'}
+              {loading ? <><AppIcon name="loading" spin /> Connecting...</> : <><AppIcon name="power" /> Save Connection</>}
             </button>
           </form>
         </div>

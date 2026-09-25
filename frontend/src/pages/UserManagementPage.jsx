@@ -4,6 +4,7 @@ import { useToast, useConfirm } from '../contexts/UIContext';
 import { isAdmin, isTeamLeader, ROLES } from '../utils/roles';
 import { formatLastLogin } from '../utils/dateFormat';
 import UserProviderAccountsModal from '../components/UserProviderAccountsModal';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -514,7 +515,7 @@ function Field({ label, type = 'text', value, onChange, required, revealable = f
               fontSize: 15,
             }}
           >
-            {showValue ? '🙈' : '👁'}
+            <AppIcon name={showValue ? 'hide' : 'show'} />
           </button>
         )}
       </div>

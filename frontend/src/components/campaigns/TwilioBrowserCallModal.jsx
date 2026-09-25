@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Device } from '@twilio/voice-sdk';
 import { API_URL } from '../../constants/api';
 import { useAuth } from '../../contexts/AuthContext';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -158,12 +159,13 @@ export default function TwilioBrowserCallModal({ lead, campaignId, callerPhone, 
   };
 
   const statusLabel = {
-    init:      '🔄 Initializing…',
-    calling:   '📞 Ringing…',
-    connected: `🟢 Connected${duration > 0 ? ' · ' + formatDuration(duration) : ''}`,
-    ended:     '✅ Call ended',
-    error:     '⚠️ Error',
+    init:      'Initializing…',
+    calling:   'Ringing…',
+    connected: `Connected${duration > 0 ? ' · ' + formatDuration(duration) : ''}`,
+    ended:     'Call ended',
+    error:     'Error',
   }[status] || status;
+  const statusIcon = { init: 'loading', calling: 'phone', connected: 'checkCircle', ended: 'checkCircle', error: 'warning' }[status];
 
   return (
     <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget && (status === 'ended' || status === 'error')) onClose(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
@@ -174,9 +176,9 @@ export default function TwilioBrowserCallModal({ lead, campaignId, callerPhone, 
       }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>🎙 Browser Call</h3>
+          <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7 }}><AppIcon name="audio" /> Browser Call</h3>
           {(status === 'ended' || status === 'error') && (
-            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            <button onClick={onClose} aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><AppIcon name="close" /></button>
           )}
         </div>
 
@@ -199,7 +201,7 @@ export default function TwilioBrowserCallModal({ lead, campaignId, callerPhone, 
           color: status === 'connected' ? '#065f46' : status === 'error' ? T.red : T.accent,
           border: `1px solid ${status === 'connected' ? 'rgba(16,185,129,0.25)' : status === 'error' ? '#fca5a5' : 'rgba(99,102,241,0.15)'}`,
         }}>
-          {statusLabel}
+          <AppIcon name={statusIcon} spin={status === 'init'} style={{ marginRight: 7 }} />{statusLabel}
         </div>
 
         {status === 'error' && errorMsg && (
@@ -210,14 +212,14 @@ export default function TwilioBrowserCallModal({ lead, campaignId, callerPhone, 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
           {status === 'connected' && (
             <button onClick={handleMute} style={{ ...btnGhost, color: muted ? T.red : T.sub }}>
-              {muted ? '🔇 Unmute' : '🎙 Mute'}
+              <AppIcon name={muted ? 'muted' : 'audio'} /> {muted ? 'Unmute' : 'Mute'}
             </button>
           )}
           {(status === 'ended' || status === 'error') ? (
             <button onClick={onClose} style={btnPrimary}>Close</button>
           ) : (
             <button onClick={handleHangup} style={btnDanger}>
-              📵 Hang Up
+              <AppIcon name="disconnect" /> Hang Up
             </button>
           )}
         </div>

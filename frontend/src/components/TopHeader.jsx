@@ -5,6 +5,7 @@ import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
 import { useCall } from '../contexts/CallContext';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateTime } from '../utils/dateFormat';
+import AppIcon from './common/AppIcon';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 // Note: exotel-accounts is reachable from Settings for manual accounts, so it is hidden here to avoid duplication.
@@ -312,10 +313,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             onClick={() => setNotifOpen(o => !o)}
             style={{ position: 'relative', cursor: 'pointer', width: 22, height: 22 }}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-            </svg>
+            <AppIcon name="bell" style={{ fontSize: 20, color: '#9ca3af' }} />
             {notifCount > 0 && (
               <span style={{
                 position: 'absolute', top: -5, right: -6,
@@ -361,7 +359,8 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
                           {call.phone || 'No phone'} • {call.executive_name || 'Unassigned'}
                         </div>
                         <div style={{ fontSize: 11, color: '#4b5563', fontFamily: font, marginTop: 2 }}>
-                          📅 {call.scheduled_time ? formatDateTime(call.scheduled_time) : ''}
+                          <AppIcon name="calendar" style={{ marginRight: 4 }} />
+                          {call.scheduled_time ? formatDateTime(call.scheduled_time) : ''}
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>

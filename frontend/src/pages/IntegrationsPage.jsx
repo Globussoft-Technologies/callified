@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import IntegrationsTab from '../components/tabs/IntegrationsTab';
+import AppIcon from '../components/common/AppIcon';
 
 const CRM_SCHEMAS = {
   "Salesforce": [{ key: "client_id", label: "OAuth Client ID", type: "text" }, { key: "client_secret", label: "OAuth Client Secret", type: "password" }, { key: "instance_url", label: "Instance Base URL", type: "text" }],
@@ -109,12 +110,12 @@ export default function IntegrationsPage({ apiFetch, API_URL, orgTimezone }) {
           border: `1px solid ${toast.type === 'success' ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
           animation: 'fadeInUp 0.2s ease',
         }}>
-          <span style={{ fontSize: '1rem' }}>{toast.type === 'success' ? '✓' : '⚠'}</span>
+          <span style={{ fontSize: '1rem' }}><AppIcon name={toast.type === 'success' ? 'checkCircle' : 'warning'} /></span>
           {toast.message}
           <button onClick={() => setToast(null)} style={{
             marginLeft: '8px', background: 'none', border: 'none', cursor: 'pointer',
             color: 'inherit', opacity: 0.6, fontSize: '1rem', lineHeight: 1, padding: 0,
-          }}>✕</button>
+          }} aria-label="Close" title="Close"><AppIcon name="close" /></button>
         </div>
       )}
 

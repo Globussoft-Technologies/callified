@@ -6,6 +6,7 @@ import { useToast } from './UIContext';
 import { useAuth } from './AuthContext';
 import { useOrg } from './OrgContext';
 import { useVoice } from './VoiceContext';
+import AppIcon from '../components/common/AppIcon';
 
 const CallContext = createContext(null);
 
@@ -745,7 +746,7 @@ export function CallProvider({ children }) {
                 background: 'rgba(99,102,241,0.10)', border: '2px solid rgba(99,102,241,0.35)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '1.2rem',
-              }}>⚠️</div>
+              }}><AppIcon name="warning" /></div>
               <div>
                 <h3 style={{margin: 0, fontSize: '1.05rem', fontWeight: 700, color: '#111827'}}>Recharge Required</h3>
                 <div style={{fontSize: '0.75rem', color: '#6b7280', marginTop: '2px'}}>Outbound calls are paused</div>
@@ -802,7 +803,7 @@ export function CallProvider({ children }) {
                 background: 'rgba(99,102,241,0.10)', border: '2px solid rgba(99,102,241,0.35)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '1.2rem',
-              }}>⚠️</div>
+              }}><AppIcon name="warning" /></div>
               <div>
                 <div style={{fontSize: '1.05rem', color: '#111827', fontWeight: 700}}>{minuteBalancePrompt}</div>
               </div>

@@ -4,6 +4,7 @@ import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaig
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { useToast } from '../../contexts/UIContext';
+import AppIcon from '../common/AppIcon';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -241,8 +242,8 @@ export default function CampaignModals({
                   <select className="form-input" value={createForm.channel || 'voice'}
                     onChange={e => setCreateForm({...createForm, channel: e.target.value})}
                     style={{width: '100%'}}>
-                    <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
-                    {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
+                    <option value="voice">Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                    {!hideAiFeatures && <option value="whatsapp">WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
                 {(createForm.channel !== 'whatsapp') && createProviderAccountOptions.length > 0 && (
@@ -317,7 +318,7 @@ export default function CampaignModals({
               </div>
             )}
             {addLeadsError && (
-              <p style={{margin: '0 0 10px', fontSize: '0.82rem', color: '#f87171'}}>⚠ {addLeadsError}</p>
+              <p style={{margin: '0 0 10px', fontSize: '0.82rem', color: '#f87171'}}><AppIcon name="warning" /> {addLeadsError}</p>
             )}
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
               <button onClick={() => { setShowAddLeadsModal(false); setAddLeadsError(''); }}
@@ -614,8 +615,8 @@ export default function CampaignModals({
                 <select className="form-input" value={editCampaignForm.channel || 'voice'}
                   onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
                   style={{width: '100%'}}>
-                  <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
-                  {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
+                  <option value="voice">Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
+                  {!hideAiFeatures && <option value="whatsapp">WhatsApp (AI Chat)</option>}
                 </select>
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>

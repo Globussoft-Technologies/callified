@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
 import { formatLastLogin } from '../utils/dateFormat';
+import AppIcon from '../components/common/AppIcon';
 
 export default function SubscriptionsPage({ apiFetch }) {
   const { currentUser } = useAuth();
@@ -141,7 +142,7 @@ export default function SubscriptionsPage({ apiFetch }) {
   return (
     <div style={{ padding: '1.5rem 2rem', maxWidth: 1000, margin: '0 auto' }}>
       <h1 style={{ fontSize: '1.6rem', fontWeight: 700, marginBottom: '1.5rem', color: '#111827' }}>
-        🛡️ Subscription Management
+        <AppIcon name="shield" /> Subscription Management
       </h1>
 
       {message && (
@@ -175,7 +176,7 @@ export default function SubscriptionsPage({ apiFetch }) {
       {/* Lookup Card */}
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: '#111827' }}>
-          🔍 Lookup Subscription
+          <AppIcon name="search" /> Lookup Subscription
         </h2>
         <form onSubmit={handleLookup} style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
           <div style={{ flex: 1 }}>
@@ -260,7 +261,7 @@ export default function SubscriptionsPage({ apiFetch }) {
       {/* Create / Update Card */}
       <div style={cardStyle}>
         <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: '#111827' }}>
-          ✏️ Create or Update Subscription
+          <AppIcon name="edit" /> Create or Update Subscription
         </h2>
         <form onSubmit={handleCreateOrUpdate}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 16, marginBottom: 16 }}>

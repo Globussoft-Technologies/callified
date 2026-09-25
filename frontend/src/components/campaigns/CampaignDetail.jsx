@@ -23,6 +23,7 @@ import {
   FileTextOutlined,
   FormOutlined,
   HistoryOutlined,
+  InfoCircleOutlined,
   LoadingOutlined,
   MessageOutlined,
   PhoneOutlined,
@@ -32,6 +33,7 @@ import {
   StopOutlined,
   TeamOutlined,
   UploadOutlined,
+  WarningOutlined,
   DownloadOutlined,
 } from '@ant-design/icons';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
@@ -316,7 +318,7 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
     <div style={{ marginBottom: '1rem' }}>
       {error && (
         <div style={{ background: '#fee2e2', border: `1px solid #fca5a5`, color: T.red, borderRadius: 8, padding: '10px 14px', marginBottom: 10, fontSize: '0.85rem' }}>
-          ⚠️ {error}
+          <WarningOutlined /> {error}
         </div>
       )}
       {!isRunning && !isDone && (
@@ -324,13 +326,13 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
           style={{ background: `linear-gradient(135deg, ${T.wa}, #128C7E)`, border: 'none', color: '#fff', fontSize: '0.85rem', padding: '8px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontFamily: T.font }}
           disabled={blasting}
           onClick={handleBlast}>
-          {blasting ? 'Starting...' : '💬 Send to New Leads'}
+          {blasting ? <><LoadingOutlined spin /> Starting...</> : <><MessageOutlined /> Send to New Leads</>}
         </button>
       )}
       {(isRunning || isDone) && (
         <div style={{ ...card, padding: '12px 16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.85rem', color: T.sub }}>
-            <span>{isRunning ? '⏳ Sending...' : '✅ Blast complete'}</span>
+            <span>{isRunning ? <><LoadingOutlined spin /> Sending...</> : <><CheckCircleOutlined /> Blast complete</>}</span>
             <span style={{ color: T.muted }}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
           </div>
           <div style={{ background: T.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
@@ -1486,7 +1488,7 @@ export default function CampaignDetail({
           </span>
         ) : (
           <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.amber, background: 'rgba(245,158,11,0.1)' }}>
-            ⚠ No product linked
+            <WarningOutlined /> No product linked
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
@@ -1654,7 +1656,7 @@ export default function CampaignDetail({
           </div>
           {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
             <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}>
-              ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+              <InfoCircleOutlined /> {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
             </div>
           )}
         </div>
@@ -1664,7 +1666,7 @@ export default function CampaignDetail({
       {selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            🖥️ Browser Call Account (this machine)
+            <DesktopOutlined /> Browser Call Account (this machine)
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select
@@ -1746,7 +1748,7 @@ export default function CampaignDetail({
       {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
       {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>📡 Live Campaign Activity</span>
+          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}><BarChartOutlined /> Live Campaign Activity</span>
           {liveEvents.length > 0 && (
             <button onClick={() => {
               setLiveEvents([]);
@@ -1771,7 +1773,7 @@ export default function CampaignDetail({
 
       {/* Quick Add Lead Form */}
       {canCreateLead && <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
+        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', gap: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}><PlusOutlined /> Quick Add:</span>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
             onChange={e => {
@@ -3106,9 +3108,9 @@ export default function CampaignDetail({
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>{scheduleEditingCallId ? '📅 Edit Scheduled Call' : '📅 Schedule Call'}</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><CalendarOutlined /> {scheduleEditingCallId ? 'Edit Scheduled Call' : 'Schedule Call'}</h3>
               <button onClick={closeScheduleModal}
-                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><CloseCircleOutlined /></button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
@@ -3158,7 +3160,7 @@ export default function CampaignDetail({
                 marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
                 background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
               }}>
-                ⚠️ {scheduleStatus.text}
+                <WarningOutlined /> {scheduleStatus.text}
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
@@ -3236,9 +3238,9 @@ export default function CampaignDetail({
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📲 Manual Call</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><PhoneOutlined /> Manual Call</h3>
               <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
-                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><CloseCircleOutlined /></button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               Calling <strong>{humanCallLead.first_name} {humanCallLead.last_name}</strong> — {humanCallLead.phone}
@@ -3260,12 +3262,12 @@ export default function CampaignDetail({
             </label>
             {humanCallStatus === 'error' && (
               <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: '#fee2e2', border: '1px solid #fca5a5', color: T.red }}>
-                ⚠️ {humanCallError}
+                <WarningOutlined /> {humanCallError}
               </div>
             )}
             {humanCallStatus === 'done' && (
               <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#065f46' }}>
-                ✅ Dialing your phone…
+                <CheckCircleOutlined /> Dialing your phone…
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
@@ -3277,7 +3279,7 @@ export default function CampaignDetail({
                 disabled={humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()}
                 onClick={handleHumanCallDial}
                 style={{ ...btnPrimary, opacity: (humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()) ? 0.6 : 1 }}>
-                {humanCallStatus === 'dialing' ? '📞 Dialing…' : '📞 Call Me'}
+                <PhoneOutlined /> {humanCallStatus === 'dialing' ? 'Dialing…' : 'Call Me'}
               </button>
             </div>
           </div>
@@ -3288,7 +3290,7 @@ export default function CampaignDetail({
       {noteModalLead && (
         <div className="modal-overlay" onClick={() => setNoteModalLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
           <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
+            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}><FormOutlined /> Quick Note</h2>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
               {noteModalLead.first_name} {noteModalLead.last_name} — {noteModalLead.phone}
             </p>
@@ -3326,7 +3328,7 @@ export default function CampaignDetail({
             padding: '1.5rem', fontFamily: T.font,
           }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📝 Call Disposition</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><FormOutlined /> Call Disposition</h3>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               {dispositionLead.first_name} {dispositionLead.last_name} — {maskPhone(dispositionLead.phone)}

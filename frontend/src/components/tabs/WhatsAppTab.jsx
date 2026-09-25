@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatTime } from '../../utils/dateFormat';
+import AppIcon from '../common/AppIcon';
 
 const PROVIDERS = [
   { value: 'gupshup', label: 'Gupshup' },
@@ -210,7 +211,7 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
             fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer',
           }}
         >
-          ✅ Use Platform Credentials
+          <AppIcon name="checkCircle" /> Use Platform Credentials
         </button>
       </div>
 
@@ -226,7 +227,7 @@ function MetaConnectPanel({ apiFetch, API_URL, existingPhone, onConnected }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
         }}
       >
-        {connecting ? 'Connecting…' : '🔗 Connect with WhatsApp Business'}
+        {connecting ? <><AppIcon name="loading" spin /> Connecting…</> : <><AppIcon name="link" /> Connect with WhatsApp Business</>}
       </button>
       <div style={{ color: '#94a3b8', fontSize: '0.74rem', textAlign: 'center', marginTop: '6px' }}>
         A Facebook popup will open — log in and select your WhatsApp Business Account
@@ -541,8 +542,8 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
   return (
     <div style={sessionPanelStyle}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid #e2e8f0' }}>
-        <h3 style={{ margin: 0, color: '#25D366', fontSize: '0.95rem' }}>📱 WhatsApp Session</h3>
-        <button onClick={onClose} style={{ ...btnSmallStyle, background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }} title="Close">×</button>
+        <h3 style={{ margin: 0, color: '#25D366', fontSize: '0.95rem' }}><AppIcon name="mobile" /> WhatsApp Session</h3>
+        <button onClick={onClose} style={{ ...btnSmallStyle, background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }} title="Close" aria-label="Close"><AppIcon name="close" /></button>
       </div>
       <div style={{ padding: '1rem', flex: 1, overflowY: 'auto' }}>
         {loading && <div style={{ color: '#64748b', fontSize: '0.85rem' }}>Loading…</div>}
@@ -562,7 +563,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
             background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.2)',
             borderRadius: '8px', padding: '12px', color: '#4f46e5', fontSize: '0.82rem', lineHeight: 1.5,
           }}>
-            <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>📱 Session view unavailable</div>
+            <div style={{ fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}><AppIcon name="mobile" /> Session view unavailable</div>
             Your WaSender plan exposes a per-session API key (used for sending) but not a Personal Access Token (needed to fetch QR codes from this dashboard).
             <div style={{ marginTop: '8px' }}>
               You can still scan and manage sessions on <a href="https://wasenderapi.com" target="_blank" rel="noreferrer" style={{ color: '#4f46e5', textDecoration: 'underline' }}>wasenderapi.com</a> — and inbound/outbound messages will work normally here.
@@ -589,7 +590,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
               border: '1px solid rgba(37,211,102,0.4)', borderRadius: '12px',
               padding: '1rem', textAlign: 'center', marginBottom: '0.75rem',
             }}>
-              <div style={{ fontSize: '2rem', lineHeight: 1, marginBottom: '0.5rem' }}>📱</div>
+              <AppIcon name="mobile" style={{ fontSize: '2rem', lineHeight: 1, marginBottom: '0.5rem', color: '#25D366' }} />
               <div style={{ color: '#64748b', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>Linked Device</div>
               <div style={{ color: '#1e293b', fontSize: '1.15rem', fontWeight: 700, fontFamily: 'monospace', marginBottom: '6px' }}>
                 {session.phone_number || '—'}
@@ -606,7 +607,7 @@ function SessionPanel({ apiFetch, API_URL, onClose, session, loading, error: hoo
               </span>
             </div>
             <div style={{ background: 'rgba(37,211,102,0.08)', border: '1px solid rgba(37,211,102,0.25)', borderRadius: '8px', padding: '0.6rem 0.75rem', color: '#166534', fontSize: '0.78rem', lineHeight: 1.5 }}>
-              ✅ Send and receive WhatsApp messages. New incoming chats will appear in the inbox automatically.
+              <AppIcon name="checkCircle" /> Send and receive WhatsApp messages. New incoming chats will appear in the inbox automatically.
             </div>
             {/* Disconnect button — recovers from stale "connected" state
                 where the phone unlinked but WaSender hasn't caught up.
@@ -1104,23 +1105,23 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid #e2e8f0' }}>
           <h3 style={{ margin: 0, color: '#25D366', fontSize: '1rem' }}>
-            <span style={{ marginRight: '6px' }}>💬</span>WhatsApp Inbox
+            <AppIcon name="message" style={{ marginRight: 6 }} />WhatsApp Inbox
           </h3>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button onClick={() => setShowNewChat(true)}
               style={{ ...btnSmallStyle, background: 'rgba(37,211,102,0.15)', color: '#16a34a', border: '1px solid rgba(37,211,102,0.3)', fontWeight: 700 }}
               title="Start a new chat">
-              + New
+              <AppIcon name="plus" /> New
             </button>
             <button onClick={() => setShowSession(s => !s)}
               style={{ ...btnSmallStyle, background: showSession ? 'rgba(37,211,102,0.15)' : '#f1f5f9', color: showSession ? '#16a34a' : '#64748b', border: '1px solid #e2e8f0' }}
               title="WhatsApp Session / QR">
-              📱
+              <AppIcon name="mobile" />
             </button>
             <button onClick={() => setShowConfig(true)}
               style={{ ...btnSmallStyle, background: '#f1f5f9', color: '#64748b', border: '1px solid #e2e8f0' }}
               title="Channel Configuration">
-              ⚙️
+              <AppIcon name="settings" />
             </button>
           </div>
         </div>
@@ -1140,7 +1141,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
               color: showArchived ? '#4f46e5' : '#64748b',
               border: '1px solid #e2e8f0',
             }}>
-            {showArchived ? '📂' : '📁'}
+            <AppIcon name={showArchived ? 'archive' : 'folder'} />
           </button>
         </div>
 
@@ -1172,7 +1173,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
               onMouseLeave={e => { if (selectedPhone !== conv.phone) e.currentTarget.style.background = 'transparent'; }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
-                  {isLinkedDevice && <span title="Currently linked WhatsApp device" style={{ fontSize: '0.85rem', flexShrink: 0 }}>📱</span>}
+                  {isLinkedDevice && <span title="Currently linked WhatsApp device" style={{ fontSize: '0.85rem', flexShrink: 0 }}><AppIcon name="mobile" /></span>}
                   {!isLinkedDevice && conv.ai_active && <span style={greenDotStyle} title="AI Auto-Reply active" />}
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ color: '#1e293b', fontWeight: 600, fontSize: '0.85rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1184,8 +1185,8 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: '8px', position: 'relative' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
-                    {conv.is_muted && <span title="Muted — AI auto-reply skipped" style={{ fontSize: '0.7rem' }}>🔇</span>}
-                    {conv.is_archived && <span title="Archived" style={{ fontSize: '0.7rem' }}>📂</span>}
+                    {conv.is_muted && <span title="Muted — AI auto-reply skipped" style={{ fontSize: '0.7rem' }}><AppIcon name="muted" /></span>}
+                    {conv.is_archived && <span title="Archived" style={{ fontSize: '0.7rem' }}><AppIcon name="archive" /></span>}
                     {/* Timestamp uses updated_at (the API field that
                         actually exists on whatsapp_conversations); the
                         old code referenced last_message_at which is
@@ -1226,18 +1227,18 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                         padding: '4px',
                       }}>
                       <button onClick={() => muteConv(conv.phone, !conv.is_muted)} style={menuItemStyle}>
-                        {conv.is_muted ? '🔊 Unmute' : '🔇 Mute'}
+                        <AppIcon name={conv.is_muted ? 'sound' : 'muted'} /> {conv.is_muted ? 'Unmute' : 'Mute'}
                       </button>
                       <button onClick={() => archiveConv(conv.phone, !conv.is_archived)} style={menuItemStyle}>
-                        {conv.is_archived ? '📥 Unarchive' : '📂 Archive'}
+                        <AppIcon name={conv.is_archived ? 'import' : 'archive'} /> {conv.is_archived ? 'Unarchive' : 'Archive'}
                       </button>
                       <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'clear', phone: conv.phone, name: conv.name || conv.phone }); }} style={menuItemStyle}>
-                        🧹 Clear chat
+                        <AppIcon name="clear" /> Clear chat
                       </button>
                       <div style={{ height: '1px', background: '#e2e8f0', margin: '4px 0' }} />
                       <button onClick={() => { setOpenMenu(null); setConfirmAction({ type: 'delete', phone: conv.phone, name: conv.name || conv.phone }); }}
                         style={{ ...menuItemStyle, color: '#dc2626' }}>
-                        🗑 Delete
+                        <AppIcon name="delete" /> Delete
                       </button>
                     </div>
                   )}
@@ -1313,7 +1314,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                             onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'block'; }}
                           />
                           <span style={{ display: 'none', padding: '8px 12px', fontSize: '0.78rem', color: isOutbound ? 'rgba(255,255,255,0.8)' : '#64748b' }}>
-                            📷 Image
+                            <AppIcon name="image" /> Image
                           </span>
                           <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', padding: '2px 8px 4px', textAlign: 'right' }}>
                             {formatTime(msg.created_at || msg.timestamp, orgTimezone)}
@@ -1321,7 +1322,7 @@ export default function WhatsAppTab({ apiFetch, API_URL, orgTimezone }) {
                         </div>
                       ) : (
                         <>
-                          {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}>🤖</span>}
+                          {msg.ai_generated && <span title="AI-generated" style={{ marginRight: '4px' }}><AppIcon name="robot" /></span>}
                           <span>{msg.message_text || msg.text || msg.body || msg.content}</span>
                           <div style={{ fontSize: '0.65rem', color: isOutbound ? 'rgba(255,255,255,0.7)' : '#64748b', marginTop: '4px', textAlign: 'right' }}>
                             {formatTime(msg.created_at || msg.timestamp, orgTimezone)}

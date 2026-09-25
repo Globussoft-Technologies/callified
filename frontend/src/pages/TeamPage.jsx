@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -933,7 +934,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                             borderRadius: 6, color: copiedInviteId === inv.id ? T.green : T.accent,
                             padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
                           }}>
-                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                          <AppIcon name={copiedInviteId === inv.id ? 'check' : 'link'} /> {copiedInviteId === inv.id ? 'Copied' : 'Copy link'}
                         </button>
                         <button onClick={() => handleCancelInvite(inv)}
                           style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
@@ -1016,7 +1017,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           fontSize: 14, fontFamily: T.font, fontWeight: 700,
                         }}
                       >
-                        🛡
+                        <AppIcon name="shield" />
                       </button>
                     </td>
                     <td style={{ ...rowTd, color: T.muted }}>

@@ -3,6 +3,7 @@ import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useConfirm } from '../contexts/UIContext';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -114,7 +115,7 @@ export default function ExecutivesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
         <div>
           <h2 style={{ margin: 0, color: T.text, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            🧑‍💼 Executives
+            <AppIcon name="team" /> Executives
           </h2>
           <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
             Manage sales/ops executives assigned to campaigns and leads.

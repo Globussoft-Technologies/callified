@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9',
@@ -476,7 +477,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
             <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>{profile.email}</div>
             <div style={{ marginTop: 8 }}><Badge>{profile.role || '-'}</Badge></div>
           </div>
-          <button onClick={onClose} style={{ ...btnGhost, padding: '6px 10px' }}>✕</button>
+          <button onClick={onClose} aria-label="Close" title="Close" style={{ ...btnGhost, padding: '6px 10px' }}><AppIcon name="close" /></button>
         </div>
 
         <div style={{ display: 'flex', borderBottom: `1px solid ${T.border}`, padding: '0 22px' }}>

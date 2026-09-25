@@ -4,6 +4,7 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
+import AppIcon from '../common/AppIcon';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizePhone } from '../../utils/phone';
 import { isAdmin } from '../../utils/roles';
@@ -965,7 +966,7 @@ export default function CampaignsTab({
                     </span>
                   ) : (
                     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#f59e0b', background: 'rgba(245,158,11,0.1)' }}>
-                      ⚠ No product
+                      <AppIcon name="warning" /> No product
                     </span>
                   )}
                   {statusBadge(campaign.status || 'active')}

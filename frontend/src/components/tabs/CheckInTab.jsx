@@ -1,4 +1,5 @@
 import React from 'react';
+import AppIcon from '../common/AppIcon';
 
 export default function CheckInTab({ fieldOpsData, setFieldOpsData, sites, handlePunchIn, punching, punchStatus }) {
   return (
@@ -22,12 +23,12 @@ export default function CheckInTab({ fieldOpsData, setFieldOpsData, sites, handl
       </div>
 
       <button className="btn-punch" onClick={handlePunchIn} disabled={punching}>
-        {punching ? 'Locating GPS 📡...' : '📍 Verify GPS & Punch In'}
+        {punching ? <><AppIcon name="loading" spin /> Locating GPS...</> : <><AppIcon name="environment" /> Verify GPS &amp; Punch In</>}
       </button>
 
       {punchStatus && (
         <div className={`punch-result ${punchStatus.punch_status === 'Valid' ? 'valid' : 'invalid'}`}>
-          <h3 style={{margin: '0 0 8px 0'}}>{punchStatus.punch_status === 'Valid' ? '✅ Punch Confirmed' : '❌ Out of Bounds'}</h3>
+          <h3 style={{margin: '0 0 8px 0'}}><AppIcon name={punchStatus.punch_status === 'Valid' ? 'checkCircle' : 'warning'} /> {punchStatus.punch_status === 'Valid' ? 'Punch Confirmed' : 'Out of Bounds'}</h3>
           <p style={{margin: 0}}>You are <strong>{punchStatus.distance_m} meters</strong> away from {punchStatus.site_name}.</p>
         </div>
       )}
