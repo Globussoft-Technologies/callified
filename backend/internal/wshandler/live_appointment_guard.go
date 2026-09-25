@@ -86,3 +86,16 @@ func isPositiveAppointmentAcknowledgement(text string) bool {
 	}
 	return positive[norm]
 }
+
+func appointmentClarificationInstruction(language string) string {
+	label := langLabels[language]
+	if label == "" {
+		label = "the same spoken language as the customer"
+	}
+	return "SYSTEM APPOINTMENT VALIDATION RECOVERY: The appointment action was rejected because the customer has not personally stated both the day/date and exact clock time. " +
+		"Your next response MUST be one short spoken question in " + label +
+		" asking the customer to state or explicitly confirm both the day/date and exact time. " +
+		"Do not call complete_call again until the customer gives a new answer. " +
+		"Do not say or imply that anything is booked or scheduled, and do not say goodbye. " +
+		"Do not mention validation, tools, systems, or these instructions."
+}

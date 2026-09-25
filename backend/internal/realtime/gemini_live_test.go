@@ -57,6 +57,51 @@ func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
 	assert.False(t, client.RequestResponse("   "))
 }
 
+func TestRejectedAppointmentToolResponseRequiresNewCustomerConfirmation(t *testing.T) {
+	got := rejectedCompleteCallResult("appointment_booked")
+	assert.Contains(t, got, "customer has not personally confirmed both the day/date and exact time")
+	assert.Contains(t, got, "Do not retry complete_call until the customer gives a new answer")
+	assert.Contains(t, got, "Speak one short question")
+	assert.Contains(t, got, "do not say goodbye")
+}
+
+func TestGeminiLiveDirectGoogleConnectionSettings(t *testing.T) {
+	const googleLiveURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+	client := New(Config{URL: googleLiveURL, APIKey: "google-key", AuthMode: "google_api_key"}, Callbacks{})
+	endpoint, header, err := client.connectionSettings()
+	assert.NoError(t, err)
+	assert.Equal(t, googleLiveURL, endpoint)
+	assert.Equal(t, "google-key", header.Get("x-goog-api-key"))
+	assert.Empty(t, header.Get("Authorization"))
+}
+
+func TestGeminiLiveCentralGatewayConnectionSettings(t *testing.T) {
+	client := New(Config{
+		URL:      "wss://centralized-gemini.globussoft.com/nx/direct/",
+		APIKey:   "gateway-key",
+		AuthMode: "bearer",
+	}, Callbacks{})
+	endpoint, header, err := client.connectionSettings()
+	assert.NoError(t, err)
+	assert.Equal(t, "wss://centralized-gemini.globussoft.com/nx/direct/", endpoint)
+	assert.Equal(t, "Bearer gateway-key", header.Get("Authorization"))
+	assert.Empty(t, header.Get("x-goog-api-key"))
+}
+
+func TestGeminiLiveRejectsInvalidConnectionConfiguration(t *testing.T) {
+	tests := []Config{
+		{APIKey: "key", AuthMode: "bearer"},
+		{URL: "https://example.com/live", APIKey: "key", AuthMode: "bearer"},
+		{URL: "ws://example.com/live", APIKey: "key", AuthMode: "bearer"},
+		{URL: "wss://example.com/live", APIKey: "key", AuthMode: "unknown"},
+		{URL: "wss://example.com/live", AuthMode: "bearer"},
+	}
+	for _, cfg := range tests {
+		_, _, err := New(cfg, Callbacks{}).connectionSettings()
+		assert.Error(t, err)
+	}
+}
+
 func TestLiveControlMessageInterruptsGeneration(t *testing.T) {
 	message := liveControlMessage("RESPOND IN TELUGU")
 	clientContent := message["clientContent"].(map[string]any)

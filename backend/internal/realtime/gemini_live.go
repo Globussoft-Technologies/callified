@@ -6,13 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
 )
-
-const geminiLiveURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
 const liveCallControl = `
 
@@ -30,7 +29,7 @@ If rejected, continue naturally without saying goodbye.
 Never speak another sentence after the final goodbye.`
 
 type Config struct {
-	APIKey, Model, Voice, Language, SystemPrompt, Greeting string
+	URL, APIKey, AuthMode, Model, Voice, Language, SystemPrompt, Greeting string
 }
 
 type Callbacks struct {
@@ -78,15 +77,14 @@ func (c *Client) RequestResponse(instruction string) bool {
 }
 
 func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
-	if strings.TrimSpace(c.cfg.APIKey) == "" {
-		return fmt.Errorf("gemini live: missing API key")
-	}
 	if strings.TrimSpace(c.cfg.Model) == "" {
 		return fmt.Errorf("gemini live: missing model")
 	}
-	header := http.Header{}
-	header.Set("x-goog-api-key", c.cfg.APIKey)
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, geminiLiveURL, header)
+	endpoint, header, err := c.connectionSettings()
+	if err != nil {
+		return err
+	}
+	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, endpoint, header)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("gemini live connect: %w (status %d)", err, resp.StatusCode)
@@ -138,6 +136,33 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 			}
 		}
 	}
+}
+
+func (c *Client) connectionSettings() (string, http.Header, error) {
+	endpoint := strings.TrimSpace(c.cfg.URL)
+	if endpoint == "" {
+		return "", nil, fmt.Errorf("gemini live: missing WebSocket URL")
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Host == "" || parsed.Scheme != "wss" {
+		return "", nil, fmt.Errorf("gemini live: invalid WebSocket URL")
+	}
+
+	apiKey := strings.TrimSpace(c.cfg.APIKey)
+	if apiKey == "" {
+		return "", nil, fmt.Errorf("gemini live: missing API key")
+	}
+
+	header := http.Header{}
+	switch strings.ToLower(strings.TrimSpace(c.cfg.AuthMode)) {
+	case "", "google_api_key", "google-api-key", "x-goog-api-key":
+		header.Set("x-goog-api-key", apiKey)
+	case "bearer":
+		header.Set("Authorization", "Bearer "+apiKey)
+	default:
+		return "", nil, fmt.Errorf("gemini live: unsupported authentication mode")
+	}
+	return parsed.String(), header, nil
 }
 
 func liveControlMessage(instruction string) map[string]any {
@@ -382,7 +407,7 @@ func (c *Client) handleToolCall(conn *websocket.Conn, tool map[string]any) {
 				Outcome: outcome, AppointmentDate: appointmentDate, AppointmentTime: appointmentTime,
 			})
 			if !accepted {
-				result = "rejected: do not claim the call or appointment is complete; ask only for the missing or unclear information and continue"
+				result = rejectedCompleteCallResult(outcome)
 			}
 		} else if name == "search_product_knowledge" {
 			query, _ := args["query"].(string)
@@ -396,4 +421,11 @@ func (c *Client) handleToolCall(conn *websocket.Conn, tool map[string]any) {
 		responses = append(responses, map[string]any{"name": name, "id": id, "response": map[string]any{"result": result}})
 	}
 	_ = c.writeJSON(conn, map[string]any{"toolResponse": map[string]any{"functionResponses": responses}})
+}
+
+func rejectedCompleteCallResult(outcome string) string {
+	if outcome == "appointment_booked" {
+		return "rejected: the customer has not personally confirmed both the day/date and exact time. Do not retry complete_call until the customer gives a new answer. Speak one short question asking the customer to state or explicitly confirm both details. Do not claim the appointment is booked and do not say goodbye."
+	}
+	return "rejected: do not claim the call is complete; ask only for the missing or unclear information and continue"
 }

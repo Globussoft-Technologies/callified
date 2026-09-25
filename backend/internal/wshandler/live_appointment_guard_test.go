@@ -38,3 +38,11 @@ func TestPositiveAppointmentAcknowledgementIsStrict(t *testing.T) {
 		assert.False(t, isPositiveAppointmentAcknowledgement(text), text)
 	}
 }
+
+func TestAppointmentClarificationInstructionRequiresSpokenConfirmation(t *testing.T) {
+	got := appointmentClarificationInstruction("te")
+	assert.Contains(t, got, "one short spoken question in Telugu")
+	assert.Contains(t, got, "both the day/date and exact time")
+	assert.Contains(t, got, "Do not call complete_call again until the customer gives a new answer")
+	assert.Contains(t, got, "do not say goodbye")
+}

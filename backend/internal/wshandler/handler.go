@@ -370,6 +370,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer wg.Done()
 				languageGuard := newLiveLanguageGuard(sess.Language)
 				appointmentGuard := newLiveAppointmentGuard()
+				var appointmentClarificationPending atomic.Bool
 				responseWatchdog := newLiveResponseWatchdog(geminiLiveResponseTimeout, func(customerText string) bool {
 					if sess.IsFinalClosing() || ctx.Err() != nil {
 						return false
@@ -460,7 +461,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				client := realtime.New(realtime.Config{
-					APIKey: h.cfg.GeminiAPIKey, Model: h.cfg.GeminiLiveModel,
+					URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
+					AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
 					Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: sess.SystemPrompt,
 					Language: sess.Language, Greeting: sess.GreetingText,
 				}, realtime.Callbacks{
@@ -519,6 +521,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						inputText.WriteString(text)
 						currentInput := strings.TrimSpace(inputText.String())
 						transcriptMu.Unlock()
+						// A rejected appointment action is allowed to be attempted again
+						// only after the customer supplies a new spoken answer.
+						if currentInput != "" {
+							appointmentClarificationPending.Store(false)
+						}
 						language, languageChanged := languageGuard.ObserveCustomer(currentInput)
 						if languageChanged {
 							sess.Log.Info("gemini live: confirmed customer language",
@@ -572,6 +579,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						currentOutput := strings.TrimSpace(outputText.String())
 						transcriptMu.Unlock()
 						holdAppointmentOutput := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
+						holdAppointmentClarification := appointmentClarificationPending.Load() && !sess.IsFinalClosing()
 						languageRedirectMu.Lock()
 						holdLanguageRedirectOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -581,7 +589,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							// hold Gemini's automatic reply. It often repeats the slot
 							// instead of completing the call; OnTurnComplete replaces it
 							// with one validated closing response.
-							if !holdAppointmentOutput && !holdLanguageRedirectOutput {
+							if !holdAppointmentOutput && !holdAppointmentClarification && !holdLanguageRedirectOutput {
 								switch languageGuard.ValidateAgent(currentOutput, false) {
 								case liveLanguageAccept:
 									if !outputApproved {
@@ -636,6 +644,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						} else {
 							sess.Log.Warn("gemini live: rejected terminal action",
 								zap.String("outcome", request.Outcome))
+							if request.Outcome == "appointment_booked" && appointmentClarificationPending.CompareAndSwap(false, true) {
+								responseWatchdog.Cancel()
+								sess.DiscardLivePlayback()
+								if sess.RequestLiveResponse(appointmentClarificationInstruction(languageGuard.Expected())) {
+									sess.Log.Info("gemini live: requesting missing appointment confirmation")
+								} else {
+									sess.Log.Warn("gemini live: appointment confirmation recovery unavailable")
+								}
+							}
 						}
 						return allowed
 					},
@@ -674,6 +691,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.Log.Info("gemini live: final appointment acknowledgement detected")
 						}
 						forceAppointmentClose := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
+						forceAppointmentClarificationHold := appointmentClarificationPending.Load() && !sess.IsFinalClosing()
 						languageRedirectMu.Lock()
 						forceLanguageRedirectHold := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -681,7 +699,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						liveStateMu.Lock()
 						hadOutput := agent != "" || len(pendingAudio) > 0 || audioReleased
 						validOutput := false
-						if (forceAppointmentClose || forceLanguageRedirectHold) && hadOutput {
+						appointmentClarificationRejected := false
+						if forceAppointmentClarificationHold && hadOutput && shouldInferFinalClose(agent) {
+							rejectOutput()
+							appointmentClarificationRejected = true
+						} else if (forceAppointmentClose || forceLanguageRedirectHold) && hadOutput {
 							rejectOutput()
 						} else if hadOutput && !outputRejected {
 							if languageGuard.ValidateAgent(agent, true) == liveLanguageAccept {
@@ -750,6 +772,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								sess.Log.Info("gemini live: completing appointment after final acknowledgement")
 							} else {
 								sess.Log.Warn("gemini live: appointment close response unavailable")
+							}
+							return
+						}
+						if appointmentClarificationRejected {
+							responseWatchdog.Cancel()
+							if sess.RequestLiveResponse(appointmentClarificationInstruction(languageGuard.Expected())) {
+								sess.Log.Warn("gemini live: blocked premature appointment close and requested confirmation")
+							} else {
+								sess.Log.Warn("gemini live: blocked premature appointment close; recovery unavailable")
 							}
 							return
 						}
@@ -1452,8 +1483,11 @@ func (h *Handler) configureVoicePipeline(sess *CallSession) {
 		return
 	}
 	sess.SetTTSInstance(nil)
-	if strings.TrimSpace(h.cfg.GeminiAPIKey) == "" {
-		sess.Log.Error("Gemini Live selected but GEMINI_API_KEY is not configured")
+	if strings.TrimSpace(h.cfg.GeminiLiveURL) == "" {
+		sess.Log.Error("Gemini Live selected but GEMINI_LIVE_URL is not configured")
+	}
+	if strings.TrimSpace(firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey)) == "" {
+		sess.Log.Error("Gemini Live selected but neither GEMINI_LIVE_API_KEY nor GEMINI_API_KEY is configured")
 	}
 }
 
