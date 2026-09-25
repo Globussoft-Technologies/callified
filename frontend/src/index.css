@@ -18,6 +18,33 @@ body {
   margin: 0;
   padding: 0;
 }
+
+/* Campaign lead actions stay compact until the user points to or tabs into them. */
+.lead-action-button {
+  transition: padding 160ms ease, box-shadow 160ms ease;
+}
+
+.lead-action-button > .lead-action-label {
+  display: inline-flex;
+  align-items: center;
+  max-width: 0;
+  margin-left: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-width 180ms ease, margin-left 160ms ease, opacity 120ms ease;
+}
+
+.lead-action-button:hover > .lead-action-label,
+.lead-action-button:focus-visible > .lead-action-label {
+  max-width: 240px;
+  margin-left: 5px;
+  opacity: 1;
+}
+
+.lead-action-button:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
 .dashboard-container {
   min-height: 100vh;
   display: flex;
