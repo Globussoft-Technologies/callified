@@ -1462,7 +1462,7 @@ export default function CampaignDetail({
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 0,
     fontSize: 11, padding: '4px 8px', borderRadius: 6, fontWeight: 600,
     fontFamily: T.font, whiteSpace: 'nowrap', lineHeight: 1.35,
-    minWidth: 30, minHeight: 26, overflow: 'hidden',
+    minWidth: 30, minHeight: 26, overflow: 'visible',
   };
   const thStyle = {
     padding: '10px 14px', fontSize: 11, fontWeight: 600, color: T.muted,
@@ -2744,13 +2744,13 @@ export default function CampaignDetail({
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        {canEditLead && <button className="lead-action-button" title="Edit lead"
+                        {canEditLead && <button className="lead-action-button" data-tooltip="Edit lead" aria-label="Edit lead"
                           onClick={() => handleEditLead(lead)}
                           style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)' }}>
                           <EditOutlined /><span className="lead-action-label">Edit</span>
                         </button>}
                         {canDial && visibleCallActions.dial && (
-                          <button className="lead-action-button" title={dialingId === lead.id ? 'Dialing lead' : 'Dial lead'}
+                          <button className="lead-action-button" data-tooltip={dialingId === lead.id ? 'Dialing lead' : 'Dial lead'} aria-label={dialingId === lead.id ? 'Dialing lead' : 'Dial lead'}
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
                             style={{
@@ -2777,10 +2777,11 @@ export default function CampaignDetail({
                           </button>
                         )} */}
                         {canBrowserCall && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
-                          <button
+                          <button className="lead-action-button"
                             onClick={() => startBrowserCallWithAutoDial(lead)}
                             disabled={browserCallDialing || browserCallLead != null}
-                            title={autoDialEnabled ? 'Browser call (auto-dial enabled)' : 'Browser call from microphone — 1x cost'}
+                            data-tooltip={autoDialEnabled ? 'Browser call (auto-dial enabled)' : 'Browser call from microphone — 1x cost'}
+                            aria-label={autoDialEnabled ? 'Browser call (auto-dial enabled)' : 'Browser call from microphone — 1x cost'}
                             style={{
                               ...rowActionStyle,
                               cursor: (browserCallDialing || browserCallLead != null) ? 'not-allowed' : 'pointer',
@@ -2793,7 +2794,7 @@ export default function CampaignDetail({
                           </button>
                         )}
                         {canMakeCalls && selectedCampaign.channel === 'whatsapp' && (
-                          <button className="lead-action-button" title={waSendingId === lead.id ? 'Sending WhatsApp message' : 'Send WhatsApp message'}
+                          <button className="lead-action-button" data-tooltip={waSendingId === lead.id ? 'Sending WhatsApp message' : 'Send WhatsApp message'} aria-label={waSendingId === lead.id ? 'Sending WhatsApp message' : 'Send WhatsApp message'}
                             onClick={() => handleSendWA(lead)}
                             disabled={waSendingId === lead.id}
                             style={{
@@ -2812,7 +2813,7 @@ export default function CampaignDetail({
                           </button>
                         )}
                         {canBrowserCall && visibleCallActions.simWebCall && (
-                          <button className="lead-action-button" title={webCallActive === lead.id ? 'End simulated web call' : 'Start simulated web call'}
+                          <button className="lead-action-button" data-tooltip={webCallActive === lead.id ? 'End simulated web call' : 'Start simulated web call'} aria-label={webCallActive === lead.id ? 'End simulated web call' : 'Start simulated web call'}
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}
                             style={{
@@ -2835,7 +2836,7 @@ export default function CampaignDetail({
                             <StopOutlined /> DND — number blocked
                           </span>
                         )}
-                        {canViewTranscripts && <button className="lead-action-button" title="View call transcripts and history"
+                        {canViewTranscripts && <button className="lead-action-button" data-tooltip="View call transcripts and history" aria-label="View call transcripts and history"
                           onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
                           style={{ ...rowActionStyle, cursor: 'pointer', fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
@@ -2851,19 +2852,19 @@ export default function CampaignDetail({
                             {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
                           </span>
                         </button>}
-                        {canEditLead && <button className="lead-action-button" title="Add or edit note"
+                        {canEditLead && <button className="lead-action-button" data-tooltip="Add or edit note" aria-label="Add or edit note"
                           onClick={() => openNoteModal(lead)}
                           style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)' }}>
                           <FormOutlined /><span className="lead-action-label">Note</span>
                         </button>}
-                        {canScheduleCalls && <button className="lead-action-button" title="Schedule call"
+                        {canScheduleCalls && <button className="lead-action-button" data-tooltip="Schedule call" aria-label="Schedule call"
                           onClick={() => {
                             openScheduleModal(lead, false);
                           }}
                           style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)' }}>
                           <CalendarOutlined /><span className="lead-action-label">Schedule</span>
                         </button>}
-                        {canDeleteLead && <button className="lead-action-button" title="Remove lead" onClick={async () => {
+                        {canDeleteLead && <button className="lead-action-button" data-tooltip="Remove lead" aria-label="Remove lead" onClick={async () => {
                             const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
                             const ok = await confirm({
                               title: 'Remove Lead',
@@ -2886,7 +2887,8 @@ export default function CampaignDetail({
                                 e.stopPropagation();
                                 setScheduleActionLeadId((prev) => prev === lead.id ? null : lead.id);
                               }}
-                              title={`Scheduled call: ${formatDateTime(lead.next_scheduled_at, orgTimezone)}`}
+                              data-tooltip={`Scheduled call: ${formatDateTime(lead.next_scheduled_at, orgTimezone)}`}
+                              aria-label={`Scheduled call: ${formatDateTime(lead.next_scheduled_at, orgTimezone)}`}
                               style={{
                                 ...rowActionStyle,
                                 background: 'rgba(59,130,246,0.12)', color: '#1e40af',
