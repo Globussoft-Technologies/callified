@@ -9,6 +9,31 @@ import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
+import {
+  BarChartOutlined,
+  CalendarOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  DeleteOutlined,
+  DesktopOutlined,
+  DownOutlined,
+  EditOutlined,
+  ExperimentOutlined,
+  FastForwardOutlined,
+  FileTextOutlined,
+  FormOutlined,
+  HistoryOutlined,
+  LoadingOutlined,
+  MessageOutlined,
+  PhoneOutlined,
+  PlusOutlined,
+  RedoOutlined,
+  SoundOutlined,
+  StopOutlined,
+  TeamOutlined,
+  UploadOutlined,
+  DownloadOutlined,
+} from '@ant-design/icons';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -1431,6 +1456,11 @@ export default function CampaignDetail({
     padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
     fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none',
   };
+  const rowActionStyle = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+    fontSize: 11, padding: '4px 10px', borderRadius: 6, fontWeight: 600,
+    fontFamily: T.font, whiteSpace: 'nowrap', lineHeight: 1.35,
+  };
   const thStyle = {
     padding: '10px 14px', fontSize: 11, fontWeight: 600, color: T.muted,
     textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left',
@@ -1528,7 +1558,7 @@ export default function CampaignDetail({
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
       {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
-          <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>🔊 Voice Settings</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}><SoundOutlined /> Voice Settings</div>
           <div className="campaign-voice-controls">
             <div className="campaign-voice-selects">
               <select className="form-input" value={campVoice.tts_provider}
@@ -1826,11 +1856,11 @@ export default function CampaignDetail({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {canAssignLeads && <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>}
-        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2' }}
-          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>}
+        {canAssignLeads && <button style={{ ...btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}><PlusOutlined /> Add from CRM</button>}
+        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}><UploadOutlined /> Import CSV</button>}
         {canExportLeads && <button
-          style={{ ...btnPrimary, background: T.green }}
+          style={{ ...btnPrimary, background: T.green, display: 'inline-flex', alignItems: 'center', gap: 6 }}
           onClick={() => {
             downloadCSV({
               apiFetch,
@@ -1839,10 +1869,10 @@ export default function CampaignDetail({
               toast,
             });
           }}>
-          ⬇ Export
+          <DownloadOutlined /> Export
         </button>}
         {!hideAiFeatures && canDialAll && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
-          <button style={{ ...btnPrimary, background: T.green }}
+          <button style={{ ...btnPrimary, background: T.green, display: 'inline-flex', alignItems: 'center', gap: 6 }}
             onClick={async () => {
               if (!requireSelectedDialAccount()) return;
               const newCount = (campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length;
@@ -1859,10 +1889,10 @@ export default function CampaignDetail({
                 setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
               } catch { toast('Dial failed');  }
             }}>
-            📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
+            <PhoneOutlined /> Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        {!hideAiFeatures && canDialAll && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && canDialAll && <button style={{ ...btnPrimary, background: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 6 }}
           onClick={async () => {
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
@@ -1878,7 +1908,7 @@ export default function CampaignDetail({
               setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
             } catch { toast('Failed');  }
           }}>
-          📞 Dial All ({campaignLeads.length})
+          <PhoneOutlined /> Dial All ({campaignLeads.length})
         </button>}
         {selectedCampaign.channel !== 'whatsapp' && canAutoDial && canBrowserCall && visibleCallActions.browserCall && (
           <button
@@ -2119,10 +2149,10 @@ export default function CampaignDetail({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent, hidden: !hasPermission('crm.view') },
-          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
-          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
-          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures || !canViewReports },
+            { id: 'leads', icon: TeamOutlined, label: `Leads (${campaignLeadsTotal})`, activeColor: T.accent, hidden: !hasPermission('crm.view') },
+            { id: 'calllog', icon: HistoryOutlined, label: `Call Log (${callLog.length})`, activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
+            { id: 'insights', icon: BarChartOutlined, label: 'Call Insights', activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
+            { id: 'retries', icon: RedoOutlined, label: 'Retries', activeColor: T.amber, hidden: hideAiFeatures || !canViewReports },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
               onClick={() => handleDetailTabChange(tab.id)}
@@ -2132,7 +2162,9 @@ export default function CampaignDetail({
                 background: detailTab === tab.id ? tab.activeColor : 'transparent',
                 color: detailTab === tab.id ? '#fff' : T.muted,
                 transition: 'all 0.15s',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
               }}>
+              <tab.icon />
               {tab.label}
             </button>
           ))}
@@ -2644,7 +2676,8 @@ export default function CampaignDetail({
                               cursor: 'help', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             }}
                           >
-                            📝 {lead.follow_up_note.slice(0, 24)}{lead.follow_up_note.length > 24 ? '…' : ''}
+                            <FormOutlined style={{ marginRight: 4 }} />
+                            {lead.follow_up_note.slice(0, 24)}{lead.follow_up_note.length > 24 ? '…' : ''}
                           </span>
                         )}
                       </div>
@@ -2710,21 +2743,21 @@ export default function CampaignDetail({
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                         {canEditLead && <button
                           onClick={() => handleEditLead(lead)}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          ✏️ Edit
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)' }}>
+                          <EditOutlined /> Edit
                         </button>}
                         {canDial && visibleCallActions.dial && (
                           <button
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
                               opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
                               background: 'rgba(16,185,129,0.08)', color: '#065f46',
-                              border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
+                              border: '1px solid rgba(16,185,129,0.25)',
                             }}>
-                            {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
+                            {dialingId === lead.id ? <><LoadingOutlined spin /> Wait...</> : <><PhoneOutlined /> Dial</>}
                           </button>
                         )}
                         {/* Manual Call disabled — use Browser Call instead
@@ -2746,14 +2779,14 @@ export default function CampaignDetail({
                             disabled={browserCallDialing || browserCallLead != null}
                             title={autoDialEnabled ? 'Auto-dial is enabled' : 'Call from browser mic — 1x cost'}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (browserCallDialing || browserCallLead != null) ? 'not-allowed' : 'pointer',
                               opacity: (browserCallDialing || browserCallLead != null) ? 0.6 : 1,
                               background: autoDialEnabled ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.08)',
                               color: autoDialEnabled ? '#b45309' : '#3730a3',
-                              border: `1px solid ${autoDialEnabled ? 'rgba(245,158,11,0.35)' : 'rgba(99,102,241,0.3)'}`, borderRadius: 6,
+                              border: `1px solid ${autoDialEnabled ? 'rgba(245,158,11,0.35)' : 'rgba(99,102,241,0.3)'}`,
                             }}>
-                            {autoDialEnabled ? '⏩ Browser Call' : '🎙 Browser Call'}
+                            {autoDialEnabled ? <FastForwardOutlined /> : <DesktopOutlined />} Browser Call
                           </button>
                         )}
                         {canMakeCalls && selectedCampaign.channel === 'whatsapp' && (
@@ -2761,15 +2794,18 @@ export default function CampaignDetail({
                             onClick={() => handleSendWA(lead)}
                             disabled={waSendingId === lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: waSendingId === lead.id ? 'not-allowed' : 'pointer',
                               opacity: waSendingId === lead.id ? 0.6 : 1,
                               background: waSendStatus[lead.id] === 'sent' ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.08)',
                               color: waSendStatus[lead.id] === 'error' ? '#dc2626' : '#065f46',
                               border: `1px solid ${waSendStatus[lead.id] === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(37,211,102,0.35)'}`,
-                              borderRadius: 6,
                             }}>
-                            {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
+                            {waSendingId === lead.id
+                              ? <><LoadingOutlined spin /> Sending...</>
+                              : waSendStatus[lead.id] === 'sent'
+                                ? <><CheckCircleOutlined /> Sent</>
+                                : <><MessageOutlined /> Send WA</>}
                           </button>
                         )}
                         {canBrowserCall && visibleCallActions.simWebCall && (
@@ -2777,15 +2813,14 @@ export default function CampaignDetail({
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
                               opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
-                              borderRadius: 6,
                               border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
                               color: webCallActive === lead.id ? T.red : T.accent,
                               background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
                             }}>
-                            {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
+                            {webCallActive === lead.id ? <><CloseCircleOutlined /> End Call</> : <><ExperimentOutlined /> Sim Web Call</>}
                           </button>
                         )}
                         {dndBlockedLeadIds.has(lead.id) && (
@@ -2794,33 +2829,34 @@ export default function CampaignDetail({
                               background: '#fee2e2', color: T.red,
                               border: '1px solid #fca5a5', fontWeight: 600,
                               display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            🚫 DND — number blocked
+                            <StopOutlined /> DND — number blocked
                           </span>
                         )}
                         {canViewTranscripts && <button
                           onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
+                          style={{ ...rowActionStyle, cursor: 'pointer', fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
                             color: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '#065f46' : T.muted,
                             border: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
                           }}>
+                          <FileTextOutlined />
                           {lead.transcript_count > 0
-                            ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}`
-                            : (lead.recording_count > 0 || lead.dial_attempts > 0) ? '📋 Call History' : '📋 No Calls'}
-                          {lead.recording_count > 0 && ' 🔊'}
+                            ? `${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}`
+                            : (lead.recording_count > 0 || lead.dial_attempts > 0) ? 'Call History' : 'No Calls'}
+                          {lead.recording_count > 0 && <SoundOutlined />}
                           {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
                         </button>}
                         {canEditLead && <button
                           onClick={() => openNoteModal(lead)}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          📝 Note
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)' }}>
+                          <FormOutlined /> Note
                         </button>}
                         {canScheduleCalls && <button
                           onClick={() => {
                             openScheduleModal(lead, false);
                           }}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          📅 Schedule
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)' }}>
+                          <CalendarOutlined /> Schedule
                         </button>}
                         {canDeleteLead && <button onClick={async () => {
                             const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
@@ -2833,10 +2869,10 @@ export default function CampaignDetail({
                             });
                             if (ok) handleRemoveLead(lead.id);
                           }}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                          style={{ ...rowActionStyle, cursor: 'pointer',
                             background: '#fee2e2', border: '1px solid #fca5a5',
-                            color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          Remove
+                            color: T.red }}>
+                          <DeleteOutlined /> Remove
                         </button>}
                         {canScheduleCalls && lead.has_pending_scheduled_call && lead.next_scheduled_at && (
                           <div style={{ position: 'relative', display: 'inline-flex' }}>
@@ -2847,14 +2883,14 @@ export default function CampaignDetail({
                               }}
                               title="Scheduled call actions"
                               style={{
-                                fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                ...rowActionStyle,
                                 background: 'rgba(59,130,246,0.12)', color: '#1e40af',
-                                border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
-                                fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 8,
+                                border: '1px solid rgba(59,130,246,0.3)', gap: 8,
                                 cursor: 'pointer'
                               }}>
-                              <span>📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}</span>
-                              <span style={{ fontSize: 10, opacity: 0.85 }}>▾</span>
+                              <CalendarOutlined />
+                              <span>{formatDateTime(lead.next_scheduled_at, orgTimezone)}</span>
+                              <DownOutlined style={{ fontSize: 9, opacity: 0.85 }} />
                             </button>
                             {scheduleActionLeadId === lead.id && (
                               <div
@@ -2875,7 +2911,7 @@ export default function CampaignDetail({
                                     background: 'transparent', color: '#1e40af', cursor: 'pointer',
                                     fontSize: 12, fontWeight: 600, fontFamily: T.font
                                   }}>
-                                  Edit
+                                  <EditOutlined style={{ marginRight: 6 }} /> Edit
                                 </button>
                                 <button
                                   onClick={async () => {
@@ -2903,7 +2939,7 @@ export default function CampaignDetail({
                                     background: 'rgba(239,68,68,0.08)', color: '#dc2626', cursor: 'pointer',
                                     fontSize: 12, fontWeight: 600, fontFamily: T.font
                                   }}>
-                                  Delete
+                                  <DeleteOutlined style={{ marginRight: 6 }} /> Delete
                                 </button>
                               </div>
                             )}
