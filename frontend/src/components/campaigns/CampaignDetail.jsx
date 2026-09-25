@@ -1528,45 +1528,47 @@ export default function CampaignDetail({
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
       {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔊 Voice Settings</span>
-            <select className="form-input" value={campVoice.tts_provider}
-              onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
-              style={{ ...inputStyle, height: 32, minWidth: 110 }}>
-              <option value="">-- Provider --</option>
-              <option value="elevenlabs">ElevenLabs</option>
-              <option value="sarvam">Sarvam AI</option>
-              <option value="smallest">Smallest AI</option>
-              <option value="gemini_live">Gemini Live</option>
-            </select>
-            <select className="form-input" value={campVoice.tts_voice_id}
-              onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
-              style={{ ...inputStyle, height: 32, minWidth: 160 }}>
-              <option value="">-- Voice --</option>
-              {(() => {
-                const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
-                const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
-                const recommended = voices.filter(v => recs.includes(v.id));
-                const others = voices.filter(v => !recs.includes(v.id));
-                return (<>
-                  {recommended.length > 0 && <optgroup label="★ Recommended">
-                    {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
-                  </optgroup>}
-                  {recommended.length > 0 && <optgroup label="All Voices">
-                    {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </optgroup>}
-                  {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </>);
-              })()}
-            </select>
-            <select className="form-input" value={campVoice.tts_language}
-              onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
-              style={{ ...inputStyle, height: 32, minWidth: 100 }}>
-              <option value="">-- Language --</option>
-              {INDIAN_LANGUAGES.map(l => (
-                <option key={l.code} value={l.code}>{l.name}</option>
-              ))}
-            </select>
+          <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>🔊 Voice Settings</div>
+          <div className="campaign-voice-controls">
+            <div className="campaign-voice-selects">
+              <select className="form-input" value={campVoice.tts_provider}
+                onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
+                style={{ ...inputStyle, height: 32, minWidth: 0 }}>
+                <option value="">-- Provider --</option>
+                <option value="elevenlabs">ElevenLabs</option>
+                <option value="sarvam">Sarvam AI</option>
+                <option value="smallest">Smallest AI</option>
+                <option value="gemini_live">Gemini Live</option>
+              </select>
+              <select className="form-input" value={campVoice.tts_voice_id}
+                onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
+                style={{ ...inputStyle, height: 32, minWidth: 0 }}>
+                <option value="">-- Voice --</option>
+                {(() => {
+                  const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
+                  const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
+                  const recommended = voices.filter(v => recs.includes(v.id));
+                  const others = voices.filter(v => !recs.includes(v.id));
+                  return (<>
+                    {recommended.length > 0 && <optgroup label="★ Recommended">
+                      {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
+                    </optgroup>}
+                    {recommended.length > 0 && <optgroup label="All Voices">
+                      {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                    </optgroup>}
+                    {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </>);
+                })()}
+              </select>
+              <select className="form-input" value={campVoice.tts_language}
+                onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
+                style={{ ...inputStyle, height: 32, minWidth: 0 }}>
+                <option value="">-- Language --</option>
+                {INDIAN_LANGUAGES.map(l => (
+                  <option key={l.code} value={l.code}>{l.name}</option>
+                ))}
+              </select>
+            </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap' }}>
               Max Call Time
               <input

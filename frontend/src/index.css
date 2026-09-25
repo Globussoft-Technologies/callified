@@ -255,6 +255,19 @@ body {
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
 }
+.campaign-voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.campaign-voice-selects {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  flex: 1 1 620px;
+  min-width: 0;
+}
 :root {
   --primary: #6366f1;
   --secondary: #0891b2;
@@ -513,6 +526,11 @@ body {
    MOBILE RESPONSIVE — screens <= 768px
    ======================================== */
 @media (max-width: 768px) {
+
+  .campaign-voice-selects {
+    grid-template-columns: 1fr;
+    flex-basis: 100%;
+  }
 
   /* --- General: prevent horizontal overflow --- */
   body {
