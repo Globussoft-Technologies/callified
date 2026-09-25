@@ -111,6 +111,39 @@ body {
     --lead-tooltip-border: rgba(15, 23, 42, 0.18);
   }
 }
+
+.campaign-table-select .ant-select-selector {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.campaign-table-select:hover .ant-select-selector {
+  border-color: #a5b4fc !important;
+}
+
+.campaign-table-select.ant-select-focused .ant-select-selector,
+.campaign-table-select.ant-select-open .ant-select-selector {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12) !important;
+}
+
+.campaign-table-select .ant-select-prefix {
+  color: #64748b;
+}
+
+.campaign-status-option {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.campaign-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.14);
+}
 .dashboard-container {
   min-height: 100vh;
   display: flex;

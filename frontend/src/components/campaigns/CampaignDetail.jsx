@@ -9,6 +9,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
+import { ConfigProvider, Select } from 'antd';
 import {
   BarChartOutlined,
   CalendarOutlined,
@@ -22,6 +23,7 @@ import {
   FastForwardOutlined,
   FileTextOutlined,
   FormOutlined,
+  GlobalOutlined,
   HistoryOutlined,
   InfoCircleOutlined,
   LoadingOutlined,
@@ -32,8 +34,10 @@ import {
   SoundOutlined,
   StopOutlined,
   TeamOutlined,
+  TagOutlined,
   UploadOutlined,
   WarningOutlined,
+  UserOutlined,
   DownloadOutlined,
 } from '@ant-design/icons';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
@@ -50,6 +54,68 @@ const card = {
   background: T.card, border: `1px solid ${T.border}`,
   borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
 };
+
+const campaignSelectTheme = {
+  token: {
+    colorPrimary: '#6366f1',
+    colorBorder: '#d8dde7',
+    colorText: '#111827',
+    colorTextPlaceholder: '#6b7280',
+    borderRadius: 7,
+    controlHeightSM: 32,
+    fontFamily: "'DM Sans', sans-serif",
+    fontSize: 13,
+  },
+  components: {
+    Select: {
+      optionActiveBg: '#f5f7ff',
+      optionSelectedBg: '#eef2ff',
+      optionSelectedColor: '#3730a3',
+      optionFontSize: 13,
+      optionHeight: 34,
+      selectorBg: '#ffffff',
+    },
+  },
+};
+
+const leadStatusColors = {
+  New: '#94a3b8',
+  Contacted: '#3b82f6',
+  Connected: '#06b6d4',
+  Interested: '#10b981',
+  'Not Interested': '#ef4444',
+  'Follow-up': '#f59e0b',
+  Closed: '#8b5cf6',
+  Qualified: '#22c55e',
+  'Appointment Set': '#ec4899',
+  Converted: '#7c3aed',
+  Lost: '#f43f5e',
+  Junk: '#64748b',
+};
+
+function CampaignTableSelect({ width, popupWidth, ...props }) {
+  return (
+    <ConfigProvider theme={campaignSelectTheme}>
+      <Select
+        className="campaign-table-select"
+        size="small"
+        variant="outlined"
+        popupMatchSelectWidth={popupWidth || width}
+        styles={{ root: { width }, popup: { root: { minWidth: popupWidth || width } } }}
+        {...props}
+      />
+    </ConfigProvider>
+  );
+}
+
+function leadStatusLabel(status) {
+  return (
+    <span className="campaign-status-option">
+      <span className="campaign-status-dot" style={{ background: leadStatusColors[status] || '#94a3b8' }} />
+      {status}
+    </span>
+  );
+}
 
 const btnPrimary = {
   background: T.accent, border: 'none', color: '#fff',
@@ -2688,9 +2754,22 @@ export default function CampaignDetail({
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>{lead.company || '-'}</td>
                     <td style={tdStyle}>
-                      {canEditLead ? <select className="form-input" value={lead.source || ''}
-                        onChange={async e => {
-                          const src = e.target.value;
+                      {canEditLead ? <CampaignTableSelect
+                        aria-label={`Source for ${lead.first_name || 'lead'}`}
+                        value={lead.source || ''}
+                        prefix={<GlobalOutlined />}
+                        width={150}
+                        popupWidth={180}
+                        showSearch={{ optionFilterProp: 'label' }}
+                        options={[
+                          { value: '', label: 'No Source' },
+                          ...['facebook','google','instagram','linkedin','website','referral','cold','other'].map(source => ({
+                            value: source,
+                            label: source === 'other' ? 'Others' : source[0].toUpperCase() + source.slice(1),
+                          })),
+                        ]}
+                        onChange={async value => {
+                          const src = value || '';
                           try {
                             await apiFetch(`${API_URL}/leads/${lead.id}/source`, {
                               method: 'PUT',
@@ -2698,19 +2777,27 @@ export default function CampaignDetail({
                               body: JSON.stringify({ source: src })
                             });
                             fetchCampaignLeads(selectedCampaign.id);
-                          } catch (err) { toast('Failed to update source'); }
+                          } catch { toast('Failed to update source'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120, background: '#fff' }}>
-                        <option value="">No Source</option>
-                        {['facebook','google','instagram','linkedin','website','referral','cold','other'].map(s => (
-                          <option key={s} value={s}>{s === 'other' ? 'Others' : s[0].toUpperCase() + s.slice(1)}</option>
-                        ))}
-                      </select> : (lead.source || 'No Source')}
+                      /> : (lead.source || 'No Source')}
                     </td>
                     <td style={tdStyle}>
-                      {canAssignLeads ? <select className="form-input" value={lead.executive_id || ''}
-                        onChange={async e => {
-                          const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
+                      {canAssignLeads ? <CampaignTableSelect
+                        aria-label={`Executive for ${lead.first_name || 'lead'}`}
+                        value={lead.executive_id ? String(lead.executive_id) : ''}
+                        prefix={<UserOutlined />}
+                        width={180}
+                        popupWidth={220}
+                        showSearch={{ optionFilterProp: 'label' }}
+                        options={[
+                          { value: '', label: 'Unassigned' },
+                          ...executives.map(executive => ({
+                            value: String(executive.id),
+                            label: executive.name || executive.full_name || executive.email,
+                          })),
+                        ]}
+                        onChange={async value => {
+                          const execId = value ? parseInt(value, 10) : 0;
                           if (!currentCampaignId) {
                             toast('Campaign is still loading. Please try again.');
                             return;
@@ -2728,19 +2815,20 @@ export default function CampaignDetail({
                             fetchCampaignLeads(currentCampaignId);
                           } catch (err) { toast(err.message || 'Failed to assign executive'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
-                        <option value="">— Unassigned —</option>
-                        {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                      </select> : (
+                      /> : (
                         executiveNameForLead(lead)
                       )}
                     </td>
                     <td style={tdStyle}>
-                      {canEditLead ? <select className="form-input" value={lead.status || 'New'}
-                        onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
-                        {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select> : (lead.status || 'New')}
+                      {canEditLead ? <CampaignTableSelect
+                        aria-label={`Status for ${lead.first_name || 'lead'}`}
+                        value={lead.status || 'New'}
+                        prefix={<TagOutlined />}
+                        width={170}
+                        popupWidth={190}
+                        options={LEAD_STATUSES.map(status => ({ value: status, label: leadStatusLabel(status) }))}
+                        onChange={value => handleLeadStatusChange(lead.id, value)}
+                      /> : (lead.status || 'New')}
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
