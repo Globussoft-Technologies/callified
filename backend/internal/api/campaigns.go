@@ -761,12 +761,44 @@ func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Requ
 
 // ── GET /api/campaigns/{id}/call-log ─────────────────────────────────────────
 
+func campaignActivityFilterFromRequest(r *http.Request) (db.CampaignActivityFilter, error) {
+	q := r.URL.Query()
+	filter := db.CampaignActivityFilter{Search: strings.TrimSpace(q.Get("search"))}
+	var err error
+	if filter.From, err = normalizeActivityDate(q.Get("from")); err != nil {
+		return filter, fmt.Errorf("invalid from date: %w", err)
+	}
+	if filter.To, err = normalizeActivityDate(q.Get("to")); err != nil {
+		return filter, fmt.Errorf("invalid to date: %w", err)
+	}
+	if filter.From != "" && filter.To != "" && filter.From > filter.To {
+		return filter, fmt.Errorf("from date must not be after to date")
+	}
+	return filter, nil
+}
+
+func normalizeActivityDate(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04", "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"} {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed.UTC().Format("2006-01-02 15:04:05"), nil
+		}
+	}
+	return "", fmt.Errorf("unsupported datetime format")
+}
+
 // @Summary     Get campaign call log
 // @Description Returns the full call history for all leads in a campaign.
 // @Tags        campaigns
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id  path      int64  true  "Campaign ID"
+// @Param       search query string false "Search by lead name, phone, company, or source"
+// @Param       from query string false "Call date/time from"
+// @Param       to query string false "Call date/time to"
 // @Success     200  {array}   db.CallLogEntry
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -779,6 +811,11 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ac := getAuth(r)
+	activityFilter, err := campaignActivityFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	execIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
@@ -787,9 +824,9 @@ func (s *Server) getCampaignCallLog(w http.ResponseWriter, r *http.Request) {
 	}
 	var log []db.CallLogEntry
 	if ac.Role == db.RoleAgent {
-		log, err = s.db.GetCampaignCallLogForUser(campaign.ID, ac.UserID)
+		log, err = s.db.GetCampaignCallLogForUserFiltered(campaign.ID, ac.UserID, activityFilter)
 	} else {
-		log, err = s.db.GetCampaignCallLog(campaign.ID, execIDs)
+		log, err = s.db.GetCampaignCallLogFiltered(campaign.ID, execIDs, activityFilter)
 	}
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallLog", "err", err)
@@ -1243,6 +1280,9 @@ func (s *Server) saveCampaignExotelCreds(w http.ResponseWriter, r *http.Request)
 // @Security    BearerAuth
 // @Param       id              path   int64  true  "Campaign ID"
 // @Param       executive_ids   query  string false  "Comma-separated executive IDs"
+// @Param       search          query  string false  "Search by lead name, phone, company, or source"
+// @Param       from            query  string false  "Review date/time from"
+// @Param       to              query  string false  "Review date/time to"
 // @Success     200  {array}   object
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1258,13 +1298,18 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 	if campaign == nil {
 		return
 	}
+	activityFilter, err := campaignActivityFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallReviews", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	reviews, err := s.db.GetCallReviewsByCampaign(campaign.ID, execIDs, apply)
+	reviews, err := s.db.GetCallReviewsByCampaignFiltered(campaign.ID, execIDs, apply, activityFilter)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallReviews", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1285,6 +1330,9 @@ func (s *Server) getCampaignCallReviews(w http.ResponseWriter, r *http.Request) 
 // @Security    BearerAuth
 // @Param       id              path   int64  true  "Campaign ID"
 // @Param       executive_ids   query  string false  "Comma-separated executive IDs"
+// @Param       search          query  string false  "Search by lead name, phone, company, or source"
+// @Param       from            query  string false  "Retry date/time from"
+// @Param       to              query  string false  "Retry date/time to"
 // @Success     200  {array}   db.RetryWithLead
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1300,13 +1348,18 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 	if campaign == nil {
 		return
 	}
+	activityFilter, err := campaignActivityFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	retries, err := s.db.GetRetriesByCampaignWithLead(campaign.ID, execIDs, apply)
+	retries, err := s.db.GetRetriesByCampaignWithLeadFiltered(campaign.ID, execIDs, apply, activityFilter)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignRetries", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1328,6 +1381,9 @@ func (s *Server) getCampaignRetries(w http.ResponseWriter, r *http.Request) {
 // @Security    BearerAuth
 // @Param       id              path   int64  true  "Campaign ID"
 // @Param       executive_ids   query  string false  "Comma-separated executive IDs"
+// @Param       search          query  string false  "Search by lead name, phone, company, or source"
+// @Param       from            query  string false  "Review date/time from"
+// @Param       to              query  string false  "Review date/time to"
 // @Success     200  {object}  object
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -1343,13 +1399,18 @@ func (s *Server) getCampaignCallInsights(w http.ResponseWriter, r *http.Request)
 	if campaign == nil {
 		return
 	}
+	activityFilter, err := campaignActivityFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	execIDs, apply, err := s.resolveExecutiveIDs(r, ac)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	insights, err := s.db.GetCampaignCallInsights(campaign.ID, execIDs, apply)
+	insights, err := s.db.GetCampaignCallInsightsFiltered(campaign.ID, execIDs, apply, activityFilter)
 	if err != nil {
 		s.logger.Sugar().Errorw("getCampaignCallInsights", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1569,25 +1630,19 @@ func (s *Server) downloadAndSaveHumanRecording(ctx context.Context, callSid, rec
 		}
 	}
 
-	var savedURL string
+	objectKey := "recordings/" + filename
+	if userDir != "" {
+		objectKey = "recordings/" + userDir + "/" + filename
+		if campaignDir != "" {
+			objectKey = "recordings/" + userDir + "/" + campaignDir + "/" + filename
+		}
+	}
 
-	if s.s3 != nil {
-		// Upload to S3 and use the public URL.
-		s3Key := "recordings/" + filename
-		if userDir != "" {
-			s3Key = "recordings/" + userDir + "/" + filename
-			if campaignDir != "" {
-				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
-			}
-		}
-		publicURL, err := s.s3.UploadPublic(ctx, s3Key, data)
-		if err != nil {
-			s.logger.Warn("downloadAndSaveHumanRecording: S3 upload failed", zap.Error(err))
-			// Fall through to local save below.
-		} else {
-			savedURL = publicURL
-			s.logger.Info("downloadAndSaveHumanRecording: uploaded to S3", zap.String("url", publicURL))
-		}
+	savedURL, provider, uploadErr := s.uploadRecordingObject(ctx, objectKey, data)
+	if uploadErr != nil {
+		s.logger.Warn("downloadAndSaveHumanRecording: remote upload failed", zap.String("provider", provider), zap.Error(uploadErr))
+	} else if savedURL != "" {
+		s.logger.Info("downloadAndSaveHumanRecording: remote upload complete", zap.String("provider", provider), zap.String("url", savedURL))
 	}
 
 	if savedURL == "" {

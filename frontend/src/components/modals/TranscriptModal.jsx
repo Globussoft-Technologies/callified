@@ -120,6 +120,20 @@ function ConclusionCard({ transcriptId, turns }) {
   const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
   const rawSent = (r.customer_sentiment || r.sentiment || '').toLowerCase();
   const sStyle = SENTIMENT_STYLE[rawSent] || null;
+  // New reviews contain an explicit AI-classified outcome. Historical rows
+  // without one safely remain pending until they are regenerated; sentiment
+  // alone must never be treated as a clear rejection.
+  const storedOutcome = (r.call_outcome || '').toLowerCase();
+  const callOutcome = r.appointment_booked
+    ? 'appointment_booked'
+    : storedOutcome === 'pending' || storedOutcome === 'not_interested'
+      ? storedOutcome
+      : 'pending';
+  const outcomeStyle = callOutcome === 'appointment_booked'
+    ? { background: '#dcfce7', color: '#15803d', border: '#86efac', label: '✅ Appointment booked' }
+    : callOutcome === 'not_interested'
+      ? { background: '#fee2e2', color: '#b91c1c', border: '#fca5a5', label: '❌ Not interested' }
+      : { background: '#fef3c7', color: '#b45309', border: '#fcd34d', label: '⏳ Pending' };
 
   return wrap(
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: '#1f2937', lineHeight: 1.5 }}>
@@ -135,12 +149,12 @@ function ConclusionCard({ transcriptId, turns }) {
           </span>
         )}
         <span style={{
-          background: r.appointment_booked ? '#dcfce7' : '#f3f4f6',
-          color: r.appointment_booked ? '#15803d' : '#6b7280',
-          border: `1px solid ${r.appointment_booked ? '#86efac' : '#e5e7eb'}`,
+          background: outcomeStyle.background,
+          color: outcomeStyle.color,
+          border: `1px solid ${outcomeStyle.border}`,
           fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600,
         }}>
-          {r.appointment_booked ? '✅ Appointment booked' : '❌ No appointment'}
+          {outcomeStyle.label}
         </span>
       </div>
       {summary       && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{summary}</div>}

@@ -153,6 +153,35 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	hasHangup := false
 	firstChunk := true
 	tPreLLM := time.Now()
+	// Gemini can stream a goodbye as normal text immediately before emitting
+	// the structured complete_call action. Hold only unmistakable farewell
+	// sentences until that action is validated; otherwise a rejected action
+	// would leave the caller hearing both a goodbye and a recovery question.
+	pendingFarewell := make([]llm.SentenceChunk, 0, 2)
+	deliverChunk := func(chunk llm.SentenceChunk) {
+		if chunk.Text == "" {
+			return
+		}
+		if firstChunk {
+			metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
+			firstChunk = false
+			// New response starting — clear barge-in so TTS worker stops
+			// discarding sentences and the agent can speak again.
+			sess.SetBargeIn(false)
+		}
+		responseBuilder.WriteString(chunk.Text)
+		responseBuilder.WriteString(" ")
+		select {
+		case sess.TTSSentences <- chunk.Text:
+		case <-ctx.Done():
+		}
+	}
+	flushFarewell := func() {
+		for _, pending := range pendingFarewell {
+			deliverChunk(pending)
+		}
+		pendingFarewell = pendingFarewell[:0]
+	}
 
 	var err error
 	if provider != nil {
@@ -167,41 +196,65 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 			if sess.IsFinalClosing() {
 				return
 			}
-			if chunk.HasHangup && !terminalActionAllowed(chunk.HangupOutcome, transcript, history) {
-				sess.Log.Warn("hangup: rejected by terminal action guard",
-					zap.String("outcome", chunk.HangupOutcome))
-				chunk.Text = terminalRecoveryLine(sess.Language, chunk.HangupOutcome)
-				chunk.HasHangup = false
-				chunk.HangupOutcome = ""
-			}
-			if firstChunk && chunk.Text != "" {
-				// Record LLM TTFB: time from transcript to first sentence chunk
-				metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
-				firstChunk = false
-				// New response starting — clear barge-in so TTS worker stops
-				// discarding sentences and the agent can speak again.
-				sess.SetBargeIn(false)
-			}
 			if chunk.HasHangup {
-				if allowHangupForTurn {
-					hasHangup = true
-					// An explicit model close is terminal. It must not be
-					// cancelled by a late greeting or other barge-in while the
-					// goodbye audio is draining.
-					sess.RequestFinalClose()
-				} else {
-					sess.Log.Warn("repeat-question: suppressed early hangup")
+				allowed := allowHangupForTurn && terminalActionAllowed(chunk.HangupOutcome, transcript, history)
+				if !allowed {
+					if allowHangupForTurn {
+						sess.Log.Warn("hangup: rejected by terminal action guard",
+							zap.String("outcome", chunk.HangupOutcome))
+					} else {
+						sess.Log.Warn("repeat-question: suppressed early hangup")
+					}
+					// Any held goodbye belongs to the rejected terminal action and
+					// must never be spoken before the recovery question.
+					pendingFarewell = pendingFarewell[:0]
+					deliverChunk(llm.SentenceChunk{Text: terminalRecoveryLine(sess.Language, chunk.HangupOutcome)})
+					return
 				}
+
+				flushFarewell()
+				hasHangup = true
+				// An explicit model close is terminal. It must not be
+				// cancelled by a late greeting or other barge-in while the
+				// goodbye audio is draining.
+				sess.RequestFinalClose()
+				deliverChunk(chunk)
+				return
 			}
-			if chunk.Text != "" {
-				responseBuilder.WriteString(chunk.Text)
-				responseBuilder.WriteString(" ")
-				select {
-				case sess.TTSSentences <- chunk.Text:
-				case <-ctx.Done():
-				}
+
+			if chunk.Text != "" && shouldInferFinalClose(chunk.Text) {
+				pendingFarewell = append(pendingFarewell, chunk)
+				return
 			}
+			if len(pendingFarewell) > 0 {
+				// A question or other continuation after a farewell makes the
+				// farewell contradictory. Drop it and continue with the useful
+				// non-terminal response.
+				sess.Log.Warn("hangup: suppressed farewell followed by continuation")
+				pendingFarewell = pendingFarewell[:0]
+			}
+			deliverChunk(chunk)
 		})
+	}
+
+	// A provider may return a plain farewell without a structured action. It is
+	// still terminal, but only release it when the customer's turn independently
+	// supports closing. This prevents a model-only goodbye from ending an
+	// ambiguous requirement correction such as "No, I'm not looking for that."
+	if len(pendingFarewell) > 0 {
+		if allowHangupForTurn && inferredFinalCloseAllowed(transcript, history) {
+			flushFarewell()
+			hasHangup = true
+			sess.RequestFinalClose()
+			sess.Log.Info("hangup: inferred final close from agent response")
+		} else {
+			pendingFarewell = pendingFarewell[:0]
+			outcome := ""
+			if isAmbiguousRequirementCorrection(transcript) {
+				outcome = "customer_declined"
+			}
+			deliverChunk(llm.SentenceChunk{Text: terminalRecoveryLine(sess.Language, outcome)})
+		}
 	}
 
 	// Record total LLM round-trip latency (metric name kept for dashboard compatibility)
@@ -217,7 +270,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 		// The model occasionally produces an unmistakable final booking or
 		// farewell but omits the [HANGUP] control marker. Infer that terminal
 		// state conservatively so a subsequent "hello" cannot restart the flow.
-		if !hasHangup && allowHangupForTurn && shouldInferFinalClose(resp) {
+		if !hasHangup && allowHangupForTurn && shouldInferFinalClose(resp) && inferredFinalCloseAllowed(transcript, history) {
 			hasHangup = true
 			sess.RequestFinalClose()
 			sess.Log.Info("hangup: inferred final close from agent response")
@@ -436,6 +489,12 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // the Voicebot applet decodes the WS payload directly into its outbound RTP
 // stream without a jitter buffer in between.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
+	sendAudioFrameAtEpoch(sess, pcm8k, sess.PlaybackEpoch())
+}
+
+// sendAudioFrameAtEpoch stops paced Live audio when its playback generation is
+// invalidated by barge-in or by the language guard.
+func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64) {
 	if sess.IsBargeInActive() {
 		return
 	}
@@ -450,6 +509,12 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 		sess.PlaybackTracker.AddBytes(len(ulaw))
 		const frameBytes = 160 // 160 bytes µ-law = 20ms @ 8 kHz
 		for off := 0; off < len(ulaw); off += frameBytes {
+			// Barge-in can arrive while a large Gemini Live audio chunk is
+			// being paced. Stop between 20 ms frames instead of sending the
+			// remainder into the carrier's playback queue.
+			if sess.IsBargeInActive() || sess.PlaybackEpoch() != expectedEpoch {
+				return
+			}
 			end := off + frameBytes
 			if end > len(ulaw) {
 				end = len(ulaw)
@@ -461,6 +526,7 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 				"media":     map[string]string{"payload": payloadB64},
 			})
 			_ = sess.SendText(frame)
+			sess.MarkAudioSent()
 			if sess.hasMonitors() {
 				sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
 			}

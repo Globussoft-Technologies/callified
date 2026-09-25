@@ -272,6 +272,18 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// test* deployments keep recordings on the SFTP NAS. Stream them through
+	// this authenticated endpoint so the NAS never needs a public HTTP URL.
+	if s.nas != nil {
+		remote, info, err := s.nas.Open(r.Context(), "recordings/"+relPath)
+		if err == nil {
+			defer remote.Close()
+			http.ServeContent(w, r, info.Name(), info.ModTime(), remote)
+			return
+		}
+		s.logger.Sugar().Warnw("serveRecording: NAS open failed; checking local fallback", "path", relPath, "err", err)
+	}
+
 	fullPath := filepath.Join(s.cfg.RecordingsDir, relPath)
 	// Backward compatibility: if the segregated path doesn't exist, fall back
 	// to the legacy flat location in the recordings root.
@@ -395,28 +407,11 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var recURL string
-	// OCI takes precedence when configured.
-	if s.oci != nil {
-		publicURL, err := s.oci.UploadPublic(r.Context(), objectKey, data)
-		if err != nil {
-			s.logger.Sugar().Warnw("uploadRecording: OCI upload failed", "err", err)
-			// Fall through to S3 or local save.
-		} else {
-			recURL = publicURL
-			s.logger.Sugar().Infow("uploadRecording: uploaded to OCI", "url", publicURL, "lead_id", leadIDStr)
-		}
-	}
-
-	if recURL == "" && s.s3 != nil {
-		publicURL, err := s.s3.UploadPublic(r.Context(), objectKey, data)
-		if err != nil {
-			s.logger.Sugar().Warnw("uploadRecording: S3 upload failed", "err", err)
-			// Fall through to local save.
-		} else {
-			recURL = publicURL
-			s.logger.Sugar().Infow("uploadRecording: uploaded to S3", "url", publicURL, "lead_id", leadIDStr)
-		}
+	recURL, provider, uploadErr := s.uploadRecordingObject(r.Context(), objectKey, data)
+	if uploadErr != nil {
+		s.logger.Sugar().Warnw("uploadRecording: remote upload failed", "provider", provider, "err", uploadErr)
+	} else if recURL != "" {
+		s.logger.Sugar().Infow("uploadRecording: remote upload complete", "provider", provider, "url", recURL, "lead_id", leadIDStr)
 	}
 
 	if recURL == "" {
