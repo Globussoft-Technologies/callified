@@ -268,6 +268,33 @@ body {
   flex: 1 1 620px;
   min-width: 0;
 }
+.lead-edit-modal {
+  max-width: 680px;
+  padding: 24px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.lead-edit-title {
+  margin: 0 0 18px;
+}
+.lead-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+}
+.lead-edit-grid .form-group {
+  margin: 0;
+  min-width: 0;
+}
+.lead-edit-grid .form-group label {
+  margin-bottom: 6px;
+}
+.lead-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
 :root {
   --primary: #6366f1;
   --secondary: #0891b2;
@@ -530,6 +557,16 @@ body {
   .campaign-voice-selects {
     grid-template-columns: 1fr;
     flex-basis: 100%;
+  }
+
+  .lead-edit-modal {
+    width: calc(100% - 24px);
+    padding: 18px;
+  }
+
+  .lead-edit-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   /* --- General: prevent horizontal overflow --- */

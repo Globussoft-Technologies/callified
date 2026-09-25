@@ -635,47 +635,49 @@ export default function CampaignModals({
       {/* Edit Lead Modal */}
       {editLead && (
         <div className="modal-overlay" onClick={() => setEditLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h2 style={{marginTop: 0, marginBottom: '1.5rem'}}>Edit Lead</h2>
-            <div className="form-group">
-              <label>First Name</label>
-              <input className="form-input" value={editForm.first_name}
-                onChange={e => { setEditForm({...editForm, first_name: e.target.value}); setEditErrors(prev => ({...prev, first_name: ''})); }}
-                style={editErrors.first_name ? {borderColor: '#ef4444'} : {}} />
-              {editErrors.first_name && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.first_name}</span>}
-            </div>
-            <div className="form-group">
-              <label>Last Name</label>
-              <input className="form-input" value={editForm.last_name}
-                onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
-            </div>
-            <div className="form-group">
-              <label>Phone</label>
-              <input className="form-input" value={editForm.phone}
-                inputMode="tel"
-                onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
-                style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
-              {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
-            </div>
-            <div className="form-group">
-              <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
-              <input className="form-input" value={editForm.company || ''} onChange={e => setEditForm({...editForm, company: e.target.value})} placeholder="e.g. Acme Inc." />
-            </div>
-            <div className="form-group">
-              <label>Source</label>
-              <input className="form-input" value={editForm.source} onChange={e => setEditForm({...editForm, source: e.target.value})} />
-            </div>
-            {executives && executives.length > 0 && (
+          <div className="glass-panel modal-content lead-edit-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <h2 className="lead-edit-title">Edit Lead</h2>
+            <div className="lead-edit-grid">
               <div className="form-group">
-                <label>Executive</label>
-                <select className="form-input" value={editForm.executive_id || ''}
-                  onChange={e => setEditForm({...editForm, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
-                  <option value="">— Unassigned —</option>
-                  {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <label>First Name</label>
+                <input className="form-input" value={editForm.first_name}
+                  onChange={e => { setEditForm({...editForm, first_name: e.target.value}); setEditErrors(prev => ({...prev, first_name: ''})); }}
+                  style={editErrors.first_name ? {borderColor: '#ef4444'} : {}} />
+                {editErrors.first_name && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.first_name}</span>}
               </div>
-            )}
-            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
+              <div className="form-group">
+                <label>Last Name</label>
+                <input className="form-input" value={editForm.last_name}
+                  onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
+              </div>
+              <div className="form-group">
+                <label>Phone</label>
+                <input className="form-input" value={editForm.phone}
+                  inputMode="tel"
+                  onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
+                  style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
+                {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
+              </div>
+              <div className="form-group">
+                <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+                <input className="form-input" value={editForm.company || ''} onChange={e => setEditForm({...editForm, company: e.target.value})} placeholder="e.g. Acme Inc." />
+              </div>
+              <div className="form-group">
+                <label>Source</label>
+                <input className="form-input" value={editForm.source} onChange={e => setEditForm({...editForm, source: e.target.value})} />
+              </div>
+              {executives && executives.length > 0 && (
+                <div className="form-group">
+                  <label>Executive</label>
+                  <select className="form-input" value={editForm.executive_id || ''}
+                    onChange={e => setEditForm({...editForm, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
+                    <option value="">— Unassigned —</option>
+                    {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="lead-edit-actions">
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
                 if (!isValidPhone(editForm.phone || '')) {
