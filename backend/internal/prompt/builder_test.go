@@ -132,3 +132,28 @@ func TestClampRunes(t *testing.T) {
 	assert.Equal(t, "hell…", clampRunes("hello world", 4))
 	assert.Equal(t, "", clampRunes("   ", 4))
 }
+
+func TestGeminiLiveVoiceUsesNamedPersona(t *testing.T) {
+	tests := []struct {
+		voice        string
+		language     string
+		wantName     string
+		wantSpeaking string
+	}{
+		{voice: "Kore", language: "en", wantName: "Kore", wantSpeaking: "calling"},
+		{voice: "kore", language: "hi", wantName: "Kore", wantSpeaking: "बोल रही हूँ"},
+		{voice: "Puck", language: "hi", wantName: "Puck", wantSpeaking: "बोल रहा हूँ"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.voice+"_"+tt.language, func(t *testing.T) {
+			name, speaking := agentIdentity(tt.voice, tt.language)
+			assert.Equal(t, tt.wantName, name)
+			assert.Equal(t, tt.wantSpeaking, speaking)
+		})
+	}
+}
+
+func TestUnknownOpaqueVoiceStillUsesSafeFallback(t *testing.T) {
+	assert.Equal(t, "Arjun", AgentPersonaName("UnknownMixedCase123", "en"))
+}

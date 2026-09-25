@@ -84,6 +84,21 @@ var elevenLabsPersona = map[string]string{
 	"s0oIsoSJ9raiUm7DJNzW": "Aarav",
 }
 
+// geminiLivePersona maps Gemini's named prebuilt voices to the identity used
+// in greetings and prompts. Gemini voice IDs are title-cased (for example,
+// "Kore"), so the generic lowercase-name path treats them like opaque IDs and
+// otherwise falls back to "Arjun" even though Gemini receives the right voice.
+var geminiLivePersona = map[string]string{
+	"kore":   "Kore",
+	"puck":   "Puck",
+	"charon": "Charon",
+	"fenrir": "Fenrir",
+	"aoede":  "Aoede",
+	"leda":   "Leda",
+	"orus":   "Orus",
+	"zephyr": "Zephyr",
+}
+
 var femaleVoices = map[string]bool{
 	"kajal": true, "pragya": true, "nisha": true, "deepika": true, "diya": true,
 	"sushma": true, "shweta": true, "ananya": true, "mithali": true, "saina": true,
@@ -92,6 +107,8 @@ var femaleVoices = map[string]bool{
 	"roopa": true,
 	// SmallestAI English female voices
 	"jasmine": true, "emily": true,
+	// Gemini Live female voices
+	"kore": true, "aoede": true, "leda": true, "zephyr": true,
 	// ElevenLabs IDs (match Python _female_voices)
 	"amiAXapsDOAiHJqbsAZj": true, "6JsmTroalVewG1gA6Jmw": true,
 	"9vP6R7VVxNwGIGLnpl17": true, "hO2yZ8lxM3axUxL8OeKX": true,
@@ -556,6 +573,8 @@ func agentIdentity(voiceID, language string) (personaName, bol string) {
 	// "Aakash"/"Anjura"/etc. instead of always "Arjun" with ElevenLabs.
 	romanFallback := "Arjun"
 	if name, ok := elevenLabsPersona[rawID]; ok {
+		romanFallback = name
+	} else if name, ok := geminiLivePersona[vid]; ok {
 		romanFallback = name
 	}
 
