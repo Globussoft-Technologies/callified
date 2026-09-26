@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -301,14 +302,22 @@ export default function LogsTab({ API_URL, apiFetch }) {
       {/* Activity filters */}
       {mode === 'activity' && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: 150 }}>
-            <option value="">All statuses</option>
-            {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)} style={{ ...inputStyle, width: 180 }}>
-            <option value="">All campaigns</option>
-            {campaignOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <AppSelect
+            value={statusFilter}
+            onChange={setStatusFilter}
+            searchable
+            size="small"
+            width={150}
+            options={[{ value: '', label: 'All statuses' }, ...statusOptions.map(status => ({ value: status, label: status }))]}
+          />
+          <AppSelect
+            value={campaignFilter}
+            onChange={setCampaignFilter}
+            searchable
+            size="small"
+            width={180}
+            options={[{ value: '', label: 'All campaigns' }, ...campaignOptions.map(campaign => ({ value: String(campaign.id), label: campaign.name }))]}
+          />
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" style={{ ...inputStyle, width: 140 }} />
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" style={{ ...inputStyle, width: 140 }} />
           <input placeholder="Search name, phone or company..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, width: 200 }} />

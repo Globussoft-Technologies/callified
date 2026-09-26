@@ -1,5 +1,6 @@
 import React from 'react';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 export default function CheckInTab({ fieldOpsData, setFieldOpsData, sites, handlePunchIn, punching, punchStatus }) {
   return (
@@ -14,12 +15,13 @@ export default function CheckInTab({ fieldOpsData, setFieldOpsData, sites, handl
       
       <div className="form-group" style={{textAlign: 'left'}}>
         <label>Property Site</label>
-        <select className="form-input" value={fieldOpsData.site_id} onChange={e => setFieldOpsData({...fieldOpsData, site_id: e.target.value})}>
-          <option value="">-- Select Property --</option>
-          {sites.map(site => (
-            <option key={site.id} value={site.id}>{site.name}</option>
-          ))}
-        </select>
+        <AppSelect
+          value={fieldOpsData.site_id || ''}
+          onChange={siteId => setFieldOpsData({ ...fieldOpsData, site_id: siteId })}
+          searchable
+          placeholder="Select property"
+          options={sites.map(site => ({ value: String(site.id), label: site.name }))}
+        />
       </div>
 
       <button className="btn-punch" onClick={handlePunchIn} disabled={punching}>

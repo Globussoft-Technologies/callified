@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -217,16 +218,19 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
               </div>
             )}
           </div>
-          <select
-            value={agentReportUserId || ''}
-            onChange={e => setAgentReportUserId(e.target.value ? parseInt(e.target.value, 10) : null)}
-            style={{
-              padding: '8px 12px', borderRadius: 8, fontSize: 13, fontFamily: T.font,
-              border: `1px solid ${T.border}`, background: '#fff', color: T.text, cursor: 'pointer', minWidth: 160
-            }}>
-            <option value="">Agent report for me</option>
-            {executives.map(e => <option key={e.id} value={e.id}>{e.name || e.full_name || e.email}</option>)}
-          </select>
+          <AppSelect
+            value={agentReportUserId ? String(agentReportUserId) : ''}
+            onChange={value => setAgentReportUserId(value ? parseInt(value, 10) : null)}
+            searchable
+            width={200}
+            options={[
+              { value: '', label: 'Agent report for me' },
+              ...executives.map(executive => ({
+                value: String(executive.id),
+                label: executive.name || executive.full_name || executive.email,
+              })),
+            ]}
+          />
           <button onClick={handleDownloadAgentReport} style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,

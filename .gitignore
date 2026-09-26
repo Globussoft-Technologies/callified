@@ -37,6 +37,12 @@ screenshot_*.png
 # Temp verification scripts
 verify_*.py
 
+# Local UI design previews
+/temp/
+
+# Local Vite proxy used only for testgo2 UI verification
+/frontend/vite.testgo2.config.js
+
 # Deploy script (contains server password)
 deploy_webhooks.py
 

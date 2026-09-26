@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 const T = {
   bg: '#f4f5f9',
@@ -35,19 +36,6 @@ const btnGhost = {
   cursor: 'pointer',
   fontFamily: T.font,
   fontSize: 13,
-};
-
-const inputStyle = {
-  padding: '10px 12px',
-  borderRadius: 8,
-  fontSize: 13,
-  border: `1px solid ${T.border}`,
-  background: '#fff',
-  color: T.text,
-  fontFamily: T.font,
-  outline: 'none',
-  width: '100%',
-  boxSizing: 'border-box',
 };
 
 const tabBtn = (active) => ({
@@ -298,16 +286,12 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, maxWidth: 300 }}>
           <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Filter by campaign</span>
-          <select
-            value={leadsCampaignId}
-            onChange={(e) => { setLeadsCampaignId(e.target.value); setLeadsPage(1); }}
-            style={{ ...inputStyle, height: 38 }}
-          >
-            <option value="">All assigned campaigns</option>
-            {campaigns.map((c) => (
-              <option key={c.campaign_id} value={String(c.campaign_id)}>{c.name}</option>
-            ))}
-          </select>
+          <AppSelect searchable value={leadsCampaignId} popupWidth={260}
+            options={[
+              { value: '', label: 'All assigned campaigns' },
+              ...campaigns.map(campaign => ({ value: String(campaign.campaign_id), label: campaign.name })),
+            ]}
+            onChange={value => { setLeadsCampaignId(value); setLeadsPage(1); }} />
         </label>
         {leadsCampaignId && (
           <button onClick={() => { setLeadsCampaignId(''); setLeadsPage(1); }} style={{ ...btnGhost, marginTop: 16 }}>Clear</button>

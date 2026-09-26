@@ -50,7 +50,7 @@ export default function CampaignsTab({
   const [csvImportResult, setCsvImportResult] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
-  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '', executive_ids: [] });
+  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', status: 'active', product_id: '', lead_source: '', executive_ids: [] });
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
@@ -435,6 +435,7 @@ export default function CampaignsTab({
     setEditCampaignForm({
       id: c.id,
       name: c.name || '',
+      status: c.status || 'active',
       product_id: c.product_id || '',
       lead_source: c.lead_source || '',
       channel: c.channel || 'voice',
@@ -454,6 +455,7 @@ export default function CampaignsTab({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editCampaignForm.name.trim(),
+          status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
           lead_source: editCampaignForm.lead_source || null,
           channel: editCampaignForm.channel || 'voice'
@@ -465,6 +467,7 @@ export default function CampaignsTab({
         setSelectedCampaign(prev => ({
           ...prev,
           name: editCampaignForm.name.trim(),
+          status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
           lead_source: editCampaignForm.lead_source || null,
           channel: editCampaignForm.channel || 'voice'

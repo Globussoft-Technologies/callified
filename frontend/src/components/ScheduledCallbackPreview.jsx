@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
 import AppIcon from './common/AppIcon';
+import AppSelect from './common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -290,19 +291,10 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Callback mode
-                <select
-                  value={newScheduleMode}
-                  onChange={e => setNewScheduleMode(e.target.value)}
-                  style={{
-                    width: '100%', marginTop: 6, padding: '8px 10px',
-                    border: `1px solid ${T.border}`, borderRadius: 8,
-                    fontSize: 13, fontFamily: T.font, color: T.text, boxSizing: 'border-box',
-                    height: 38, background: '#fff'
-                  }}
-                >
-                  <option value="manual">Manual / Browser Callback (auto-connect for you)</option>
-                  <option value="ai">AI Dial</option>
-                </select>
+                <AppSelect value={newScheduleMode} styles={{ root: { marginTop: 6 } }} options={[
+                  { value: 'manual', label: 'Manual / Browser Callback (auto-connect for you)' },
+                  { value: 'ai', label: 'AI Dial' },
+                ]} onChange={setNewScheduleMode} />
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Notes (optional)

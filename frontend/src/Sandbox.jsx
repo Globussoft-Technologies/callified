@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import AppIcon from './components/common/AppIcon';
+import AppSelect from './components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -232,17 +233,13 @@ export default function Sandbox() {
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontFamily: T.font }}>
             Voice
           </div>
-          <select value={voiceId} onChange={e => setVoiceId(e.target.value)} disabled={recording}
-            style={{
-              width: '100%', padding: '9px 13px', borderRadius: 8, fontSize: 13,
-              border: `1px solid ${T.border}`, background: T.card, color: T.text,
-              fontFamily: T.font, outline: 'none', cursor: 'pointer',
-              opacity: recording ? 0.6 : 1,
-            }}>
-            {currentVoices.map(v => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
+          <AppSelect
+            value={voiceId}
+            onChange={setVoiceId}
+            disabled={recording}
+            searchable
+            options={currentVoices.map(voice => ({ value: voice.id, label: voice.name }))}
+          />
         </div>
 
         {/* Action buttons */}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { formatTime } from '../../utils/dateFormat';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 const PROVIDERS = [
   { value: 'gupshup', label: 'Gupshup' },
@@ -318,9 +319,12 @@ function ConfigModal({ show, onClose, apiFetch, API_URL }) {
         )}
 
         <label style={labelStyle}>Provider</label>
-        <select value={provider} onChange={e => { setProvider(e.target.value); setCreds({}); setError(''); }} style={selectStyle}>
-          {PROVIDERS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-        </select>
+        <AppSelect
+          value={provider}
+          onChange={value => { setProvider(value); setCreds({}); setError(''); }}
+          searchable
+          options={PROVIDERS}
+        />
 
         {provider === 'meta' ? (
           <MetaConnectPanel
@@ -1502,13 +1506,6 @@ const inputStyle = {
   width: '100%', boxSizing: 'border-box', padding: '8px 12px', borderRadius: '8px',
   border: '1px solid #e2e8f0', background: '#ffffff',
   color: '#1e293b', fontSize: '0.85rem', outline: 'none',
-};
-
-const selectStyle = {
-  ...inputStyle,
-  appearance: 'auto',
-  WebkitAppearance: 'menulist',
-  cursor: 'pointer',
 };
 
 const labelStyle = {

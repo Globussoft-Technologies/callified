@@ -6,6 +6,7 @@ import { useCall } from '../contexts/CallContext';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateTime } from '../utils/dateFormat';
 import AppIcon from './common/AppIcon';
+import { useTheme } from '../contexts/ThemeContext';
 
 // Tabs that should be hidden when AI features are disabled for the user.
 // Note: exotel-accounts is reachable from Settings for manual accounts, so it is hidden here to avoid duplication.
@@ -85,8 +86,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const activeTab = location.pathname.replace('/', '') || 'crm';
   const hideAiFeatures = useHideAiFeatures();
   const { hasPermission } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
 
-  const [callingStatus, setCallingStatus] = useState(null);
+  const [, setCallingStatus] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -165,12 +167,12 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
           background: 'none', border: 'none', cursor: 'pointer',
           padding: '6px 10px', borderRadius: 6,
           fontSize: 13, fontWeight: isActive ? 600 : 500,
-          color: isActive ? '#6366f1' : '#374151',
+          color: isActive ? '#818cf8' : 'var(--text-secondary)',
           fontFamily: font, whiteSpace: 'nowrap',
           transition: 'color 0.15s',
         }}
-        onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = '#111827'; }}
-        onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = '#374151'; }}
+        onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-primary)'; }}
+        onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-secondary)'; }}
       >
         {label}
       </button>
@@ -181,7 +183,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
     <header style={{
       display: 'flex', flexWrap: 'nowrap', alignItems: 'center', gap: '6px',
       padding: '0 24px', height: 56,
-      background: '#ffffff', borderBottom: '1px solid #e5e7eb',
+      background: 'var(--surface)', borderBottom: '1px solid var(--border)',
       boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
       position: 'sticky', top: 0, zIndex: 100,
       width: '100%', boxSizing: 'border-box',
@@ -192,7 +194,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
         onClick={() => navigate('/crm')}
         style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flexShrink: 0, marginRight: 12 }}>
         <img src={navLogo} alt="Callified" style={{ height: 36, width: 36, objectFit: 'contain', borderRadius: 10 }} />
-        <span style={{ fontSize: 15, fontWeight: 700, color: '#111827', fontFamily: font }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', fontFamily: font }}>
           Callified
         </span>
       </div>
@@ -306,6 +308,17 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
           {statusLabel}
         </button>
 
+        {/* Theme */}
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleTheme}
+          aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+          title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        >
+          <AppIcon name={isDark ? 'sun' : 'moon'} />
+        </button>
+
         {/* Bell */}
         <div ref={notifRef} style={{ position: 'relative' }}>
           <div
@@ -313,7 +326,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             onClick={() => setNotifOpen(o => !o)}
             style={{ position: 'relative', cursor: 'pointer', width: 22, height: 22 }}
           >
-            <AppIcon name="bell" style={{ fontSize: 20, color: '#9ca3af' }} />
+            <AppIcon name="bell" style={{ fontSize: 20, color: 'var(--text-muted)' }} />
             {notifCount > 0 && (
               <span style={{
                 position: 'absolute', top: -5, right: -6,
@@ -415,7 +428,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
             }}>
               {userInitial}
             </div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', fontFamily: font, whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: font, whiteSpace: 'nowrap' }}>
               {userName}{orgName ? ` (${orgName})` : ''}
             </span>
           </div>
@@ -442,9 +455,9 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
         ) : (
           <button data-testid="logout-btn" onClick={() => setConfirmLogout(true)}
             style={{
-              background: 'transparent', border: '1px solid #e5e7eb',
+              background: 'transparent', border: '1px solid var(--border)',
               borderRadius: 8, padding: '6px 14px',
-              color: '#374151', cursor: 'pointer',
+              color: 'var(--text-secondary)', cursor: 'pointer',
               fontWeight: 600, fontSize: 13, fontFamily: font, whiteSpace: 'nowrap',
             }}>
             Logout

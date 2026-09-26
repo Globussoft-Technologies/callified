@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
 import { formatLastLogin } from '../utils/dateFormat';
 import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 export default function SubscriptionsPage({ apiFetch }) {
   const { currentUser } = useAuth();
@@ -288,15 +289,11 @@ export default function SubscriptionsPage({ apiFetch }) {
             </div>
             <div>
               <label style={labelStyle}>Plan</label>
-              <select
-                value={plan}
-                onChange={e => setPlan(e.target.value)}
-                style={inputStyle}
-              >
-                <option value="trial">Trial</option>
-                <option value="standard">Standard (AI features enabled)</option>
-                <option value="manual">Manual calls only (AI features hidden)</option>
-              </select>
+              <AppSelect value={plan} options={[
+                { value: 'trial', label: 'Trial' },
+                { value: 'standard', label: 'Standard (AI features enabled)' },
+                { value: 'manual', label: 'Manual calls only (AI features hidden)' },
+              ]} onChange={setPlan} />
             </div>
             <div>
               <label style={labelStyle}>Minutes</label>

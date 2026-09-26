@@ -3,6 +3,7 @@ import { useToast } from '../contexts/UIContext';
 import { useCall } from '../contexts/CallContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
 import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -215,14 +216,11 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.sub }}>Campaign (for browser call)</span>
-            <select
-              value={selectedCampaignId}
-              onChange={e => setSelectedCampaignId(e.target.value)}
-              style={{ ...inputStyle(false), width: '100%', boxSizing: 'border-box', height: 38 }}
-            >
-              {campaigns.length === 0 && <option value="">No campaigns</option>}
-              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <AppSelect searchable value={String(selectedCampaignId || '')} width={260} popupWidth={300}
+              options={campaigns.length === 0
+                ? [{ value: '', label: 'No campaigns', disabled: true }]
+                : campaigns.map(campaign => ({ value: String(campaign.id), label: campaign.name }))}
+              onChange={setSelectedCampaignId} />
           </label>
           <button onClick={() => search()} disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}>
             {loading ? 'Searching…' : 'Search'}
