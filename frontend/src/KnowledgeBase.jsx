@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import AppIcon from './components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -53,13 +54,13 @@ export default function KnowledgeBase({ apiUrl }) {
       });
       const data = await res.json();
       if (data.status === 'success') {
-        setStatusMsg('✅ File uploaded! Background worker is currently extracting and mapping chunks.');
+        setStatusMsg('File uploaded! Background worker is currently extracting and mapping chunks.');
         fetchFiles();
         if (fileInputRef.current) fileInputRef.current.value = '';
       } else {
-        setStatusMsg(`❌ Error: ${data.message || data.detail}`);
+        setStatusMsg(`Error: ${data.message || data.detail}`);
       }
-    } catch (e) { setStatusMsg(`❌ Upload failed: ${e.message}`); }
+    } catch (e) { setStatusMsg(`Error: Upload failed: ${e.message}`); }
     setUploading(false);
   };
 
@@ -79,7 +80,7 @@ export default function KnowledgeBase({ apiUrl }) {
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          🧠 RAG Knowledge Base
+          <AppIcon name="book" /> RAG Knowledge Base
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
           Upload company PDFs, product sheets, and manuals. The AI will instantly search and read these during live phone calls to eliminate hallucinations.
@@ -106,11 +107,11 @@ export default function KnowledgeBase({ apiUrl }) {
               background: uploading ? T.muted : T.accent,
               color: '#fff', cursor: uploading ? 'not-allowed' : 'pointer',
             }}>
-              {uploading ? 'Processing Vector Embeddings...' : '☁️ Upload & Embed PDF'}
+              {uploading ? <><AppIcon name="loading" spin /> Processing Vector Embeddings...</> : <><AppIcon name="upload" /> Upload &amp; Embed PDF</>}
             </button>
             {statusMsg && (
-              <p style={{ margin: 0, fontSize: 13, color: statusMsg.includes('❌') ? T.red : T.green }}>
-                {statusMsg}
+              <p style={{ margin: 0, fontSize: 13, color: statusMsg.startsWith('Error:') ? T.red : T.green }}>
+                <AppIcon name={statusMsg.startsWith('Error:') ? 'warning' : 'checkCircle'} /> {statusMsg}
               </p>
             )}
           </form>
@@ -147,7 +148,7 @@ export default function KnowledgeBase({ apiUrl }) {
                       borderLeft: `3px solid ${isActive ? T.green : T.amber}`,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontSize: 18 }}>📄</span>
+                        <AppIcon name="pdf" style={{ fontSize: 18, color: T.red }} />
                         <div>
                           <a href="#" onClick={handleOpen}
                             style={{ color: T.accent, fontWeight: 600, fontSize: 13, textDecoration: 'none', cursor: 'pointer' }}
@@ -157,7 +158,7 @@ export default function KnowledgeBase({ apiUrl }) {
                             {f.filename}
                           </a>
                           <div style={{ fontSize: 12, color: T.muted, marginTop: 2 }}>
-                            {f.status === 'Processing' ? '⚙️ Synthesizing...' : `✅ Active (${f.chunk_count} FAISS Chunks)`}
+                            {f.status === 'Processing' ? <><AppIcon name="loading" spin /> Synthesizing...</> : <><AppIcon name="checkCircle" /> Active ({f.chunk_count} FAISS Chunks)</>}
                           </div>
                         </div>
                       </div>
@@ -180,7 +181,7 @@ export default function KnowledgeBase({ apiUrl }) {
                       ) : (
                         <button onClick={() => setConfirmDeleteId(f.id)}
                           style={{ background: 'transparent', border: 'none', color: T.red, cursor: 'pointer', fontSize: 16 }}
-                          title="Delete">🗑️</button>
+                          title="Delete" aria-label="Delete"><AppIcon name="delete" /></button>
                       )}
                     </li>
                   );

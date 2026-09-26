@@ -4,6 +4,8 @@ import { useToast, useConfirm } from '../contexts/UIContext';
 import { isAdmin, isTeamLeader, ROLES } from '../utils/roles';
 import { formatLastLogin } from '../utils/dateFormat';
 import UserProviderAccountsModal from '../components/UserProviderAccountsModal';
+import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -22,13 +24,6 @@ const inputStyle = {
   background: '#f9fafb', border: `1px solid ${T.border}`,
   borderRadius: 8, color: T.text, padding: '10px 14px', fontSize: 13,
   outline: 'none', width: '100%', boxSizing: 'border-box', fontFamily: T.font,
-};
-
-const selectStyle = {
-  ...inputStyle,
-  appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center',
 };
 
 const thStyle = {
@@ -350,7 +345,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                   { value: ROLES.ADMIN, label: 'Admin' },
                 ]} />
                 {(form.role === ROLES.AGENT || form.role === ROLES.EXECUTIVE) && (
-                  <Select label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
+                  <Select searchable label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
                     { value: '', label: 'None' },
                     ...managerOptions.map(m => ({ value: String(m.id), label: m.full_name || m.email })),
                   ]} />
@@ -424,7 +419,7 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                   { value: ROLES.ADMIN, label: 'Admin' },
                 ]} />
                 {(form.role === ROLES.AGENT || form.role === ROLES.EXECUTIVE) && (
-                  <Select label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
+                  <Select searchable label="Manager" value={form.manager_id} onChange={v => setForm({ ...form, manager_id: v })} options={[
                     { value: '', label: 'None' },
                     ...managerOptions.map(m => ({ value: String(m.id), label: m.full_name || m.email })),
                   ]} />
@@ -514,7 +509,7 @@ function Field({ label, type = 'text', value, onChange, required, revealable = f
               fontSize: 15,
             }}
           >
-            {showValue ? '🙈' : '👁'}
+            <AppIcon name={showValue ? 'hide' : 'show'} />
           </button>
         )}
       </div>
@@ -522,15 +517,11 @@ function Field({ label, type = 'text', value, onChange, required, revealable = f
   );
 }
 
-function Select({ label, value, onChange, options }) {
+function Select({ label, value, onChange, options, searchable = false }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.sub, marginBottom: 6 }}>{label}</label>
-      <select style={selectStyle} value={value} onChange={e => onChange(e.target.value)}>
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+      <AppSelect value={value} onChange={onChange} options={options} searchable={searchable} />
     </div>
   );
 }

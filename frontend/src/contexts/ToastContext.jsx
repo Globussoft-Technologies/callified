@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import AppIcon from '../components/common/AppIcon';
 
 const ToastContext = createContext(null);
 
@@ -43,7 +44,7 @@ export function ToastProvider({ children }) {
             animation: 'fadeInUp 0.25s ease',
             pointerEvents: 'auto',
           }}>
-            <span style={{fontSize: '1rem'}}>{t.type === 'error' ? '⚠️' : '✓'}</span>
+            <AppIcon name={t.type === 'error' ? 'warning' : 'checkCircle'} style={{fontSize: '1rem'}} />
             {t.message}
           </div>
         ))}

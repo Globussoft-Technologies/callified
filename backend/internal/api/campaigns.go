@@ -346,6 +346,15 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Name = strings.TrimSpace(req.Name)
 	}
+	if req.Status != "" {
+		req.Status = strings.ToLower(strings.TrimSpace(req.Status))
+		switch req.Status {
+		case "active", "paused", "completed":
+		default:
+			writeError(w, http.StatusBadRequest, "status must be active, paused, or completed")
+			return
+		}
+	}
 	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID); err != nil {
 		s.logger.Sugar().Errorw("updateCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

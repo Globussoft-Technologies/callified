@@ -355,7 +355,7 @@ export default function CrmTab({
       })()}
 
       {/* Charts row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px 240px', gap: 12 }}>
+      <div className="dashboard-chart-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(260px, 320px)', gap: 12 }}>
 
         {/* Bar chart */}
         <div style={{ ...card, padding: '18px 20px' }}>
@@ -412,46 +412,83 @@ export default function CrmTab({
           </div>
         </div>
 
-        {/* Active Campaigns compact */}
-        <div style={{ ...card, padding: '18px 20px' }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: T.sub, marginBottom: 14 }}>Active Campaigns</div>
-          {canSeeCampaigns && activeCampaigns.length > 0 ? (
-            activeCampaigns.slice(0, 5).map((c, i) => {
-              const total  = c.stats?.total  || 0;
-              const called = c.stats?.called || 0;
-              const pct    = total > 0 ? Math.round((called / total) * 100) : 0;
+      </div>
+
+      {/* Active campaign performance matrix */}
+      <section className="campaign-performance-matrix" style={{ ...card, marginTop: 12 }}>
+        <div className="campaign-performance-header">
+          <div>
+            <div className="campaign-performance-title">Active Campaigns</div>
+            <div className="campaign-performance-subtitle">Calling and conversion performance</div>
+          </div>
+          <span className="campaign-performance-count">{activeCampaigns.length} active</span>
+        </div>
+
+        {canSeeCampaigns && activeCampaigns.length > 0 ? (
+          <div className="campaign-performance-scroll">
+            <div className="campaign-performance-grid campaign-performance-columns" aria-hidden="true">
+              <span>Campaign</span>
+              <span>Called</span>
+              <span>Qualified</span>
+              <span>Booked</span>
+            </div>
+            {activeCampaigns.map(campaign => {
+              const total = campaign.stats?.total || 0;
+              const called = campaign.stats?.called || 0;
+              const qualified = campaign.stats?.qualified || 0;
+              const booked = campaign.stats?.appointments || 0;
+              const calledPct = total > 0 ? Math.min(100, Math.round((called / total) * 100)) : 0;
+              const qualifiedPct = called > 0 ? Math.min(100, Math.round((qualified / called) * 100)) : null;
+              const bookedPct = qualified > 0 ? Math.min(100, Math.round((booked / qualified) * 100)) : null;
+              const needsLeads = total === 0;
+              const complete = total > 0 && called >= total;
+              const statusLabel = needsLeads ? 'Needs leads' : complete ? 'Calling complete' : `${Math.max(total - called, 0)} remaining`;
+
               return (
-                <div key={c.id} onClick={() => onCampaignClick(c)}
+                <div
+                  key={campaign.id}
+                  className="campaign-performance-grid campaign-performance-row"
+                  onClick={() => onCampaignClick(campaign)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}
-                  style={{
-                    padding: '10px 0',
-                    borderBottom: i < activeCampaigns.length - 1 ? `1px solid ${T.border}` : 'none',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    cursor: 'pointer',
-                  }}>
-                  <div style={{ minWidth: 0, marginRight: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.name}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      event.currentTarget.click();
+                    }
+                  }}
+                >
+                  <div className="campaign-performance-name-cell">
+                    <div className="campaign-performance-name">{campaign.name}</div>
+                    <div className={`campaign-performance-status${needsLeads ? ' is-warning' : ''}`}>
+                      <span />{statusLabel}
                     </div>
-                    <div style={{ fontSize: 10, color: T.muted }}>{called}/{total} called</div>
+                    <div className="campaign-performance-progress" aria-label={`${calledPct}% called`}>
+                      <div style={{ width: `${calledPct}%` }} />
+                    </div>
                   </div>
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, flexShrink: 0 }}>
-                    <DonutRing pct={pct} color={T.accent} size={36} stroke={4} />
-                    <span style={{ position: 'absolute', fontSize: 8, fontWeight: 700, color: T.accent }}>{pct}%</span>
+                  <div className="campaign-performance-metric">
+                    <strong>{called}/{total}</strong>
+                    <small>{total > 0 ? `${calledPct}%` : 'No data'}</small>
+                  </div>
+                  <div className="campaign-performance-metric">
+                    <strong>{qualified}</strong>
+                    <small>{qualifiedPct == null ? '—' : `${qualifiedPct}% of called`}</small>
+                  </div>
+                  <div className="campaign-performance-metric">
+                    <strong>{booked}</strong>
+                    <small>{bookedPct == null ? '—' : `${bookedPct}% of qualified`}</small>
                   </div>
                 </div>
               );
-            })
-          ) : (
-            <div style={{ fontSize: 12, color: T.muted, textAlign: 'center', padding: '20px 0' }}>
-              {isAdmin ? 'No active campaigns' : 'No campaigns yet'}
-            </div>
-          )}
-        </div>
-
-      </div>
+            })}
+          </div>
+        ) : (
+          <div className="campaign-performance-empty">
+            {isAdmin ? 'No active campaigns' : 'No campaigns yet'}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

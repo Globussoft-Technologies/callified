@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
+import AppIcon from '../common/AppIcon';
 
 export default function DocumentVault({
   activeLeadDocs, setActiveLeadDocs, handleUploadDoc, docFormData, setDocFormData, docs, orgTimezone
@@ -9,7 +10,7 @@ export default function DocumentVault({
   return (
     <div className="modal-overlay" onClick={() => setActiveLeadDocs(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
       <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '600px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-        <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📁 Document Vault</h2>
+        <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}><AppIcon name="folder" /> Document Vault</h2>
         <p style={{color: '#94a3b8', marginBottom: '2rem'}}>Client: {activeLeadDocs.first_name} {activeLeadDocs.last_name}</p>
         
         <form onSubmit={handleUploadDoc} style={{display: 'flex', gap: '10px', marginBottom: '2rem', alignItems: 'flex-end'}}>
@@ -21,7 +22,7 @@ export default function DocumentVault({
             <label>Mock File URL</label>
             <input className="form-input" required value={docFormData.file_url} onChange={e => setDocFormData({...docFormData, file_url: e.target.value})} placeholder="https://bdrpl.com/vault/..." />
           </div>
-          <button type="submit" className="btn-primary" style={{height: '46px', padding: '0 16px'}}>Upload</button>
+          <button type="submit" className="btn-primary" style={{height: '46px', padding: '0 16px'}}><AppIcon name="upload" /> Upload</button>
         </form>
 
         <h3 style={{fontSize: '1.1rem', marginBottom: '1rem'}}>Secure Uploads</h3>

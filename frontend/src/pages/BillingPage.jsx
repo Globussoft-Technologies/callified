@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useToast, useConfirm } from '../contexts/UIContext';
+import AppIcon from '../components/common/AppIcon';
 
 const TOPUP_PRESETS = [100, 500, 1000, 5000];
 
@@ -168,7 +169,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <div style={{ fontSize: 10, fontWeight: 700, color: T.accent, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>
-              📞 Call Credits
+              <AppIcon name="phone" /> Call Credits
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 4 }}>
               <div style={{ fontSize: 32, fontWeight: 900, fontFamily: T.mono, color: T.text }}>
@@ -316,7 +317,7 @@ export default function BillingPage({ apiFetch, API_URL }) {
                     <ul style={{ margin: '0 0 16px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 4 }}>
                       {plan.features.map((f, i) => (
                         <li key={i} style={{ fontSize: 12, color: T.sub, display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ color: T.green, fontWeight: 700 }}>✓</span> {f}
+                          <span style={{ color: T.green, fontWeight: 700 }}><AppIcon name="check" /></span> {f}
                         </li>
                       ))}
                     </ul>
@@ -506,11 +507,11 @@ export default function BillingPage({ apiFetch, API_URL }) {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button onClick={() => { try { invoiceFrameRef.current?.contentWindow?.print(); } catch(e) { toast('Print failed: ' + (e?.message || 'unknown')); } }}
                   style={{ padding: '6px 14px', borderRadius: 6, cursor: 'pointer', background: T.accent, border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, fontFamily: T.font }}>
-                  🖨 Print
+                  <AppIcon name="print" /> Print
                 </button>
                 <a href={viewingInvoice.blobUrl} download={`${viewingInvoice.number}.pdf`}
                   style={{ padding: '6px 14px', borderRadius: 6, background: T.bg, border: `1px solid ${T.border}`, color: T.sub, fontSize: 12, fontWeight: 600, textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
-                  ↓ Download
+                  <AppIcon name="import" /> Download
                 </a>
                 <button onClick={() => { if (viewingInvoice?.blobUrl) URL.revokeObjectURL(viewingInvoice.blobUrl); setViewingInvoice(null); }}
                   style={{ padding: '6px 12px', borderRadius: 6, cursor: 'pointer', background: T.bg, border: `1px solid ${T.border}`, color: T.sub, fontSize: 12, fontFamily: T.font }}>

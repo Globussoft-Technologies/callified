@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { useToast } from '../contexts/UIContext';
 import { formatDateTime } from '../utils/dateFormat';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -27,12 +28,12 @@ const btnPrimary = {
 };
 
 const typeMeta = {
-  lead_created: { icon: '👤', color: '#6366f1', bg: 'rgba(99,102,241,0.08)', label: 'Lead' },
-  note: { icon: '📝', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', label: 'Note' },
-  call: { icon: '📞', color: '#10b981', bg: 'rgba(16,185,129,0.08)', label: 'Call' },
-  scheduled_call: { icon: '📅', color: '#0891b2', bg: 'rgba(8,145,178,0.08)', label: 'Scheduled' },
-  whatsapp: { icon: '💬', color: '#25D366', bg: 'rgba(37,211,102,0.08)', label: 'WhatsApp' },
-  status_change: { icon: '🔖', color: '#64748b', bg: 'rgba(100,116,139,0.08)', label: 'Status' },
+  lead_created: { icon: 'user', color: '#6366f1', bg: 'rgba(99,102,241,0.08)', label: 'Lead' },
+  note: { icon: 'note', color: '#f59e0b', bg: 'rgba(245,158,11,0.08)', label: 'Note' },
+  call: { icon: 'phone', color: '#10b981', bg: 'rgba(16,185,129,0.08)', label: 'Call' },
+  scheduled_call: { icon: 'calendar', color: '#0891b2', bg: 'rgba(8,145,178,0.08)', label: 'Scheduled' },
+  whatsapp: { icon: 'message', color: '#25D366', bg: 'rgba(37,211,102,0.08)', label: 'WhatsApp' },
+  status_change: { icon: 'tag', color: '#64748b', bg: 'rgba(100,116,139,0.08)', label: 'Status' },
 };
 
 function maskPhone(phone) {
@@ -98,7 +99,7 @@ export default function InteractionHistoryPage({ apiFetch, API_URL, orgTimezone 
   return (
     <div style={{ padding: '24px', maxWidth: 1100, margin: '0 auto', fontFamily: T.font }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>🕘 Interaction History</h1>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}><AppIcon name="history" /> Interaction History</h1>
         <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
           Search any customer to see their complete timeline: calls, notes, scheduled callbacks, and WhatsApp messages.
         </p>
@@ -180,7 +181,7 @@ export default function InteractionHistoryPage({ apiFetch, API_URL, orgTimezone 
                         width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         background: meta.bg, color: meta.color, fontSize: 16,
                       }}>
-                        {meta.icon}
+                        <AppIcon name={meta.icon} />
                       </div>
                       {!isLast && <div style={{ width: 2, flex: 1, background: T.border, marginTop: 8 }} />}
                     </div>

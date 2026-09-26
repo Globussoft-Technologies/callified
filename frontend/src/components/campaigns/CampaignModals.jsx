@@ -4,6 +4,20 @@ import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaig
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { useToast } from '../../contexts/UIContext';
+import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
+
+const campaignSourceOptions = [
+  { value: '', label: 'Select source' },
+  { value: 'facebook', label: 'Facebook / Meta Ads' },
+  { value: 'google', label: 'Google Ads' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'linkedin', label: 'LinkedIn' },
+  { value: 'website', label: 'Website Form' },
+  { value: 'referral', label: 'Referral' },
+  { value: 'cold', label: 'Cold Outreach' },
+  { value: 'other', label: 'Others' },
+];
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -209,57 +223,40 @@ export default function CampaignModals({
                     Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                     {selectedTemplate && <span style={{color: '#60a5fa', fontSize: '0.75rem'}}> — required to apply prompt template</span>}
                   </label>
-                  <select className="form-input" value={createForm.product_id}
-                    onChange={e => setCreateForm({...createForm, product_id: e.target.value})}
-                    style={{width: '100%'}}>
-                    <option value="">-- Select Product --</option>
-                    {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <AppSelect searchable value={String(createForm.product_id || '')} popupWidth={280}
+                    options={[{ value: '', label: 'Select product' }, ...dedupedProducts.map(product => ({ value: String(product.id), label: product.name }))]}
+                    onChange={value => setCreateForm({...createForm, product_id: value})} />
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                     Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — where did these leads come from?)</span>
                   </label>
-                  <select className="form-input" value={createForm.lead_source}
-                    onChange={e => setCreateForm({...createForm, lead_source: e.target.value})}
-                    style={{width: '100%'}}>
-                    <option value="">-- Select Source --</option>
-                    <option value="facebook">Facebook / Meta Ads</option>
-                    <option value="google">Google Ads</option>
-                    <option value="instagram">Instagram</option>
-                    <option value="linkedin">LinkedIn</option>
-                    <option value="website">Website Form</option>
-                    <option value="referral">Referral</option>
-                    <option value="cold">Cold Outreach</option>
-                    <option value="other">Others</option>
-                  </select>
+                  <AppSelect searchable value={createForm.lead_source || ''} options={campaignSourceOptions}
+                    onChange={value => setCreateForm({...createForm, lead_source: value})} />
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
                   <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                     Communication Channel <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — defaults to voice)</span>
                   </label>
-                  <select className="form-input" value={createForm.channel || 'voice'}
-                    onChange={e => setCreateForm({...createForm, channel: e.target.value})}
-                    style={{width: '100%'}}>
-                    <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
-                    {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
-                  </select>
+                  <AppSelect value={createForm.channel || 'voice'} options={[
+                    { value: 'voice', label: `Voice Call${!hideAiFeatures ? ' (AI Phone)' : ''}` },
+                    ...(!hideAiFeatures ? [{ value: 'whatsapp', label: 'WhatsApp (AI Chat)' }] : []),
+                  ]} onChange={value => setCreateForm({...createForm, channel: value})} />
                 </div>
                 {(createForm.channel !== 'whatsapp') && createProviderAccountOptions.length > 0 && (
                   <div style={{marginBottom: '1.5rem'}}>
                     <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                       Provider Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved browser calling credentials)</span>
                     </label>
-                    <select className="form-input" value={createForm.exotel_account_id || ''}
-                      onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
-                      style={{width: '100%'}}>
-                      <option value="">-- Use default / set later --</option>
-                      {createProviderAccountOptions.map(a => (
-                        <option key={a.id} value={a.id}>
-                          [{providerAccountLabel(a.provider)}] {a.name || a.account_sid} · {a.caller_id || 'no caller ID'}
-                        </option>
-                      ))}
-                    </select>
+                    <AppSelect searchable value={createForm.exotel_account_id ? String(createForm.exotel_account_id) : ''} popupWidth={360}
+                      options={[
+                        { value: '', label: 'Use default / set later' },
+                        ...createProviderAccountOptions.map(account => ({
+                          value: String(account.id),
+                          label: `[${providerAccountLabel(account.provider)}] ${account.name || account.account_sid} · ${account.caller_id || 'no caller ID'}`,
+                        })),
+                      ]}
+                      onChange={value => setCreateForm({...createForm, exotel_account_id: value ? parseInt(value, 10) : ''})} />
                   </div>
                 )}
                 {createError && (
@@ -317,7 +314,7 @@ export default function CampaignModals({
               </div>
             )}
             {addLeadsError && (
-              <p style={{margin: '0 0 10px', fontSize: '0.82rem', color: '#f87171'}}>⚠ {addLeadsError}</p>
+              <p style={{margin: '0 0 10px', fontSize: '0.82rem', color: '#f87171'}}><AppIcon name="warning" /> {addLeadsError}</p>
             )}
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
               <button onClick={() => { setShowAddLeadsModal(false); setAddLeadsError(''); }}
@@ -582,41 +579,42 @@ export default function CampaignModals({
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
+                  Campaign Status
+                </label>
+                <AppSelect searchable value={editCampaignForm.status || 'active'} options={[
+                  { value: 'active', label: 'Active' },
+                  { value: 'paused', label: 'Paused' },
+                  { value: 'completed', label: 'Completed' },
+                ]} onChange={value => setEditCampaignForm({...editCampaignForm, status: value})} />
+                <p style={{margin: '6px 0 0', color: '#64748b', fontSize: '0.75rem'}}>
+                  {editCampaignForm.status === 'active'
+                    ? 'Included in the Active Campaigns dashboard.'
+                    : editCampaignForm.status === 'paused'
+                      ? 'Hidden from Active Campaigns until reactivated; campaign data is retained.'
+                      : 'Marked as finished and hidden from Active Campaigns; campaign data is retained.'}
+                </p>
+              </div>
+              <div style={{marginBottom: '1.5rem'}}>
+                <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                   Product <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
-                <select className="form-input" value={editCampaignForm.product_id}
-                  onChange={e => setEditCampaignForm({...editCampaignForm, product_id: e.target.value})}
-                  style={{width: '100%'}}>
-                  <option value="">-- Select Product --</option>
-                  {dedupedProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
+                <AppSelect searchable value={String(editCampaignForm.product_id || '')} popupWidth={280}
+                  options={[{ value: '', label: 'Select product' }, ...dedupedProducts.map(product => ({ value: String(product.id), label: product.name }))]}
+                  onChange={value => setEditCampaignForm({...editCampaignForm, product_id: value})} />
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
                   Lead Source <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
                 </label>
-                <select className="form-input" value={editCampaignForm.lead_source}
-                  onChange={e => setEditCampaignForm({...editCampaignForm, lead_source: e.target.value})}
-                  style={{width: '100%'}}>
-                  <option value="">-- Select Source --</option>
-                  <option value="facebook">Facebook / Meta Ads</option>
-                  <option value="google">Google Ads</option>
-                  <option value="instagram">Instagram</option>
-                  <option value="linkedin">LinkedIn</option>
-                  <option value="website">Website Form</option>
-                  <option value="referral">Referral</option>
-                  <option value="cold">Cold Outreach</option>
-                  <option value="other">Others</option>
-                </select>
+                <AppSelect searchable value={editCampaignForm.lead_source || ''} options={campaignSourceOptions}
+                  onChange={value => setEditCampaignForm({...editCampaignForm, lead_source: value})} />
               </div>
               <div style={{marginBottom: '1.5rem'}}>
                 <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>Communication Channel</label>
-                <select className="form-input" value={editCampaignForm.channel || 'voice'}
-                  onChange={e => setEditCampaignForm({...editCampaignForm, channel: e.target.value})}
-                  style={{width: '100%'}}>
-                  <option value="voice">📞 Voice Call{!hideAiFeatures && ' (AI Phone)'}</option>
-                  {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
-                </select>
+                <AppSelect value={editCampaignForm.channel || 'voice'} options={[
+                  { value: 'voice', label: `Voice Call${!hideAiFeatures ? ' (AI Phone)' : ''}` },
+                  ...(!hideAiFeatures ? [{ value: 'whatsapp', label: 'WhatsApp (AI Chat)' }] : []),
+                ]} onChange={value => setEditCampaignForm({...editCampaignForm, channel: value})} />
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
                 <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
@@ -635,47 +633,53 @@ export default function CampaignModals({
       {/* Edit Lead Modal */}
       {editLead && (
         <div className="modal-overlay" onClick={() => setEditLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-          <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h2 style={{marginTop: 0, marginBottom: '1.5rem'}}>Edit Lead</h2>
-            <div className="form-group">
-              <label>First Name</label>
-              <input className="form-input" value={editForm.first_name}
-                onChange={e => { setEditForm({...editForm, first_name: e.target.value}); setEditErrors(prev => ({...prev, first_name: ''})); }}
-                style={editErrors.first_name ? {borderColor: '#ef4444'} : {}} />
-              {editErrors.first_name && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.first_name}</span>}
-            </div>
-            <div className="form-group">
-              <label>Last Name</label>
-              <input className="form-input" value={editForm.last_name}
-                onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
-            </div>
-            <div className="form-group">
-              <label>Phone</label>
-              <input className="form-input" value={editForm.phone}
-                inputMode="tel"
-                onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
-                style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
-              {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
-            </div>
-            <div className="form-group">
-              <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
-              <input className="form-input" value={editForm.company || ''} onChange={e => setEditForm({...editForm, company: e.target.value})} placeholder="e.g. Acme Inc." />
-            </div>
-            <div className="form-group">
-              <label>Source</label>
-              <input className="form-input" value={editForm.source} onChange={e => setEditForm({...editForm, source: e.target.value})} />
-            </div>
-            {executives && executives.length > 0 && (
+          <div className="glass-panel modal-content lead-edit-modal" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+            <h2 className="lead-edit-title">Edit Lead</h2>
+            <div className="lead-edit-grid">
               <div className="form-group">
-                <label>Executive</label>
-                <select className="form-input" value={editForm.executive_id || ''}
-                  onChange={e => setEditForm({...editForm, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
-                  <option value="">— Unassigned —</option>
-                  {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
+                <label>First Name</label>
+                <input className="form-input" value={editForm.first_name}
+                  onChange={e => { setEditForm({...editForm, first_name: e.target.value}); setEditErrors(prev => ({...prev, first_name: ''})); }}
+                  style={editErrors.first_name ? {borderColor: '#ef4444'} : {}} />
+                {editErrors.first_name && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.first_name}</span>}
               </div>
-            )}
-            <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
+              <div className="form-group">
+                <label>Last Name</label>
+                <input className="form-input" value={editForm.last_name}
+                  onChange={e => { setEditForm({...editForm, last_name: e.target.value}); setEditErrors(prev => ({...prev, last_name: ''})); }} />
+              </div>
+              <div className="form-group">
+                <label>Phone</label>
+                <input className="form-input" value={editForm.phone}
+                  inputMode="tel"
+                  onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
+                  style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
+                {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}
+              </div>
+              <div className="form-group">
+                <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
+                <input className="form-input" value={editForm.company || ''} onChange={e => setEditForm({...editForm, company: e.target.value})} placeholder="e.g. Acme Inc." />
+              </div>
+              <div className="form-group">
+                <label>Source</label>
+                <AppSelect searchable size="large" value={(editForm.source || '').toLowerCase()} options={[
+                  { value: 'manual', label: 'Manual' },
+                  ...campaignSourceOptions,
+                ]} onChange={value => setEditForm({...editForm, source: value})} />
+              </div>
+              {executives && executives.length > 0 && (
+                <div className="form-group">
+                  <label>Executive</label>
+                  <AppSelect searchable size="large" value={editForm.executive_id ? String(editForm.executive_id) : ''} popupWidth={280}
+                    options={[
+                      { value: '', label: 'Unassigned' },
+                      ...executives.map(executive => ({ value: String(executive.id), label: executive.name || executive.full_name || executive.email })),
+                    ]}
+                    onChange={value => setEditForm({...editForm, executive_id: value ? parseInt(value, 10) : 0})} />
+                </div>
+              )}
+            </div>
+            <div className="lead-edit-actions">
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
                 if (!isValidPhone(editForm.phone || '')) {

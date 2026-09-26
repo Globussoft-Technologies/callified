@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
+import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -183,7 +185,7 @@ export default function ExotelAccountsPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
         <div>
           <h2 style={{ margin: 0, color: T.text, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            📞 Provider Accounts
+            <AppIcon name="phone" /> Provider Accounts
           </h2>
           <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
             Save calling provider credentials and select one per campaign.
@@ -302,30 +304,30 @@ export default function ExotelAccountsPage() {
                 </div>
                 <div>
                   <label style={labelStyle}>App Type</label>
-                  <select
-                    style={inputStyle}
+                  <AppSelect
                     value={form.app_type || 'exoml'}
-                    onChange={e => setField('app_type', e.target.value)}
-                  >
-                    <option value="exoml">Legacy ExoML (XML)</option>
-                    <option value="voicebot">AgentStream Voicebot (JSON)</option>
-                  </select>
+                    onChange={value => setField('app_type', value)}
+                    options={[
+                      { value: 'exoml', label: 'Legacy ExoML (XML)' },
+                      { value: 'voicebot', label: 'AgentStream Voicebot (JSON)' },
+                    ]}
+                  />
                   <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
                     Use AgentStream for modern Exotel Voicebot flows.
                   </div>
                 </div>
                 <div>
                   <label style={labelStyle}>Account Region</label>
-                  <select
-                    style={inputStyle}
+                  <AppSelect
                     value={form.region || ''}
-                    onChange={e => setField('region', e.target.value)}
-                  >
-                    <option value="">Global (api.exotel.com)</option>
-                    <option value="in">India (api.in.exotel.com)</option>
-                    <option value="us">US (api.us.exotel.com)</option>
-                    <option value="sg">Singapore (api.sg.exotel.com)</option>
-                  </select>
+                    onChange={value => setField('region', value)}
+                    options={[
+                      { value: '', label: 'Global (api.exotel.com)' },
+                      { value: 'in', label: 'India (api.in.exotel.com)' },
+                      { value: 'us', label: 'US (api.us.exotel.com)' },
+                      { value: 'sg', label: 'Singapore (api.sg.exotel.com)' },
+                    ]}
+                  />
                   <div style={{ color: T.muted, fontSize: 11, marginTop: 4 }}>
                     Pick the Exotel cluster for this account.
                   </div>
@@ -404,7 +406,7 @@ export default function ExotelAccountsPage() {
                     <button type="button" onClick={() => setShowApiKey(v => !v)}
                       aria-label={showApiKey ? 'Hide Auth Token' : 'Show Auth Token'}
                       style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.muted, fontSize: 16, padding: 2 }}>
-                      {showApiKey ? '🙈' : '👁️'}
+                      <AppIcon name={showApiKey ? 'hide' : 'show'} />
                     </button>
                   </div>
                 </div>

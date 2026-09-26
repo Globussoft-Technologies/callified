@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import AppIcon from './components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -71,7 +72,7 @@ export default function CallMonitor({ apiUrl }) {
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>🎙️ Live Call Monitor</h2>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="audio" /> Live Call Monitor</h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
           Inject dynamic instructions into the AI's mind instantly, or take over the line if the client demands human interaction.
         </p>
@@ -184,7 +185,7 @@ export default function CallMonitor({ apiUrl }) {
                 border: `1px solid rgba(99,102,241,0.3)`,
                 background: 'rgba(99,102,241,0.08)', color: T.accent,
                 whiteSpace: 'nowrap',
-              }}>💬 Whisper</button>
+              }}><AppIcon name="message" /> Whisper</button>
               <button onClick={toggleTakeover} style={{
                 padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
                 cursor: 'pointer', fontFamily: T.font, whiteSpace: 'nowrap',
@@ -192,7 +193,7 @@ export default function CallMonitor({ apiUrl }) {
                 background: takeoverActive ? T.red : 'rgba(239,68,68,0.08)',
                 color: takeoverActive ? '#fff' : T.red,
               }}>
-                {takeoverActive ? '🎤 Taking Over' : '🚨 Takeover Call'}
+                <AppIcon name={takeoverActive ? 'audio' : 'takeover'} /> {takeoverActive ? 'Taking Over' : 'Takeover Call'}
               </button>
             </div>
 

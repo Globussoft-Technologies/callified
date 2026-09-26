@@ -87,6 +87,11 @@ const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.exotel_account_id,0),
 	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s')`
 
+// These values mirror frontend/src/constants/leadStatuses.js. Keep aggregate
+// metrics aligned with statuses users can actually assign in the CRM.
+const qualifiedLeadStatusesSQL = `'Qualified','Appointment Set','Converted'`
+const appointmentLeadStatusesSQL = `'Appointment Set','Converted'`
+
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
 	err := row.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
@@ -104,8 +109,8 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 			cl.campaign_id,
 			COUNT(*) AS total,
 			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
-			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
-			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+			SUM(CASE WHEN l.status IN (` + qualifiedLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN (` + appointmentLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		GROUP BY cl.campaign_id`
@@ -156,8 +161,8 @@ func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
 			cl.campaign_id,
 			COUNT(*) AS total,
 			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
-			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
-			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+			SUM(CASE WHEN l.status IN (` + qualifiedLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN (` + appointmentLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		GROUP BY cl.campaign_id`
@@ -205,8 +210,8 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 			cl.campaign_id,
 			COUNT(*) AS total,
 			SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END) AS called,
-			SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END) AS qualified,
-			SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END) AS appointments
+			SUM(CASE WHEN l.status IN (` + qualifiedLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS qualified,
+			SUM(CASE WHEN l.status IN (` + appointmentLeadStatusesSQL + `) THEN 1 ELSE 0 END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		GROUP BY cl.campaign_id`
@@ -873,9 +878,9 @@ func (d *DB) GetOrgDashboardSummary(orgID int64) (OrgDashboardSummary, error) {
 	err := d.pool.QueryRow(`
 		SELECT
 			COUNT(DISTINCT l.phone) AS total,
-			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
-			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
-			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+			COUNT(DISTINCT CASE WHEN COALESCE(l.status,'new') != 'new' THEN l.phone END) AS called,
+			COUNT(DISTINCT CASE WHEN l.status IN (`+qualifiedLeadStatusesSQL+`) THEN l.phone END) AS qualified,
+			COUNT(DISTINCT CASE WHEN l.status IN (`+appointmentLeadStatusesSQL+`) THEN l.phone END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		JOIN campaigns c ON c.id = cl.campaign_id
@@ -896,9 +901,9 @@ func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
 	err := d.pool.QueryRow(`
 		SELECT
 			COUNT(DISTINCT CONCAT(l.org_id, ':', l.phone)) AS total,
-			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
-			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
-			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+			COUNT(DISTINCT CASE WHEN COALESCE(l.status,'new') != 'new' THEN CONCAT(l.org_id, ':', l.phone) END) AS called,
+			COUNT(DISTINCT CASE WHEN l.status IN (`+qualifiedLeadStatusesSQL+`) THEN CONCAT(l.org_id, ':', l.phone) END) AS qualified,
+			COUNT(DISTINCT CASE WHEN l.status IN (`+appointmentLeadStatusesSQL+`) THEN CONCAT(l.org_id, ':', l.phone) END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		JOIN campaigns c ON c.id = cl.campaign_id`,
@@ -933,9 +938,9 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 	leadQuery := `
 		SELECT
 			COUNT(DISTINCT l.phone) AS total,
-			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
-			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
-			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
+			COUNT(DISTINCT CASE WHEN COALESCE(l.status,'new') != 'new' THEN l.phone END) AS called,
+			COUNT(DISTINCT CASE WHEN l.status IN (` + qualifiedLeadStatusesSQL + `) THEN l.phone END) AS qualified,
+			COUNT(DISTINCT CASE WHEN l.status IN (` + appointmentLeadStatusesSQL + `) THEN l.phone END) AS appointments
 		FROM campaign_leads cl
 		JOIN leads l ON l.id = cl.lead_id
 		JOIN campaigns c ON c.id = cl.campaign_id
@@ -998,10 +1003,10 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 	if err := d.pool.QueryRow(statusQ+` AND l.status NOT IN ('new')`, statusArgs...).Scan(&s.Called); err != nil {
 		return s, err
 	}
-	if err := d.pool.QueryRow(statusQ+` AND l.status IN ('Warm','Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Qualified); err != nil {
+	if err := d.pool.QueryRow(statusQ+` AND l.status IN (`+qualifiedLeadStatusesSQL+`)`, append([]any{}, statusArgs...)).Scan(&s.Qualified); err != nil {
 		return s, err
 	}
-	err := d.pool.QueryRow(statusQ+` AND l.status IN ('Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Appointments)
+	err := d.pool.QueryRow(statusQ+` AND l.status IN (`+appointmentLeadStatusesSQL+`)`, append([]any{}, statusArgs...)).Scan(&s.Appointments)
 	return s, err
 }
 

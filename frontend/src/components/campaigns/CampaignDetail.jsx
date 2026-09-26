@@ -9,6 +9,38 @@ import { useAuth } from '../../contexts/AuthContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
+import AppSelect from '../common/AppSelect';
+import { Checkbox } from 'antd';
+import {
+  BarChartOutlined,
+  CalendarOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  DeleteOutlined,
+  DesktopOutlined,
+  DownOutlined,
+  EditOutlined,
+  ExperimentOutlined,
+  FastForwardOutlined,
+  FileTextOutlined,
+  FormOutlined,
+  GlobalOutlined,
+  HistoryOutlined,
+  InfoCircleOutlined,
+  LoadingOutlined,
+  MessageOutlined,
+  PhoneOutlined,
+  PlusOutlined,
+  RedoOutlined,
+  SoundOutlined,
+  StopOutlined,
+  TeamOutlined,
+  TagOutlined,
+  UploadOutlined,
+  WarningOutlined,
+  UserOutlined,
+  DownloadOutlined,
+} from '@ant-design/icons';
 // import TwilioBrowserCallModal from './TwilioBrowserCallModal';
 
 const T = {
@@ -23,6 +55,56 @@ const card = {
   background: T.card, border: `1px solid ${T.border}`,
   borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
 };
+
+const leadStatusColors = {
+  New: '#94a3b8',
+  Contacted: '#3b82f6',
+  Connected: '#06b6d4',
+  Interested: '#10b981',
+  'Not Interested': '#ef4444',
+  'Follow-up': '#f59e0b',
+  Closed: '#8b5cf6',
+  Qualified: '#22c55e',
+  'Appointment Set': '#ec4899',
+  Converted: '#7c3aed',
+  Lost: '#f43f5e',
+  Junk: '#64748b',
+};
+
+function CampaignTableSelect({ width, popupWidth, ...props }) {
+  return (
+    <AppSelect
+      className="campaign-table-select"
+      size="small"
+      width={width}
+      popupWidth={popupWidth || width}
+      {...props}
+    />
+  );
+}
+
+function leadStatusLabel(status) {
+  return (
+    <span className="campaign-status-option">
+      <span className="campaign-status-dot" style={{ background: leadStatusColors[status] || '#94a3b8' }} />
+      {status}
+    </span>
+  );
+}
+
+function campaignVoiceOptions(voiceCatalog, provider, language) {
+  const recommendedIds = VOICE_RECOMMENDATIONS[language]?.[provider]?.top || [];
+  const voices = voiceCatalog[provider] || [];
+  const recommended = voices.filter(voice => recommendedIds.includes(voice.id));
+  const others = voices.filter(voice => !recommendedIds.includes(voice.id));
+  const toOptions = list => list.map(voice => ({ value: voice.id, label: voice.name }));
+
+  if (recommended.length === 0) return toOptions(voices);
+  return [
+    { label: 'Recommended', options: toOptions(recommended) },
+    { label: 'All Voices', options: toOptions(others) },
+  ];
+}
 
 const btnPrimary = {
   background: T.accent, border: 'none', color: '#fff',
@@ -291,7 +373,7 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
     <div style={{ marginBottom: '1rem' }}>
       {error && (
         <div style={{ background: '#fee2e2', border: `1px solid #fca5a5`, color: T.red, borderRadius: 8, padding: '10px 14px', marginBottom: 10, fontSize: '0.85rem' }}>
-          ⚠️ {error}
+          <WarningOutlined /> {error}
         </div>
       )}
       {!isRunning && !isDone && (
@@ -299,13 +381,13 @@ function WhatsAppBlastPanel({ campaignId, apiFetch, API_URL }) {
           style={{ background: `linear-gradient(135deg, ${T.wa}, #128C7E)`, border: 'none', color: '#fff', fontSize: '0.85rem', padding: '8px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontFamily: T.font }}
           disabled={blasting}
           onClick={handleBlast}>
-          {blasting ? 'Starting...' : '💬 Send to New Leads'}
+          {blasting ? <><LoadingOutlined spin /> Starting...</> : <><MessageOutlined /> Send to New Leads</>}
         </button>
       )}
       {(isRunning || isDone) && (
         <div style={{ ...card, padding: '12px 16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: '0.85rem', color: T.sub }}>
-            <span>{isRunning ? '⏳ Sending...' : '✅ Blast complete'}</span>
+            <span>{isRunning ? <><LoadingOutlined spin /> Sending...</> : <><CheckCircleOutlined /> Blast complete</>}</span>
             <span style={{ color: T.muted }}>{job.sent} sent · {job.failed} failed · {job.total} total</span>
           </div>
           <div style={{ background: T.border, borderRadius: 4, height: 6, overflow: 'hidden' }}>
@@ -454,10 +536,6 @@ export default function CampaignDetail({
   const [bulkSelectLimit, setBulkSelectLimit] = useState('');
   const [bulkSelectionLoading, setBulkSelectionLoading] = useState(false);
   const [execFilter, setExecFilter] = useState([]);
-  const [showExecFilter, setShowExecFilter] = useState(false);
-  const [execSearch, setExecSearch] = useState('');
-  const [showDetailExecFilter, setShowDetailExecFilter] = useState(false);
-  const [detailExecSearch, setDetailExecSearch] = useState('');
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
   const activityDateMax = detailTab === 'leads' ? undefined : currentLocalDateTime();
@@ -534,11 +612,7 @@ export default function CampaignDetail({
 
   useEffect(() => {
     setExecFilter([]);
-    setExecSearch('');
-    setShowExecFilter(false);
     setDetailExecutiveFilter([]);
-    setDetailExecSearch('');
-    setShowDetailExecFilter(false);
     setAutoDialEnabled(false);
     setAutoDialQueue([]);
     setAutoDialActiveId(null);
@@ -1431,6 +1505,12 @@ export default function CampaignDetail({
     padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
     fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none',
   };
+  const rowActionStyle = {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 0,
+    fontSize: 11, padding: '4px 8px', borderRadius: 6, fontWeight: 600,
+    fontFamily: T.font, whiteSpace: 'nowrap', lineHeight: 1.35,
+    minWidth: 30, minHeight: 26, overflow: 'visible',
+  };
   const thStyle = {
     padding: '10px 14px', fontSize: 11, fontWeight: 600, color: T.muted,
     textTransform: 'uppercase', letterSpacing: '0.06em', textAlign: 'left',
@@ -1456,7 +1536,7 @@ export default function CampaignDetail({
           </span>
         ) : (
           <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: T.amber, background: 'rgba(245,158,11,0.1)' }}>
-            ⚠ No product linked
+            <WarningOutlined /> No product linked
           </span>
         )}
         {statusBadge(selectedCampaign.status)}
@@ -1467,26 +1547,25 @@ export default function CampaignDetail({
           </button>
         )}
         {canEditCampaign && (
-          <select className="form-input" value={selectedCampaign.lead_source || ''}
-            onChange={async (e) => {
-              const src = e.target.value;
+          <AppSelect searchable size="small" width={180} popupWidth={210} value={selectedCampaign.lead_source || ''}
+            onChange={async src => {
               await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
                 method: 'PUT', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ lead_source: src })
               });
               setSelectedCampaign({...selectedCampaign, lead_source: src});
             }}
-            style={{ width: 'auto', height: 32, fontSize: '0.8rem', padding: '4px 10px', background: '#fff', border: `1px solid ${T.border}`, color: T.text, borderRadius: 8, fontFamily: T.font }}>
-            <option value="">No Source</option>
-            <option value="facebook">Facebook / Meta</option>
-            <option value="google">Google Ads</option>
-            <option value="instagram">Instagram</option>
-            <option value="linkedin">LinkedIn</option>
-            <option value="website">Website</option>
-            <option value="referral">Referral</option>
-            <option value="cold">Cold Outreach</option>
-            <option value="other">Others</option>
-          </select>
+            options={[
+              { value: '', label: 'No Source' },
+              { value: 'facebook', label: 'Facebook / Meta' },
+              { value: 'google', label: 'Google Ads' },
+              { value: 'instagram', label: 'Instagram' },
+              { value: 'linkedin', label: 'LinkedIn' },
+              { value: 'website', label: 'Website' },
+              { value: 'referral', label: 'Referral' },
+              { value: 'cold', label: 'Cold Outreach' },
+              { value: 'other', label: 'Others' },
+            ]} />
         )}
       </div>
 
@@ -1528,45 +1607,22 @@ export default function CampaignDetail({
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
       {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>🔊 Voice Settings</span>
-            <select className="form-input" value={campVoice.tts_provider}
-              onChange={e => { const p = e.target.value; setCampVoice(v => ({...v, tts_provider: p, tts_voice_id: (INDIAN_VOICES[p] || [])[0]?.id || ''})); }}
-              style={{ ...inputStyle, height: 32, minWidth: 110 }}>
-              <option value="">-- Provider --</option>
-              <option value="elevenlabs">ElevenLabs</option>
-              <option value="sarvam">Sarvam AI</option>
-              <option value="smallest">Smallest AI</option>
-              <option value="gemini_live">Gemini Live</option>
-            </select>
-            <select className="form-input" value={campVoice.tts_voice_id}
-              onChange={e => setCampVoice(v => ({...v, tts_voice_id: e.target.value}))}
-              style={{ ...inputStyle, height: 32, minWidth: 160 }}>
-              <option value="">-- Voice --</option>
-              {(() => {
-                const recs = VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.top || [];
-                const voices = INDIAN_VOICES[campVoice.tts_provider] || [];
-                const recommended = voices.filter(v => recs.includes(v.id));
-                const others = voices.filter(v => !recs.includes(v.id));
-                return (<>
-                  {recommended.length > 0 && <optgroup label="★ Recommended">
-                    {recommended.map(v => <option key={v.id} value={v.id}>★ {v.name}</option>)}
-                  </optgroup>}
-                  {recommended.length > 0 && <optgroup label="All Voices">
-                    {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </optgroup>}
-                  {recommended.length === 0 && voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </>);
-              })()}
-            </select>
-            <select className="form-input" value={campVoice.tts_language}
-              onChange={e => setCampVoice(v => ({...v, tts_language: e.target.value}))}
-              style={{ ...inputStyle, height: 32, minWidth: 100 }}>
-              <option value="">-- Language --</option>
-              {INDIAN_LANGUAGES.map(l => (
-                <option key={l.code} value={l.code}>{l.name}</option>
-              ))}
-            </select>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}><SoundOutlined /> Voice Settings</div>
+          <div className="campaign-voice-controls">
+            <div className="campaign-voice-selects">
+              <AppSelect size="small" value={campVoice.tts_provider || undefined} placeholder="Provider" options={[
+                { value: 'elevenlabs', label: 'ElevenLabs' },
+                { value: 'sarvam', label: 'Sarvam AI' },
+                { value: 'smallest', label: 'Smallest AI' },
+                { value: 'gemini_live', label: 'Gemini Live' },
+              ]} onChange={provider => setCampVoice(value => ({...value, tts_provider: provider, tts_voice_id: (INDIAN_VOICES[provider] || [])[0]?.id || ''}))} />
+              <AppSelect searchable size="small" value={campVoice.tts_voice_id || undefined} placeholder="Voice" popupWidth={260}
+                options={campaignVoiceOptions(INDIAN_VOICES, campVoice.tts_provider, campVoice.tts_language)}
+                onChange={voiceId => setCampVoice(value => ({...value, tts_voice_id: voiceId}))} />
+              <AppSelect searchable size="small" value={campVoice.tts_language || undefined} placeholder="Language"
+                options={INDIAN_LANGUAGES.map(language => ({ value: language.code, label: language.name }))}
+                onChange={language => setCampVoice(value => ({...value, tts_language: language}))} />
+            </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap' }}>
               Max Call Time
               <input
@@ -1622,7 +1678,7 @@ export default function CampaignDetail({
           </div>
           {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
             <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}>
-              ℹ {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
+              <InfoCircleOutlined /> {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
             </div>
           )}
         </div>
@@ -1632,16 +1688,14 @@ export default function CampaignDetail({
       {selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            🖥️ Browser Call Account (this machine)
+            <DesktopOutlined /> Browser Call Account (this machine)
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <select
-              className="form-input"
+            <AppSelect searchable size="small" popupWidth={460}
               value={effectiveBrowserAccountId}
               disabled={!canChangeBrowserCallAccount}
-              onChange={e => {
+              onChange={v => {
                 if (!canChangeBrowserCallAccount) return;
-                const v = e.target.value;
                 const override = mustSelectBrowserCallAccount ? v : (v === selectedExotelAccountId ? '' : v);
                 setBrowserAccountId(override);
                 try {
@@ -1663,14 +1717,15 @@ export default function CampaignDetail({
                   }).catch(() => {});
                 }
               }}
-              style={{ ...inputStyle, height: 34, minWidth: 280, maxWidth: 420, opacity: canChangeBrowserCallAccount ? 1 : 0.6, cursor: canChangeBrowserCallAccount ? 'pointer' : 'not-allowed' }}>
-              <option value="">{campaignDefaultLabel}</option>
-              {callingAccountOptions.map(a => (
-                <option key={a.id} value={String(a.id)}>
-                  [{a.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] {a.name} · {a.caller_id}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: campaignDefaultLabel },
+                ...callingAccountOptions.map(account => ({
+                  value: String(account.id),
+                  label: `[${account.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] ${account.name} · ${account.caller_id}`,
+                })),
+              ]}
+              width="min(420px, 100%)"
+            />
           </div>
           <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 6 }}>
             {effectiveBrowserAccount
@@ -1714,7 +1769,7 @@ export default function CampaignDetail({
       {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
       {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>📡 Live Campaign Activity</span>
+          <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}><BarChartOutlined /> Live Campaign Activity</span>
           {liveEvents.length > 0 && (
             <button onClick={() => {
               setLiveEvents([]);
@@ -1739,7 +1794,7 @@ export default function CampaignDetail({
 
       {/* Quick Add Lead Form */}
       {canCreateLead && <div style={{ ...card, padding: '12px 16px', marginBottom: 14, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', textTransform: 'uppercase', letterSpacing: '0.05em' }}>➕ Quick Add:</span>
+        <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, height: 32, display: 'flex', alignItems: 'center', gap: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}><PlusOutlined /> Quick Add:</span>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <input className="form-input" placeholder="Name" value={qaName}
             onChange={e => {
@@ -1824,11 +1879,11 @@ export default function CampaignDetail({
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {canAssignLeads && <button style={{ ...btnPrimary }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}>+ Add from CRM</button>}
-        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2' }}
-          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}>📤 Import CSV</button>}
+        {canAssignLeads && <button style={{ ...btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => { setSelectedLeadIds([]); setShowAddLeadsModal(true); }}><PlusOutlined /> Add from CRM</button>}
+        {canImportLeads && <button style={{ ...btnPrimary, background: '#0891b2', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          onClick={() => { setCsvFile(null); setShowCsvImportModal(true); }}><UploadOutlined /> Import CSV</button>}
         {canExportLeads && <button
-          style={{ ...btnPrimary, background: T.green }}
+          style={{ ...btnPrimary, background: T.green, display: 'inline-flex', alignItems: 'center', gap: 6 }}
           onClick={() => {
             downloadCSV({
               apiFetch,
@@ -1837,10 +1892,10 @@ export default function CampaignDetail({
               toast,
             });
           }}>
-          ⬇ Export
+          <DownloadOutlined /> Export
         </button>}
         {!hideAiFeatures && canDialAll && campaignLeads.some(l => (l.status || '').toLowerCase() === 'new') && (
-          <button style={{ ...btnPrimary, background: T.green }}
+          <button style={{ ...btnPrimary, background: T.green, display: 'inline-flex', alignItems: 'center', gap: 6 }}
             onClick={async () => {
               if (!requireSelectedDialAccount()) return;
               const newCount = (campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length;
@@ -1857,10 +1912,10 @@ export default function CampaignDetail({
                 setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
               } catch { toast('Dial failed');  }
             }}>
-            📞 Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
+            <PhoneOutlined /> Dial All New ({(campaignLeads || []).filter(l => (l.status || '').toLowerCase() === 'new').length})
           </button>
         )}
-        {!hideAiFeatures && canDialAll && <button style={{ ...btnPrimary, background: '#7c3aed' }}
+        {!hideAiFeatures && canDialAll && <button style={{ ...btnPrimary, background: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 6 }}
           onClick={async () => {
             if (!requireSelectedDialAccount()) return;
             if (!await confirm({ message: `Dial ALL ${campaignLeads.length} leads? (30s gap)` })) return;
@@ -1876,7 +1931,7 @@ export default function CampaignDetail({
               setTimeout(() => clearInterval(ri), 30 * 60 * 1000);
             } catch { toast('Failed');  }
           }}>
-          📞 Dial All ({campaignLeads.length})
+          <PhoneOutlined /> Dial All ({campaignLeads.length})
         </button>}
         {selectedCampaign.channel !== 'whatsapp' && canAutoDial && canBrowserCall && visibleCallActions.browserCall && (
           <button
@@ -2051,64 +2106,33 @@ export default function CampaignDetail({
       {!autoDialEnabled && canShowAgentFilter && detailExecutiveFilter && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Filter by agent</span>
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setShowDetailExecFilter(v => !v)}
-              style={{
-                padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
-                fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
-                cursor: 'pointer', minWidth: 160, textAlign: 'left'
-              }}>
-              {detailExecutiveFilter.length === 0 ? 'All agents' : `${detailExecutiveFilter.length} agent${detailExecutiveFilter.length > 1 ? 's' : ''}`} ▾
-            </button>
-            {showDetailExecFilter && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: 220,
-                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
-                maxHeight: 300, overflowY: 'auto'
-              }}>
-                <input
-                  type="text"
-                  placeholder="Search agents..."
-                  value={detailExecSearch}
-                  onChange={e => setDetailExecSearch(e.target.value)}
-                  onClick={e => e.stopPropagation()}
-                  style={{
-                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
-                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
-                    outline: 'none'
-                  }}
-                />
-                <div
-                  onClick={() => setDetailExecutiveFilter([])}
-                  style={{
-                    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
-                    color: detailExecutiveFilter.length === 0 ? T.accent : T.text, fontWeight: detailExecutiveFilter.length === 0 ? 700 : 400,
-                    background: detailExecutiveFilter.length === 0 ? 'rgba(99,102,241,0.08)' : 'transparent'
-                  }}>
-                  All agents
-                </div>
-                {(() => {
-                  const q = detailExecSearch.trim().toLowerCase();
-                  const filtered = q ? (agents || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (agents || []);
-                  if (filtered.length === 0) {
-                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No agents found.</div>;
-                  }
-                  return filtered.map(e => {
-                    const checked = detailExecutiveFilter.includes(e.id);
-                    return (
-                      <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={checked}
-                          onChange={() => setDetailExecutiveFilter(prev => checked ? prev.filter(id => id !== e.id) : [...prev, e.id])} />
-                        {e.name || e.full_name || e.email}
-                      </label>
-                    );
-                  });
-                })()}
-              </div>
+          <AppSelect
+            mode="multiple"
+            searchable
+            allowClear
+            size="small"
+            width={190}
+            popupWidth={260}
+            value={detailExecutiveFilter}
+            onChange={setDetailExecutiveFilter}
+            placeholder="All agents"
+            maxTagCount={0}
+            maxTagPlaceholder={omitted => `${omitted.length} agent${omitted.length === 1 ? '' : 's'}`}
+            options={(agents || []).map(agent => ({
+              value: agent.id,
+              label: agent.name || agent.full_name || agent.email,
+            }))}
+            optionRender={option => (
+              <Checkbox
+                checked={detailExecutiveFilter.includes(option.value)}
+                style={{ pointerEvents: 'none' }}
+              >
+                {option.label}
+              </Checkbox>
             )}
-          </div>
+            menuItemSelectedIcon={null}
+            notFoundContent="No agents found"
+          />
         </div>
       )}
 
@@ -2117,10 +2141,10 @@ export default function CampaignDetail({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
           {[
-            { id: 'leads',   label: `👥 Leads (${campaignLeadsTotal})`,   activeColor: T.accent, hidden: !hasPermission('crm.view') },
-          { id: 'calllog', label: `📞 Call Log (${callLog.length})`,       activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
-          { id: 'insights',label: '📊 Call Insights',                      activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
-          { id: 'retries', label: '🔄 Retries',                            activeColor: T.amber,  hidden: hideAiFeatures || !canViewReports },
+            { id: 'leads', icon: TeamOutlined, label: `Leads (${campaignLeadsTotal})`, activeColor: T.accent, hidden: !hasPermission('crm.view') },
+            { id: 'calllog', icon: HistoryOutlined, label: `Call Log (${callLog.length})`, activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
+            { id: 'insights', icon: BarChartOutlined, label: 'Call Insights', activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
+            { id: 'retries', icon: RedoOutlined, label: 'Retries', activeColor: T.amber, hidden: hideAiFeatures || !canViewReports },
           ].filter(tab => !tab.hidden).map(tab => (
             <button key={tab.id}
               onClick={() => handleDetailTabChange(tab.id)}
@@ -2130,7 +2154,9 @@ export default function CampaignDetail({
                 background: detailTab === tab.id ? tab.activeColor : 'transparent',
                 color: detailTab === tab.id ? '#fff' : T.muted,
                 transition: 'all 0.15s',
+                display: 'inline-flex', alignItems: 'center', gap: 6,
               }}>
+              <tab.icon />
               {tab.label}
             </button>
           ))}
@@ -2147,58 +2173,33 @@ export default function CampaignDetail({
           }}
         />
         {canShowAgentFilter && executives && executives.length > 0 && (
-          <div style={{ position: 'relative' }}>
-            <button
-              onClick={() => setShowExecFilter(v => !v)}
-              style={{
-                padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
-                fontSize: 13, fontFamily: T.font, color: T.text, background: '#fff',
-                cursor: 'pointer', minWidth: 160, textAlign: 'left'
-              }}>
-              {execFilter.length === 0 ? 'Filter by Executive' : `${execFilter.length} executive${execFilter.length > 1 ? 's' : ''}`} ▾
-            </button>
-            {showExecFilter && (
-              <div style={{
-                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 220,
-                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
-                maxHeight: 300, overflowY: 'auto'
-              }}>
-                <input
-                  type="text"
-                  placeholder="Search executives..."
-                  value={execSearch}
-                  onChange={e => setExecSearch(e.target.value)}
-                  onClick={e => e.stopPropagation()}
-                  style={{
-                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
-                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
-                    outline: 'none'
-                  }}
-                />
-                {(() => {
-                  const q = execSearch.trim().toLowerCase();
-                  const filtered = q ? (executives || []).filter(e => (e.name || '').toLowerCase().includes(q)) : (executives || []);
-                  if (filtered.length === 0) {
-                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No executives found.</div>;
-                  }
-                  return filtered.map(e => {
-                    const checked = execFilter.includes(String(e.id));
-                    return (
-                      <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer'}}>
-                        <input type="checkbox" checked={checked}
-                          onChange={() => {
-                            const val = String(e.id);
-                            setExecFilter(prev => checked ? prev.filter(id => id !== val) : [...prev, val]);
-                          }} />
-                        {e.name}
-                      </label>
-                    );
-                  });
-                })()}
-              </div>
+          <AppSelect
+            mode="multiple"
+            searchable
+            allowClear
+            size="small"
+            width={210}
+            popupWidth={260}
+            value={execFilter}
+            onChange={setExecFilter}
+            placeholder="Filter by executive"
+            maxTagCount={0}
+            maxTagPlaceholder={omitted => `${omitted.length} executive${omitted.length === 1 ? '' : 's'}`}
+            options={executives.map(executive => ({
+              value: String(executive.id),
+              label: executive.name || executive.full_name || executive.email,
+            }))}
+            optionRender={option => (
+              <Checkbox
+                checked={execFilter.includes(String(option.value))}
+                style={{ pointerEvents: 'none' }}
+              >
+                {option.label}
+              </Checkbox>
             )}
-          </div>
+            menuItemSelectedIcon={null}
+            notFoundContent="No executives found"
+          />
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <input
@@ -2642,7 +2643,8 @@ export default function CampaignDetail({
                               cursor: 'help', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                             }}
                           >
-                            📝 {lead.follow_up_note.slice(0, 24)}{lead.follow_up_note.length > 24 ? '…' : ''}
+                            <FormOutlined style={{ marginRight: 4 }} />
+                            {lead.follow_up_note.slice(0, 24)}{lead.follow_up_note.length > 24 ? '…' : ''}
                           </span>
                         )}
                       </div>
@@ -2650,9 +2652,22 @@ export default function CampaignDetail({
                     <td style={{ ...tdStyle, fontFamily: T.mono }}>{lead.phone}</td>
                     <td style={tdStyle}>{lead.company || '-'}</td>
                     <td style={tdStyle}>
-                      {canEditLead ? <select className="form-input" value={lead.source || ''}
-                        onChange={async e => {
-                          const src = e.target.value;
+                      {canEditLead ? <CampaignTableSelect
+                        aria-label={`Source for ${lead.first_name || 'lead'}`}
+                        value={lead.source || ''}
+                        prefix={<GlobalOutlined />}
+                        width={150}
+                        popupWidth={180}
+                        searchable
+                        options={[
+                          { value: '', label: 'No Source' },
+                          ...['facebook','google','instagram','linkedin','website','referral','cold','other'].map(source => ({
+                            value: source,
+                            label: source === 'other' ? 'Others' : source[0].toUpperCase() + source.slice(1),
+                          })),
+                        ]}
+                        onChange={async value => {
+                          const src = value || '';
                           try {
                             await apiFetch(`${API_URL}/leads/${lead.id}/source`, {
                               method: 'PUT',
@@ -2660,19 +2675,27 @@ export default function CampaignDetail({
                               body: JSON.stringify({ source: src })
                             });
                             fetchCampaignLeads(selectedCampaign.id);
-                          } catch (err) { toast('Failed to update source'); }
+                          } catch { toast('Failed to update source'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120, background: '#fff' }}>
-                        <option value="">No Source</option>
-                        {['facebook','google','instagram','linkedin','website','referral','cold','other'].map(s => (
-                          <option key={s} value={s}>{s === 'other' ? 'Others' : s[0].toUpperCase() + s.slice(1)}</option>
-                        ))}
-                      </select> : (lead.source || 'No Source')}
+                      /> : (lead.source || 'No Source')}
                     </td>
                     <td style={tdStyle}>
-                      {canAssignLeads ? <select className="form-input" value={lead.executive_id || ''}
-                        onChange={async e => {
-                          const execId = e.target.value ? parseInt(e.target.value, 10) : 0;
+                      {canAssignLeads ? <CampaignTableSelect
+                        aria-label={`Executive for ${lead.first_name || 'lead'}`}
+                        value={lead.executive_id ? String(lead.executive_id) : ''}
+                        prefix={<UserOutlined />}
+                        width={180}
+                        popupWidth={220}
+                        searchable
+                        options={[
+                          { value: '', label: 'Unassigned' },
+                          ...executives.map(executive => ({
+                            value: String(executive.id),
+                            label: executive.name || executive.full_name || executive.email,
+                          })),
+                        ]}
+                        onChange={async value => {
+                          const execId = value ? parseInt(value, 10) : 0;
                           if (!currentCampaignId) {
                             toast('Campaign is still loading. Please try again.');
                             return;
@@ -2690,44 +2713,45 @@ export default function CampaignDetail({
                             fetchCampaignLeads(currentCampaignId);
                           } catch (err) { toast(err.message || 'Failed to assign executive'); }
                         }}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px', minWidth: 120 }}>
-                        <option value="">— Unassigned —</option>
-                        {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                      </select> : (
+                      /> : (
                         executiveNameForLead(lead)
                       )}
                     </td>
                     <td style={tdStyle}>
-                      {canEditLead ? <select className="form-input" value={lead.status || 'New'}
-                        onChange={e => handleLeadStatusChange(lead.id, e.target.value)}
-                        style={{ ...inputStyle, height: 30, fontSize: '0.8rem', padding: '2px 8px' }}>
-                        {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select> : (lead.status || 'New')}
+                      {canEditLead ? <CampaignTableSelect
+                        aria-label={`Status for ${lead.first_name || 'lead'}`}
+                        value={lead.status || 'New'}
+                        prefix={<TagOutlined />}
+                        width={170}
+                        popupWidth={190}
+                        options={LEAD_STATUSES.map(status => ({ value: status, label: leadStatusLabel(status) }))}
+                        onChange={value => handleLeadStatusChange(lead.id, value)}
+                      /> : (lead.status || 'New')}
                     </td>
                     <td style={tdStyle}>
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        {canEditLead && <button
+                      <div className="campaign-lead-actions" style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {canEditLead && <button className="lead-action-button" data-action="edit" data-tooltip="Edit lead" aria-label="Edit lead"
                           onClick={() => handleEditLead(lead)}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          ✏️ Edit
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(245,158,11,0.08)', color: '#92400e', border: '1px solid rgba(245,158,11,0.25)' }}>
+                          <EditOutlined /><span className="lead-action-label">Edit</span>
                         </button>}
                         {canDial && visibleCallActions.dial && (
-                          <button
+                          <button className="lead-action-button" data-action="dial" data-tooltip={dialingId === lead.id ? 'Dialing lead' : 'Dial lead'} aria-label={dialingId === lead.id ? 'Dialing lead' : 'Dial lead'}
                             onClick={() => handleDialClick(lead)}
                             disabled={dialingId === lead.id || webCallActive === lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (dialingId === lead.id || webCallActive === lead.id) ? 'not-allowed' : 'pointer',
                               opacity: (dialingId === lead.id || webCallActive === lead.id) ? 0.5 : 1,
                               background: 'rgba(16,185,129,0.08)', color: '#065f46',
-                              border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6,
+                              border: '1px solid rgba(16,185,129,0.25)',
                             }}>
-                            {dialingId === lead.id ? '📞 Wait...' : '📞 Dial'}
+                            {dialingId === lead.id ? <><LoadingOutlined spin /><span className="lead-action-label">Wait...</span></> : <><PhoneOutlined /><span className="lead-action-label">Dial</span></>}
                           </button>
                         )}
                         {/* Manual Call disabled — use Browser Call instead
                         {selectedCampaign.channel !== 'whatsapp' && (
-                          <button
+                          <button className="lead-action-button"
                             onClick={() => { setHumanCallLead(lead); setHumanCallStatus('idle'); setHumanCallError(''); }}
                             style={{
                               fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
@@ -2739,51 +2763,54 @@ export default function CampaignDetail({
                           </button>
                         )} */}
                         {canBrowserCall && selectedCampaign.channel !== 'whatsapp' && visibleCallActions.browserCall && (
-                          <button
+                          <button className="lead-action-button" data-action="browser-call"
                             onClick={() => startBrowserCallWithAutoDial(lead)}
                             disabled={browserCallDialing || browserCallLead != null}
-                            title={autoDialEnabled ? 'Auto-dial is enabled' : 'Call from browser mic — 1x cost'}
+                            data-tooltip={autoDialEnabled ? 'Browser call (auto-dial enabled)' : 'Browser call from microphone — 1x cost'}
+                            aria-label={autoDialEnabled ? 'Browser call (auto-dial enabled)' : 'Browser call from microphone — 1x cost'}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (browserCallDialing || browserCallLead != null) ? 'not-allowed' : 'pointer',
                               opacity: (browserCallDialing || browserCallLead != null) ? 0.6 : 1,
                               background: autoDialEnabled ? 'rgba(245,158,11,0.12)' : 'rgba(99,102,241,0.08)',
                               color: autoDialEnabled ? '#b45309' : '#3730a3',
-                              border: `1px solid ${autoDialEnabled ? 'rgba(245,158,11,0.35)' : 'rgba(99,102,241,0.3)'}`, borderRadius: 6,
+                              border: `1px solid ${autoDialEnabled ? 'rgba(245,158,11,0.35)' : 'rgba(99,102,241,0.3)'}`,
                             }}>
-                            {autoDialEnabled ? '⏩ Browser Call' : '🎙 Browser Call'}
+                            {autoDialEnabled ? <FastForwardOutlined /> : <DesktopOutlined />}<span className="lead-action-label">Browser Call</span>
                           </button>
                         )}
                         {canMakeCalls && selectedCampaign.channel === 'whatsapp' && (
-                          <button
+                          <button className="lead-action-button" data-action="whatsapp" data-tooltip={waSendingId === lead.id ? 'Sending WhatsApp message' : 'Send WhatsApp message'} aria-label={waSendingId === lead.id ? 'Sending WhatsApp message' : 'Send WhatsApp message'}
                             onClick={() => handleSendWA(lead)}
                             disabled={waSendingId === lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: waSendingId === lead.id ? 'not-allowed' : 'pointer',
                               opacity: waSendingId === lead.id ? 0.6 : 1,
                               background: waSendStatus[lead.id] === 'sent' ? 'rgba(37,211,102,0.15)' : 'rgba(37,211,102,0.08)',
                               color: waSendStatus[lead.id] === 'error' ? '#dc2626' : '#065f46',
                               border: `1px solid ${waSendStatus[lead.id] === 'error' ? 'rgba(239,68,68,0.3)' : 'rgba(37,211,102,0.35)'}`,
-                              borderRadius: 6,
                             }}>
-                            {waSendingId === lead.id ? '⏳ Sending...' : waSendStatus[lead.id] === 'sent' ? '✅ Sent' : '💬 Send WA'}
+                            {waSendingId === lead.id
+                              ? <><LoadingOutlined spin /><span className="lead-action-label">Sending...</span></>
+                              : waSendStatus[lead.id] === 'sent'
+                                ? <><CheckCircleOutlined /><span className="lead-action-label">Sent</span></>
+                                : <><MessageOutlined /><span className="lead-action-label">Send WA</span></>}
                           </button>
                         )}
                         {canBrowserCall && visibleCallActions.simWebCall && (
-                          <button
+                          <button className="lead-action-button" data-action="sim-web-call" data-tooltip={webCallActive === lead.id ? 'End simulated web call' : 'Start simulated web call'} aria-label={webCallActive === lead.id ? 'End simulated web call' : 'Start simulated web call'}
                             onClick={() => onCampaignWebCall(lead, selectedCampaign.id)}
                             disabled={webCallActive != null && webCallActive !== lead.id}
                             style={{
-                              fontSize: 11, padding: '4px 10px', fontWeight: 600, fontFamily: T.font,
+                              ...rowActionStyle,
                               cursor: (webCallActive != null && webCallActive !== lead.id) ? 'not-allowed' : 'pointer',
                               opacity: (webCallActive != null && webCallActive !== lead.id) ? 0.5 : 1,
-                              borderRadius: 6,
                               border: webCallActive === lead.id ? `1px solid rgba(239,68,68,0.3)` : `1px solid rgba(99,102,241,0.25)`,
                               color: webCallActive === lead.id ? T.red : T.accent,
                               background: webCallActive === lead.id ? 'rgba(239,68,68,0.08)' : 'rgba(99,102,241,0.08)',
                             }}>
-                            {webCallActive === lead.id ? '🔴 End Call' : '🌐 Sim Web Call'}
+                            {webCallActive === lead.id ? <><CloseCircleOutlined /><span className="lead-action-label">End Call</span></> : <><ExperimentOutlined /><span className="lead-action-label">Sim Web Call</span></>}
                           </button>
                         )}
                         {dndBlockedLeadIds.has(lead.id) && (
@@ -2792,35 +2819,38 @@ export default function CampaignDetail({
                               background: '#fee2e2', color: T.red,
                               border: '1px solid #fca5a5', fontWeight: 600,
                               display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                            🚫 DND — number blocked
+                            <StopOutlined /> DND — number blocked
                           </span>
                         )}
-                        {canViewTranscripts && <button
+                        {canViewTranscripts && <button className="lead-action-button" data-action="history" data-tooltip="View call transcripts and history" aria-label="View call transcripts and history"
                           onClick={() => handleViewTranscripts({ ...lead, campaign_id: selectedCampaign.id })}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontFamily: T.font, borderRadius: 6, fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
+                          style={{ ...rowActionStyle, cursor: 'pointer', fontWeight: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 600 : 400,
                             background: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? 'rgba(16,185,129,0.08)' : T.bg,
                             color: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '#065f46' : T.muted,
                             border: (lead.transcript_count > 0 || lead.recording_count > 0 || lead.dial_attempts > 0) ? '1px solid rgba(16,185,129,0.25)' : `1px solid ${T.border}`,
                           }}>
-                          {lead.transcript_count > 0
-                            ? `📋 ${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}`
-                            : (lead.recording_count > 0 || lead.dial_attempts > 0) ? '📋 Call History' : '📋 No Calls'}
-                          {lead.recording_count > 0 && ' 🔊'}
-                          {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
+                          <FileTextOutlined />
+                          <span className="lead-action-label">
+                            {lead.transcript_count > 0
+                              ? `${lead.transcript_count} Transcript${lead.transcript_count > 1 ? 's' : ''}`
+                              : (lead.recording_count > 0 || lead.dial_attempts > 0) ? 'Call History' : 'No Calls'}
+                            {lead.recording_count > 0 && <SoundOutlined style={{ marginLeft: 4 }} />}
+                            {lead.dial_attempts > 0 && ` (${lead.dial_attempts} dial${lead.dial_attempts > 1 ? 's' : ''})`}
+                          </span>
                         </button>}
-                        {canEditLead && <button
+                        {canEditLead && <button className="lead-action-button" data-action="note" data-tooltip="Add or edit note" aria-label="Add or edit note"
                           onClick={() => openNoteModal(lead)}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          📝 Note
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(168,85,247,0.08)', color: '#6b21a8', border: '1px solid rgba(168,85,247,0.25)' }}>
+                          <FormOutlined /><span className="lead-action-label">Note</span>
                         </button>}
-                        {canScheduleCalls && <button
+                        {canScheduleCalls && <button className="lead-action-button" data-action="schedule" data-tooltip="Schedule call" aria-label="Schedule call"
                           onClick={() => {
                             openScheduleModal(lead, false);
                           }}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)', borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          📅 Schedule
+                          style={{ ...rowActionStyle, cursor: 'pointer', background: 'rgba(59,130,246,0.08)', color: '#1e40af', border: '1px solid rgba(59,130,246,0.25)' }}>
+                          <CalendarOutlined /><span className="lead-action-label">Schedule</span>
                         </button>}
-                        {canDeleteLead && <button onClick={async () => {
+                        {canDeleteLead && <button className="lead-action-button" data-action="remove" data-tooltip="Remove lead" aria-label="Remove lead" onClick={async () => {
                             const fullName = `${lead.first_name || ''} ${lead.last_name || ''}`.trim() || 'this lead';
                             const ok = await confirm({
                               title: 'Remove Lead',
@@ -2831,28 +2861,28 @@ export default function CampaignDetail({
                             });
                             if (ok) handleRemoveLead(lead.id);
                           }}
-                          style={{ fontSize: 11, padding: '4px 10px', cursor: 'pointer',
+                          style={{ ...rowActionStyle, cursor: 'pointer',
                             background: '#fee2e2', border: '1px solid #fca5a5',
-                            color: T.red, borderRadius: 6, fontWeight: 600, fontFamily: T.font }}>
-                          Remove
+                            color: T.red }}>
+                          <DeleteOutlined /><span className="lead-action-label">Remove</span>
                         </button>}
                         {canScheduleCalls && lead.has_pending_scheduled_call && lead.next_scheduled_at && (
                           <div style={{ position: 'relative', display: 'inline-flex' }}>
-                            <button
+                            <button className="lead-action-button" data-action="scheduled"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setScheduleActionLeadId((prev) => prev === lead.id ? null : lead.id);
                               }}
-                              title="Scheduled call actions"
+                              data-tooltip={`Scheduled call: ${formatDateTime(lead.next_scheduled_at, orgTimezone)}`}
+                              aria-label={`Scheduled call: ${formatDateTime(lead.next_scheduled_at, orgTimezone)}`}
                               style={{
-                                fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                                ...rowActionStyle,
                                 background: 'rgba(59,130,246,0.12)', color: '#1e40af',
-                                border: '1px solid rgba(59,130,246,0.3)', fontWeight: 600,
-                                fontFamily: T.font, whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 8,
+                                border: '1px solid rgba(59,130,246,0.3)',
                                 cursor: 'pointer'
                               }}>
-                              <span>📅 {formatDateTime(lead.next_scheduled_at, orgTimezone)}</span>
-                              <span style={{ fontSize: 10, opacity: 0.85 }}>▾</span>
+                              <CalendarOutlined />
+                              <span className="lead-action-label">{formatDateTime(lead.next_scheduled_at, orgTimezone)} <DownOutlined style={{ fontSize: 9, opacity: 0.85 }} /></span>
                             </button>
                             {scheduleActionLeadId === lead.id && (
                               <div
@@ -2873,7 +2903,7 @@ export default function CampaignDetail({
                                     background: 'transparent', color: '#1e40af', cursor: 'pointer',
                                     fontSize: 12, fontWeight: 600, fontFamily: T.font
                                   }}>
-                                  Edit
+                                  <EditOutlined style={{ marginRight: 6 }} /> Edit
                                 </button>
                                 <button
                                   onClick={async () => {
@@ -2901,7 +2931,7 @@ export default function CampaignDetail({
                                     background: 'rgba(239,68,68,0.08)', color: '#dc2626', cursor: 'pointer',
                                     fontSize: 12, fontWeight: 600, fontFamily: T.font
                                   }}>
-                                  Delete
+                                  <DeleteOutlined style={{ marginRight: 6 }} /> Delete
                                 </button>
                               </div>
                             )}
@@ -3068,9 +3098,9 @@ export default function CampaignDetail({
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>{scheduleEditingCallId ? '📅 Edit Scheduled Call' : '📅 Schedule Call'}</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><CalendarOutlined /> {scheduleEditingCallId ? 'Edit Scheduled Call' : 'Schedule Call'}</h3>
               <button onClick={closeScheduleModal}
-                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><CloseCircleOutlined /></button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               {scheduleLead.first_name} {scheduleLead.last_name} — {scheduleLead.phone}
@@ -3093,15 +3123,10 @@ export default function CampaignDetail({
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Callback mode
-                <select
-                  className="form-input"
-                  value={scheduleMode}
-                  onChange={e => setScheduleMode(e.target.value)}
-                  style={{ ...inputStyle, width: '100%', marginTop: 6, height: 38 }}
-                >
-                  <option value="manual">Manual / Browser Callback (auto-connect for you)</option>
-                  <option value="ai">AI Dial</option>
-                </select>
+                <AppSelect value={scheduleMode} styles={{ root: { marginTop: 6 } }} options={[
+                  { value: 'manual', label: 'Manual / Browser Callback (auto-connect for you)' },
+                  { value: 'ai', label: 'AI Dial' },
+                ]} onChange={setScheduleMode} />
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Notes (optional)
@@ -3120,7 +3145,7 @@ export default function CampaignDetail({
                 marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
                 background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
               }}>
-                ⚠️ {scheduleStatus.text}
+                <WarningOutlined /> {scheduleStatus.text}
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
@@ -3198,9 +3223,9 @@ export default function CampaignDetail({
         >
           <div style={{ background: '#fff', border: `1px solid ${T.border}`, borderRadius: 16, boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxWidth: 420, width: '100%', padding: '1.5rem', fontFamily: T.font }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📲 Manual Call</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><PhoneOutlined /> Manual Call</h3>
               <button onClick={() => { setHumanCallLead(null); setHumanCallStatus('idle'); }}
-                style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><CloseCircleOutlined /></button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               Calling <strong>{humanCallLead.first_name} {humanCallLead.last_name}</strong> — {humanCallLead.phone}
@@ -3222,12 +3247,12 @@ export default function CampaignDetail({
             </label>
             {humanCallStatus === 'error' && (
               <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: '#fee2e2', border: '1px solid #fca5a5', color: T.red }}>
-                ⚠️ {humanCallError}
+                <WarningOutlined /> {humanCallError}
               </div>
             )}
             {humanCallStatus === 'done' && (
               <div style={{ marginTop: '0.75rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#065f46' }}>
-                ✅ Dialing your phone…
+                <CheckCircleOutlined /> Dialing your phone…
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>
@@ -3239,7 +3264,7 @@ export default function CampaignDetail({
                 disabled={humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()}
                 onClick={handleHumanCallDial}
                 style={{ ...btnPrimary, opacity: (humanCallStatus === 'dialing' || humanCallStatus === 'done' || !humanCallPhone.trim()) ? 0.6 : 1 }}>
-                {humanCallStatus === 'dialing' ? '📞 Dialing…' : '📞 Call Me'}
+                <PhoneOutlined /> {humanCallStatus === 'dialing' ? 'Dialing…' : 'Call Me'}
               </button>
             </div>
           </div>
@@ -3250,7 +3275,7 @@ export default function CampaignDetail({
       {noteModalLead && (
         <div className="modal-overlay" onClick={() => setNoteModalLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
           <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
+            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}><FormOutlined /> Quick Note</h2>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
               {noteModalLead.first_name} {noteModalLead.last_name} — {noteModalLead.phone}
             </p>
@@ -3288,7 +3313,7 @@ export default function CampaignDetail({
             padding: '1.5rem', fontFamily: T.font,
           }} onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📝 Call Disposition</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}><FormOutlined /> Call Disposition</h3>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
               {dispositionLead.first_name} {dispositionLead.last_name} — {maskPhone(dispositionLead.phone)}
@@ -3296,14 +3321,9 @@ export default function CampaignDetail({
 
             <label style={{ display: 'block', fontSize: '0.8rem', color: T.sub, fontWeight: 600, marginBottom: '0.75rem' }}>
               Status
-              <select
-                className="form-input"
-                value={dispositionStatus}
-                onChange={e => setDispositionStatus(e.target.value)}
-                style={{ ...inputStyle, width: '100%', marginTop: 6, height: 38 }}
-              >
-                {LEAD_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <AppSelect value={dispositionStatus} styles={{ root: { marginTop: 6 } }}
+                options={LEAD_STATUSES.map(status => ({ value: status, label: leadStatusLabel(status) }))}
+                onChange={setDispositionStatus} />
             </label>
 
             <label style={{ display: 'block', fontSize: '0.8rem', color: T.sub, fontWeight: 600, marginBottom: '0.75rem' }}>

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { formatDateTime } from '../utils/dateFormat';
+import AppIcon from './common/AppIcon';
+import AppSelect from './common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -154,8 +156,8 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
         style={{ ...card, maxWidth: 560, width: '100%', maxHeight: '85vh', overflow: 'auto', padding: '1.5rem', fontFamily: T.font }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-          <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Scheduled Callback Ready</h3>
-          <button onClick={handleDismiss} disabled={dismissing} style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+          <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7 }}><AppIcon name="calendar" /> Scheduled Callback Ready</h3>
+          <button onClick={handleDismiss} disabled={dismissing} aria-label="Close" title="Close" style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}><AppIcon name="close" /></button>
         </div>
 
         {loading ? (
@@ -231,11 +233,11 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
             </div>
           )}
           <button onClick={() => setRescheduling(true)} disabled={autoStarting || rescheduling} style={{ ...btnGhost, opacity: (autoStarting || rescheduling) ? 0.6 : 1 }}>
-            📅 Reschedule
+            <AppIcon name="calendar" /> Reschedule
           </button>
           <button onClick={handleDismiss} disabled={autoStarting || rescheduling || dismissing} style={{ ...btnGhost, opacity: (autoStarting || rescheduling || dismissing) ? 0.6 : 1 }}>{dismissing ? 'Cancelling…' : 'Dismiss'}</button>
           <button onClick={handleManualStart} disabled={loading || autoStarting || rescheduling} style={{ ...btnPrimary, background: T.green, opacity: (loading || autoStarting || rescheduling) ? 0.6 : 1 }}>
-            {autoStarting ? 'Starting…' : '▶ Start Call'}
+            {autoStarting ? <><AppIcon name="loading" spin /> Starting…</> : <><AppIcon name="play" /> Start Call</>}
           </button>
         </div>
       </div>
@@ -258,11 +260,11 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
             style={{ ...card, maxWidth: 440, width: '100%', padding: '1.5rem', fontFamily: T.font }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700 }}>📅 Reschedule Callback</h3>
+              <h3 style={{ margin: 0, color: T.text, fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7 }}><AppIcon name="calendar" /> Reschedule Callback</h3>
               <button
                 onClick={() => { setRescheduling(false); setRescheduleError(''); }}
                 style={{ background: 'transparent', border: 'none', color: T.muted, fontSize: '1.2rem', cursor: 'pointer' }}>
-                ✕
+                <AppIcon name="close" />
               </button>
             </div>
             <p style={{ color: T.muted, fontSize: '0.85rem', marginBottom: '1.25rem' }}>
@@ -289,19 +291,10 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Callback mode
-                <select
-                  value={newScheduleMode}
-                  onChange={e => setNewScheduleMode(e.target.value)}
-                  style={{
-                    width: '100%', marginTop: 6, padding: '8px 10px',
-                    border: `1px solid ${T.border}`, borderRadius: 8,
-                    fontSize: 13, fontFamily: T.font, color: T.text, boxSizing: 'border-box',
-                    height: 38, background: '#fff'
-                  }}
-                >
-                  <option value="manual">Manual / Browser Callback (auto-connect for you)</option>
-                  <option value="ai">AI Dial</option>
-                </select>
+                <AppSelect value={newScheduleMode} styles={{ root: { marginTop: 6 } }} options={[
+                  { value: 'manual', label: 'Manual / Browser Callback (auto-connect for you)' },
+                  { value: 'ai', label: 'AI Dial' },
+                ]} onChange={setNewScheduleMode} />
               </label>
               <label style={{ fontSize: '0.8rem', color: T.sub, fontWeight: 600 }}>
                 Notes (optional)
@@ -324,7 +317,7 @@ export default function ScheduledCallbackPreview({ call, onStart, onDismiss, onR
                 marginTop: '1rem', padding: '8px 12px', borderRadius: 8, fontSize: '0.8rem',
                 background: '#fee2e2', border: '1px solid #fca5a5', color: T.red
               }}>
-                ⚠️ {rescheduleError || dismissError}
+                <AppIcon name="warning" /> {rescheduleError || dismissError}
               </div>
             )}
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: '1.25rem' }}>

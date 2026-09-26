@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
 import loginIcon from '../assets/tg_image_3608761279.png';
+import AppIcon from './common/AppIcon';
 
 export default function AuthPage({ redirectTo = '/crm' }) {
   const { login, signup } = useAuth();
@@ -141,7 +142,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
           {subscriptionError && (
             <div style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: '12px', padding: '1.25rem', marginBottom: '1rem', color: '#fcd34d' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                <span style={{ fontSize: '1.5rem' }}>⚠️</span>
+                <AppIcon name="warning" style={{ fontSize: '1.5rem' }} />
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: '#fbbf24' }}>
                   {subscriptionError.code === 'SUBSCRIPTION_EXPIRED' ? 'Subscription Expired' : 'Subscription Required'}
                 </h3>
@@ -167,7 +168,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
                   padding: '10px 18px',
                 }}
               >
-                📧 Contact Support to Renew
+                <AppIcon name="mail" style={{ marginRight: 7 }} /> Contact Support to Renew
               </button>
             </div>
           )}
@@ -234,19 +235,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
                         lineHeight: 1,
                       }}
                     >
-                      {showPassword ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
-                          <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
-                          <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
-                          <line x1="2" x2="22" y1="2" y2="22"/>
-                        </svg>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                          <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                      )}
+                      <AppIcon name={showPassword ? 'hide' : 'show'} style={{ fontSize: 20 }} />
                     </button>
                   </div>
                 </div>

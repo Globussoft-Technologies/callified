@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -93,7 +94,7 @@ export default function SettingsTab({
 
         {/* Pronunciation Guide */}
         {!hideAiFeatures && (<div style={card}>
-          <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}>🗣️ Pronunciation Guide</h3>
+          <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="sound" /> Pronunciation Guide</h3>
           <p style={{ margin: '0 0 20px', fontSize: 13, color: T.muted }}>
             Teach the AI how to speak your product names correctly. The AI will use the phonetic version in conversations.
           </p>
@@ -127,7 +128,7 @@ export default function SettingsTab({
                 color: '#fff', fontWeight: 700, fontSize: 13, fontFamily: T.font,
                 cursor: 'pointer', whiteSpace: 'nowrap',
               }}>
-              + Add Rule
+              <AppIcon name="plus" /> Add Rule
             </button>
           </form>
           {pronError && (
@@ -160,7 +161,7 @@ export default function SettingsTab({
                   return (
                     <tr key={p.id}>
                       <td style={{ ...rowTd, fontWeight: 600, color: T.text, fontFamily: T.mono }}>{p.word}</td>
-                      <td style={{ ...rowTd, color: T.green, fontStyle: 'italic' }}>🔊 "{p.phonetic}"</td>
+                      <td style={{ ...rowTd, color: T.green, fontStyle: 'italic' }}><AppIcon name="sound" /> "{p.phonetic}"</td>
                       <td style={{ ...rowTd, color: T.muted }}>{formatDate(p.created_at, orgTimezone)}</td>
                       <td style={rowTd}>
                         <button
@@ -170,7 +171,7 @@ export default function SettingsTab({
                             color: T.red, borderRadius: 6, padding: '4px 12px',
                             cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
                           }}>
-                          🗑️ Remove
+                          <AppIcon name="delete" /> Remove
                         </button>
                       </td>
                     </tr>
@@ -187,7 +188,7 @@ export default function SettingsTab({
           background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
           boxShadow: 'none',
         }}>
-          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: T.amber }}>💡 How it works</h4>
+          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: T.amber }}><AppIcon name="idea" /> How it works</h4>
           <p style={{ color: T.sub, fontSize: 13, margin: 0, lineHeight: 1.7 }}>
             The pronunciation guide is injected into the AI's prompt at the start of every call.
             When the AI generates a response containing a mapped word, it will use the phonetic version instead.
@@ -201,10 +202,10 @@ export default function SettingsTab({
         {!hideAiFeatures && selectedOrg && (
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>🤖 AI System Prompt</h3>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="robot" /> AI System Prompt</h3>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 {!promptDirty && promptSaved && (
-                  <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+                  <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}><AppIcon name="check" /> Saved</span>
                 )}
                 {promptDirty && (
                   <button
@@ -216,7 +217,7 @@ export default function SettingsTab({
                       fontWeight: 700, fontSize: 13, fontFamily: T.font,
                       opacity: promptSaving ? 0.7 : 1,
                     }}>
-                    {promptSaving ? '⏳ Saving...' : '💾 Save Prompt'}
+                    {promptSaving ? <><AppIcon name="loading" spin /> Saving...</> : <><AppIcon name="save" /> Save Prompt</>}
                   </button>
                 )}
               </div>
@@ -227,7 +228,7 @@ export default function SettingsTab({
 
             {systemPromptAuto && !systemPromptCustom && (
               <div style={{ marginBottom: 16 }}>
-                <label style={{ ...labelStyle, color: T.accent }}>📄 Auto-Generated from Products</label>
+                <label style={{ ...labelStyle, color: T.accent }}><AppIcon name="file" /> Auto-Generated from Products</label>
                 <div style={{
                   background: T.bg, padding: 12, borderRadius: 8,
                   border: `1px solid ${T.border}`, whiteSpace: 'pre-wrap',
@@ -241,7 +242,7 @@ export default function SettingsTab({
 
             <div>
               <label style={labelStyle}>
-                ✏️ Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}
+                <AppIcon name="edit" /> Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}
               </label>
               <textarea
                 rows={8}
@@ -290,10 +291,10 @@ export default function SettingsTab({
         {/* Call Action Visibility */}
         {!hideAiFeatures && (<div style={card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>☎️ Call Action Visibility</h3>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="phone" /> Call Action Visibility</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {callActionsSaved && (
-                <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}>✓ Saved</span>
+                <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}><AppIcon name="check" /> Saved</span>
               )}
               <button
                 onClick={saveCallActions}
@@ -302,7 +303,7 @@ export default function SettingsTab({
                   borderRadius: 8, color: '#fff', padding: '8px 16px',
                   cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
                 }}>
-                💾 Save
+                <AppIcon name="save" /> Save
               </button>
             </div>
           </div>
@@ -323,13 +324,13 @@ export default function SettingsTab({
                 readOnly
                 style={{ width: 18, height: 18, cursor: 'default' }}
               />
-              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>🎙 Browser Call</span>
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}><AppIcon name="audio" /> Browser Call</span>
             </label>
           ) : ([
-            { key: 'dial', label: '📞 Dial' },
-            { key: 'browserCall', label: '🎙 Browser Call' },
-            { key: 'simWebCall', label: '🌐 Sim Web Call' },
-          ].map(({ key, label }) => (
+            { key: 'dial', label: 'Dial', icon: 'phone' },
+            { key: 'browserCall', label: 'Browser Call', icon: 'audio' },
+            { key: 'simWebCall', label: 'Sim Web Call', icon: 'global' },
+          ].map(({ key, label, icon }) => (
             <label key={key} style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '10px 12px', borderRadius: 8, cursor: 'pointer',
@@ -342,7 +343,7 @@ export default function SettingsTab({
                 onChange={() => handleCallActionChange(key)}
                 style={{ width: 18, height: 18, cursor: 'pointer' }}
               />
-              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}>{label}</span>
+              <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}><AppIcon name={icon} /> {label}</span>
             </label>
           )))}
         </div>)}

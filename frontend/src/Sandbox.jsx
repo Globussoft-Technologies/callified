@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import AppIcon from './components/common/AppIcon';
+import AppSelect from './components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -189,7 +191,7 @@ export default function Sandbox() {
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>🎯 AI Training Sandbox</h2>
+        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}><AppIcon name="experiment" /> AI Training Sandbox</h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
           Roleplay and stress test the Voice Agent engine. Choose different TTS providers and voices to find the best fit.
         </p>
@@ -231,17 +233,13 @@ export default function Sandbox() {
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8, fontFamily: T.font }}>
             Voice
           </div>
-          <select value={voiceId} onChange={e => setVoiceId(e.target.value)} disabled={recording}
-            style={{
-              width: '100%', padding: '9px 13px', borderRadius: 8, fontSize: 13,
-              border: `1px solid ${T.border}`, background: T.card, color: T.text,
-              fontFamily: T.font, outline: 'none', cursor: 'pointer',
-              opacity: recording ? 0.6 : 1,
-            }}>
-            {currentVoices.map(v => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
+          <AppSelect
+            value={voiceId}
+            onChange={setVoiceId}
+            disabled={recording}
+            searchable
+            options={currentVoices.map(voice => ({ value: voice.id, label: voice.name }))}
+          />
         </div>
 
         {/* Action buttons */}
@@ -253,7 +251,7 @@ export default function Sandbox() {
               background: 'linear-gradient(135deg, #22c55e, #16a34a)',
               color: '#fff', cursor: 'pointer',
             }}>
-              🎙️ Start Simulation
+              <AppIcon name="audio" /> Start Simulation
             </button>
           ) : (
             <button onClick={stopSandbox} style={{
@@ -262,20 +260,20 @@ export default function Sandbox() {
               border: `1px solid ${T.red}`, background: 'rgba(239,68,68,0.08)',
               color: T.red, cursor: 'pointer',
             }}>
-              ⏹️ Stop
+              <AppIcon name="stop" /> Stop
             </button>
           )}
           <button onClick={() => setTranscripts([])} style={{
             padding: '10px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
             fontFamily: T.font, cursor: 'pointer',
             border: `1px solid ${T.border}`, background: T.card, color: T.sub,
-          }}>🗑️ Clear</button>
+          }}><AppIcon name="clear" /> Clear</button>
         </div>
 
         {/* Status panel */}
         <div style={{ background: T.bg, borderRadius: 8, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {[
-            { label: 'Mic', value: recording ? <span style={{ color: T.green }}>Active 🟢</span> : <span style={{ color: T.red }}>Off 🔴</span> },
+            { label: 'Mic', value: recording ? <span style={{ color: T.green }}><AppIcon name="checkCircle" /> Active</span> : <span style={{ color: T.red }}><AppIcon name="stop" /> Off</span> },
             { label: 'Provider', value: <span style={{ color: T.accent }}>{VOICE_OPTIONS[provider].label}</span> },
             { label: 'Voice', value: <span style={{ color: T.accent }}>{selectedVoiceName}</span> },
           ].map(({ label, value }) => (
@@ -311,7 +309,7 @@ export default function Sandbox() {
               fontFamily: T.font,
             }}>
               <strong style={{ display: 'block', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, color: T.muted }}>
-                {t.role === 'user' ? '👤 You' : '🤖 AI Agent'}
+                <AppIcon name={t.role === 'user' ? 'user' : 'robot'} /> {t.role === 'user' ? 'You' : 'AI Agent'}
               </strong>
               <span style={{ fontSize: 13, color: T.text }}>{t.text}</span>
             </div>

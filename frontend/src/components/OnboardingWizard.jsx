@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { INDIAN_VOICES, INDIAN_LANGUAGES } from '../constants/voices';
+import AppSelect from './common/AppSelect';
 
 const STEPS = [
   { key: 'leads', label: 'Upload Leads' },
@@ -211,24 +212,20 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '1rem' }}>
                 <div>
                   <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Language</label>
-                  <select className="form-input" value={language} onChange={e => setLanguage(e.target.value)}>
-                    {INDIAN_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
-                  </select>
+                  <AppSelect searchable value={language} options={INDIAN_LANGUAGES.map(item => ({ value: item.code, label: item.name }))} onChange={setLanguage} />
                 </div>
                 <div>
                   <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Provider</label>
-                  <select className="form-input" value={voiceProvider} onChange={e => { setVoiceProvider(e.target.value); setVoiceId(''); }}>
-                    <option value="sarvam">Sarvam AI</option>
-                    <option value="elevenlabs">ElevenLabs</option>
-                    <option value="smallest">SmallestAI</option>
-                  </select>
+                  <AppSelect value={voiceProvider} options={[
+                    { value: 'sarvam', label: 'Sarvam AI' },
+                    { value: 'elevenlabs', label: 'ElevenLabs' },
+                    { value: 'smallest', label: 'SmallestAI' },
+                  ]} onChange={value => { setVoiceProvider(value); setVoiceId(''); }} />
                 </div>
                 <div>
                   <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Voice</label>
-                  <select className="form-input" value={voiceId} onChange={e => setVoiceId(e.target.value)}>
-                    <option value="">Select voice...</option>
-                    {voices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
+                  <AppSelect searchable value={voiceId || undefined} placeholder="Select voice..."
+                    options={voices.map(voice => ({ value: voice.id, label: voice.name }))} onChange={setVoiceId} />
                 </div>
               </div>
 
@@ -278,9 +275,8 @@ export default function OnboardingWizard({ apiFetch, API_URL, selectedOrg, orgPr
                 </div>
                 <div>
                   <label style={{ display: 'block', color: '#cbd5e1', fontSize: '0.85rem', marginBottom: '6px' }}>Product</label>
-                  <select className="form-input" value={productId} onChange={e => setProductId(e.target.value)}>
-                    {orgProducts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
+                  <AppSelect searchable value={String(productId)} popupWidth={240}
+                    options={orgProducts.map(product => ({ value: String(product.id), label: product.name }))} onChange={setProductId} />
                 </div>
               </div>
 
