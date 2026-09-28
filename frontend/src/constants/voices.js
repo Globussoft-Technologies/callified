@@ -13,6 +13,12 @@ export const INDIAN_LANGUAGES = [
 
 // Per-language voice recommendations (tested for quality/naturalness)
 export const VOICE_RECOMMENDATIONS = {
+  en: {
+    gemini_live: {
+      top: ['en-in-csagent-12', 'en-in-csagent-1', 'en-in-csagent-5'],
+      note: 'Indian-English voices optimized for natural sales and call-center conversations.',
+    },
+  },
   bn: {
     sarvam: {
       top: ['amit', 'advait', 'manan', 'aayan', 'neha', 'roopa', 'ishita', 'pooja'],
@@ -32,6 +38,41 @@ export const VOICE_RECOMMENDATIONS = {
 };
 
 export const INDIAN_VOICES = {
+  gemini_live: [
+    { id: 'en-in-csagent-12', name: 'Indian Sales Agent – Natural & Clear ♂' },
+    { id: 'en-in-csagent-1', name: 'Indian Call Agent – Natural & Clear ♂' },
+    { id: 'en-in-csagent-5', name: 'Indian Sales Agent – Clear & Friendly ♀' },
+    { id: 'Kore', name: 'Kore – Firm' },
+    { id: 'Puck', name: 'Puck – Upbeat' },
+    { id: 'Charon', name: 'Charon – Informative' },
+    { id: 'Fenrir', name: 'Fenrir – Excitable' },
+    { id: 'Aoede', name: 'Aoede – Breezy' },
+    { id: 'Leda', name: 'Leda – Youthful' },
+    { id: 'Orus', name: 'Orus – Firm' },
+    { id: 'Zephyr', name: 'Zephyr – Bright' },
+    { id: 'Callirrhoe', name: 'Callirrhoe – Easy-going' },
+    { id: 'Autonoe', name: 'Autonoe – Bright' },
+    { id: 'Enceladus', name: 'Enceladus – Breathy' },
+    { id: 'Iapetus', name: 'Iapetus – Clear' },
+    { id: 'Umbriel', name: 'Umbriel – Easy-going' },
+    { id: 'Algieba', name: 'Algieba – Smooth' },
+    { id: 'Despina', name: 'Despina – Smooth' },
+    { id: 'Erinome', name: 'Erinome – Clear' },
+    { id: 'Algenib', name: 'Algenib – Gravelly' },
+    { id: 'Rasalgethi', name: 'Rasalgethi – Informative' },
+    { id: 'Laomedeia', name: 'Laomedeia – Upbeat' },
+    { id: 'Achernar', name: 'Achernar – Soft' },
+    { id: 'Alnilam', name: 'Alnilam – Firm' },
+    { id: 'Schedar', name: 'Schedar – Even' },
+    { id: 'Gacrux', name: 'Gacrux – Mature' },
+    { id: 'Pulcherrima', name: 'Pulcherrima – Forward' },
+    { id: 'Achird', name: 'Achird – Friendly' },
+    { id: 'Zubenelgenubi', name: 'Zubenelgenubi – Casual' },
+    { id: 'Vindemiatrix', name: 'Vindemiatrix – Gentle' },
+    { id: 'Sadachbia', name: 'Sadachbia – Lively' },
+    { id: 'Sadaltager', name: 'Sadaltager – Knowledgeable' },
+    { id: 'Sulafat', name: 'Sulafat – Warm' },
+  ],
   elevenlabs: [
     { id: 'oH8YmZXJYEZq5ScgoGn9', name: 'Aakash – Friendly Support' },
     { id: 'X4ExprIXDKrWcHdtGysh', name: 'Anjura – Confident' },

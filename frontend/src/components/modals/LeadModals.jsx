@@ -1,4 +1,19 @@
 import React from 'react';
+import AppSelect from '../common/AppSelect';
+
+const sourceOptions = ['manual', 'facebook', 'google', 'instagram', 'linkedin', 'website', 'referral', 'cold', 'other']
+  .map(source => ({
+    value: source,
+    label: source === 'other' ? 'Others' : source[0].toUpperCase() + source.slice(1),
+  }));
+
+const executiveOptions = executives => [
+  { value: '', label: 'Unassigned' },
+  ...(executives || []).map(executive => ({
+    value: String(executive.id),
+    label: executive.name || executive.full_name || executive.email,
+  })),
+];
 
 export default function LeadModals({
   isModalOpen, setIsModalOpen, handleCreateLead, formData, setFormData, loading,
@@ -30,16 +45,15 @@ export default function LeadModals({
               </div>
               <div className="form-group">
                 <label>Source</label>
-                <input data-testid="lead-source" name="source" className="form-input" value={formData.source || ""} onChange={e => setFormData({...formData, source: e.target.value})} placeholder="Dashboard" />
+                <AppSelect data-testid="lead-source" searchable size="large" value={(formData.source || 'manual').toLowerCase()}
+                  options={sourceOptions} onChange={value => setFormData({...formData, source: value})} />
               </div>
               {executives && executives.length > 0 && (
                 <div className="form-group">
                   <label>Executive</label>
-                  <select className="form-input" value={formData.executive_id || ''}
-                    onChange={e => setFormData({...formData, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
-                    <option value="">— Unassigned —</option>
-                    {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
+                  <AppSelect searchable size="large" value={formData.executive_id ? String(formData.executive_id) : ''}
+                    popupWidth={260} options={executiveOptions(executives)}
+                    onChange={value => setFormData({...formData, executive_id: value ? parseInt(value, 10) : 0})} />
                 </div>
               )}
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>
@@ -76,16 +90,15 @@ export default function LeadModals({
               </div>
               <div className="form-group">
                 <label>Source</label>
-                <input name="source" className="form-input" value={editFormData.source} onChange={e => setEditFormData({...editFormData, source: e.target.value})} />
+                <AppSelect searchable size="large" value={(editFormData.source || 'manual').toLowerCase()}
+                  options={sourceOptions} onChange={value => setEditFormData({...editFormData, source: value})} />
               </div>
               {executives && executives.length > 0 && (
                 <div className="form-group">
                   <label>Executive</label>
-                  <select className="form-input" value={editFormData.executive_id || ''}
-                    onChange={e => setEditFormData({...editFormData, executive_id: e.target.value ? parseInt(e.target.value, 10) : 0})}>
-                    <option value="">— Unassigned —</option>
-                    {executives.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
+                  <AppSelect searchable size="large" value={editFormData.executive_id ? String(editFormData.executive_id) : ''}
+                    popupWidth={260} options={executiveOptions(executives)}
+                    onChange={value => setEditFormData({...editFormData, executive_id: value ? parseInt(value, 10) : 0})} />
                 </div>
               )}
               <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '2.5rem'}}>

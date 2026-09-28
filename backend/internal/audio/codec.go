@@ -33,3 +33,39 @@ func Decimate2x(pcm16k []byte) []byte {
 	}
 	return out
 }
+
+// Upsample2x converts 8kHz PCM16LE to 16kHz using linear interpolation.
+func Upsample2x(pcm8k []byte) []byte {
+	if len(pcm8k) < 2 {
+		return nil
+	}
+	samples := len(pcm8k) / 2
+	out := make([]byte, samples*4)
+	for i := 0; i < samples; i++ {
+		cur := int16(uint16(pcm8k[i*2]) | uint16(pcm8k[i*2+1])<<8)
+		next := cur
+		if i+1 < samples {
+			next = int16(uint16(pcm8k[(i+1)*2]) | uint16(pcm8k[(i+1)*2+1])<<8)
+		}
+		mid := int16((int32(cur) + int32(next)) / 2)
+		for j, sample := range []int16{cur, mid} {
+			off := (i*2 + j) * 2
+			out[off] = byte(sample)
+			out[off+1] = byte(uint16(sample) >> 8)
+		}
+	}
+	return out
+}
+
+// Decimate3x converts Gemini Live's 24kHz PCM16LE output to telephony 8kHz.
+func Decimate3x(pcm24k []byte) []byte {
+	samples := len(pcm24k) / 2
+	outSamples := samples / 3
+	out := make([]byte, outSamples*2)
+	for i := 0; i < outSamples; i++ {
+		src := i * 6
+		out[i*2] = pcm24k[src]
+		out[i*2+1] = pcm24k[src+1]
+	}
+	return out
+}

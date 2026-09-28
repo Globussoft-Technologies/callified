@@ -8,6 +8,7 @@ import TranscriptModal from '../components/modals/TranscriptModal';
 import EmailDraftModal from '../components/modals/EmailDraftModal';
 import { normalizePhone } from '../utils/phone';
 import { useAuth } from '../contexts/AuthContext';
+import AppIcon from '../components/common/AppIcon';
 
 export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
@@ -311,7 +312,7 @@ export default function CrmPage({
       {noteLead && (
         <div className="modal-overlay" onClick={() => setNoteLead(null)} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
           <div className="glass-panel modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '520px'}} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-            <h2 style={{marginTop: 0, marginBottom: '0.5rem'}}>📝 Quick Note</h2>
+            <h2 style={{marginTop: 0, marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: 8}}><AppIcon name="note" /> Quick Note</h2>
             <p style={{color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.5rem'}}>
               {noteLead.first_name} {noteLead.last_name} — {noteLead.phone}
             </p>
@@ -321,7 +322,7 @@ export default function CrmPage({
               style={{width: '100%', minHeight: '120px', resize: 'vertical', fontSize: '0.9rem', lineHeight: 1.5,
                 borderColor: noteError ? 'rgba(239,68,68,0.5)' : undefined}} />
             {noteError && (
-              <p style={{color: '#f87171', fontSize: '0.8rem', margin: '6px 0 0'}}>⚠ {noteError}</p>
+              <p style={{color: '#f87171', fontSize: '0.8rem', margin: '6px 0 0'}}><AppIcon name="warning" style={{ marginRight: 4 }} />{noteError}</p>
             )}
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setNoteLead(null)}

@@ -15,6 +15,7 @@ import { API_URL } from '../constants/api';
 import { INDIAN_LANGUAGES, INDIAN_VOICES, VOICE_RECOMMENDATIONS } from '../constants/voices';
 import { formatDateTime } from '../utils/dateFormat';
 import AuthAudio from '../components/AuthAudio';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f6f7fb',
@@ -410,52 +411,48 @@ export default function ReceptionistPage() {
       <section style={{ marginBottom: 16, background: T.panel, border: `1px solid ${T.border}`, borderRadius: 8, padding: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Voice Settings</div>
-          <select
+          <AppSelect
             value={activeVoiceProvider}
-            onChange={e => handleProviderChange(e.target.value)}
+            onChange={handleProviderChange}
             disabled={active}
-            style={{ height: 34, minWidth: 130, border: `1px solid ${T.border}`, borderRadius: 6, padding: '0 10px', fontFamily: T.font, background: '#fff' }}
-          >
-            <option value="elevenlabs">ElevenLabs</option>
-            <option value="sarvam">Sarvam AI</option>
-            <option value="smallest">Smallest AI</option>
-          </select>
-          <select
+            size="small"
+            width={150}
+            options={[
+              { value: 'elevenlabs', label: 'ElevenLabs' },
+              { value: 'sarvam', label: 'Sarvam AI' },
+              { value: 'smallest', label: 'Smallest AI' },
+            ]}
+          />
+          <AppSelect
             value={activeVoiceId}
-            onChange={e => handleVoiceChange(e.target.value)}
+            onChange={handleVoiceChange}
             disabled={active}
-            style={{ height: 34, minWidth: 220, border: `1px solid ${T.border}`, borderRadius: 6, padding: '0 10px', fontFamily: T.font, background: '#fff' }}
-          >
-            <option value="">Select voice</option>
-            {(() => {
+            searchable
+            size="small"
+            width={260}
+            placeholder="Select voice"
+            options={(() => {
               const recs = VOICE_RECOMMENDATIONS[activeLanguage]?.[activeVoiceProvider]?.top || [];
               const recommended = selectedProviderVoices.filter(v => recs.includes(v.id));
               const others = selectedProviderVoices.filter(v => !recs.includes(v.id));
-              return (
-                <>
-                  {recommended.length > 0 && (
-                    <optgroup label="Recommended">
-                      {recommended.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </optgroup>
-                  )}
-                  {recommended.length > 0 && (
-                    <optgroup label="All Voices">
-                      {others.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </optgroup>
-                  )}
-                  {recommended.length === 0 && selectedProviderVoices.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </>
-              );
+              const toOptions = voices => voices.map(v => ({ value: v.id, label: v.name }));
+              return recommended.length > 0
+                ? [
+                    { label: 'Recommended', options: toOptions(recommended) },
+                    { label: 'All Voices', options: toOptions(others) },
+                  ]
+                : toOptions(selectedProviderVoices);
             })()}
-          </select>
-          <select
+          />
+          <AppSelect
             value={activeLanguage}
-            onChange={e => setActiveLanguage(e.target.value)}
+            onChange={setActiveLanguage}
             disabled={active}
-            style={{ height: 34, minWidth: 130, border: `1px solid ${T.border}`, borderRadius: 6, padding: '0 10px', fontFamily: T.font, background: '#fff' }}
-          >
-            {INDIAN_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
-          </select>
+            searchable
+            size="small"
+            width={160}
+            options={INDIAN_LANGUAGES.map(language => ({ value: language.code, label: language.name }))}
+          />
           <button
             onClick={handleSaveVoice}
             disabled={active || voiceSaveStatus === 'saving'}

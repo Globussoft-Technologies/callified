@@ -2,6 +2,8 @@ package llm
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +23,34 @@ func TestGeminiStreamEventMarksThoughtParts(t *testing.T) {
 	require.Len(t, event.Candidates[0].Content.Parts, 2)
 	assert.True(t, event.Candidates[0].Content.Parts[0].Thought)
 	assert.False(t, event.Candidates[0].Content.Parts[1].Thought)
+}
+
+func TestGeminiDefaultEndpointUsesHeaderAPIKey(t *testing.T) {
+	client := NewGeminiClient("test-key", "gemini-test", "")
+	endpoint, bearerAuth := client.endpoint("generateContent", false)
+	parsed, err := url.Parse(endpoint)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.Query().Get("key"))
+	assert.False(t, bearerAuth)
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	require.NoError(t, err)
+	client.applyAuth(req, bearerAuth)
+	assert.Equal(t, "test-key", req.Header.Get("x-goog-api-key"))
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
+func TestGeminiCustomEndpointUsesBearerToken(t *testing.T) {
+	client := NewGeminiClient("test-token", "gemini-test", "https://example.test")
+	endpoint, bearerAuth := client.endpoint("streamGenerateContent", true)
+	assert.True(t, bearerAuth)
+	assert.Contains(t, endpoint, "?alt=sse")
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	require.NoError(t, err)
+	client.applyAuth(req, bearerAuth)
+	assert.Equal(t, "Bearer test-token", req.Header.Get("Authorization"))
+	assert.Empty(t, req.Header.Get("x-goog-api-key"))
 }
 
 func TestGeminiVoiceRequestDisablesThinking(t *testing.T) {

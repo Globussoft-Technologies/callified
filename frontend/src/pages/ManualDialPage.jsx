@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../contexts/UIContext';
 import { useCall } from '../contexts/CallContext';
 import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
+import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -193,7 +195,7 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
   return (
     <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', fontFamily: T.font }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>📞 Manual Dial</h1>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="phone" /> Manual Dial</h1>
         <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
           Search any customer and place an AI or browser call.
         </p>
@@ -214,14 +216,11 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 220 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.sub }}>Campaign (for browser call)</span>
-            <select
-              value={selectedCampaignId}
-              onChange={e => setSelectedCampaignId(e.target.value)}
-              style={{ ...inputStyle(false), width: '100%', boxSizing: 'border-box', height: 38 }}
-            >
-              {campaigns.length === 0 && <option value="">No campaigns</option>}
-              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <AppSelect searchable value={String(selectedCampaignId || '')} width={260} popupWidth={300}
+              options={campaigns.length === 0
+                ? [{ value: '', label: 'No campaigns', disabled: true }]
+                : campaigns.map(campaign => ({ value: String(campaign.id), label: campaign.name }))}
+              onChange={setSelectedCampaignId} />
           </label>
           <button onClick={() => search()} disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.6 : 1 }}>
             {loading ? 'Searching…' : 'Search'}
@@ -256,13 +255,13 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
                         onClick={() => handleAIDial(lead)}
                         disabled={!canDial}
                         style={{ ...btnPrimary, background: T.green, padding: '6px 14px', fontSize: '0.8rem', opacity: !canDial ? 0.6 : 1 }}>
-                        {callingId === lead.id ? 'Dialing…' : '🤖 AI Dial'}
+                        {callingId === lead.id ? <><AppIcon name="loading" spin /> Dialing…</> : <><AppIcon name="robot" /> AI Dial</>}
                       </button>
                       <button
                         onClick={() => handleBrowserCall(lead)}
                         disabled={!canDial || !selectedCampaignId}
                         style={{ ...btnPrimary, padding: '6px 14px', fontSize: '0.8rem', opacity: (!canDial || !selectedCampaignId) ? 0.6 : 1 }}>
-                        {browserCallDialing ? 'Calling…' : '🎙 Browser Call'}
+                        {browserCallDialing ? <><AppIcon name="loading" spin /> Calling…</> : <><AppIcon name="audio" /> Browser Call</>}
                       </button>
                     </div>
                   </td>
@@ -280,7 +279,7 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
       )}
 
       <div style={{ ...card, padding: '1.25rem' }}>
-        <div style={{ fontWeight: 700, color: T.text, fontSize: 15, marginBottom: 14 }}>➕ Add New Customer & Call</div>
+        <div style={{ fontWeight: 700, color: T.text, fontSize: 15, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 7 }}><AppIcon name="plus" /> Add New Customer & Call</div>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: 1 }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: T.sub }}>Name</span>
@@ -319,13 +318,13 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
               onClick={() => createAndCall('ai')}
               disabled={!canDial}
               style={{ ...btnPrimary, background: T.green, opacity: !canDial ? 0.6 : 1 }}>
-              {creating ? 'Creating…' : '🤖 Create & AI Dial'}
+              {creating ? <><AppIcon name="loading" spin /> Creating…</> : <><AppIcon name="robot" /> Create & AI Dial</>}
             </button>
             <button
               onClick={() => createAndCall('browser')}
               disabled={!canDial || !selectedCampaignId}
               style={{ ...btnPrimary, opacity: (!canDial || !selectedCampaignId) ? 0.6 : 1 }}>
-              {creating ? 'Creating…' : '🎙 Create & Browser Call'}
+              {creating ? <><AppIcon name="loading" spin /> Creating…</> : <><AppIcon name="audio" /> Create & Browser Call</>}
             </button>
           </div>
         </div>

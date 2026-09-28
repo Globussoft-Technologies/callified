@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -205,7 +206,7 @@ export default function ProductsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          {hideAiFeatures ? '📦 Products' : <>📦 <span style={{ color: T.cyan }}>Product</span> Knowledge</>}
+          <AppIcon name="product" /> {hideAiFeatures ? 'Products' : <><span style={{ color: T.cyan }}>Product</span> Knowledge</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
           {hideAiFeatures ? 'Manage your products.' : 'Manage your products. The AI learns from this to have informed conversations.'}
@@ -214,7 +215,7 @@ export default function ProductsTab({
 
       {/* Org card */}
       <div style={{ ...card, padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ fontSize: 22 }}>🏛️</span>
+        <AppIcon name="bank" style={{ fontSize: 22, color: T.cyan }} />
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 2 }}>
             Your Organization
@@ -229,7 +230,7 @@ export default function ProductsTab({
           {/* Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.text }}>
-              📦 Products in <span style={{ color: T.cyan }}>{selectedOrg.name}</span>
+              <AppIcon name="product" /> Products in <span style={{ color: T.cyan }}>{selectedOrg.name}</span>
             </h3>
             {!showProductInput ? (
               <button data-testid="add-product-btn"
@@ -238,7 +239,7 @@ export default function ProductsTab({
                   padding: '8px 16px', borderRadius: 8, border: 'none',
                   background: T.accent, color: '#fff', fontWeight: 600,
                   fontSize: 13, fontFamily: T.font, cursor: 'pointer',
-                }}>+ Add Product</button>
+                }}><AppIcon name="plus" /> Add Product</button>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -257,7 +258,7 @@ export default function ProductsTab({
                   padding: '0 10px', height: 36, borderRadius: 8,
                   border: `1px solid ${T.border}`, background: T.card,
                   color: T.muted, fontSize: 13, cursor: 'pointer', fontFamily: T.font,
-                }}>✕</button>
+                }} aria-label="Cancel" title="Cancel"><AppIcon name="close" /></button>
               </div>
               {nameError && <span style={{ color: T.red, fontSize: '0.72rem', marginLeft: 2 }}>{nameError}</span>}
               </div>
@@ -299,7 +300,7 @@ export default function ProductsTab({
                               background: 'rgba(8,145,178,0.08)', border: `1px solid rgba(8,145,178,0.25)`,
                               color: T.cyan, padding: '3px 10px', borderRadius: 6,
                               cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
-                            }}>✏️ Edit</button>
+                            }}><AppIcon name="edit" /> Edit</button>
                           </>
                         )}
                       </div>
@@ -321,7 +322,7 @@ export default function ProductsTab({
                         <button onClick={() => setConfirmDeleteId(p.id)} style={{
                           background: 'transparent', border: 'none', color: T.red,
                           cursor: 'pointer', fontSize: 13, fontFamily: T.font,
-                        }}>🗑️ Remove</button>
+                        }}><AppIcon name="delete" /> Remove</button>
                       )}
                     </div>
 
@@ -342,14 +343,14 @@ export default function ProductsTab({
                           color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
                           cursor: scraping === p.id ? 'not-allowed' : 'pointer',
                         }}>
-                          {scraping === p.id ? '⏳ Analyzing...' : ((getWebsiteUrl(p.id) || p.website_url) ? '🔍 Scrape Website' : '🧠 AI Research')}
+                          {scraping === p.id ? <><AppIcon name="loading" spin /> Analyzing...</> : ((getWebsiteUrl(p.id) || p.website_url) ? <><AppIcon name="search" /> Scrape Website</> : <><AppIcon name="robot" /> AI Research</>)}
                         </button>
                       </div>
                       {scrapeError?.[p.id] && (
                         <div style={{ marginTop: 6, padding: '8px 12px', borderRadius: 6,
                           background: '#fef2f2', border: '1px solid #fca5a5',
                           color: '#dc2626', fontSize: 12, lineHeight: 1.5, fontFamily: T.font }}>
-                          ⚠️ {scrapeError[p.id]}
+                          <AppIcon name="warning" /> {scrapeError[p.id]}
                         </div>
                       )}
                     </div>
@@ -363,8 +364,8 @@ export default function ProductsTab({
                           color: T.cyan, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
                           fontSize: 13, fontWeight: 600, fontFamily: T.font, width: '100%', textAlign: 'left',
                         }}>
-                        {pp.expanded ? '▾' : '▸'} Product Details, Persona & Call Flow
-                        {p.scraped_info ? ' ✅' : ''}{pp.agent_persona ? ' 🎭' : ''}
+                        <AppIcon name={pp.expanded ? 'down' : 'right'} /> Product Details, Persona &amp; Call Flow
+                        {p.scraped_info ? <AppIcon name="checkCircle" style={{ marginLeft: 7 }} /> : null}{pp.agent_persona ? <AppIcon name="user" style={{ marginLeft: 7 }} /> : null}
                       </button>
 
                       {pp.expanded && (
@@ -372,7 +373,7 @@ export default function ProductsTab({
 
                           {p.scraped_info && (
                             <div style={{ marginBottom: 16 }}>
-                              <label style={{ ...labelStyle, color: T.cyan }}>📄 AI-Extracted Info</label>
+                              <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> AI-Extracted Info</label>
                               <textarea readOnly value={p.scraped_info} style={{
                                 width: '100%', boxSizing: 'border-box', padding: 12, borderRadius: 8,
                                 border: `1px solid ${T.border}`, background: T.bg,
@@ -385,7 +386,7 @@ export default function ProductsTab({
 
                           {p.image_urls && p.image_urls.length > 0 && (
                             <div style={{ marginBottom: 16 }}>
-                              <label style={{ ...labelStyle, color: '#f59e0b' }}>🖼️ Scraped Images ({p.image_urls.length})</label>
+                              <label style={{ ...labelStyle, color: '#f59e0b' }}><AppIcon name="image" /> Scraped Images ({p.image_urls.length})</label>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                                 {p.image_urls.map((url, i) => (
                                   <div key={i} style={{ position: 'relative', cursor: 'pointer' }}
@@ -401,7 +402,7 @@ export default function ProductsTab({
                                       border: `1px solid ${T.border}`, background: T.bg,
                                       alignItems: 'center', justifyContent: 'center',
                                       fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
-                                      ❌ Failed
+                                      <AppIcon name="warning" /> Failed
                                     </div>
                                     <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0,
                                       background: 'rgba(0,0,0,0.65)', color: '#fff', fontSize: 9,
@@ -417,7 +418,7 @@ export default function ProductsTab({
 
                           {/* Manual Images */}
                           <div style={{ marginBottom: 16 }}>
-                            <label style={{ ...labelStyle, color: '#8b5cf6' }}>📸 Custom Images (AI uses these labels for WhatsApp matching)</label>
+                            <label style={{ ...labelStyle, color: '#8b5cf6' }}><AppIcon name="camera" /> Custom Images (AI uses these labels for WhatsApp matching)</label>
 
                             {p.manual_images && p.manual_images.length > 0 && (
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
@@ -437,7 +438,7 @@ export default function ProductsTab({
                                         border: `2px solid #8b5cf6`, background: T.bg,
                                         alignItems: 'center', justifyContent: 'center',
                                         fontSize: 11, color: T.sub, textAlign: 'center', padding: 4 }}>
-                                        ❌ Failed
+                                        <AppIcon name="warning" /> Failed
                                       </div>
                                       <button
                                         onClick={e => { e.stopPropagation(); handleDeleteManualImage(p.id, i); }}
@@ -446,7 +447,7 @@ export default function ProductsTab({
                                           color: '#fff', fontSize: 10, cursor: 'pointer',
                                           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
                                           zIndex: 1 }}>
-                                        ✕
+                                        <AppIcon name="close" />
                                       </button>
                                     </div>
                                     {/* Editable label */}
@@ -492,7 +493,7 @@ export default function ProductsTab({
                                   border: `1px solid ${T.border}`, background: T.card,
                                   color: T.sub, fontWeight: 600, fontSize: 12, fontFamily: T.font, cursor: 'pointer',
                                 }}>
-                                  📁 {pp.pendingFile ? pp.pendingFile.name : 'Choose Image'}
+                                  <AppIcon name="folder" /> {pp.pendingFile ? pp.pendingFile.name : 'Choose Image'}
                                 </button>
                                 <button onClick={() => handleUploadImage(p.id)} disabled={pp.uploading || !pp.pendingFile} style={{
                                   height: 36, padding: '0 16px', borderRadius: 8, border: 'none',
@@ -500,14 +501,14 @@ export default function ProductsTab({
                                   color: '#fff', fontWeight: 600, fontSize: 12, fontFamily: T.font,
                                   cursor: (pp.uploading || !pp.pendingFile) ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
                                 }}>
-                                  {pp.uploading ? '⏳ Uploading...' : '⬆️ Upload'}
+                                  {pp.uploading ? <><AppIcon name="loading" spin /> Uploading...</> : <><AppIcon name="upload" /> Upload</>}
                                 </button>
                               </div>
                             </div>
                           </div>
 
                           <div style={{ marginBottom: 16 }}>
-                            <label style={labelStyle}>📝 Manual Notes</label>
+                            <label style={labelStyle}><AppIcon name="note" /> Manual Notes</label>
                             <textarea placeholder="Pricing, USPs, objection handling..."
                               defaultValue={p.manual_notes}
                               onBlur={e => handleSaveProduct(p.id, { manual_notes: e.target.value })}
@@ -523,13 +524,13 @@ export default function ProductsTab({
                                   color: '#fff', fontWeight: 600, fontSize: 13,
                                   fontFamily: T.font, cursor: pp.generatingPersona ? 'not-allowed' : 'pointer',
                                 }}>
-                                  {pp.generatingPersona ? '⏳ Generating from website info...' : '✨ Auto-Generate Persona & Call Flow from Website'}
+                                  {pp.generatingPersona ? <><AppIcon name="loading" spin /> Generating from website info...</> : <><AppIcon name="robot" /> Auto-Generate Persona &amp; Call Flow from Website</>}
                                 </button>
                               </div>
                             )}
 
                             <div style={{ marginBottom: 12 }}>
-                              <label style={{ ...labelStyle, color: '#7c3aed' }}>🎭 Agent Persona</label>
+                              <label style={{ ...labelStyle, color: '#7c3aed' }}><AppIcon name="user" /> Agent Persona</label>
                               <textarea rows={4} value={pp.agent_persona}
                                 onChange={e => updateProductPrompt(p.id, 'agent_persona', e.target.value)}
                                 placeholder="e.g. You are Meera, a professional sales agent..."
@@ -537,7 +538,7 @@ export default function ProductsTab({
                             </div>
 
                             <div style={{ marginBottom: 16 }}>
-                              <label style={{ ...labelStyle, color: T.cyan }}>📋 Call Flow Instructions</label>
+                              <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> Call Flow Instructions</label>
                               <textarea rows={5} value={pp.call_flow_instructions}
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
                                 placeholder="e.g. Step 1: Greet. Step 2: Qualify..."
@@ -551,7 +552,7 @@ export default function ProductsTab({
                                 color: '#fff', fontWeight: 600, fontSize: 13,
                                 fontFamily: T.font, cursor: pp.generating ? 'not-allowed' : 'pointer',
                               }}>
-                                {pp.generating ? '⏳ Generating...' : '🤖 Generate Prompt'}
+                                {pp.generating ? <><AppIcon name="loading" spin /> Generating...</> : <><AppIcon name="robot" /> Generate Prompt</>}
                               </button>
                               <button disabled={pp.saving} onClick={() => handleSaveProductPrompt(p.id)} style={{
                                 padding: '9px 16px', borderRadius: 8, border: 'none',
@@ -559,7 +560,7 @@ export default function ProductsTab({
                                 color: '#fff', fontWeight: 600, fontSize: 13,
                                 fontFamily: T.font, cursor: pp.saving ? 'not-allowed' : 'pointer',
                               }}>
-                                {pp.saving ? '⏳ Saving...' : '💾 Save Persona & Flow'}
+                                {pp.saving ? <><AppIcon name="loading" spin /> Saving...</> : <><AppIcon name="save" /> Save Persona &amp; Flow</>}
                               </button>
                             </div>
                           </div>

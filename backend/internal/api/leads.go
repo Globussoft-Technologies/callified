@@ -1145,7 +1145,6 @@ func (s *Server) getTranscriptReview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, review)
 }
 
-
 // ── POST /api/transcripts/{id}/conclusion ────────────────────────────────────
 //
 // (Re)generates the AI conclusion for a single transcript on demand and
@@ -1666,6 +1665,7 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		QualityScore:                a.QualityScore,
 		Sentiment:                   a.Sentiment,
 		AppointmentBooked:           a.AppointmentBooked,
+		CallOutcome:                 a.CallOutcome,
 		FailureReason:               a.FailureReason,
 		WhatWentWell:                a.WhatWentWell,
 		WhatWentWrong:               a.WhatWentWrong,

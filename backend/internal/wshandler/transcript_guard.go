@@ -168,10 +168,9 @@ func terminalActionAllowed(outcome, transcript string, history []llm.ChatMessage
 	case "appointment_booked":
 		return appointmentHasDayAndTime(transcript, history)
 	case "customer_declined":
-		switch normalizeQuestionText(transcript) {
-		case "no", "nope", "nahi", "nahin", "ledu", "వద్దు", "नहीं", "இல்லை", "ಬೇಡ", "വേണ്ട", "না", "ના", "ਨਹੀਂ":
-			return true
-		}
+		// A bare "no" or a correction such as "I'm not looking for that"
+		// may answer a requirement-confirmation question rather than reject
+		// the entire call. Close only on an explicit lack of interest.
 		return containsAnyNormalized(transcript, []string{
 			"not interested", "no thanks", "dont need", "do not need", "ill pass", "i will pass",
 			"interest ledu", "వద్దు", "ఆసక్తి లేదు", "नहीं चाहिए", "रुचि नहीं", "வேண்டாம்", "விருப்பமில்லை",
@@ -179,6 +178,8 @@ func terminalActionAllowed(outcome, transcript string, history []llm.ChatMessage
 	case "customer_requested_end":
 		return containsAnyNormalized(transcript, []string{
 			"hang up", "end the call", "stop the call", "dont call", "do not call", "goodbye", "bye",
+			"call me later", "call later", "i will call later", "ill call later", "talk later",
+			"im busy", "i am busy", "busy now", "not a good time",
 			"call cut", "phone pettu", "కాల్ కట్", "போனை வை", "फोन रखो", "ಕಾಲ್ ಕಟ್",
 		})
 	default:
@@ -186,6 +187,27 @@ func terminalActionAllowed(outcome, transcript string, history []llm.ChatMessage
 		// repeat/clarification turn above can never close the call.
 		return true
 	}
+}
+
+// inferredFinalCloseAllowed applies the same deterministic safety checks when
+// a provider returns a plain farewell without a structured complete_call
+// action. The model's farewell alone is not evidence that the customer wanted
+// to end the call.
+func inferredFinalCloseAllowed(transcript string, history []llm.ChatMessage) bool {
+	return terminalActionAllowed("appointment_booked", transcript, history) ||
+		terminalActionAllowed("customer_declined", transcript, history) ||
+		terminalActionAllowed("customer_requested_end", transcript, history)
+}
+
+func isAmbiguousRequirementCorrection(transcript string) bool {
+	norm := normalizeQuestionText(transcript)
+	switch norm {
+	case "no", "nope", "nahi", "nahin", "ledu", "नहीं", "இல்லை", "ಬೇಡ", "വേണ്ട", "না", "ના", "ਨਹੀਂ":
+		return true
+	}
+	return containsAnyNormalized(transcript, []string{
+		"not looking for it", "not looking for that", "not what i meant", "thats not what i meant",
+	})
 }
 
 func appointmentHasDayAndTime(transcript string, history []llm.ChatMessage) bool {
@@ -217,6 +239,35 @@ func appointmentHasDayAndTime(transcript string, history []llm.ChatMessage) bool
 		return true
 	}
 	return containsAnyLiteral(context, appointmentTimeMarkers) && containsDigitOrNumberWord(context)
+}
+
+// appointmentToolArgumentsAllowed is the stricter Gemini Live booking gate.
+// The tool arguments must contain a real date and exact time, and those same
+// details must be supported by customer speech. This prevents the model from
+// turning an unrelated ASR fragment (for example a company or payment name)
+// into a spoken appointment confirmation.
+func appointmentToolArgumentsAllowed(date, clockTime, transcript string, history []llm.ChatMessage) bool {
+	date = strings.TrimSpace(date)
+	clockTime = strings.TrimSpace(clockTime)
+	if date == "" || clockTime == "" || !appointmentHasDayAndTime(date+" "+clockTime, nil) {
+		return false
+	}
+
+	return customerAppointmentHasDayAndTime(transcript, history)
+}
+
+// customerAppointmentHasDayAndTime deliberately ignores model messages. It is
+// used when Callified needs to make a deterministic booking decision without
+// trusting a date or time that the model may have proposed on its own.
+func customerAppointmentHasDayAndTime(transcript string, history []llm.ChatMessage) bool {
+	customerParts := make([]string, 0, len(history)+1)
+	for _, message := range history {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "user") {
+			customerParts = append(customerParts, message.Text)
+		}
+	}
+	customerParts = append(customerParts, transcript)
+	return appointmentHasDayAndTime(strings.Join(customerParts, " "), nil)
 }
 
 func containsDigitOrNumberWord(text string) bool {
@@ -277,5 +328,11 @@ func terminalRecoveryLine(language, outcome string) string {
 			return "What exact time works for the demo?"
 		}
 	}
-	return "Sorry, could you please say that again?"
+	if outcome == "customer_declined" {
+		return "Understood. What solution are you looking for instead?"
+	}
+	if outcome == "customer_requested_end" {
+		return "Of course. How can I help you further?"
+	}
+	return "Of course. Let me explain that again."
 }

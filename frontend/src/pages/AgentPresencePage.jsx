@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -107,7 +108,7 @@ export default function AgentPresencePage({ apiFetch, API_URL }) {
   return (
     <div style={{ padding: '24px', maxWidth: 1200, margin: '0 auto', fontFamily: T.font }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text }}>🟢 Live Agent Status</h1>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="team" /> Live Agent Status</h1>
         <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
           Real-time presence for every agent in your organization.
         </p>

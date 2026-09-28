@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm } from '../contexts/UIContext';
+import AppIcon from '../components/common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -134,7 +135,7 @@ export default function DeleteLeadsPage() {
     <div style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto', fontFamily: T.font, background: T.bg, minHeight: '100%' }}>
       <div style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ margin: 0, color: T.text, fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-          🗑️ Delete Leads
+          <AppIcon name="delete" /> Delete Leads
         </h2>
         <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
           Search by name or phone number and permanently delete a lead from all campaigns.

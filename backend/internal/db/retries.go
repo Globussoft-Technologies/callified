@@ -85,6 +85,12 @@ type RetryWithLead struct {
 // render Lead Name + Phone without a second fetch. Drops the org filter
 // implicit (campaign_id alone scopes it because campaigns are org-scoped).
 func (d *DB) GetRetriesByCampaignWithLead(campaignID int64, execIDs []int64, applyExecFilter bool) ([]RetryWithLead, error) {
+	return d.GetRetriesByCampaignWithLeadFiltered(campaignID, execIDs, applyExecFilter, CampaignActivityFilter{})
+}
+
+// GetRetriesByCampaignWithLeadFiltered applies search to lead details and the
+// date range to the retry time displayed by the dashboard.
+func (d *DB) GetRetriesByCampaignWithLeadFiltered(campaignID int64, execIDs []int64, applyExecFilter bool, filter CampaignActivityFilter) ([]RetryWithLead, error) {
 	q := `
 		SELECT r.id, r.lead_id,
 		       COALESCE(l.first_name,''), COALESCE(l.last_name,''), COALESCE(l.phone,''),
@@ -98,6 +104,10 @@ func (d *DB) GetRetriesByCampaignWithLead(campaignID int64, execIDs []int64, app
 		WHERE r.campaign_id=?`
 	args := []any{campaignID}
 	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	if c, a := campaignActivityFilterClause(filter, "r.next_attempt_at"); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}

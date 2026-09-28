@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useToast } from '../contexts/UIContext';
 import UserDetailModal from '../components/modals/UserDetailModal';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -237,18 +238,24 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Campaign</span>
-            <select value={campaignId} onChange={e => setCampaignId(e.target.value)} style={{ ...inputStyle, height: 41 }}>
-              <option value="">All campaigns</option>
-              {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <AppSelect
+              value={campaignId}
+              onChange={setCampaignId}
+              searchable
+              options={[{ value: '', label: 'All campaigns' }, ...campaigns.map(campaign => ({ value: String(campaign.id), label: campaign.name }))]}
+            />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 140, flex: '1 1 120px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Period</span>
-            <select value={period} onChange={e => setPeriod(e.target.value)} style={{ ...inputStyle, height: 41 }}>
-              <option value="daily">Daily</option>
-              <option value="monthly">Monthly</option>
-              <option value="custom">Custom Date</option>
-            </select>
+            <AppSelect
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { value: 'daily', label: 'Daily' },
+                { value: 'monthly', label: 'Monthly' },
+                { value: 'custom', label: 'Custom Date' },
+              ]}
+            />
           </label>
           {period === 'daily' && (
             <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
@@ -276,11 +283,11 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
           )}
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 130, flex: '1 1 120px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>
-            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inputStyle, height: 41 }}>
-              <option value="All">All</option>
-              <option value="Agent">Agent</option>
-              <option value="Executive">Executive</option>
-            </select>
+            <AppSelect
+              value={roleFilter}
+              onChange={setRoleFilter}
+              options={['All', 'Agent', 'Executive'].map(role => ({ value: role, label: role }))}
+            />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: '2 1 200px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Search name/email</span>

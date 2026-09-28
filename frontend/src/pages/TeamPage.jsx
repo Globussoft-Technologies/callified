@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast, useConfirm, usePrompt } from '../contexts/UIContext';
+import AppIcon from '../components/common/AppIcon';
+import AppSelect from '../components/common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -623,15 +625,11 @@ export default function TeamPage({ apiFetch, API_URL }) {
                   visible={showInvitePassword}
                   onToggle={() => setShowInvitePassword(v => !v)}
                 />
-                <select
+                <AppSelect
                   value={inviteForm.role}
-                  onChange={e => setInviteForm({ ...inviteForm, role: e.target.value })}
-                  style={{ ...inputStyle, cursor: 'pointer' }}
-                >
-                  <option value="Admin">Admin</option>
-                  <option value="Agent">Agent</option>
-                  <option value="Executive">Executive</option>
-                </select>
+                  onChange={role => setInviteForm({ ...inviteForm, role })}
+                  options={['Admin', 'Agent', 'Executive'].map(role => ({ value: role, label: role }))}
+                />
                 {inviteError && (
                   <div style={{ color: T.red, fontSize: 13, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '8px 12px' }}>
                     {inviteError}
@@ -933,7 +931,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                             borderRadius: 6, color: copiedInviteId === inv.id ? T.green : T.accent,
                             padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
                           }}>
-                          {copiedInviteId === inv.id ? '✓ Copied' : '🔗 Copy link'}
+                          <AppIcon name={copiedInviteId === inv.id ? 'check' : 'link'} /> {copiedInviteId === inv.id ? 'Copied' : 'Copy link'}
                         </button>
                         <button onClick={() => handleCancelInvite(inv)}
                           style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: T.red, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
@@ -985,23 +983,15 @@ export default function TeamPage({ apiFetch, API_URL }) {
                     </td>
                     <td style={rowTd}>{m.email}</td>
                     <td style={rowTd}>
-                      <select
+                      <AppSelect
                         value={m.role}
                         disabled={isSelf}
                         title={isSelf ? 'You cannot change your own role' : undefined}
-                        onChange={e => handleRoleChange(m.id, e.target.value)}
-                        style={{
-                          background: T.bg, border: `1px solid ${T.border}`,
-                          borderRadius: 6, color: isSelf ? T.muted : T.sub,
-                          padding: '4px 8px', fontSize: 12, fontFamily: T.font,
-                          cursor: isSelf ? 'not-allowed' : 'pointer',
-                          opacity: isSelf ? 0.6 : 1,
-                        }}
-                      >
-                        <option value="Admin">Admin</option>
-                        <option value="Agent">Agent</option>
-                        <option value="Executive">Executive</option>
-                      </select>
+                        onChange={role => handleRoleChange(m.id, role)}
+                        options={['Admin', 'Agent', 'Executive'].map(role => ({ value: role, label: role }))}
+                        size="small"
+                        width={130}
+                      />
                     </td>
                     <td style={rowTd}>
                       <button
@@ -1016,7 +1006,7 @@ export default function TeamPage({ apiFetch, API_URL }) {
                           fontSize: 14, fontFamily: T.font, fontWeight: 700,
                         }}
                       >
-                        🛡
+                        <AppIcon name="shield" />
                       </button>
                     </td>
                     <td style={{ ...rowTd, color: T.muted }}>

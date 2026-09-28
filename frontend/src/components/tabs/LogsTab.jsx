@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -245,7 +247,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
                 background: mode === 'activity' ? T.accent : 'transparent',
                 color: mode === 'activity' ? '#fff' : T.muted,
               }}>
-              📋 Activity
+              <AppIcon name="file" /> Activity
             </button>
             <button onClick={() => setMode('verbose')}
               style={{
@@ -254,7 +256,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
                 background: mode === 'verbose' ? T.accent : 'transparent',
                 color: mode === 'verbose' ? '#fff' : T.muted,
               }}>
-              🔧 Verbose
+              <AppIcon name="tool" /> Verbose
             </button>
           </div>
 
@@ -272,7 +274,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
               background: paused ? 'rgba(239,68,68,0.08)' : 'rgba(16,185,129,0.08)',
               color: paused ? T.red : T.green,
             }}>
-            {paused ? '⏸ Paused' : '▶ Live'}
+            <AppIcon name={paused ? 'pause' : 'play'} /> {paused ? 'Paused' : 'Live'}
           </button>
 
           {/* Clear */}
@@ -291,7 +293,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
           ) : (
             <button onClick={() => setConfirmClear(true)}
               style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid rgba(239,68,68,0.2)`, background: 'rgba(239,68,68,0.06)', color: T.red, cursor: 'pointer', fontSize: 12, fontFamily: T.font }}>
-              🗑️ Clear
+              <AppIcon name="clear" /> Clear
             </button>
           )}
         </div>
@@ -300,14 +302,22 @@ export default function LogsTab({ API_URL, apiFetch }) {
       {/* Activity filters */}
       {mode === 'activity' && (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...inputStyle, width: 150 }}>
-            <option value="">All statuses</option>
-            {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <select value={campaignFilter} onChange={e => setCampaignFilter(e.target.value)} style={{ ...inputStyle, width: 180 }}>
-            <option value="">All campaigns</option>
-            {campaignOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          <AppSelect
+            value={statusFilter}
+            onChange={setStatusFilter}
+            searchable
+            size="small"
+            width={150}
+            options={[{ value: '', label: 'All statuses' }, ...statusOptions.map(status => ({ value: status, label: status }))]}
+          />
+          <AppSelect
+            value={campaignFilter}
+            onChange={setCampaignFilter}
+            searchable
+            size="small"
+            width={180}
+            options={[{ value: '', label: 'All campaigns' }, ...campaignOptions.map(campaign => ({ value: String(campaign.id), label: campaign.name }))]}
+          />
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" style={{ ...inputStyle, width: 140 }} />
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" style={{ ...inputStyle, width: 140 }} />
           <input placeholder="Search name, phone or company..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputStyle, width: 200 }} />
@@ -354,7 +364,7 @@ export default function LogsTab({ API_URL, apiFetch }) {
           <div style={{ ...card, height: '62vh', overflowY: 'auto', padding: 8 }}>
             {pageLogs.length === 0 ? (
               <div style={{ textAlign: 'center', color: T.muted, padding: '3rem' }}>
-                <div style={{ fontSize: 32, marginBottom: 12 }}>📡</div>
+                <AppIcon name="api" style={{ fontSize: 32, marginBottom: 12 }} />
                 {activityLogs.length === 0 ? (
                   streamStatus === 'error' ? (
                     <>

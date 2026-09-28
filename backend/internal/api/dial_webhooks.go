@@ -749,23 +749,19 @@ func (s *Server) downloadRecording(callSid, recordingURL string) error {
 		}
 	}
 
-	var localURL string
-	if s.s3 != nil {
-		s3Key := "recordings/" + filename
-		if userDir != "" {
-			s3Key = "recordings/" + userDir + "/" + filename
-			if campaignDir != "" {
-				s3Key = "recordings/" + userDir + "/" + campaignDir + "/" + filename
-			}
+	objectKey := "recordings/" + filename
+	if userDir != "" {
+		objectKey = "recordings/" + userDir + "/" + filename
+		if campaignDir != "" {
+			objectKey = "recordings/" + userDir + "/" + campaignDir + "/" + filename
 		}
-		publicURL, err := s.s3.UploadPublic(context.Background(), s3Key, data)
-		if err != nil {
-			s.logger.Warn("downloadRecording: S3 upload failed", zap.Error(err))
-			// Fall through to local save.
-		} else {
-			localURL = publicURL
-			s.logger.Info("downloadRecording: uploaded to S3", zap.String("url", publicURL))
-		}
+	}
+
+	localURL, provider, uploadErr := s.uploadRecordingObject(context.Background(), objectKey, data)
+	if uploadErr != nil {
+		s.logger.Warn("downloadRecording: remote upload failed", zap.String("provider", provider), zap.Error(uploadErr))
+	} else if localURL != "" {
+		s.logger.Info("downloadRecording: remote upload complete", zap.String("provider", provider), zap.String("url", localURL))
 	}
 
 	if localURL == "" {

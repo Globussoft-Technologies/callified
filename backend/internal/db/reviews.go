@@ -20,6 +20,14 @@ func (d *DB) EnsureCallReviewColumns() error {
 }
 
 func ensureCallReviewColumns(exec schemaExecutor) error {
+	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD COLUMN call_outcome VARCHAR(32) NOT NULL DEFAULT '' AFTER appointment_booked`); err != nil && !isMySQLError(err, 1060) {
+		return fmt.Errorf("add call_reviews.call_outcome: %w", err)
+	}
+
+	if _, err := exec.Exec(`UPDATE call_reviews SET call_outcome='appointment_booked' WHERE appointment_booked=1 AND call_outcome=''`); err != nil {
+		return fmt.Errorf("backfill call_reviews.call_outcome: %w", err)
+	}
+
 	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD COLUMN lead_id INT DEFAULT NULL`); err != nil && !isMySQLError(err, 1060) {
 		return fmt.Errorf("add call_reviews.lead_id: %w", err)
 	}
@@ -52,6 +60,7 @@ type CallReview struct {
 	QualityScore                float64 `json:"quality_score"`
 	Sentiment                   string  `json:"sentiment"`
 	AppointmentBooked           bool    `json:"appointment_booked"`
+	CallOutcome                 string  `json:"call_outcome"`
 	FailureReason               string  `json:"failure_reason"`
 	WhatWentWell                string  `json:"what_went_well"`
 	WhatWentWrong               string  `json:"what_went_wrong"`
@@ -89,6 +98,12 @@ type CallReviewWithLead struct {
 // (sentiment/insights/summary) and current (customer_sentiment/what_went_*) column
 // pairs so the Call Insights tab renders for both old and new rows. Issue #75.
 func (d *DB) GetCallReviewsByCampaign(campaignID int64, execIDs []int64, applyExecFilter bool) ([]CallReviewWithLead, error) {
+	return d.GetCallReviewsByCampaignFiltered(campaignID, execIDs, applyExecFilter, CampaignActivityFilter{})
+}
+
+// GetCallReviewsByCampaignFiltered applies the dashboard search/date controls
+// to the per-call review rows.
+func (d *DB) GetCallReviewsByCampaignFiltered(campaignID int64, execIDs []int64, applyExecFilter bool, filter CampaignActivityFilter) ([]CallReviewWithLead, error) {
 	q := `
 		SELECT r.id, r.transcript_id, COALESCE(r.org_id,0),
 		       COALESCE(r.lead_id, t.lead_id, 0),
@@ -107,6 +122,10 @@ func (d *DB) GetCallReviewsByCampaign(campaignID int64, execIDs []int64, applyEx
 		WHERE t.campaign_id=?`
 	args := []any{campaignID}
 	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	if c, a := campaignActivityFilterClause(filter, "r.created_at"); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
@@ -156,18 +175,27 @@ type ImprovementCount struct {
 // the shape the Insights tab renders. Sentiment/improvement/failure columns
 // COALESCE legacy and current schema names so old rows still contribute.
 func (d *DB) GetCampaignCallInsights(campaignID int64, execIDs []int64, applyExecFilter bool) (*CampaignCallInsights, error) {
+	return d.GetCampaignCallInsightsFiltered(campaignID, execIDs, applyExecFilter, CampaignActivityFilter{})
+}
+
+// GetCampaignCallInsightsFiltered applies the same filters to every aggregate
+// query so cards, sentiment, improvements, and failure reasons stay aligned.
+func (d *DB) GetCampaignCallInsightsFiltered(campaignID int64, execIDs []int64, applyExecFilter bool, filter CampaignActivityFilter) (*CampaignCallInsights, error) {
 	out := &CampaignCallInsights{
 		SentimentBreakdown: map[string]int64{},
 		TopImprovements:    []ImprovementCount{},
 		TopFailureReasons:  []FailureReason{},
 	}
 
-	filterJoin := ""
+	filterJoin := "LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)"
 	filterWhere := ""
 	filterArgs := []any{}
 	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
-		filterJoin = "LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)"
 		filterWhere = " AND " + c
+		filterArgs = append(filterArgs, a...)
+	}
+	if c, a := campaignActivityFilterClause(filter, "r.created_at"); c != "" {
+		filterWhere += " AND " + c
 		filterArgs = append(filterArgs, a...)
 	}
 
@@ -255,6 +283,7 @@ func (d *DB) GetCallReviewByTranscript(transcriptID int64) (*CallReview, error) 
 	row := d.pool.QueryRow(`
 		SELECT id, transcript_id, COALESCE(org_id,0), COALESCE(quality_score,0),
 		COALESCE(sentiment,'neutral'), COALESCE(appointment_booked,0),
+		COALESCE(call_outcome,''),
 		COALESCE(failure_reason,''), COALESCE(what_went_well,''), COALESCE(what_went_wrong,''),
 		COALESCE(summary,''), COALESCE(insights,''),
 		COALESCE(prompt_improvement_suggestion,''),
@@ -263,7 +292,7 @@ func (d *DB) GetCallReviewByTranscript(transcriptID int64) (*CallReview, error) 
 	r := &CallReview{}
 	var apptBooked int
 	err := row.Scan(&r.ID, &r.TranscriptID, &r.OrgID, &r.QualityScore, &r.Sentiment,
-		&apptBooked, &r.FailureReason, &r.WhatWentWell, &r.WhatWentWrong,
+		&apptBooked, &r.CallOutcome, &r.FailureReason, &r.WhatWentWell, &r.WhatWentWrong,
 		&r.Summary, &r.Insights, &r.PromptImprovementSuggestion, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -283,18 +312,19 @@ func (d *DB) SaveCallReview(r *CallReview) error {
 	}
 	_, err := d.pool.Exec(`
 		INSERT INTO call_reviews
-		(transcript_id, org_id, lead_id, quality_score, sentiment, appointment_booked,
+		(transcript_id, org_id, lead_id, quality_score, sentiment, appointment_booked, call_outcome,
 		 failure_reason, what_went_well, what_went_wrong, summary, insights,
 		 prompt_improvement_suggestion)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
 		quality_score=VALUES(quality_score), sentiment=VALUES(sentiment),
-		appointment_booked=VALUES(appointment_booked), failure_reason=VALUES(failure_reason),
+		appointment_booked=VALUES(appointment_booked), call_outcome=VALUES(call_outcome),
+		failure_reason=VALUES(failure_reason),
 		what_went_well=VALUES(what_went_well), what_went_wrong=VALUES(what_went_wrong),
 		summary=VALUES(summary), insights=VALUES(insights),
 		prompt_improvement_suggestion=VALUES(prompt_improvement_suggestion),
 		lead_id=IF(VALUES(lead_id) > 0, VALUES(lead_id), lead_id)`,
-		r.TranscriptID, r.OrgID, r.LeadID, r.QualityScore, r.Sentiment, apptBooked,
+		r.TranscriptID, r.OrgID, r.LeadID, r.QualityScore, r.Sentiment, apptBooked, r.CallOutcome,
 		nullString(r.FailureReason), nullString(r.WhatWentWell), nullString(r.WhatWentWrong),
 		nullString(r.Summary), nullString(r.Insights), nullString(r.PromptImprovementSuggestion))
 	return err

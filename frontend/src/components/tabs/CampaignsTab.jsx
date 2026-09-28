@@ -4,6 +4,7 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
+import AppIcon from '../common/AppIcon';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizePhone } from '../../utils/phone';
 import { isAdmin } from '../../utils/roles';
@@ -49,7 +50,7 @@ export default function CampaignsTab({
   const [csvImportResult, setCsvImportResult] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
-  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', product_id: '', lead_source: '', executive_ids: [] });
+  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', status: 'active', product_id: '', lead_source: '', executive_ids: [] });
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
@@ -196,10 +197,13 @@ export default function CampaignsTab({
     } catch { setCampaignLeads([]); setCampaignLeadsTotal(0); }
   }, [apiFetch, API_URL]);
 
-  const fetchCallLog = async (campaignId, executiveIds = []) => {
+  const fetchCallLog = async (campaignId, executiveIds = [], filters = {}) => {
     try {
       const params = new URLSearchParams();
       if (executiveIds?.length) params.set('executive_ids', executiveIds.join(','));
+      if (filters.search?.trim()) params.set('search', filters.search.trim());
+      if (filters.from) params.set('from', filters.from);
+      if (filters.to) params.set('to', filters.to);
       const query = params.toString() ? `?${params.toString()}` : '';
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/call-log${query}`);
       if (!res.ok) { setCallLog([]); return; }
@@ -431,6 +435,7 @@ export default function CampaignsTab({
     setEditCampaignForm({
       id: c.id,
       name: c.name || '',
+      status: c.status || 'active',
       product_id: c.product_id || '',
       lead_source: c.lead_source || '',
       channel: c.channel || 'voice',
@@ -450,6 +455,7 @@ export default function CampaignsTab({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editCampaignForm.name.trim(),
+          status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
           lead_source: editCampaignForm.lead_source || null,
           channel: editCampaignForm.channel || 'voice'
@@ -461,6 +467,7 @@ export default function CampaignsTab({
         setSelectedCampaign(prev => ({
           ...prev,
           name: editCampaignForm.name.trim(),
+          status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
           lead_source: editCampaignForm.lead_source || null,
           channel: editCampaignForm.channel || 'voice'
@@ -962,7 +969,7 @@ export default function CampaignsTab({
                     </span>
                   ) : (
                     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#f59e0b', background: 'rgba(245,158,11,0.1)' }}>
-                      ⚠ No product
+                      <AppIcon name="warning" /> No product
                     </span>
                   )}
                   {statusBadge(campaign.status || 'active')}

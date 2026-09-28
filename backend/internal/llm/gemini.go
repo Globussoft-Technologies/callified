@@ -146,9 +146,7 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 		return "", fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if bearerAuth {
-		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
-	}
+	g.applyAuth(httpReq, bearerAuth)
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -232,9 +230,7 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 		return fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if bearerAuth {
-		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
-	}
+	g.applyAuth(httpReq, bearerAuth)
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -353,11 +349,19 @@ func (g *GeminiClient) endpoint(method string, stream bool) (string, bool) {
 	}
 
 	endpoint := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:%s?key=%s",
-		url.PathEscape(g.model), method, url.QueryEscape(g.apiKey),
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:%s",
+		url.PathEscape(g.model), method,
 	)
 	if stream {
-		endpoint += "&alt=sse"
+		endpoint += "?alt=sse"
 	}
 	return endpoint, false
+}
+
+func (g *GeminiClient) applyAuth(req *http.Request, bearerAuth bool) {
+	if bearerAuth {
+		req.Header.Set("Authorization", "Bearer "+g.apiKey)
+		return
+	}
+	req.Header.Set("x-goog-api-key", g.apiKey)
 }

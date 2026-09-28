@@ -3,6 +3,7 @@ import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
+import AppIcon from '../common/AppIcon';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -85,7 +86,7 @@ function ConclusionCard({ transcriptId, turns }) {
     }}>
       <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#7c3aed', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          ✨ AI Conclusion
+          <AppIcon name="robot" /> AI Conclusion
           <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#6b7280' }}>(Gemini)</span>
         </span>
         <button type="button" onClick={() => fetchConclusion(true)} disabled={state.status === 'loading'}
@@ -95,7 +96,7 @@ function ConclusionCard({ transcriptId, turns }) {
             color: '#7c3aed', borderRadius: 6, padding: '3px 10px',
             fontSize: '0.72rem', cursor: state.status === 'loading' ? 'wait' : 'pointer',
             fontWeight: 600,
-          }}>↻ Regenerate</button>
+          }}><AppIcon name="retry" /> Regenerate</button>
       </div>
       {children}
     </div>
@@ -120,6 +121,20 @@ function ConclusionCard({ transcriptId, turns }) {
   const stars = '★'.repeat(score) + '☆'.repeat(5 - score);
   const rawSent = (r.customer_sentiment || r.sentiment || '').toLowerCase();
   const sStyle = SENTIMENT_STYLE[rawSent] || null;
+  // New reviews contain an explicit AI-classified outcome. Historical rows
+  // without one safely remain pending until they are regenerated; sentiment
+  // alone must never be treated as a clear rejection.
+  const storedOutcome = (r.call_outcome || '').toLowerCase();
+  const callOutcome = r.appointment_booked
+    ? 'appointment_booked'
+    : storedOutcome === 'pending' || storedOutcome === 'not_interested'
+      ? storedOutcome
+      : 'pending';
+  const outcomeStyle = callOutcome === 'appointment_booked'
+    ? { background: '#dcfce7', color: '#15803d', border: '#86efac', label: 'Appointment booked', icon: 'checkCircle' }
+    : callOutcome === 'not_interested'
+      ? { background: '#fee2e2', color: '#b91c1c', border: '#fca5a5', label: 'Not interested', icon: 'close' }
+      : { background: '#fef3c7', color: '#b45309', border: '#fcd34d', label: 'Pending', icon: 'loading' };
 
   return wrap(
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: '#1f2937', lineHeight: 1.5 }}>
@@ -135,12 +150,12 @@ function ConclusionCard({ transcriptId, turns }) {
           </span>
         )}
         <span style={{
-          background: r.appointment_booked ? '#dcfce7' : '#f3f4f6',
-          color: r.appointment_booked ? '#15803d' : '#6b7280',
-          border: `1px solid ${r.appointment_booked ? '#86efac' : '#e5e7eb'}`,
+          background: outcomeStyle.background,
+          color: outcomeStyle.color,
+          border: `1px solid ${outcomeStyle.border}`,
           fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600,
         }}>
-          {r.appointment_booked ? '✅ Appointment booked' : '❌ No appointment'}
+          <AppIcon name={outcomeStyle.icon} /> {outcomeStyle.label}
         </span>
       </div>
       {summary       && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{summary}</div>}
@@ -212,7 +227,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
         }}>
           <div>
             <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}>
-              📋 Call Transcripts
+              <AppIcon name="file" /> Call Transcripts
             </h2>
             <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
               {transcriptLead.first_name} — {transcriptLead.phone}
@@ -225,12 +240,12 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                 color: T.sub, borderRadius: 6, padding: '4px 12px',
                 fontSize: '0.78rem', cursor: refreshing ? 'wait' : 'pointer',
                 fontWeight: 600,
-              }}>↺ {refreshing ? 'Refreshing…' : 'Refresh'}</button>
+              }}><AppIcon name="retry" spin={refreshing} /> {refreshing ? 'Refreshing…' : 'Refresh'}</button>
             )}
             <button onClick={close} style={{
               background: 'none', border: 'none', cursor: 'pointer',
               color: T.muted, fontSize: '1.2rem', lineHeight: 1, padding: 4,
-            }}>✕</button>
+            }} aria-label="Close" title="Close"><AppIcon name="close" /></button>
           </div>
         </div>
 
@@ -238,7 +253,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 24px' }}>
           {list.length === 0 ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, background: T.bg, borderRadius: 12 }}>
-              <div style={{ fontSize: '2rem', marginBottom: 12 }}>📞</div>
+              <AppIcon name="phone" style={{ fontSize: '2rem', marginBottom: 12 }} />
               <div style={{ fontWeight: 600, color: T.sub }}>No call transcripts yet.</div>
               <div style={{ fontSize: '0.85rem', marginTop: 8 }}>Transcripts will appear here after AI calls are completed.</div>
             </div>
@@ -260,7 +275,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       {t.tts_language && !hideLanguageTag && (
                         <span style={{ background: 'rgba(16,185,129,0.1)', color: '#059669', fontSize: '0.72rem', fontWeight: 600, border: '1px solid rgba(16,185,129,0.25)', borderRadius: 6, padding: '2px 8px' }}>
-                          🗣 {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}
+                          <AppIcon name="sound" /> {LANG_NAMES[t.tts_language] || t.tts_language.toUpperCase()}
                         </span>
                       )}
                       {t.call_duration_s > 0 && (
@@ -279,14 +294,14 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
                     }}>
                       <span style={{ fontSize: '0.82rem', color: '#92400e', fontWeight: 500 }}>
-                        ⏳ Recording is being processed. Refresh in a few minutes.
+                        <AppIcon name="loading" spin /> Recording is being processed. Refresh in a few minutes.
                       </span>
                       {onRefresh && (
                         <button onClick={handleRefresh} disabled={refreshing} style={{
                           background: 'transparent', border: '1px solid rgba(251,191,36,0.5)',
                           color: '#92400e', borderRadius: 6, padding: '2px 10px',
                           fontSize: '0.72rem', cursor: refreshing ? 'wait' : 'pointer', fontWeight: 600,
-                        }}>↺ Refresh</button>
+                        }}><AppIcon name="retry" spin={refreshing} /> Refresh</button>
                       )}
                     </div>
                   )}
@@ -297,11 +312,12 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     const isWav = url.endsWith('.wav');
                     const isMp3 = url.endsWith('.mp3');
                     const isWebm = url.endsWith('.webm');
-                    const sourceLabel = isWav ? '🖥️ Server Recording (Stereo)' : isMp3 ? '📞 Exotel Recording' : isWebm ? '🌐 Browser Recording' : '🔊 Recording';
+                    const sourceLabel = isWav ? 'Server Recording (Stereo)' : isMp3 ? 'Exotel Recording' : isWebm ? 'Browser Recording' : 'Recording';
+                    const sourceIcon = isWav ? 'desktop' : isMp3 ? 'phone' : isWebm ? 'global' : 'sound';
                     const color = isWav ? '#0891b2' : isMp3 ? '#059669' : isWebm ? '#7c3aed' : T.accent;
                     return (
                       <div style={{ marginBottom: 12, padding: '10px 12px', background: T.card, borderRadius: 8, border: `1px solid ${T.border}` }}>
-                        <div style={{ fontSize: '0.78rem', color, fontWeight: 600, marginBottom: 6 }}>{sourceLabel}</div>
+                        <div style={{ fontSize: '0.78rem', color, fontWeight: 600, marginBottom: 6 }}><AppIcon name={sourceIcon} /> {sourceLabel}</div>
                         <AuthAudio style={{ width: '100%', height: 36 }} src={url} />
                       </div>
                     );
@@ -321,7 +337,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                             color: isAI ? T.accent : T.green,
                             border: `1px solid ${isAI ? 'rgba(99,102,241,0.25)' : 'rgba(16,185,129,0.25)'}`,
                           }}>
-                            {isAI ? '🤖' : '👤'}
+                            <AppIcon name={isAI ? 'robot' : 'user'} />
                           </div>
                           <div style={{
                             maxWidth: '75%', padding: '10px 14px', borderRadius: 12,

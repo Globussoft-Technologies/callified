@@ -44,7 +44,7 @@ func validateMonitorKey(key string) string {
 // is either a typo, a stale client, or an attempted abuse — better to reject
 // at the door than to silently swallow it and have the call act weird.
 var (
-	validTTSProviders = map[string]bool{"elevenlabs": true, "sarvam": true, "smallest": true}
+	validTTSProviders = map[string]bool{"elevenlabs": true, "sarvam": true, "smallest": true, "gemini_live": true}
 	validTTSLanguages = map[string]bool{
 		"hi": true, "mr": true, "en": true, "ta": true, "te": true,
 		"kn": true, "bn": true, "gu": true, "pa": true, "ml": true,
@@ -66,7 +66,7 @@ const (
 // how the Exotel webhook flow works.
 func validateMediaStreamParams(q url.Values) string {
 	if v := q.Get("tts_provider"); v != "" && !validTTSProviders[v] {
-		return "tts_provider must be one of: elevenlabs, sarvam, smallest"
+		return "tts_provider must be one of: elevenlabs, sarvam, smallest, gemini_live"
 	}
 	if v := q.Get("tts_language"); v != "" && !validTTSLanguages[v] {
 		return "tts_language is not a supported language code"
