@@ -108,6 +108,10 @@ type CallSession struct {
 	PlaybackTracker *audio.PlaybackTracker
 	EchoCanceller   *audio.EchoCanceller
 	VAD             *audio.VAD
+	outboundAudioMu sync.Mutex
+	outboundUlaw    *audio.UlawFramer
+	outboundEpoch   uint64
+	outboundNextAt  time.Time
 
 	// Monitor (manager dashboard) WebSocket connections
 	monitorMu    sync.RWMutex
@@ -282,6 +286,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
 		VAD:             audio.NewVAD(),
+		outboundUlaw:    audio.NewUlawFramer(160),
 		monitorConns:    make(map[*websocket.Conn]struct{}),
 	}
 	s.dgAlive.Store(true)

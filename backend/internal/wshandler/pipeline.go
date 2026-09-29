@@ -460,15 +460,17 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 		zap.Int("text_len", len(sentence)),
 	)
 
+	epoch := sess.PlaybackEpoch()
 	err := provider.Synthesize(ttsCtx, sentence, sess.TTSLanguage, sess.TTSVoiceID,
 		func(pcm8k []byte) {
 			if firstChunk {
 				metrics.TTSFirstByteLatency.Observe(time.Since(tPreTTS).Seconds())
 				firstChunk = false
 			}
-			sendAudioFrame(sess, pcm8k)
+			sendAudioFrameAtEpoch(sess, pcm8k, epoch)
 		},
 	)
+	flushAudioFrameAtEpoch(sess, epoch)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		sess.Log.Warn("TTS error", zap.String("sentence", sentence), zap.Error(err))
 	}
@@ -504,33 +506,14 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 	sess.EchoCanceller.FeedTTS(audio.PCMToUlaw(pcm8k))
 
 	if sess.UseUlaw {
-		// μ-law: encode then slice into 20ms frames and pace.
+		// μ-law: encode, retain chunk remainders, and emit only complete 20 ms
+		// frames. Gemini/TTS chunk boundaries are not carrier frame boundaries.
 		ulaw := audio.PCMToUlaw(pcm8k)
 		sess.PlaybackTracker.AddBytes(len(ulaw))
-		const frameBytes = 160 // 160 bytes µ-law = 20ms @ 8 kHz
-		for off := 0; off < len(ulaw); off += frameBytes {
-			// Barge-in can arrive while a large Gemini Live audio chunk is
-			// being paced. Stop between 20 ms frames instead of sending the
-			// remainder into the carrier's playback queue.
-			if sess.IsBargeInActive() || sess.PlaybackEpoch() != expectedEpoch {
+		for _, carrierFrame := range packetizeUlaw(sess, expectedEpoch, ulaw) {
+			if !sendUlawCarrierFrame(sess, expectedEpoch, carrierFrame) {
 				return
 			}
-			end := off + frameBytes
-			if end > len(ulaw) {
-				end = len(ulaw)
-			}
-			payloadB64 := base64.StdEncoding.EncodeToString(ulaw[off:end])
-			frame, _ := json.Marshal(map[string]interface{}{
-				"event":     "media",
-				"streamSid": sess.StreamSid,
-				"media":     map[string]string{"payload": payloadB64},
-			})
-			_ = sess.SendText(frame)
-			sess.MarkAudioSent()
-			if sess.hasMonitors() {
-				sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
-			}
-			time.Sleep(20 * time.Millisecond)
 		}
 		return
 	}
@@ -564,6 +547,87 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 	if sess.hasMonitors() {
 		sess.BroadcastAudio("agent", payloadB64, "pcm16_8k")
 	}
+}
+
+// packetizeUlaw keeps an incomplete carrier frame across upstream audio
+// chunks. An epoch change means a barge-in/quality rejection occurred, so the
+// old tail and pacing clock are discarded before the next response starts.
+func packetizeUlaw(sess *CallSession, expectedEpoch uint64, ulaw []byte) [][]byte {
+	sess.outboundAudioMu.Lock()
+	defer sess.outboundAudioMu.Unlock()
+	if sess.outboundEpoch != expectedEpoch {
+		sess.outboundUlaw.Reset()
+		sess.outboundNextAt = time.Time{}
+		sess.outboundEpoch = expectedEpoch
+	}
+	return sess.outboundUlaw.Push(ulaw)
+}
+
+// flushAudioFrameAtEpoch pads only the final frame of a completed utterance.
+// Interrupted/rejected epochs are discarded rather than flushed.
+func flushAudioFrameAtEpoch(sess *CallSession, expectedEpoch uint64) {
+	if !sess.UseUlaw || sess.IsBargeInActive() || sess.PlaybackEpoch() != expectedEpoch {
+		return
+	}
+	sess.outboundAudioMu.Lock()
+	if sess.outboundEpoch != expectedEpoch {
+		sess.outboundAudioMu.Unlock()
+		return
+	}
+	frame := sess.outboundUlaw.Flush()
+	sess.outboundAudioMu.Unlock()
+	if frame != nil {
+		sendUlawCarrierFrame(sess, expectedEpoch, frame)
+	}
+}
+
+func sendUlawCarrierFrame(sess *CallSession, expectedEpoch uint64, carrierFrame []byte) bool {
+	if len(carrierFrame) != 160 || sess.IsBargeInActive() || sess.PlaybackEpoch() != expectedEpoch {
+		return false
+	}
+	if !waitForUlawFrameTime(sess, expectedEpoch) {
+		return false
+	}
+	payloadB64 := base64.StdEncoding.EncodeToString(carrierFrame)
+	frame, _ := json.Marshal(map[string]interface{}{
+		"event":     "media",
+		"streamSid": sess.StreamSid,
+		"media":     map[string]string{"payload": payloadB64},
+	})
+	if err := sess.SendText(frame); err != nil {
+		return false
+	}
+	sess.MarkAudioSent()
+	if sess.hasMonitors() {
+		sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
+	}
+	return true
+}
+
+// waitForUlawFrameTime uses an absolute monotonic schedule. Repeated
+// time.Sleep(20ms) adds WebSocket write time to every frame and slowly drifts;
+// this clock keeps the carrier feed at 8 kHz without catch-up bursts.
+func waitForUlawFrameTime(sess *CallSession, expectedEpoch uint64) bool {
+	const frameDuration = 20 * time.Millisecond
+	sess.outboundAudioMu.Lock()
+	if sess.outboundEpoch != expectedEpoch {
+		sess.outboundAudioMu.Unlock()
+		return false
+	}
+	now := time.Now()
+	if sess.outboundNextAt.IsZero() || now.Sub(sess.outboundNextAt) > frameDuration {
+		sess.outboundNextAt = now
+	}
+	target := sess.outboundNextAt
+	sess.outboundNextAt = target.Add(frameDuration)
+	sess.outboundAudioMu.Unlock()
+
+	if delay := time.Until(target); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+	}
+	return !sess.IsBargeInActive() && sess.PlaybackEpoch() == expectedEpoch
 }
 
 func max(a, b int) int {
