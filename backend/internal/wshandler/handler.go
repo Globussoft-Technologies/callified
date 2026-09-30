@@ -369,8 +369,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			go func() {
 				defer wg.Done()
 				languageGuard := newLiveLanguageGuard(sess.Language)
-				appointmentGuard := newLiveAppointmentGuard()
-				var appointmentClarificationPending atomic.Bool
+				appointmentTimezone := "Asia/Kolkata"
+				if h.db != nil && sess.OrgID > 0 {
+					if configured, err := h.db.GetOrgTimezone(sess.OrgID); err == nil && strings.TrimSpace(configured) != "" {
+						appointmentTimezone = strings.TrimSpace(configured)
+					}
+				}
+				appointmentLocation, err := time.LoadLocation(appointmentTimezone)
+				if err != nil {
+					appointmentTimezone = "Asia/Kolkata"
+					appointmentLocation, _ = time.LoadLocation(appointmentTimezone)
+				}
+				callNow := time.Now().In(appointmentLocation)
+				liveSystemPrompt := sess.SystemPrompt + fmt.Sprintf(
+					"\n\nCURRENT LOCAL DATE AND TIME: %s (%s). Follow the configured call flow for scheduling. "+
+						"Collect both a customer-provided day/date and exact time, asking only for whichever detail is missing. "+
+						"After both are available, complete and confirm the appointment without requesting an extra acknowledgement unless the call flow explicitly requires one. "+
+						"When completing an appointment, pass appointment_date as YYYY-MM-DD and appointment_time as HH:MM in this timezone.",
+					callNow.Format("2006-01-02 15:04"), appointmentTimezone,
+				)
 				responseWatchdog := newLiveResponseWatchdog(geminiLiveResponseTimeout, func(customerText string) bool {
 					if sess.IsFinalClosing() || ctx.Err() != nil {
 						return false
@@ -463,7 +480,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				client := realtime.New(realtime.Config{
 					URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 					AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-					Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: sess.SystemPrompt,
+					Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
 					Language: sess.Language, Greeting: sess.GreetingText,
 				}, realtime.Callbacks{
 					OnInterimInputTranscript: func(text string) {
@@ -521,23 +538,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						inputText.WriteString(text)
 						currentInput := strings.TrimSpace(inputText.String())
 						transcriptMu.Unlock()
-						// A rejected appointment action is allowed to be attempted again
-						// only after the customer supplies a new spoken answer.
-						if currentInput != "" {
-							appointmentClarificationPending.Store(false)
-						}
 						language, languageChanged := languageGuard.ObserveCustomer(currentInput)
 						if languageChanged {
 							sess.Log.Info("gemini live: confirmed customer language",
 								zap.String("language", language),
 								zap.String("text", currentInput))
 						}
-						appointmentAcknowledged := appointmentGuard.ObserveCustomerAcknowledgement(currentInput, sess.HistorySnapshot())
-						if appointmentAcknowledged {
-							sess.Log.Info("gemini live: final appointment acknowledgement detected")
-						}
 						redirectQueued := false
-						if languageChanged && !appointmentAcknowledged && !sess.IsFinalClosing() {
+						if languageChanged && !sess.IsFinalClosing() {
 							label := langLabels[language]
 							if label == "" {
 								label = "English"
@@ -578,18 +586,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						outputText.WriteString(text)
 						currentOutput := strings.TrimSpace(outputText.String())
 						transcriptMu.Unlock()
-						holdAppointmentOutput := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
-						holdAppointmentClarification := appointmentClarificationPending.Load() && !sess.IsFinalClosing()
 						languageRedirectMu.Lock()
 						holdLanguageRedirectOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
 						liveStateMu.Lock()
 						if !outputRejected {
-							// Once a confirmed appointment receives its final "okay",
-							// hold Gemini's automatic reply. It often repeats the slot
-							// instead of completing the call; OnTurnComplete replaces it
-							// with one validated closing response.
-							if !holdAppointmentOutput && !holdAppointmentClarification && !holdLanguageRedirectOutput {
+							if !holdLanguageRedirectOutput {
 								switch languageGuard.ValidateAgent(currentOutput, false) {
 								case liveLanguageAccept:
 									if !outputApproved {
@@ -629,30 +631,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						newOutputTurn = true
 					},
 					OnCompleteCall: func(request realtime.CompleteCallRequest) bool {
-						transcriptMu.Lock()
-						current := strings.TrimSpace(inputText.String())
-						transcriptMu.Unlock()
-						allowed := terminalActionAllowed(request.Outcome, current, sess.HistorySnapshot())
+						// Gemini owns the conversational close according to the configured
+						// call flow. The only server-side appointment restriction is that
+						// the supplied local calendar instant must still be in the future.
+						allowed := true
 						if request.Outcome == "appointment_booked" {
-							allowed = allowed && appointmentToolArgumentsAllowed(
-								request.AppointmentDate, request.AppointmentTime, current, sess.HistorySnapshot(),
+							validation := validateAppointmentSlot(
+								request.AppointmentDate, request.AppointmentTime, appointmentTimezone, time.Now(),
 							)
+							allowed = validation == appointmentSlotValid
+							if !allowed {
+								sess.Log.Info("gemini live: appointment instant rejected",
+									zap.String("validation", string(validation)))
+							}
 						}
 						if allowed {
-							appointmentGuard.MarkCompletedByTool()
 							sess.RequestFinalClose()
 						} else {
 							sess.Log.Warn("gemini live: rejected terminal action",
 								zap.String("outcome", request.Outcome))
-							if request.Outcome == "appointment_booked" && appointmentClarificationPending.CompareAndSwap(false, true) {
-								responseWatchdog.Cancel()
-								sess.DiscardLivePlayback()
-								if sess.RequestLiveResponse(appointmentClarificationInstruction(languageGuard.Expected())) {
-									sess.Log.Info("gemini live: requesting missing appointment confirmation")
-								} else {
-									sess.Log.Warn("gemini live: appointment confirmation recovery unavailable")
-								}
-							}
 						}
 						return allowed
 					},
@@ -687,11 +684,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								zap.String("language", language),
 								zap.String("text", user))
 						}
-						if appointmentGuard.ObserveCustomerAcknowledgement(user, sess.HistorySnapshot()) {
-							sess.Log.Info("gemini live: final appointment acknowledgement detected")
-						}
-						forceAppointmentClose := appointmentGuard.ShouldHoldOutput() && !sess.IsFinalClosing()
-						forceAppointmentClarificationHold := appointmentClarificationPending.Load() && !sess.IsFinalClosing()
 						languageRedirectMu.Lock()
 						forceLanguageRedirectHold := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -699,11 +691,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						liveStateMu.Lock()
 						hadOutput := agent != "" || len(pendingAudio) > 0 || audioReleased
 						validOutput := false
-						appointmentClarificationRejected := false
-						if forceAppointmentClarificationHold && hadOutput && shouldInferFinalClose(agent) {
-							rejectOutput()
-							appointmentClarificationRejected = true
-						} else if (forceAppointmentClose || forceLanguageRedirectHold) && hadOutput {
+						if forceLanguageRedirectHold && hadOutput {
 							rejectOutput()
 						} else if hadOutput && !outputRejected {
 							if languageGuard.ValidateAgent(agent, true) == liveLanguageAccept {
@@ -723,7 +711,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						languageRedirectMu.Lock()
 						skipInterruptedRedirectTurn := languageRedirectActive &&
 							(languageRedirectInterrupted || forceLanguageRedirectHold) &&
-							!validOutput && !forceAppointmentClose
+							!validOutput
 						if skipInterruptedRedirectTurn {
 							languageRedirectInterrupted = false
 							languageRedirectAwaitingInterrupt = false
@@ -744,44 +732,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.AppendHistory("model", agent)
 							sess.BroadcastTranscript("agent", agent)
 							sess.RememberAgentSpeech(agent)
-							if appointmentGuard.ObserveAgentConfirmation(agent, sess.HistorySnapshot()) {
-								sess.Log.Info("gemini live: customer-supported appointment slot confirmed")
-							}
 						}
 						newOutputTurn = true
 						if skipInterruptedRedirectTurn {
 							sess.Log.Debug("gemini live: discarded interrupted pre-switch response")
 							responseWatchdog.Arm(correctionCustomer)
-							return
-						}
-						if forceAppointmentClose {
-							responseWatchdog.Cancel()
-							label := langLabels[languageGuard.Expected()]
-							instruction := "SYSTEM VERIFIED APPOINTMENT CLOSE: Callified has validated and completed the appointment action because the customer supplied a day and exact time, " +
-								"the appointment was confirmed, and the customer has now accepted it. Do not call another tool. " +
-								"Speak exactly one short thank-you and goodbye"
-							if label != "" {
-								instruction += " in " + label
-							} else {
-								instruction += " in the same spoken language as the customer's latest utterance"
-							}
-							instruction += ". Do not repeat the appointment date or time. Do not ask another question."
-							if sess.RequestLiveResponse(instruction) {
-								appointmentGuard.MarkFinalPromptSent()
-								sess.RequestFinalClose()
-								sess.Log.Info("gemini live: completing appointment after final acknowledgement")
-							} else {
-								sess.Log.Warn("gemini live: appointment close response unavailable")
-							}
-							return
-						}
-						if appointmentClarificationRejected {
-							responseWatchdog.Cancel()
-							if sess.RequestLiveResponse(appointmentClarificationInstruction(languageGuard.Expected())) {
-								sess.Log.Warn("gemini live: blocked premature appointment close and requested confirmation")
-							} else {
-								sess.Log.Warn("gemini live: blocked premature appointment close; recovery unavailable")
-							}
 							return
 						}
 						if rejectedOutput {
