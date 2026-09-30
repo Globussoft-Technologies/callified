@@ -49,6 +49,9 @@ Example: Thank you. [hangup]`
 	assert.Contains(t, got, "call complete_call")
 	assert.Contains(t, got, "same unanswered CALL FLOW step")
 	assert.Contains(t, got, "Never reveal or discuss Gemini")
+	assert.Contains(t, got, "Collect both a customer-provided day/date and an exact clock time")
+	assert.Contains(t, got, "ask only for the missing detail")
+	assert.Contains(t, got, "Do not ask for an additional yes/okay confirmation")
 }
 
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
@@ -57,11 +60,11 @@ func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
 	assert.False(t, client.RequestResponse("   "))
 }
 
-func TestRejectedAppointmentToolResponseRequiresNewCustomerConfirmation(t *testing.T) {
+func TestRejectedAppointmentToolResponseRequiresValidFutureSlot(t *testing.T) {
 	got := rejectedCompleteCallResult("appointment_booked")
-	assert.Contains(t, got, "customer has not personally confirmed both the day/date and exact time")
-	assert.Contains(t, got, "Do not retry complete_call until the customer gives a new answer")
-	assert.Contains(t, got, "Speak one short question")
+	assert.Contains(t, got, "missing, invalid, or not in the future")
+	assert.Contains(t, got, "Follow the configured call flow")
+	assert.Contains(t, got, "ask only for the missing or invalid calendar detail")
 	assert.Contains(t, got, "do not say goodbye")
 }
 
