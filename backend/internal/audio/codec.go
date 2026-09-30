@@ -56,3 +56,16 @@ func Upsample2x(pcm8k []byte) []byte {
 	}
 	return out
 }
+
+// Decimate3x converts Gemini Live's 24kHz PCM16LE output to telephony 8kHz.
+func Decimate3x(pcm24k []byte) []byte {
+	samples := len(pcm24k) / 2
+	outSamples := samples / 3
+	out := make([]byte, outSamples*2)
+	for i := 0; i < outSamples; i++ {
+		src := i * 6
+		out[i*2] = pcm24k[src]
+		out[i*2+1] = pcm24k[src+1]
+	}
+	return out
+}
