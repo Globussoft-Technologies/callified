@@ -653,6 +653,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						return allowed
 					},
+					OnLanguageSwitch: func(language string) bool {
+						previous := languageGuard.Confirmed()
+						if !languageGuard.ApplyExplicitSwitch(language) {
+							sess.Log.Warn("gemini live: rejected unsupported language tool request",
+								zap.String("language", language))
+							return false
+						}
+						responseWatchdog.Cancel()
+						if previous != language {
+							sess.DiscardLivePlayback()
+							sess.Log.Info("gemini live: accepted explicit semantic language switch",
+								zap.String("from", previous),
+								zap.String("to", language))
+						}
+						return true
+					},
 					OnKnowledgeQuery: func(query string) string {
 						query = strings.TrimSpace(query)
 						if query == "" || h.ragClient == nil || sess.OrgID == 0 {
