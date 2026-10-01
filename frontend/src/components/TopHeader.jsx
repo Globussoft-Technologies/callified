@@ -29,7 +29,7 @@ const PRIMARY_ADMIN_TABS = [
 ];
 
 // More-menu tabs accessible to Team Leaders (subset of MORE_ADMIN_TABS).
-const TEAM_LEADER_MORE_TAB_IDS = new Set(['scheduled', 'interaction-history', 'settings']);
+const TEAM_LEADER_MORE_TAB_IDS = new Set(['scheduled', 'interaction-history', 'lead-call-status', 'settings']);
 
 const MORE_ADMIN_TABS = [
   { id: 'integrations',     label: 'Integrations',      path: '/integrations',      testid: 'tab-integrations' },
@@ -41,6 +41,7 @@ const MORE_ADMIN_TABS = [
   { id: 'interaction-history', label: 'Interaction History', path: '/interaction-history', testid: 'tab-interaction-history' },
   { id: 'agent-presence', label: 'Agent Presence', path: '/agent-presence', testid: 'tab-agent-presence' },
   { id: 'agent-report', label: 'Agent Report', path: '/agent-report', testid: 'tab-agent-report' },
+  { id: 'lead-call-status', label: 'Lead Call Status', path: '/lead-call-status', testid: 'tab-lead-call-status' },
   { id: 'campaign-progress', label: 'Campaign Progress', path: '/campaign-progress', testid: 'tab-campaign-progress' },
   { id: 'billing',      label: 'Billing',         path: '/billing',      testid: 'tab-billing' },
   { id: 'dnd',          label: 'DND',             path: '/dnd',          testid: 'tab-dnd' },
@@ -60,6 +61,7 @@ const TAB_PERMISSION = {
   knowledge: 'knowledge.manage',
   scheduled: 'calls.schedule',
   'agent-report': 'reports.view',
+  'lead-call-status': 'reports.view',
   'campaign-progress': 'reports.view',
   billing: 'billing.manage',
   dnd: 'dnd.manage',

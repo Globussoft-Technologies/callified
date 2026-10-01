@@ -245,7 +245,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	_ = i.store.SetPendingCall(ctx, "latest", pending)
 
 	// 6. Log dial attempt in DB
-	if _, dbErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID,
+	if _, dbErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID, data.UserID,
 		callSid, provider, data.LeadPhone, "initiated"); dbErr != nil {
 		i.log.Warn("dial: SaveCallLog failed", zap.Error(dbErr))
 	}

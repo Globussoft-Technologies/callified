@@ -53,6 +53,7 @@ type Server struct {
 // internal/llm and create a cycle).
 type callAnalyzer interface {
 	AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*recording.Analysis, error)
+	AnalyzeCallForCampaign(ctx context.Context, orgID, campaignID int64, history []llm.ChatMessage) (*recording.Analysis, error)
 }
 
 // waSenderIface allows the WA sender to be nil-safe.
@@ -246,6 +247,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/campaigns/{id}/stats", adminOrAgent(s.getCampaignStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-outcome-stats", adminOrAgent(s.getCampaignCallOutcomeStats))
 	mux.HandleFunc("GET /api/campaigns/{id}/call-log", adminOrAgent(s.getCampaignCallLog))
+	mux.HandleFunc("GET /api/campaigns/{id}/dispositions", adminOrAgent(s.getCampaignDispositionOptions))
+	mux.HandleFunc("PUT /api/campaigns/{id}/dispositions", adminAuth(s.putCampaignDispositionOptions))
 	mux.HandleFunc("GET /api/campaigns/{id}/export-recordings", adminOrAgent(s.exportRecordings))
 	mux.HandleFunc("GET /api/campaigns/{id}/export-leads", adminOrAgent(s.exportCampaignLeads))
 	mux.HandleFunc("GET /api/campaigns/{id}/voice-settings", adminOrAgent(s.getCampaignVoiceSettings))
@@ -326,6 +329,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// ── Transcript review ─────────────────────────────────────────────────────
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
+	mux.HandleFunc("GET /api/transcripts/{id}/disposition", auth(s.getTranscriptDisposition))
+	mux.HandleFunc("PATCH /api/transcripts/{id}/disposition", auth(s.patchTranscriptDisposition))
 
 	// ── DND ───────────────────────────────────────────────────────────────────
 	// /check is a read-only lookup any agent might need before placing a call;
@@ -493,6 +498,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/analytics/agent-lead-summary", auth(s.agentLeadSummary))
 	mux.HandleFunc("GET /api/analytics/agent-report", auth(s.agentReportXLSX))
 	mux.HandleFunc("GET /api/analytics/user-detail/{id}", auth(s.userDetail))
+
+	// ── Lead call status report ───────────────────────────────────────────────
+	mux.HandleFunc("GET /api/reports/lead-call-status", auth(s.leadCallStatusReport))
+	mux.HandleFunc("GET /api/reports/lead-call-status/options", auth(s.leadCallStatusReportOptions))
+	mux.HandleFunc("GET /api/reports/lead-call-status/export", auth(s.leadCallStatusExport))
+	mux.HandleFunc("GET /api/leads/{id}/call-status-history", auth(s.leadCallStatusHistory))
 
 	// ── Billing (Phase 3B) ────────────────────────────────────────────────────
 	// Subscribe/cancel/create-order/verify-payment all carry financial impact

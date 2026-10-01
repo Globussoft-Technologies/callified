@@ -3,6 +3,7 @@ package recording
 import (
 	"testing"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,4 +32,14 @@ func TestNormalizeCallOutcome(t *testing.T) {
 			require.Equal(t, tt.want, a.CallOutcome)
 		})
 	}
+}
+
+func TestNormalizeDispositionUsesConfiguredCodes(t *testing.T) {
+	options := []db.DispositionOption{{Code: "hot_lead", Label: "Hot Lead", IsActive: true}}
+	a := &analysis{CallOutcome: callOutcomePending, DispositionCode: "invented", Confidence: 2}
+
+	normalizeDisposition(a, options)
+
+	require.Equal(t, "hot_lead", a.DispositionCode)
+	require.Equal(t, float64(1), a.Confidence)
 }

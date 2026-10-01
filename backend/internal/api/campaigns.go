@@ -1515,7 +1515,7 @@ func (s *Server) humanCallLead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log the call so StatusCallback can look it up by call_sid.
-	if _, dbErr := s.db.SaveCallLog(leadID, campaignID, ac.OrgID, callSid, "exotel-human", lead.Phone, "initiated"); dbErr != nil {
+	if _, dbErr := s.db.SaveCallLog(leadID, campaignID, ac.OrgID, ac.UserID, callSid, "exotel-human", lead.Phone, "initiated"); dbErr != nil {
 		s.logger.Sugar().Warnw("humanCallLead: SaveCallLog failed", "err", dbErr)
 	}
 

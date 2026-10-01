@@ -32,6 +32,7 @@ import InteractionHistoryPage from './pages/InteractionHistoryPage';
 import AgentPresencePage from './pages/AgentPresencePage';
 import AgentReportPage from './pages/AgentReportPage';
 import CampaignProgressPage from './pages/CampaignProgressPage';
+import LeadCallStatusReportPage from './pages/LeadCallStatusReportPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import RequireRole from './components/RequireRole';
@@ -240,6 +241,11 @@ export default function App() {
           </AdminOnly>
         } />
         <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}><CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/lead-call-status" element={
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader']}>
+            <LeadCallStatusReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} orgTimezone={orgTimezone} />
+          </RequireRole>
+        } />
         <Route path="/team" element={
           <AdminOnly userRole={userRole}>
             <TeamPage apiFetch={apiFetch} API_URL={API_URL} />
