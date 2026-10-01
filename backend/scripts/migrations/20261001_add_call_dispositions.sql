@@ -58,4 +58,14 @@ CREATE TABLE IF NOT EXISTS call_disposition_events (
     KEY idx_disposition_events_org (org_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS agent_user_id BIGINT DEFAULT NULL;
+SET @add_agent_user_id = IF(
+    (SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = DATABASE()
+       AND table_name = 'call_logs'
+       AND column_name = 'agent_user_id') = 0,
+    'ALTER TABLE call_logs ADD COLUMN agent_user_id BIGINT DEFAULT NULL',
+    'SELECT 1'
+);
+PREPARE add_agent_user_id_stmt FROM @add_agent_user_id;
+EXECUTE add_agent_user_id_stmt;
+DEALLOCATE PREPARE add_agent_user_id_stmt;
