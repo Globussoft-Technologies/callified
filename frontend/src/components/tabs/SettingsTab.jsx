@@ -22,7 +22,7 @@ export default function SettingsTab({
   handleAddPronunciation, pronFormData, setPronFormData, pronError, setPronError, pronunciations, handleDeletePronunciation,
   selectedOrg,
   promptDirty, handleSaveSystemPrompt, promptSaving, promptSaved, systemPromptAuto, systemPromptCustom,
-  setSystemPromptCustom, setPromptDirty,
+  setSystemPromptCustom, systemPromptMode, setSystemPromptMode, setPromptDirty,
   orgTimezone, timezone, setTimezone, timezoneSaving, handleSaveTimezone
 }) {
   const hideAiFeatures = useHideAiFeatures();
@@ -192,15 +192,20 @@ export default function SettingsTab({
                       <td style={{ ...rowTd, color: T.green, fontStyle: 'italic' }}><AppIcon name="sound" /> "{p.phonetic}"</td>
                       <td style={{ ...rowTd, color: T.muted }}>{formatDate(p.created_at, orgTimezone)}</td>
                       <td style={rowTd}>
-                        <button
-                          onClick={() => handleDeletePronunciation(p.id)}
-                          style={{
-                            background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
-                            color: T.red, borderRadius: 6, padding: '4px 12px',
-                            cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
-                          }}>
-                          <AppIcon name="delete" /> Remove
-                        </button>
+                        {p.inherited ? (
+                          <span title="Inherited legacy rule; add the same word above to override it for this organization"
+                            style={{ color: T.muted, fontSize: 12, fontWeight: 600 }}>Inherited</span>
+                        ) : (
+                          <button
+                            onClick={() => handleDeletePronunciation(p.id)}
+                            style={{
+                              background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)',
+                              color: T.red, borderRadius: 6, padding: '4px 12px',
+                              cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font,
+                            }}>
+                            <AppIcon name="delete" /> Remove
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -235,8 +240,26 @@ export default function SettingsTab({
               </div>
             </div>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
-              Add organization-wide guidance without replacing Callified's protected safety, language, product, and call-flow rules.
+              Choose whether organization instructions replace the standard prompt or extend Callified's protected prompt.
             </p>
+
+            <div style={{ marginBottom: 16, maxWidth: 420 }}>
+              <label style={labelStyle}>Prompt behavior</label>
+              <AppSelect
+                value={systemPromptMode}
+                onChange={value => { setSystemPromptMode(value); setPromptDirty(true); }}
+                options={[
+                  { value: 'replace', label: 'Replace default prompt' },
+                  { value: 'extend', label: 'Extend default prompt' },
+                ]}
+                width="100%"
+              />
+              <p style={{ color: T.muted, fontSize: 12, margin: '6px 0 0' }}>
+                {systemPromptMode === 'replace'
+                  ? 'Preserves the established custom agent behavior for this organization.'
+                  : 'Keeps Callified safety, language, product, and call-flow rules, then adds these instructions.'}
+              </p>
+            </div>
 
             {systemPromptAuto && !systemPromptCustom && (
               <div style={{ marginBottom: 16 }}>
@@ -273,7 +296,7 @@ export default function SettingsTab({
                 </span>
               </div>
               <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
-                Product knowledge remains managed in Products. These instructions are appended to every AI call for this organization.
+                Product knowledge remains managed in Products. These instructions apply to every AI call for this organization.
               </p>
             </div>
           </div>

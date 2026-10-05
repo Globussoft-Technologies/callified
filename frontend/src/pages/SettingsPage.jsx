@@ -15,6 +15,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
   // System Prompt State
   const [systemPromptAuto, setSystemPromptAuto] = useState('');
   const [systemPromptCustom, setSystemPromptCustom] = useState('');
+  const [systemPromptMode, setSystemPromptMode] = useState('replace');
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
   const [promptSaved, setPromptSaved] = useState(false);
@@ -40,6 +41,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       const data = await res.json();
       setSystemPromptAuto(data.auto_generated || '');
       setSystemPromptCustom(data.custom_prompt || '');
+      setSystemPromptMode(data.prompt_mode === 'extend' ? 'extend' : 'replace');
       setPromptDirty(false);
     } catch (error) { toast(error.message, 'error'); }
   };
@@ -88,7 +90,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
     try {
       const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
         method: 'PUT', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ custom_prompt: systemPromptCustom })
+        body: JSON.stringify({ custom_prompt: systemPromptCustom, prompt_mode: systemPromptMode })
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -133,6 +135,7 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       promptDirty={promptDirty} handleSaveSystemPrompt={handleSaveSystemPrompt}
       promptSaving={promptSaving} promptSaved={promptSaved} systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
+      systemPromptMode={systemPromptMode} setSystemPromptMode={setSystemPromptMode}
       setPromptDirty={setPromptDirty}
       timezone={timezone} setTimezone={setTimezone}
       timezoneSaving={timezoneSaving} handleSaveTimezone={handleSaveTimezone}

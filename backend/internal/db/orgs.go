@@ -34,6 +34,7 @@ func (d *DB) EnsureOrganizationsTable() error {
 			name VARCHAR(255) NOT NULL,
 			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
 			custom_system_prompt TEXT DEFAULT NULL,
+			system_prompt_mode VARCHAR(16) NOT NULL DEFAULT 'replace',
 			tts_provider VARCHAR(50) DEFAULT 'elevenlabs',
 			tts_voice_id VARCHAR(100) DEFAULT NULL,
 			tts_language VARCHAR(10) DEFAULT 'hi',
@@ -49,6 +50,10 @@ func (d *DB) EnsureOrganizationsTable() error {
 		return err
 	}
 	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN max_call_duration_seconds INT DEFAULT NULL`)
+	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
+		return err
+	}
+	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN system_prompt_mode VARCHAR(16) NOT NULL DEFAULT 'replace' AFTER custom_system_prompt`)
 	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
 		return err
 	}
@@ -106,7 +111,7 @@ func (d *DB) GetOrganizationByDomain(domain string) (*Organization, error) {
 func (d *DB) CreateOrganizationWithDomain(name, domain string) (int64, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	res, err := d.pool.Exec(
-		`INSERT INTO organizations (name, domain) VALUES (?, NULLIF(?, ''))`,
+		`INSERT INTO organizations (name, domain, system_prompt_mode) VALUES (?, NULLIF(?, ''), 'extend')`,
 		name, domain)
 	if err != nil {
 		return 0, fmt.Errorf("CreateOrganizationWithDomain: %w", err)
@@ -163,10 +168,40 @@ func (d *DB) GetOrgSystemPrompt(orgID int64) (string, error) {
 	return prompt, err
 }
 
+// GetOrgSystemPromptConfig returns the prompt and how it combines with the
+// protected Callified prompt. Legacy organizations default to replace so a
+// deployment cannot silently change their live agent behavior.
+func (d *DB) GetOrgSystemPromptConfig(orgID int64) (string, string, error) {
+	var prompt, mode string
+	err := d.pool.QueryRow(`SELECT COALESCE(custom_system_prompt,''),
+		COALESCE(NULLIF(system_prompt_mode,''),'replace') FROM organizations WHERE id=?`, orgID).Scan(&prompt, &mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "replace", nil
+	}
+	mode = normalizeSystemPromptMode(mode)
+	return prompt, mode, err
+}
+
+func normalizeSystemPromptMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "extend") {
+		return "extend"
+	}
+	return "replace"
+}
+
 // SaveOrgSystemPrompt updates the custom_system_prompt column for an org.
 func (d *DB) SaveOrgSystemPrompt(orgID int64, prompt string) error {
 	_, err := d.pool.Exec(
 		`UPDATE organizations SET custom_system_prompt=? WHERE id=?`, nullString(prompt), orgID)
+	return err
+}
+
+func (d *DB) SaveOrgSystemPromptConfig(orgID int64, prompt, mode string) error {
+	if mode != "replace" && mode != "extend" {
+		return fmt.Errorf("invalid system prompt mode")
+	}
+	_, err := d.pool.Exec(`UPDATE organizations SET custom_system_prompt=?, system_prompt_mode=? WHERE id=?`,
+		nullString(prompt), mode, orgID)
 	return err
 }
 
@@ -559,9 +594,11 @@ func (d *DB) CompleteTask(id, orgID int64) error {
 // Pronunciation mirrors the pronunciation_guide table.
 type Pronunciation struct {
 	ID        int64  `json:"id"`
+	OrgID     int64  `json:"org_id"`
 	Word      string `json:"word"`
 	Phonetic  string `json:"phonetic"`
 	CreatedAt string `json:"created_at"`
+	Inherited bool   `json:"inherited"`
 }
 
 // EnsurePronunciationGuideTable scopes pronunciation rules to an organization.
@@ -622,22 +659,43 @@ func (d *DB) EnsurePronunciationGuideTable() error {
 // migration to clean it up across every deployment.
 func (d *DB) GetAllPronunciations(orgID int64) ([]Pronunciation, error) {
 	rows, err := d.pool.Query(
-		`SELECT id, word, phonetic, COALESCE(DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),'') FROM pronunciation_guide
-		 WHERE org_id=? AND LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
-		 ORDER BY word`, orgID)
+		`SELECT id, org_id, word, phonetic, COALESCE(DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),'') FROM pronunciation_guide
+		 WHERE org_id IN (0, ?) AND LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
+		 ORDER BY LOWER(TRIM(word)), org_id DESC, id DESC`, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var list []Pronunciation
+	var candidates []Pronunciation
 	for rows.Next() {
 		var p Pronunciation
-		if err := rows.Scan(&p.ID, &p.Word, &p.Phonetic, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Word, &p.Phonetic, &p.CreatedAt); err != nil {
 			return nil, err
 		}
-		list = append(list, p)
+		p.Inherited = p.OrgID == 0
+		candidates = append(candidates, p)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return preferOrganizationPronunciations(candidates), nil
+}
+
+// preferOrganizationPronunciations expects candidates ordered by normalized
+// word and org_id descending. The first rule for each word is therefore the
+// organization's override; otherwise the inherited org_id=0 rule is retained.
+func preferOrganizationPronunciations(candidates []Pronunciation) []Pronunciation {
+	result := make([]Pronunciation, 0, len(candidates))
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		key := strings.ToLower(strings.TrimSpace(candidate.Word))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, candidate)
+	}
+	return result
 }
 
 // UpsertPronunciation inserts a new entry or updates the phonetic for an existing word.
