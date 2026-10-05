@@ -525,6 +525,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Language: sess.Language, Greeting: sess.GreetingText,
 				}, realtime.Callbacks{
 					OnInterimInputTranscript: func(text string) {
+						if strings.TrimSpace(text) != "" {
+							// Interim transcription proves the customer is speaking. Do not
+							// wait for a long utterance to become final before cancelling the
+							// inactivity sequence.
+							inactivityWatchdog.CustomerSpoke()
+						}
 						language, detected := languageGuard.ProvisionalCustomer(text)
 						if !detected {
 							return

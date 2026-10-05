@@ -102,6 +102,26 @@ func TestLiveLanguageGuardIgnoresNonRequestInterimAndNegatedRequest(t *testing.T
 	assert.False(t, changed)
 }
 
+func TestLiveLanguageGuardDoesNotSwitchOnLanguageMention(t *testing.T) {
+	guard := newLiveLanguageGuard("en")
+	for _, transcript := range []string{
+		"I studied in Hindi medium",
+		"The document is available in Marathi",
+		"Our customer support course is in Telugu",
+	} {
+		language, changed := guard.ObserveCustomer(transcript)
+		assert.Equal(t, "en", language)
+		assert.False(t, changed, transcript)
+	}
+}
+
+func TestLiveLanguageGuardScopesNegationToMatchedRequest(t *testing.T) {
+	guard := newLiveLanguageGuard("te")
+	language, changed := guard.ObserveCustomer("Don't speak in Hindi, speak in English")
+	assert.Equal(t, "en", language)
+	assert.True(t, changed)
+}
+
 func TestLiveLanguageGuardAcceptsSemanticToolSwitchForNaturalVariation(t *testing.T) {
 	guard := newLiveLanguageGuard("en")
 	assert.True(t, guard.ApplyExplicitSwitch("te"))

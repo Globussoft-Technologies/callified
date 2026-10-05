@@ -67,72 +67,71 @@ func normalizeFillerWord(text string) string {
 // request a language switch, regardless of what Sarvam detects as the language.
 // Includes:
 //   - English phrases (e.g. "speak in Kannada")
-//   - Romanized/transliterated phrases (e.g. "kannada alli", "hindi mein")
+//   - Romanized/transliterated requests (e.g. "kannada alli mathadi")
 //   - Native-script phrases (e.g. "ಕನ್ನಡದಲ್ಲಿ", "हिंदी में") so the request works
 //     when the customer asks in their own language.
 var explicitSwitchKeywords = map[string][]string{
 	"en": {
 		"switch to english", "speak in english", "speak english", "talk in english", "talk english",
-		"english please", "can you speak in english", "can you talk in english", "english lo",
-		"english mein", "in english", "english mein baat",
+		"english please", "can you speak in english", "can you talk in english", "english mein baat karo",
 		"ഇംഗ്ലീഷിൽ പറയു", "इंग्लिश में बोलो", "ஆங்கிலத்தில் பேசுங்கள்", "ఆంగ్లంలో మాట్లాడండి", "ಇಂಗ್ಲಿಷ್ನಲ್ಲಿ ಮಾತಾಡಿ",
 	},
 	"hi": {
 		"switch to hindi", "speak in hindi", "speak hindi", "talk in hindi", "talk hindi",
 		"hindi please", "can you speak in hindi", "can you talk in hindi", "hindi mein baat karo",
-		"hindi lo", "in hindi", "hindi mein", "hindi mein bolo",
+		"hindi mein bolo",
 		"हिंदी में बात", "हिंदी में बोलो",
 		"हिंदी बोलो", "hindi bol",
 	},
 	"te": {
 		"switch to telugu", "speak in telugu", "speak telugu", "talk in telugu", "talk telugu",
 		"telugu please", "can you speak in telugu", "can you talk in telugu", "telugu lo matladandi",
-		"telugu lo", "in telugu", "telugu matladu", "telugu lo matladi",
+		"telugu matladu", "telugu lo matladi",
 		"తెలుగులో మాట్లాడండి",
 	},
 	"ta": {
 		"switch to tamil", "speak in tamil", "speak tamil", "talk in tamil", "talk tamil",
 		"tamil please", "can you speak in tamil", "can you talk in tamil", "tamil la pesunga",
-		"tamil la", "in tamil", "tamil pesu", "tamil la pesu",
+		"tamil pesu", "tamil la pesu",
 		"தமிழில் பேசுங்கள்",
 	},
 	"kn": {
 		"switch to kannada", "speak in kannada", "speak kannada", "talk in kannada", "talk kannada",
 		"kannada please", "can you speak in kannada", "can you talk in kannada",
-		"kannada alli", "kannada lo", "in kannada", "kannada dhalli", "kannada dhalli mathadi",
+		"kannada dhalli mathadi",
 		"kannada mathadi", "kannada alli mathadi", "kannada bari",
 		"ಕನ್ನಡದಲ್ಲಿ ಮಾತಾಡಿ",
-		"ಕನ್ನಡದಲ್ಲಿ ಮಾತಾಡ್ತೀರಾ", "kannadadalli", "kannada alli matadi",
+		"ಕನ್ನಡದಲ್ಲಿ ಮಾತಾಡ್ತೀರಾ", "kannada alli matadi",
 	},
 	"ml": {
 		"switch to malayalam", "speak in malayalam", "speak malayalam", "talk in malayalam", "talk malayalam",
-		"malayalam please", "can you speak in malayalam", "can you talk in malayalam", "in malayalam",
+		"malayalam please", "can you speak in malayalam", "can you talk in malayalam",
 		"malayalam parayu", "malayalam il parayu", "malayalam parayanam",
 		"മലയാളത്തിൽ പറയു",
 	},
 	"mr": {
 		"switch to marathi", "speak in marathi", "speak marathi", "talk in marathi", "talk marathi",
-		"marathi please", "can you speak in marathi", "can you talk in marathi", "marathi madhe",
-		"in marathi", "marathi bol", "marathi madhe bol",
+		"marathi please", "can you speak in marathi", "can you talk in marathi",
+		"marathi bol", "marathi madhe bol",
 		"मराठीत बोला", "मराठी मध्ये बोल",
 	},
 	"gu": {
 		"switch to gujarati", "speak in gujarati", "speak gujarati", "talk in gujarati", "talk gujarati",
-		"gujarati please", "can you speak in gujarati", "can you talk in gujarati", "in gujarati",
-		"gujarati ma", "gujarati ma bolo", "gujarati bol",
+		"gujarati please", "can you speak in gujarati", "can you talk in gujarati",
+		"gujarati ma bolo", "gujarati bol",
 		"ગુજરાતીમાં બોલો",
 	},
 	"pa": {
 		"switch to punjabi", "speak in punjabi", "speak punjabi", "talk in punjabi", "talk punjabi",
-		"punjabi please", "can you speak in punjabi", "can you talk in punjabi", "in punjabi",
-		"punjabi vich", "punjabi vich bolo", "panjabi me bolo",
+		"punjabi please", "can you speak in punjabi", "can you talk in punjabi",
+		"punjabi vich bolo", "panjabi me bolo",
 		"panjabi mein bolo", "punjabi mein bolo", "punjabi bol",
 		"ਪੰਜਾਬੀ ਵਿੱਚ ਬੋਲੋ",
 	},
 	"bn": {
 		"switch to bengali", "speak in bengali", "speak bengali", "talk in bengali", "talk bengali",
-		"bengali please", "can you speak in bengali", "can you talk in bengali", "in bengali",
-		"bengali te", "bengali te bolo", "bengali bolo", "bangla te bolo",
+		"bengali please", "can you speak in bengali", "can you talk in bengali",
+		"bengali te bolo", "bengali bolo", "bangla te bolo",
 		"বাংলায় কথা", "বাংলায় বলো",
 	},
 }
@@ -141,22 +140,43 @@ var explicitSwitchKeywords = map[string][]string{
 // request. Returns the target language code and true if found.
 func isExplicitLangSwitch(text string) (targetLang string, ok bool) {
 	lower := strings.ToLower(strings.TrimSpace(text))
-	// When intent is negated or explicitly declined, retaining the current
-	// language is safer than matching a nested phrase such as "speak in Hindi".
-	for _, negation := range []string{
-		"don't", "dont", "do not", "not speak", "no need", "stop speaking",
-		"can't", "cant", "cannot", " mat bolo", " नहीं बोल", " ಬೇಡ", " వద్దు",
-	} {
-		if strings.Contains(lower, negation) {
-			return "", false
-		}
-	}
+	bestLang, bestIndex := "", len(lower)+1
 	for lang, keywords := range explicitSwitchKeywords {
 		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
-				return lang, true
+			for searchFrom := 0; searchFrom < len(lower); {
+				relativeIndex := strings.Index(lower[searchFrom:], kw)
+				if relativeIndex < 0 {
+					break
+				}
+				index := searchFrom + relativeIndex
+				if !switchRequestIsNegated(lower, index) && index < bestIndex {
+					bestLang, bestIndex = lang, index
+				}
+				searchFrom = index + len(kw)
 			}
 		}
 	}
-	return "", false
+	return bestLang, bestLang != ""
+}
+
+// switchRequestIsNegated limits negation to the clause containing the matched
+// request. This lets "don't speak Hindi, speak English" select English while
+// still rejecting its first, negated request.
+func switchRequestIsNegated(text string, matchIndex int) bool {
+	clauseStart := 0
+	for _, separator := range []string{",", ";", ".", "!", "?", " but ", " however "} {
+		if index := strings.LastIndex(text[:matchIndex], separator); index >= clauseStart {
+			clauseStart = index + len(separator)
+		}
+	}
+	prefix := strings.TrimSpace(text[clauseStart:matchIndex])
+	for _, negation := range []string{
+		"don't", "dont", "do not", "not", "no need to", "stop", "can't", "cant", "cannot",
+		"mat", "नहीं", "ಬೇಡ", "వద్దు",
+	} {
+		if strings.Contains(prefix, negation) {
+			return true
+		}
+	}
+	return false
 }
