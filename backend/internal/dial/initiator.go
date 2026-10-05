@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"go.uber.org/zap"
 
@@ -16,22 +18,27 @@ import (
 
 // CallData holds the information needed to initiate one outbound call.
 type CallData struct {
-	LeadID      int64
-	LeadName    string
-	LeadPhone   string
-	CampaignID  int64
-	OrgID       int64
-	Interest    string
-	Language    string
-	TTSProvider string
-	TTSVoiceID  string
-	TTSLanguage string
+	LeadID                 int64
+	LeadName               string
+	LeadPhone              string
+	CampaignID             int64
+	OrgID                  int64
+	Interest               string
+	Language               string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
 	// IsBridge=true routes the call to browser-to-phone mode: the Exotel stream is
 	// relayed to the agent's browser WebSocket instead of the AI pipeline.
 	IsBridge bool
-	// UserEmail identifies the agent who clicked the call button. Used to honour
-	// per-user feature flags such as hide_ai_features → unlimited manual calls.
+	// UserEmail identifies the agent who clicked the call button.
 	UserEmail string
+	// UserID is the authenticated dashboard user placing the call. When non-zero
+	// and the user owns a personal provider account, the initiator prefers that
+	// account over the campaign/org default so agent-initiated calls go out from
+	// the agent's own credentials.
+	UserID int64
 	// ExotelAccountID overrides the campaign's default provider account for this
 	// specific call. 0 means use the campaign default (used by AI/server calls).
 	ExotelAccountID int64
@@ -40,24 +47,26 @@ type CallData struct {
 // Initiator orchestrates the full dial sequence:
 // DND check → TRAI hours → Redis pending call → provider dial → DB log.
 type Initiator struct {
-	cfg     *config.Config
-	store   *rstore.Store
-	db      *db.DB
-	disp    *webhook.Dispatcher
-	twilio  *TwilioClient
-	exotel  *ExotelClient
-	log     *zap.Logger
+	cfg    *config.Config
+	store  *rstore.Store
+	db     *db.DB
+	disp   *webhook.Dispatcher
+	exotel *ExotelClient
+	tata   *TataClient
+	twilio *TwilioClient
+	log    *zap.Logger
 }
 
-// New creates an Initiator wired to both telephony providers.
+// New creates an Initiator wired to the supported telephony providers.
 func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook.Dispatcher, log *zap.Logger) *Initiator {
 	return &Initiator{
 		cfg:    cfg,
 		store:  store,
 		db:     database,
 		disp:   disp,
-		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
 		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, "", cfg.ExotelRegion, cfg.ExotelSubdomain),
+		tata:   NewTataClient(cfg.TataAPIToken, cfg.TataCallerID, cfg.TataAgentNumber, cfg.TataAPIEndpoint),
+		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
 		log:    log,
 	}
 }
@@ -70,9 +79,9 @@ var ErrCallHours = fmt.Errorf("outside TRAI calling hours (9 AM – 9 PM)")
 
 // ErrInsufficientCredits is returned when the org's prepaid balance is zero
 // or negative. Surfaced to the API handler so it can return HTTP 402 with a
-// "recharge to continue" message instead of letting Exotel be charged for a
+// minute-balance message instead of letting Exotel be charged for a
 // dial we can't bill the customer for.
-var ErrInsufficientCredits = fmt.Errorf("insufficient credits — please recharge to continue making calls")
+var ErrInsufficientCredits = fmt.Errorf("Credits exhausted")
 
 // Initiate performs the full dial sequence for one lead.
 // Returns the carrier-issued call SID plus nil on successful dial initiation
@@ -107,83 +116,81 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// OrgID==0 happens in a few legacy/test code paths; let those through
 	// so we don't break dev environments with no billing setup.
 	//
-	// Bypass: agents whose AI features are hidden and who are placing a manual
-	// browser call (IsBridge) get unlimited calls — credits are neither checked
-	// nor deducted for those calls.
-	skipCredits := false
+	// Every real dial path uses the same minute balance gate, so calls stop
+	// once available minutes are exhausted.
 	if data.OrgID > 0 {
-		if data.UserEmail != "" && data.IsBridge && i.db.ShouldHideAiFeatures(data.UserEmail) {
-			skipCredits = true
-			i.log.Info("dial: unlimited manual call for AI-hidden user – skipping credit gate",
-				zap.String("email", data.UserEmail),
-				zap.Int64("org_id", data.OrgID),
-				zap.Int64("lead_id", data.LeadID))
-		} else {
-			oc, ocErr := i.db.GetOrgCredit(data.OrgID)
-			if ocErr != nil {
-				i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
-			} else if oc != nil && oc.BalancePaise <= 0 {
-				// Three passes before blocking:
-				// 1. Active subscription → always allow.
-				// 2. No deduction history → org is new / never topped up; allow so
-				//    fresh orgs and test environments aren't dead-on-arrival.
-				// 3. Has prior deductions and balance=0 → genuinely exhausted.
-				sub, _ := i.db.GetSubscriptionByOrg(data.OrgID)
-				if sub != nil {
-					i.log.Info("dial: zero balance but active subscription – allowing call",
-						zap.Int64("org_id", data.OrgID), zap.String("plan", sub.PlanName))
-				} else {
-					hasHistory, _ := i.db.HasCallDeductions(data.OrgID)
-					if hasHistory {
-						_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
-						i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
-							"failed", "insufficient credits – recharge to continue")
-						return "", ErrInsufficientCredits
-					}
-					i.log.Info("dial: zero balance, no prior deductions – allowing call (new org)",
-						zap.Int64("org_id", data.OrgID))
-				}
-			}
+		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
+		if ocErr != nil {
+			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
+		} else if oc != nil && oc.BalancePaise <= 0 {
+			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
+			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
+				"failed", ErrInsufficientCredits.Error())
+			return "", ErrInsufficientCredits
 		}
 	}
 
 	// 3. Store pending call info in Redis (wshandler reads this on stream connect)
 	pending := rstore.PendingCallInfo{
-		Name:        data.LeadName,
-		Phone:       data.LeadPhone,
-		LeadID:      data.LeadID,
-		OrgID:       data.OrgID,
-		Interest:    data.Interest,
-		CampaignID:  data.CampaignID,
-		TTSProvider: data.TTSProvider,
-		TTSVoiceID:  data.TTSVoiceID,
-		TTSLanguage: data.TTSLanguage,
-		IsBridge:    data.IsBridge,
-		SkipCredits: skipCredits,
-		UserEmail:   data.UserEmail,
+		Name:                   data.LeadName,
+		Phone:                  data.LeadPhone,
+		LeadID:                 data.LeadID,
+		OrgID:                  data.OrgID,
+		Interest:               data.Interest,
+		CampaignID:             data.CampaignID,
+		TTSProvider:            data.TTSProvider,
+		TTSVoiceID:             data.TTSVoiceID,
+		TTSLanguage:            data.TTSLanguage,
+		MaxCallDurationSeconds: data.MaxCallDurationSeconds,
+		IsBridge:               data.IsBridge,
+		UserEmail:              data.UserEmail,
+		UserID:                 data.UserID,
 	}
 
 	// 4. Resolve provider credentials.
 	// Browser calls may override the campaign default with a per-machine/org
 	// account so multiple systems can dial in parallel. The override is scoped
 	// to the org and validated to be a voicebot account for bridge calls.
+	// When UserID is set (agent/team-leader placed the call), an explicit
+	// ExotelAccountID must belong either to the org or to that user; otherwise
+	// we prefer the user's personal provider account before falling back to the
+	// campaign/org default.
 	var creds db.ExotelCreds
 	if data.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID); cerr == nil && c.IsSet() {
+		var lookupErr error
+		if data.UserID > 0 {
+			creds, lookupErr = i.db.GetOrgOrUserExotelAccountCreds(data.ExotelAccountID, data.OrgID, data.UserID)
+		} else {
+			creds, lookupErr = i.db.GetOrgExotelAccountCreds(data.ExotelAccountID, data.OrgID)
+		}
+		if lookupErr != nil {
+			return "", fmt.Errorf("lookup provider account: %w", lookupErr)
+		}
+		if !creds.IsSet() {
+			return "", fmt.Errorf("provider account not found or inaccessible")
+		}
+		if creds.Direction == "inbound" {
+			return "", fmt.Errorf("selected provider account is inbound-only; choose an outbound account")
+		}
+		isTataProvider := creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele"
+		if data.IsBridge && !isTataProvider && creds.AppType != "voicebot" {
+			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
+		}
+	}
+	if !creds.IsSet() && data.UserID > 0 {
+		if c, cerr := i.db.GetUserExotelAccountCreds(data.UserID, data.OrgID); cerr == nil && c.IsSet() {
 			creds = c
 		} else if cerr != nil {
-			return "", fmt.Errorf("lookup provider account: %w", cerr)
-		} else {
-			return "", fmt.Errorf("provider account not found or incomplete")
-		}
-		if data.IsBridge && creds.AppType != "voicebot" {
-			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
+			return "", fmt.Errorf("lookup user provider account: %w", cerr)
 		}
 	}
 	if !creds.IsSet() && data.CampaignID > 0 {
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
+	}
+	if creds.Direction == "inbound" {
+		return "", fmt.Errorf("campaign provider account is inbound-only; choose an outbound account")
 	}
 	provider := creds.Provider
 	if provider == "" {
@@ -192,22 +199,25 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// Carry the Exotel app/flow type and account choice through to the webhook
 	// and hangup path so they use the same credentials used to place the call.
 	pending.AppType = creds.AppType
-	pending.ExotelAccountID = data.ExotelAccountID
+	if creds.AccountID > 0 {
+		pending.ExotelAccountID = creds.AccountID
+	}
 	var callSid string
 
 	switch provider {
 	case "twilio":
-		var twilioClient *TwilioClient
+		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
+	case "tata", "smartflo", "tata_tele":
+		var tataClient *TataClient
 		if creds.IsSet() {
-			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
-			twilioClient = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
-			twilioClient = i.twilio // global fallback
+			tataClient = i.tata
 		}
-		twimlURL := fmt.Sprintf("%s/webhook/twilio?lead_id=%d&campaign_id=%d",
+		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		statusURL := fmt.Sprintf("%s/webhook/twilio/status", i.cfg.PublicServerURL)
-		callSid, err = twilioClient.InitiateCall(ctx, data.LeadPhone, twimlURL, statusURL)
+		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
+		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
@@ -269,6 +279,33 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	return callSid, nil
 }
 
+func tataStreamURL(publicURL string, leadID, campaignID, orgID int64) string {
+	base := strings.TrimRight(publicURL, "/")
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		base = "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		base = "ws://" + strings.TrimPrefix(base, "http://")
+	}
+	u, err := url.Parse(base + "/media-stream/tata")
+	if err != nil {
+		return base + "/media-stream/tata"
+	}
+	q := u.Query()
+	q.Set("provider", "tata")
+	if leadID > 0 {
+		q.Set("lead_id", fmt.Sprint(leadID))
+	}
+	if campaignID > 0 {
+		q.Set("campaign_id", fmt.Sprint(campaignID))
+	}
+	if orgID > 0 {
+		q.Set("org_id", fmt.Sprint(orgID))
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 // Hangup ends an in-progress carrier call. It first tries to use the same
 // provider account that placed the call (stored in Redis under the call SID),
 // then falls back to the campaign-linked account. This keeps per-machine
@@ -281,7 +318,7 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 	var creds db.ExotelCreds
 	// 1. Per-call override from the Redis pending entry.
 	if pending, ok := i.store.GetPendingCall(ctx, callSid); ok && pending.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgExotelAccountCreds(pending.ExotelAccountID, pending.OrgID); cerr == nil && c.IsSet() {
+		if c, cerr := i.db.GetOrgOrUserExotelAccountCreds(pending.ExotelAccountID, pending.OrgID, 0); cerr == nil && c.IsSet() {
 			creds = c
 		}
 	}
@@ -297,12 +334,13 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 
 	switch provider {
 	case "twilio":
-		var client *TwilioClient
+		return fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
+	case "tata", "smartflo", "tata_tele":
+		var client *TataClient
 		if creds.IsSet() {
-			// accountSID, authToken (=APIKey), fromPhone (=CallerID)
-			client = NewTwilioClient(creds.AccountSID, creds.APIKey, creds.CallerID)
+			client = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
-			client = i.twilio
+			client = i.tata
 		}
 		return client.Hangup(ctx, callSid)
 	default: // exotel

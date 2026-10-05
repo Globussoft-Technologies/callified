@@ -17,6 +17,9 @@ import (
 // @Success     200  {string}  string  "event: log\\ndata: {...}\\n\\n"
 // @Router      /api/sse/live-logs [get]
 func (s *Server) liveLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "logs.view") {
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")

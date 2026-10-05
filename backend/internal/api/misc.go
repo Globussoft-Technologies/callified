@@ -106,6 +106,9 @@ func (s *Server) completeTask(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/reports [get]
 func (s *Server) getReports(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "reports.view") {
+		return
+	}
 	ac := getAuth(r)
 	report, err := s.db.GetReports(ac.OrgID)
 	if err != nil {
@@ -235,6 +238,9 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 // @Failure     401  {object}  ErrorResponse
 // @Router      /api/recordings/{filename} [get]
 func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.recordings") {
+		return
+	}
 	ac := getAuth(r)
 	relPath := r.PathValue("filename")
 
@@ -307,6 +313,9 @@ func (s *Server) serveRecording(w http.ResponseWriter, r *http.Request) {
 // @Failure     503  {object}  ErrorResponse
 // @Router      /api/upload-recording [post]
 func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.recordings") {
+		return
+	}
 	if s.cfg.RecordingsDir == "" {
 		writeError(w, http.StatusServiceUnavailable, "recordings dir not configured")
 		return
@@ -324,6 +333,11 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	leadIDStr := r.FormValue("lead_id")
+	streamSid := strings.TrimSpace(r.FormValue("stream_sid"))
+	if len(streamSid) > 255 {
+		writeError(w, http.StatusBadRequest, "stream_sid too long")
+		return
+	}
 
 	// Prefer client-provided filename; fall back to synthesised name.
 	fname := filepath.Base(header.Filename)
@@ -358,9 +372,16 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	// Try to determine the campaign from the lead's latest transcript so the
 	// webm recording can be grouped under recordings/<email>/<campaign>/.
 	campaignDir := ""
+	campaignID := int64(0)
+	if cid, convErr := strconv.ParseInt(r.FormValue("campaign_id"), 10, 64); convErr == nil && cid > 0 {
+		campaignID = cid
+	}
 	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
 		if txs, err := s.db.GetTranscriptsByLead(leadID); err == nil && len(txs) > 0 {
-			if c, err := s.db.GetCampaignByID(txs[0].CampaignID); err == nil && c != nil {
+			if campaignID == 0 {
+				campaignID = txs[0].CampaignID
+			}
+			if c, err := s.db.GetCampaignByID(campaignID); err == nil && c != nil {
 				campaignDir = sanitizeEmailForPath(c.Name)
 			}
 		}
@@ -425,11 +446,11 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Swap the stereo-WAV URL on the most recent transcript for this lead
-	// to point at the higher-quality webm instead. Poll up to ~3s because
+	// to point at the higher-quality webm instead. Poll up to ~5s because
 	// the transcript row is inserted asynchronously by finalizeCall —
 	// matches the Python handler's retry loop.
 	if leadID, convErr := strconv.ParseInt(leadIDStr, 10, 64); convErr == nil && leadID > 0 {
-		s.attachRecordingToLatestTranscript(r.Context(), leadID, recURL)
+		s.attachRecordingToLatestTranscript(r.Context(), leadID, campaignID, ac.OrgID, streamSid, recURL)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "url": recURL})
@@ -445,11 +466,22 @@ func (s *Server) uploadRecording(w http.ResponseWriter, r *http.Request) {
 //
 // Polls because finalizeCall runs in a goroutine — the transcript row may not
 // exist yet when the browser POSTs the file.
-func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID int64, recURL string) {
-	for attempt := 0; attempt < 6; attempt++ {
-		transcripts, err := s.db.GetTranscriptsByLead(leadID)
-		if err == nil && len(transcripts) > 0 {
-			latest := transcripts[0] // ordered by created_at DESC
+func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID, campaignID, orgID int64, streamSid, recURL string) {
+	since := time.Now().Add(-5 * time.Minute)
+	// Wait longer for browser web-sim calls because finalizeCall (which creates
+	// the transcript row and server-side WAV) may still be draining the WS and
+	// saving the recording. Previously we only polled 3s, so the browser upload
+	// frequently won the race and created an empty transcript row.
+	const maxAttempts = 10 // 5 seconds; finalizeCall should create the row quickly for web-sim
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var latest *db.Transcript
+		var err error
+		if streamSid != "" {
+			latest, err = s.db.GetTranscriptByCallSid(streamSid)
+		} else {
+			latest, err = s.db.GetRecentTranscriptForRecordingAttach(leadID, campaignID, since)
+		}
+		if err == nil && latest != nil {
 			if latest.RecordingURL != "" {
 				s.logger.Sugar().Infow("uploadRecording: server recording already attached, skipping webm",
 					"transcript_id", latest.ID, "existing", latest.RecordingURL)
@@ -470,10 +502,12 @@ func (s *Server) attachRecordingToLatestTranscript(ctx context.Context, leadID i
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
+	s.logger.Sugar().Warnw("uploadRecording: no transcript row found after waiting, creating fallback empty row",
+		"lead_id", leadID, "campaign_id", campaignID, "url", recURL)
 	// No transcript row exists (e.g. web-sim with no server-side WAV, or
 	// finalizeCall didn't run). Create an empty row carrying the webm URL
 	// so the call still appears in the Transcripts modal as audio-only.
-	transcriptID, err := s.db.SaveCallTranscript(leadID, 0, 0, "[]", recURL, "", 0)
+	transcriptID, err := s.db.SaveCallTranscriptWithCallSid(leadID, campaignID, orgID, streamSid, "[]", recURL, "", 0)
 	if err != nil {
 		s.logger.Sugar().Warnw("uploadRecording: no transcript and create failed",
 			"lead_id", leadID, "url", recURL, "err", err)
@@ -683,6 +717,219 @@ func (s *Server) debugCallTimeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, emptyJSON(timeline))
 }
 
+// ── GET /api/receptionist/calls ──────────────────────────────────────────────
+// Returns post-call inbound receptionist rows: customer name, phone, transcript
+// and recording URL after extraction has created or matched a CRM lead.
+
+func (s *Server) listReceptionistCalls(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	calls, err := s.db.GetRecentInboundReceptionistCalls(ac.OrgID, 50)
+	if err != nil {
+		s.logger.Sugar().Errorw("listReceptionistCalls", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	for i := range calls {
+		changed := fillReceptionistCallFromTranscript(&calls[i])
+		if changed {
+			_ = s.db.UpdateCallTranscriptInboundDetails(
+				calls[i].TranscriptID,
+				calls[i].FirstName,
+				calls[i].LastName,
+				calls[i].Phone,
+				calls[i].Interest,
+				calls[i].Status,
+			)
+		}
+	}
+	writeJSON(w, http.StatusOK, emptyJSON(calls))
+}
+
+type persistedReceptionistTurn struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+func fillReceptionistCallFromTranscript(call *db.InboundReceptionistCall) bool {
+	if call == nil || len(call.Transcript) == 0 {
+		return false
+	}
+	originalName := strings.TrimSpace(call.FirstName + " " + call.LastName)
+	originalPhone := call.Phone
+	var turns []persistedReceptionistTurn
+	if err := json.Unmarshal(call.Transcript, &turns); err != nil {
+		return false
+	}
+	for _, turn := range turns {
+		if !strings.EqualFold(turn.Role, "User") && !strings.EqualFold(turn.Role, "Customer") {
+			continue
+		}
+		text := strings.TrimSpace(turn.Text)
+		if text == "" {
+			continue
+		}
+		if call.Phone == "" {
+			if phone := extractReceptionistPhone(text); phone != "" {
+				call.Phone = phone
+			}
+		}
+		if name := extractReceptionistName(text); name != "" {
+			call.FirstName = name
+			call.LastName = ""
+		}
+	}
+	return originalName != strings.TrimSpace(call.FirstName+" "+call.LastName) || originalPhone != call.Phone
+}
+
+func extractReceptionistPhone(text string) string {
+	var digits strings.Builder
+	for _, r := range text {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	raw := digits.String()
+	if strings.HasPrefix(raw, "91") && len(raw) == 12 {
+		raw = raw[2:]
+	}
+	if strings.HasPrefix(raw, "0") && len(raw) > 10 {
+		raw = strings.TrimPrefix(raw, "0")
+	}
+	if len(raw) == 10 {
+		return raw
+	}
+	return ""
+}
+
+func extractReceptionistName(text string) string {
+	lower := strings.ToLower(text)
+	for _, prefix := range []string{
+		"sorry, this is ",
+		"sorry this is ",
+		"my name is ",
+		"this is ",
+		"i am ",
+		"i'm ",
+		"name is ",
+	} {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(text[idx+len(prefix):])
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.Trim(fields[0], ".,!?;:\"'()[]{}")
+		if name != "" && receptionistNameHasLetter(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func receptionistNameHasLetter(s string) bool {
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return true
+		}
+	}
+	return false
+}
+
+type receptionistCallUpdateRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+	Interest  string `json:"interest"`
+	Status    string `json:"status"`
+}
+
+func (s *Server) updateReceptionistCall(w http.ResponseWriter, r *http.Request) {
+	ac := getAuth(r)
+	transcriptID, err := parseID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	call, err := s.db.GetReceptionistCallByTranscript(ac.OrgID, transcriptID)
+	if err != nil {
+		s.logger.Sugar().Errorw("updateReceptionistCall: fetch", "err", err, "transcript_id", transcriptID)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if call == nil {
+		writeError(w, http.StatusNotFound, "call not found")
+		return
+	}
+	var req receptionistCallUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	first := strings.TrimSpace(req.FirstName)
+	last := strings.TrimSpace(req.LastName)
+	phone := normalizePhone(strings.TrimSpace(req.Phone))
+	interest := strings.TrimSpace(req.Interest)
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "new"
+	}
+	if err := s.db.UpdateCallTranscriptInboundDetails(transcriptID, first, last, phone, interest, status); err != nil {
+		s.logger.Sugar().Errorw("updateReceptionistCall: update transcript fields", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	leadID := call.LeadID
+	if leadID == 0 {
+		if first == "" && last == "" && phone == "" && interest == "" {
+			writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
+			return
+		}
+		id, err := s.db.CreateLead(first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
+		if err != nil {
+			if isDuplicateEntryError(err) && phone != "" {
+				existing, findErr := s.db.GetLeadByPhoneOrg(phone, ac.OrgID, nil, false)
+				if findErr != nil || existing == nil {
+					writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists"})
+					return
+				}
+				leadID = existing.ID
+			} else {
+				s.logger.Sugar().Errorw("updateReceptionistCall: create lead", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		} else {
+			leadID = id
+		}
+		if err := s.db.UpdateCallTranscriptLead(transcriptID, leadID); err != nil {
+			s.logger.Sugar().Errorw("updateReceptionistCall: attach lead", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	updated, err := s.db.UpdateLead(leadID, first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
+	if err != nil {
+		if isDuplicateEntryError(err) {
+			writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists for another lead"})
+			return
+		}
+		s.logger.Sugar().Errorw("updateReceptionistCall: update lead", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !updated {
+		writeError(w, http.StatusNotFound, "lead not found")
+		return
+	}
+	_ = s.db.UpdateLeadDisposition(leadID, status, "", "")
+	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "lead_id": leadID})
+}
+
 // ── GET /api/debug/recording-config ──────────────────────────────────────────
 // Reports whether the post-call WAV pipeline is wired correctly. Mostly a
 // diagnostic for the empty-`recording_url` case where saveWAV silently
@@ -785,10 +1032,10 @@ func (s *Server) recordingSvcName() string {
 //
 // POST /api/public/trial-signup creates a fully functional trial account from
 // the marketing website form. It provisions an org, an admin user, a 7-day
-// admin subscription, and 50 minutes of prepaid calling credit.
+// admin subscription, and 100 minutes of prepaid calling credit.
 
 const (
-	trialMinutes     = 50
+	trialMinutes     = 100
 	trialExpiryDays  = 7
 	trialPasswordLen = 10
 )
@@ -911,8 +1158,8 @@ func (s *Server) trialSignup(w http.ResponseWriter, r *http.Request) {
 		"ok":          true,
 		"provisioned": true,
 		"credentials": map[string]any{
-			"username": req.Email,
-			"password": password,
+			"username":  req.Email,
+			"password":  password,
 			"login_url": "https://app.callified.ai",
 		},
 	})

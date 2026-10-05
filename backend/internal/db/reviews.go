@@ -3,13 +3,52 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+
+	"github.com/go-sql-driver/mysql"
 )
+
+type schemaExecutor interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// EnsureCallReviewColumns applies the schema needed for cross-call memory.
+// It mirrors the standalone migration so normal deployments do not depend on
+// a separate manual migration step.
+func (d *DB) EnsureCallReviewColumns() error {
+	return ensureCallReviewColumns(d.pool)
+}
+
+func ensureCallReviewColumns(exec schemaExecutor) error {
+	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD COLUMN lead_id INT DEFAULT NULL`); err != nil && !isMySQLError(err, 1060) {
+		return fmt.Errorf("add call_reviews.lead_id: %w", err)
+	}
+
+	if _, err := exec.Exec(`
+		UPDATE call_reviews cr
+		JOIN call_transcripts ct ON cr.transcript_id = ct.id
+		SET cr.lead_id = ct.lead_id
+		WHERE cr.lead_id IS NULL AND ct.lead_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("backfill call_reviews.lead_id: %w", err)
+	}
+
+	if _, err := exec.Exec(`ALTER TABLE call_reviews ADD INDEX idx_call_reviews_lead_id (lead_id)`); err != nil && !isMySQLError(err, 1061) {
+		return fmt.Errorf("add call_reviews lead index: %w", err)
+	}
+	return nil
+}
+
+func isMySQLError(err error, number uint16) bool {
+	var mysqlErr *mysql.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == number
+}
 
 // CallReview mirrors the call_reviews table.
 type CallReview struct {
 	ID                          int64   `json:"id"`
 	TranscriptID                int64   `json:"transcript_id"`
 	OrgID                       int64   `json:"org_id"`
+	LeadID                      int64   `json:"lead_id"`
 	QualityScore                float64 `json:"quality_score"`
 	Sentiment                   string  `json:"sentiment"`
 	AppointmentBooked           bool    `json:"appointment_booked"`
@@ -49,8 +88,8 @@ type CallReviewWithLead struct {
 // joined to leads for first_name/last_name and COALESCEd across the legacy
 // (sentiment/insights/summary) and current (customer_sentiment/what_went_*) column
 // pairs so the Call Insights tab renders for both old and new rows. Issue #75.
-func (d *DB) GetCallReviewsByCampaign(campaignID int64) ([]CallReviewWithLead, error) {
-	rows, err := d.pool.Query(`
+func (d *DB) GetCallReviewsByCampaign(campaignID int64, execIDs []int64, applyExecFilter bool) ([]CallReviewWithLead, error) {
+	q := `
 		SELECT r.id, r.transcript_id, COALESCE(r.org_id,0),
 		       COALESCE(r.lead_id, t.lead_id, 0),
 		       COALESCE(l.first_name,''), COALESCE(l.last_name,''),
@@ -65,8 +104,14 @@ func (d *DB) GetCallReviewsByCampaign(campaignID int64) ([]CallReviewWithLead, e
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
 		LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)
-		WHERE t.campaign_id=?
-		ORDER BY r.id DESC`, campaignID)
+		WHERE t.campaign_id=?`
+	args := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY r.id DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +137,12 @@ func (d *DB) GetCallReviewsByCampaign(campaignID int64) ([]CallReviewWithLead, e
 // silently falling back to the per-call review list and rendering an empty
 // state.
 type CampaignCallInsights struct {
-	TotalReviews       int64                `json:"total_reviews"`
-	AvgQualityScore    float64              `json:"avg_quality_score"`
-	AppointmentRate    float64              `json:"appointment_rate"`
-	SentimentBreakdown map[string]int64     `json:"sentiment_breakdown"`
-	TopImprovements    []ImprovementCount   `json:"top_improvements"`
-	TopFailureReasons  []FailureReason      `json:"top_failure_reasons"`
+	TotalReviews       int64              `json:"total_reviews"`
+	AvgQualityScore    float64            `json:"avg_quality_score"`
+	AppointmentRate    float64            `json:"appointment_rate"`
+	SentimentBreakdown map[string]int64   `json:"sentiment_breakdown"`
+	TopImprovements    []ImprovementCount `json:"top_improvements"`
+	TopFailureReasons  []FailureReason    `json:"top_failure_reasons"`
 }
 
 // ImprovementCount counts how many times the same prompt-improvement
@@ -110,11 +155,20 @@ type ImprovementCount struct {
 // GetCampaignCallInsights aggregates call_reviews rows for a campaign into
 // the shape the Insights tab renders. Sentiment/improvement/failure columns
 // COALESCE legacy and current schema names so old rows still contribute.
-func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, error) {
+func (d *DB) GetCampaignCallInsights(campaignID int64, execIDs []int64, applyExecFilter bool) (*CampaignCallInsights, error) {
 	out := &CampaignCallInsights{
 		SentimentBreakdown: map[string]int64{},
 		TopImprovements:    []ImprovementCount{},
 		TopFailureReasons:  []FailureReason{},
+	}
+
+	filterJoin := ""
+	filterWhere := ""
+	filterArgs := []any{}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		filterJoin = "LEFT JOIN leads l ON l.id = COALESCE(r.lead_id, t.lead_id)"
+		filterWhere = " AND " + c
+		filterArgs = append(filterArgs, a...)
 	}
 
 	// Summary tile: total / avg score / appointment rate (as a percentage 0-100,
@@ -127,7 +181,8 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       END
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
-		WHERE t.campaign_id=?`, campaignID).
+		`+filterJoin+`
+		WHERE t.campaign_id=?`+filterWhere, append([]any{campaignID}, filterArgs...)...).
 		Scan(&out.TotalReviews, &out.AvgQualityScore, &out.AppointmentRate)
 	if err != nil {
 		return nil, err
@@ -138,8 +193,9 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       COUNT(*)
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
-		WHERE t.campaign_id=?
-		GROUP BY s`, campaignID)
+		`+filterJoin+`
+		WHERE t.campaign_id=?`+filterWhere+`
+		GROUP BY s`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer sRows.Close()
 		for sRows.Next() {
@@ -156,10 +212,12 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		       COUNT(*) AS cnt
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
+		`+filterJoin+`
 		WHERE t.campaign_id=?
 		  AND COALESCE(NULLIF(r.prompt_improvement_suggestion,''), NULLIF(r.insights,'')) IS NOT NULL
+		  `+filterWhere+`
 		GROUP BY s
-		ORDER BY cnt DESC LIMIT 5`, campaignID)
+		ORDER BY cnt DESC LIMIT 5`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer iRows.Close()
 		for iRows.Next() {
@@ -174,9 +232,11 @@ func (d *DB) GetCampaignCallInsights(campaignID int64) (*CampaignCallInsights, e
 		SELECT r.failure_reason, COUNT(*) AS cnt
 		FROM call_reviews r
 		JOIN call_transcripts t ON r.transcript_id=t.id
+		`+filterJoin+`
 		WHERE t.campaign_id=? AND r.failure_reason IS NOT NULL AND r.failure_reason<>''
+		  `+filterWhere+`
 		GROUP BY r.failure_reason
-		ORDER BY cnt DESC LIMIT 5`, campaignID)
+		ORDER BY cnt DESC LIMIT 5`, append([]any{campaignID}, filterArgs...)...)
 	if err == nil {
 		defer fRows.Close()
 		for fRows.Next() {
@@ -223,17 +283,18 @@ func (d *DB) SaveCallReview(r *CallReview) error {
 	}
 	_, err := d.pool.Exec(`
 		INSERT INTO call_reviews
-		(transcript_id, org_id, quality_score, sentiment, appointment_booked,
+		(transcript_id, org_id, lead_id, quality_score, sentiment, appointment_booked,
 		 failure_reason, what_went_well, what_went_wrong, summary, insights,
 		 prompt_improvement_suggestion)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 		ON DUPLICATE KEY UPDATE
 		quality_score=VALUES(quality_score), sentiment=VALUES(sentiment),
 		appointment_booked=VALUES(appointment_booked), failure_reason=VALUES(failure_reason),
 		what_went_well=VALUES(what_went_well), what_went_wrong=VALUES(what_went_wrong),
 		summary=VALUES(summary), insights=VALUES(insights),
-		prompt_improvement_suggestion=VALUES(prompt_improvement_suggestion)`,
-		r.TranscriptID, r.OrgID, r.QualityScore, r.Sentiment, apptBooked,
+		prompt_improvement_suggestion=VALUES(prompt_improvement_suggestion),
+		lead_id=IF(VALUES(lead_id) > 0, VALUES(lead_id), lead_id)`,
+		r.TranscriptID, r.OrgID, r.LeadID, r.QualityScore, r.Sentiment, apptBooked,
 		nullString(r.FailureReason), nullString(r.WhatWentWell), nullString(r.WhatWentWrong),
 		nullString(r.Summary), nullString(r.Insights), nullString(r.PromptImprovementSuggestion))
 	return err
@@ -254,6 +315,49 @@ func scanReviews(rows interface {
 		}
 		r.AppointmentBooked = apptBooked == 1
 		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+// CallMemory is one past-call memory entry for a lead, injected into the
+// voice agent's system prompt at the start of a new call so the agent
+// knows the history with this customer (docs/call-memory-proposal.md).
+type CallMemory struct {
+	CreatedAt string
+	Summary   string
+}
+
+// GetLastCallMemory returns the most recent call reviews for a lead within
+// the same campaign, newest first, capped at limit. Returns nil for invalid
+// IDs or when the lead has no reviewed calls in this campaign — callers treat
+// nil as "no memory", which must never block a call.
+func (d *DB) GetLastCallMemory(leadID, campaignID int64, limit int) ([]CallMemory, error) {
+	if leadID <= 0 || campaignID <= 0 || limit <= 0 {
+		return nil, nil
+	}
+	// COALESCE(cr.lead_id, ct.lead_id): rows written before lead_id was
+	// populated on call_reviews (and not covered by the backfill) still
+	// resolve via their transcript.
+	rows, err := d.pool.Query(`
+		SELECT DATE_FORMAT(cr.created_at,'%Y-%m-%d'),
+		       COALESCE(NULLIF(cr.summary,''), NULLIF(cr.what_went_well,''), '')
+		FROM call_reviews cr
+		JOIN call_transcripts ct ON cr.transcript_id = ct.id
+		WHERE COALESCE(cr.lead_id, ct.lead_id) = ?
+		  AND ct.campaign_id = ?
+		ORDER BY cr.id DESC
+		LIMIT ?`, leadID, campaignID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CallMemory
+	for rows.Next() {
+		var m CallMemory
+		if err := rows.Scan(&m.CreatedAt, &m.Summary); err != nil {
+			return nil, err
+		}
+		list = append(list, m)
 	}
 	return list, rows.Err()
 }

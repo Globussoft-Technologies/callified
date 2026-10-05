@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
+import { useToast } from '../../contexts/UIContext';
 
 export default function CampaignModals({
   // Create Campaign Modal
@@ -33,6 +34,8 @@ export default function CampaignModals({
   setCreateError,
 }) {
   const hideAiFeatures = useHideAiFeatures();
+  const toast = useToast();
+  const csvInputRef = useRef(null);
   const [nameTouched, setNameTouched] = useState(false);
   const [addLeadsError, setAddLeadsError] = useState('');
   const nameError = validateCampaignName(createForm.name);
@@ -66,7 +69,7 @@ export default function CampaignModals({
     setNameTouched(false);
     setShowCreateModal(false);
     if (setSelectedTemplate) setSelectedTemplate(null);
-    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', executive_ids: [] });
+    if (setCreateForm) setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
     if (setCreateError) setCreateError('');
   };
 
@@ -88,6 +91,21 @@ export default function CampaignModals({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const createProviderAccountOptions = (orgExotelAccounts || [])
+    .filter(a => (a.direction || 'outbound') !== 'inbound');
+  const providerAccountLabel = (provider) => {
+    switch ((provider || 'exotel').toLowerCase()) {
+      case 'tata':
+      case 'smartflo':
+      case 'tata_tele':
+        return 'Tata Tele';
+      case 'twilio':
+        return 'Twilio';
+      default:
+        return 'Exotel';
+    }
   };
 
   return (
@@ -213,6 +231,7 @@ export default function CampaignModals({
                     <option value="website">Website Form</option>
                     <option value="referral">Referral</option>
                     <option value="cold">Cold Outreach</option>
+                    <option value="other">Others</option>
                   </select>
                 </div>
                 <div style={{marginBottom: '1.5rem'}}>
@@ -226,49 +245,21 @@ export default function CampaignModals({
                     {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                   </select>
                 </div>
-                {(createForm.channel !== 'whatsapp') && orgExotelAccounts && orgExotelAccounts.length > 0 && (
+                {(createForm.channel !== 'whatsapp') && createProviderAccountOptions.length > 0 && (
                   <div style={{marginBottom: '1.5rem'}}>
                     <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                      Exotel Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved Exotel credentials)</span>
+                      Provider Account <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional — select saved browser calling credentials)</span>
                     </label>
                     <select className="form-input" value={createForm.exotel_account_id || ''}
                       onChange={e => setCreateForm({...createForm, exotel_account_id: e.target.value ? parseInt(e.target.value) : ''})}
                       style={{width: '100%'}}>
                       <option value="">-- Use default / set later --</option>
-                      {orgExotelAccounts.map(a => (
+                      {createProviderAccountOptions.map(a => (
                         <option key={a.id} value={a.id}>
-                          {a.name} · {a.account_sid} · {a.caller_id}
+                          [{providerAccountLabel(a.provider)}] {a.name || a.account_sid} · {a.caller_id || 'no caller ID'}
                         </option>
                       ))}
                     </select>
-                  </div>
-                )}
-                {executives && executives.length > 0 && (
-                  <div style={{marginBottom: '1.5rem'}}>
-                    <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                      Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
-                    </label>
-                    <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
-                      {executives.map(e => {
-                        const ids = createForm.executive_ids || [];
-                        const checked = ids.includes(e.id) || ids.includes(String(e.id));
-                        return (
-                          <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
-                            <input type="checkbox" checked={checked}
-                              onChange={() => {
-                                const val = String(e.id);
-                                setCreateForm(f => ({
-                                  ...f,
-                                  executive_ids: checked
-                                    ? (f.executive_ids || []).filter(id => String(id) !== val)
-                                    : [...(f.executive_ids || []), val]
-                                }));
-                              }} />
-                            {e.name}
-                          </label>
-                        );
-                      })}
-                    </div>
                   </div>
                 )}
                 {createError && (
@@ -470,9 +461,80 @@ export default function CampaignModals({
               </div>
             )}
 
-            <input type="file" accept=".csv" key={csvFile ? csvFile.name : 'empty'}
-              onChange={e => { setCsvFile(e.target.files[0]); if (setCsvImportResult) setCsvImportResult(null); }}
-              style={{marginBottom: '1rem', color: '#e2e8f0', fontSize: '0.85rem'}} />
+            <div style={{marginBottom: '1rem'}}>
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv"
+                onChange={e => { setCsvFile(e.target.files?.[0] || null); if (setCsvImportResult) setCsvImportResult(null); }}
+                style={{position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none'}}
+              />
+              <div style={{display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap'}}>
+                <button
+                  type="button"
+                  onClick={() => csvInputRef.current?.click()}
+                  style={{
+                    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)',
+                    color: '#e2e8f0', padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
+                    fontSize: '0.85rem', fontWeight: 600,
+                  }}>
+                  Choose CSV
+                </button>
+                {csvFile ? (
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: '#334155',
+                    background: 'rgba(99,102,241,0.08)',
+                    border: '1px solid rgba(99,102,241,0.18)',
+                    borderRadius: '8px',
+                    padding: '7px 8px 7px 10px',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    maxWidth: '100%',
+                  }}>
+                    <span style={{wordBreak: 'break-all'}}>{csvFile.name}</span>
+                    <button
+                      type="button"
+                      aria-label="Clear selected CSV"
+                      title="Clear selected CSV"
+                      onClick={() => {
+                        setCsvFile(null);
+                        if (setCsvImportResult) setCsvImportResult(null);
+                        if (csvInputRef.current) csvInputRef.current.value = '';
+                      }}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        flex: '0 0 18px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: '#ffffff',
+                        border: '1px solid rgba(99,102,241,0.18)',
+                        borderRadius: '50%',
+                        color: '#334155',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        lineHeight: 1,
+                        padding: 0,
+                      }}>
+                      &times;
+                    </button>
+                  </span>
+                ) : (
+                  <span style={{
+                    color: '#94a3b8',
+                    border: '1px solid transparent',
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                  }}>
+                    No file selected
+                  </span>
+                )}
+              </div>
+            </div>
             <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
               <button onClick={closeCsvImportModal}
                 style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
@@ -544,6 +606,7 @@ export default function CampaignModals({
                   <option value="website">Website Form</option>
                   <option value="referral">Referral</option>
                   <option value="cold">Cold Outreach</option>
+                  <option value="other">Others</option>
                 </select>
               </div>
               <div style={{marginBottom: '1.5rem'}}>
@@ -555,34 +618,6 @@ export default function CampaignModals({
                   {!hideAiFeatures && <option value="whatsapp">💬 WhatsApp (AI Chat)</option>}
                 </select>
               </div>
-              {executives && executives.length > 0 && (
-                <div style={{marginBottom: '1.5rem'}}>
-                  <label style={{display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '4px'}}>
-                    Assign Executives <span style={{color: '#64748b', fontSize: '0.75rem'}}>(optional)</span>
-                  </label>
-                  <div style={{maxHeight: '140px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 10px'}}>
-                    {executives.map(e => {
-                      const ids = editCampaignForm.executive_ids || [];
-                      const checked = ids.includes(e.id) || ids.includes(String(e.id));
-                      return (
-                        <label key={e.id} style={{display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: '#e2e8f0', fontSize: '0.85rem', cursor: 'pointer'}}>
-                          <input type="checkbox" checked={checked}
-                            onChange={() => {
-                              const val = String(e.id);
-                              setEditCampaignForm(f => ({
-                                ...f,
-                                executive_ids: checked
-                                  ? (f.executive_ids || []).filter(id => String(id) !== val)
-                                  : [...(f.executive_ids || []), val]
-                              }));
-                            }} />
-                          {e.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
                 <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}
                   style={{background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#94a3b8', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}}>
@@ -643,7 +678,11 @@ export default function CampaignModals({
             <div style={{display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '1.5rem'}}>
               <button onClick={() => setEditLead(null)} style={{background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: '#cbd5e1', padding: '8px 18px', borderRadius: '8px', cursor: 'pointer'}}>Cancel</button>
               <button className="btn-primary" onClick={() => {
-                if (!isValidPhone(editForm.phone || '')) { alert(PHONE_VALIDATION_MESSAGE); return; }
+                if (!isValidPhone(editForm.phone || '')) {
+                  setEditErrors(prev => ({...prev, phone: PHONE_VALIDATION_MESSAGE}));
+                  toast(PHONE_VALIDATION_MESSAGE, 'error');
+                  return;
+                }
                 handleSaveEdit();
               }}>Save</button>
             </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -35,16 +36,33 @@ function ScoreBadge({ score }) {
 }
 
 export default function AnalyticsPage({ apiFetch, API_URL }) {
+  const { currentUser } = useAuth();
   const [data, setData]       = useState(null);
   const [langData, setLangData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [executives, setExecutives] = useState([]);
+  const [selectedExecutiveIds, setSelectedExecutiveIds] = useState([]);
+  const [showAgentFilter, setShowAgentFilter] = useState(false);
+  const [agentFilterSearch, setAgentFilterSearch] = useState('');
+  const [agentReportUserId, setAgentReportUserId] = useState(null);
+
+  useEffect(() => {
+    apiFetch(`${API_URL}/executives`)
+      .then(r => r.json())
+      .then(d => setExecutives(Array.isArray(d) ? d : []))
+      .catch(() => {});
+  }, [apiFetch, API_URL]);
 
   useEffect(() => {
     (async () => {
+      setLoading(true);
       try {
+        const params = new URLSearchParams();
+        if (selectedExecutiveIds?.length) params.set('executive_ids', selectedExecutiveIds.join(','));
+        const query = params.toString() ? `?${params.toString()}` : '';
         const [dashRes, langRes] = await Promise.all([
-          apiFetch(`${API_URL}/analytics/dashboard`),
-          apiFetch(`${API_URL}/analytics/languages`),
+          apiFetch(`${API_URL}/analytics/dashboard${query}`),
+          apiFetch(`${API_URL}/analytics/languages${query}`),
         ]);
         const dash = await dashRes.json();
         const lang = await langRes.json();
@@ -53,8 +71,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       } catch (e) { console.error('Failed to load analytics', e); }
       finally { setLoading(false); }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedExecutiveIds, apiFetch, API_URL]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading analytics…</div>;
   if (!data)   return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Failed to load analytics data.</div>;
@@ -81,7 +98,10 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
   const handleExportCSV = async () => {
     try {
-      const res = await apiFetch(`${API_URL}/analytics/export/csv`);
+      const params = new URLSearchParams();
+      if (selectedExecutiveIds?.length) params.set('executive_ids', selectedExecutiveIds.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/analytics/export/csv${query}`);
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -94,11 +114,36 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
 
   const handleExportReport = async () => {
     try {
-      const res = await apiFetch(`${API_URL}/analytics/export/report`);
+      const params = new URLSearchParams();
+      if (selectedExecutiveIds?.length) params.set('executive_ids', selectedExecutiveIds.join(','));
+      const query = params.toString() ? `?${params.toString()}` : '';
+      const res = await apiFetch(`${API_URL}/analytics/export/report${query}`);
       const html = await res.text();
       const win = window.open('', '_blank');
       win.document.write(html); win.document.close();
     } catch (e) { console.error('Report export failed', e); }
+  };
+
+  const handleDownloadAgentReport = async () => {
+    try {
+      const userId = agentReportUserId || currentUser?.id;
+      if (!userId) {
+        console.error('No agent selected and current user unavailable');
+        return;
+      }
+      const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const to = new Date().toISOString().slice(0, 10);
+      const params = new URLSearchParams({ from, to, campaign_id: '0', user_id: String(userId) });
+      const res = await apiFetch(`${API_URL}/analytics/agent-report?${params.toString()}`);
+      if (!res.ok) throw new Error(`Report failed (${res.status})`);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `agent_report_${userId}_${from}_${to}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) { console.error('Agent report download failed', e); }
   };
 
   return (
@@ -112,7 +157,84 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>Real-time metrics from your AI dialer campaigns.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative' }}>
+            <button
+              onClick={() => setShowAgentFilter(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+                background: T.card, border: `1px solid ${T.border}`, color: T.sub,
+              }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              {selectedExecutiveIds.length === 0 ? 'Filter by agents' : `${selectedExecutiveIds.length} agent${selectedExecutiveIds.length > 1 ? 's' : ''}`} ▾
+            </button>
+            {showAgentFilter && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 220,
+                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
+                maxHeight: 300, overflowY: 'auto'
+              }}>
+                <input
+                  type="text"
+                  placeholder="Search agents..."
+                  value={agentFilterSearch}
+                  onChange={e => setAgentFilterSearch(e.target.value)}
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '6px 8px', marginBottom: 6,
+                    border: `1px solid ${T.border}`, borderRadius: 6, fontSize: 13, fontFamily: T.font,
+                    outline: 'none'
+                  }}
+                />
+                <div
+                  onClick={() => setSelectedExecutiveIds([])}
+                  style={{
+                    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                    color: selectedExecutiveIds.length === 0 ? T.accent : T.text, fontWeight: selectedExecutiveIds.length === 0 ? 700 : 400,
+                    background: selectedExecutiveIds.length === 0 ? 'rgba(99,102,241,0.08)' : 'transparent'
+                  }}>
+                  All agents
+                </div>
+                {(() => {
+                  const q = agentFilterSearch.trim().toLowerCase();
+                  const filtered = q ? (executives || []).filter(e => (e.name || e.full_name || e.email || '').toLowerCase().includes(q)) : (executives || []);
+                  if (filtered.length === 0) {
+                    return <div style={{ color: T.muted, fontSize: 12, padding: '6px 0' }}>No agents found.</div>;
+                  }
+                  return filtered.map(e => {
+                    const checked = selectedExecutiveIds.includes(e.id);
+                    return (
+                      <label key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', color: T.text, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => setSelectedExecutiveIds(prev => checked ? prev.filter(id => id !== e.id) : [...prev, e.id])} />
+                        {e.name || e.full_name || e.email}
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+            )}
+          </div>
+          <select
+            value={agentReportUserId || ''}
+            onChange={e => setAgentReportUserId(e.target.value ? parseInt(e.target.value, 10) : null)}
+            style={{
+              padding: '8px 12px', borderRadius: 8, fontSize: 13, fontFamily: T.font,
+              border: `1px solid ${T.border}`, background: '#fff', color: T.text, cursor: 'pointer', minWidth: 160
+            }}>
+            <option value="">Agent report for me</option>
+            {executives.map(e => <option key={e.id} value={e.id}>{e.name || e.full_name || e.email}</option>)}
+          </select>
+          <button onClick={handleDownloadAgentReport} style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,
+            background: T.accent, border: 'none', color: '#fff',
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Download Agent Report
+          </button>
           <button onClick={handleExportCSV} style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: T.font,

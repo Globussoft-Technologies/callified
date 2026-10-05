@@ -326,8 +326,8 @@ func (s *Server) normalizeRole(raw string) string {
 		return "Admin"
 	case "agent":
 		return "Agent"
-	case "viewer":
-		return "Viewer"
+	case "executive", "viewer":
+		return "Executive"
 	}
 	fallback := strings.TrimSpace(s.cfg.SSODefaultRole)
 	if fallback == "" {
@@ -336,8 +336,8 @@ func (s *Server) normalizeRole(raw string) string {
 	switch strings.ToLower(fallback) {
 	case "admin":
 		return "Admin"
-	case "viewer":
-		return "Viewer"
+	case "executive", "viewer":
+		return "Executive"
 	}
 	return "Agent"
 }

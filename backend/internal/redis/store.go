@@ -33,16 +33,17 @@ var displayTZ = func() *time.Location {
 
 // PendingCallInfo mirrors the dict stored by python's set_pending_call().
 type PendingCallInfo struct {
-	Name          string `json:"name"`
-	Phone         string `json:"phone"`
-	LeadID        int64  `json:"lead_id"`
-	OrgID         int64  `json:"org_id"`
-	Interest      string `json:"interest"`
-	ExotelCallSid string `json:"exotel_call_sid"`
-	CampaignID    int64  `json:"campaign_id"`
-	TTSProvider   string `json:"tts_provider"`
-	TTSVoiceID    string `json:"tts_voice_id"`
-	TTSLanguage   string `json:"tts_language"`
+	Name                   string `json:"name"`
+	Phone                  string `json:"phone"`
+	LeadID                 int64  `json:"lead_id"`
+	OrgID                  int64  `json:"org_id"`
+	Interest               string `json:"interest"`
+	ExotelCallSid          string `json:"exotel_call_sid"`
+	CampaignID             int64  `json:"campaign_id"`
+	TTSProvider            string `json:"tts_provider"`
+	TTSVoiceID             string `json:"tts_voice_id"`
+	TTSLanguage            string `json:"tts_language"`
+	MaxCallDurationSeconds int    `json:"max_call_duration_seconds,omitempty"`
 	// IsBridge=true means the call is a browser-to-phone bridge: skip AI pipeline,
 	// relay audio between Exotel and the agent's browser WebSocket.
 	IsBridge bool `json:"is_bridge,omitempty"`
@@ -54,6 +55,8 @@ type PendingCallInfo struct {
 	// UserEmail is the agent/admin who initiated the call. Used to segregate
 	// recordings into per-user folders.
 	UserEmail string `json:"user_email,omitempty"`
+	// UserID is the resolved DB user id of the agent/admin who initiated the call.
+	UserID int64 `json:"user_id,omitempty"`
 	// ExotelAccountID is the org_exotel_accounts row used to place this specific
 	// call. It lets browser calls from different machines use different provider
 	// accounts while the campaign default remains unchanged for AI calls.
@@ -62,9 +65,9 @@ type PendingCallInfo struct {
 
 // Store wraps a Redis client with in-memory fallback (mirrors redis_store.py).
 type Store struct {
-	rdb    *goredis.Client
-	log    *zap.Logger
-	mu     sync.RWMutex
+	rdb         *goredis.Client
+	log         *zap.Logger
+	mu          sync.RWMutex
 	memPending  map[string]PendingCallInfo
 	memTakeover map[string]bool
 	memWhisper  map[string][]string

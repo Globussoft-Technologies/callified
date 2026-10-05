@@ -21,8 +21,8 @@ import (
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/prompt"
-	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/recording"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/stt"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
@@ -35,16 +35,16 @@ var upgrader = websocket.Upgrader{
 
 // Handler serves the /media-stream and /ws/sandbox WebSocket endpoints.
 type Handler struct {
-	cfg           *config.Config
-	promptBuilder *prompt.Builder    // Phase 3C: replaces gRPC InitializeCall
-	recordingSvc  *recording.Service // Phase 4: replaces gRPC FinalizeCall
-	store         *rstore.Store
-	db            *db.DB        // for lead lookups when Redis pending-call info is sparse
-	provider      *llm.Provider // Phase 0: native Go LLM
-	initiator     *dial.Initiator // optional: used to hang up bridge calls from browser
-	ttsKeys       map[string]string
-	log           *zap.Logger
-	sessions      sync.Map // stream_sid → *CallSession (for monitor WebSocket)
+	cfg               *config.Config
+	promptBuilder     *prompt.Builder    // Phase 3C: replaces gRPC InitializeCall
+	recordingSvc      *recording.Service // Phase 4: replaces gRPC FinalizeCall
+	store             *rstore.Store
+	db                *db.DB          // for lead lookups when Redis pending-call info is sparse
+	provider          *llm.Provider   // Phase 0: native Go LLM
+	initiator         *dial.Initiator // optional: used to hang up bridge calls from browser
+	ttsKeys           map[string]string
+	log               *zap.Logger
+	sessions          sync.Map // stream_sid → *CallSession (for monitor WebSocket)
 	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
 }
 
@@ -108,8 +108,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if streamSid == "" {
 		streamSid = fmt.Sprintf("web_sim_%s_%d", q.Get("lead_id"), time.Now().UnixMilli())
 	}
+	isTataStream := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	if isTataStream && strings.HasPrefix(streamSid, "web_sim_") {
+		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
+	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	if isTataStream {
+		sess.Provider = "tata"
+		sess.IsExotel = false
+		sess.UseUlaw = strings.EqualFold(q.Get("codec"), "ulaw") || strings.EqualFold(q.Get("codec"), "mulaw")
+	}
+	sess.IsInbound = q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
 	// the lead label instead of the empty "()" we used to show.
@@ -122,6 +132,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if id := q.Get("campaign_id"); id != "" {
 		fmt.Sscanf(id, "%d", &sess.CampaignID)
 	}
+	if id := q.Get("org_id"); id != "" {
+		fmt.Sscanf(id, "%d", &sess.OrgID)
+	}
 	// Snapshot whether the URL explicitly carried a language BEFORE
 	// initializeCall has a chance to populate sess.Language from a platform-
 	// default fallback (GetOrganizationVoiceSettings(0) returns "en" when no
@@ -130,7 +143,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// is empty until the start frame lands) correctly defers to
 	// handleStartEvent's Redis-hydration path instead of firing a greeting
 	// in the platform-default English/Aditya combo.
-	langFromQuery := q.Get("tts_language") != ""
+	deferTataInboundUntilStart := isTataStream && sess.IsInbound
+	langFromQuery := !deferTataInboundUntilStart && (q.Get("tts_language") != "" || (isTataStream && (q.Get("lead_id") != "" || q.Get("campaign_id") != "" || q.Get("org_id") != "")))
 	if l := q.Get("tts_language"); l != "" {
 		sess.Language = l
 		sess.TTSLanguage = l
@@ -141,6 +155,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("voice"); v != "" {
 		sess.TTSVoiceID = v
 	}
+	if d := q.Get("max_call_duration_seconds"); d != "" {
+		fmt.Sscanf(d, "%d", &sess.MaxCallDurationSeconds)
+	}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -148,11 +165,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.sessions.Store(sess.StreamSid, sess)
 	defer func() {
 		// Accumulate talk time and log the call activity for the agent who initiated it.
-		if sess.UserEmail != "" && !sess.CallStart.IsZero() {
-			if u, err := h.db.GetUserByEmail(sess.UserEmail); err == nil && u != nil {
+		if (sess.UserID > 0 || sess.UserEmail != "") && !sess.CallStart.IsZero() {
+			userID := sess.UserID
+			orgID := sess.OrgID
+			if userID == 0 {
+				if u, err := h.db.GetUserByEmail(sess.UserEmail); err == nil && u != nil {
+					userID = u.ID
+					orgID = u.OrgID
+				}
+			}
+			if userID > 0 {
 				dur := int64(time.Since(sess.CallStart).Seconds())
 				if dur > 0 {
-					_ = h.db.AddAgentTalkTime(u.ID, dur)
+					_ = h.db.AddAgentTalkTime(userID, dur)
 				}
 				outcome := "no_answer"
 				if dur > 30 {
@@ -160,7 +185,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else if dur > 5 {
 					outcome = "connected"
 				}
-				_ = h.db.LogAgentActivity(u.ID, u.OrgID, sess.CampaignID, sess.LeadID, db.ActivityCall, map[string]any{
+				_ = h.db.LogAgentActivity(userID, orgID, sess.CampaignID, sess.LeadID, db.ActivityCall, map[string]any{
 					"duration_s": dur,
 					"outcome":    outcome,
 					"call_sid":   sess.CallSid,
@@ -192,6 +217,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.initializeCall(ctx, sess); err != nil {
 		h.log.Error("InitializeCall failed", zap.Error(err))
 		// Continue with defaults — don't abort the call
+	}
+	if sess.IsInbound {
+		h.applyInboundReceptionistPrompt(sess)
 	}
 
 	// --- Voice consistency cache (lead_voice:{id}, 90-day TTL) ---
@@ -232,12 +260,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and merges by confidence within 300ms — recovers Hindi misclassified by
 	// Deepgram's "multi" mode. Mirrors main-branch ws_handler.py 4aa3fa3.
 	onTranscript := func(text string) {
+		if sess.IsFinalClosing() {
+			return
+		}
+		if isPathologicalTranscript(text) {
+			sess.Log.Warn("transcript dropped: pathological repetition",
+				zap.Int("text_len", len(text)))
+			if sess.CancelBargeIn() {
+				sess.Log.Info("barge-in: cancelled after pathological transcript")
+			}
+			return
+		}
 		if first, elapsed := sess.MarkSTTFirst(); first {
 			metrics.STTFirstByteLatency.Observe(elapsed)
 		}
-		if sess.HangupRequested() {
-			return
-		}
+		// NOTE: we intentionally do NOT drop transcripts just because a hangup
+		// has been requested. The customer may interrupt the AI's goodbye and
+		// cancel the hangup via barge-in. processTranscript is the gate that
+		// decides whether to act on a post-hangup transcript.
 		// Explicit language switch request ("can you speak in kannada" etc.)
 		// must be handled even during TTS cooldown — Sarvam detects these as
 		// English but the customer clearly wants a different language.
@@ -250,17 +290,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// picks these up as speech but they are not real customer replies.
 		// Agent keeps waiting for a meaningful response.
 		if isFillerSound(text) {
-			sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			// If a barge-in is pending, a filler sound means the user did not
+			// actually intend to interrupt — cancel the barge-in so TTS can resume.
+			if sess.CancelBargeIn() {
+				sess.Log.Info("barge-in: cancelled by filler sound", zap.String("text", text))
+			} else {
+				sess.SetBargeIn(false)
+				sess.Log.Debug("transcript dropped: filler sound", zap.String("text", text))
+			}
 			return
 		}
-		// Suppress transcripts while TTS is playing or within 1s of it ending
-		// to prevent the agent's own voice from looping back as customer input.
-		// Mirrors feat/go-backend ws_handler.py behaviour (no barge-in).
-		if sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000 {
-			sess.Log.Debug("transcript dropped: TTS cooldown",
-				zap.Bool("tts_playing", sess.IsTTSPlaying()),
-				zap.Int64("ms_since_tts_end", sess.MsSinceTTSEnd()))
-			return
+		// A real transcript confirms any pending barge-in before we apply the
+		// normal TTS cooldown filter.
+		if sess.IsBargeInPending() {
+			sess.ConfirmBargeIn()
+		}
+		// During TTS playback, discard only text that resembles sentences actually
+		// sent to TTS. A distinct transcript.final is real customer speech even if
+		// Sarvam missed vad.speech_start; preserve it and recover the interruption.
+		if !sess.IsBargeInActive() && (sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 1000) {
+			if sess.IsLikelyRecentAgentEcho(text) {
+				sess.Log.Debug("transcript dropped: matched recent TTS echo",
+					zap.String("text", text))
+				return
+			}
+			if sess.IsTTSPlaying() {
+				sess.RecoverBargeInFromFinalTranscript()
+			}
 		}
 		// Guard against send on closed channel if session tore down mid-STT.
 		select {
@@ -268,8 +324,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 		}
 	}
-	// BARGE-IN DISABLED — handler removed; STT OnSpeechStarted left nil so no
-	// speech-started callbacks fire. Energy-VAD barge-in is also commented below.
+	onSpeechStarted := func() {
+		// Sarvam ASR detected possible human speech. Keep this tentative until
+		// the final transcript arrives, because short fillers/noise such as
+		// "hmm" should not cut off the agent mid-sentence.
+		if sess.IsBargeInPending() {
+			sess.Log.Debug("barge-in: speech_start while pending")
+		} else {
+			sess.TryBargeIn("SpeechStarted")
+		}
+	}
 
 	var wg sync.WaitGroup
 
@@ -294,16 +358,45 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// g2: STT goroutine.
-		// Sarvam STT is used for Indian-language calls — it auto-detects language
-		// per utterance (te-IN, hi-IN, etc.). Language switching is now triggered
-		// ONLY by explicit customer requests (e.g. "speak in Hindi") handled in
-		// onTranscript; Sarvam's detected language is no longer used to auto-switch.
+		// Sarvam realtime STT is used for Indian-language calls — it streams
+		// audio over a WebSocket and emits partial transcripts, which let us
+		// confirm a barge-in within the first few hundred milliseconds instead
+		// of waiting for a full utterance to be POSTed to the batch API.
 		// Deepgram is used as fallback when no Sarvam key is configured.
 		wg.Add(1)
+		onLangDetected := func(transcript string, detectedLang string) {
+			// Auto language switching is disabled. The customer must explicitly
+			// ask for a language switch (handled in onTranscript via
+			// isExplicitLangSwitch). We still log detections for debugging.
+			sess.Log.Debug("lang: detected but not auto-switching",
+				zap.String("detected", detectedLang),
+				zap.String("text", transcript))
+		}
+		onPartialTranscript := func(text string) {
+			// Partial transcripts are not sent to the LLM pipeline; they only
+			// confirm that the user's interruption was real speech. Use a
+			// stricter filter than isFillerSound so short partial words like
+			// "he" / "my" / "no" (often the beginning of a real interruption)
+			// still confirm the barge-in.
+			if isKnownFiller(text) {
+				if sess.CancelBargeIn() {
+					sess.Log.Info("barge-in: cancelled by filler partial", zap.String("text", text))
+				}
+				return
+			}
+			if !isMeaningfulBargeInPartial(text) {
+				return
+			}
+			if sess.IsBargeInPending() {
+				sess.ConfirmBargeIn()
+			}
+		}
 		if h.cfg.SarvamAPIKey != "" && stt.SarvamLangSupported(sess.Language) {
-			sarvamClient := stt.NewSarvamClient(h.cfg.SarvamAPIKey, h.log)
+			sarvamClient := stt.NewSarvamRealtimeClient(h.cfg.SarvamAPIKey, h.log)
 			sarvamClient.OnTranscript = onTranscript
-			// BARGE-IN DISABLED: OnSpeechStarted left nil.
+			sarvamClient.OnSpeechStarted = onSpeechStarted
+			sarvamClient.OnPartialTranscript = onPartialTranscript
+			sarvamClient.OnTranscriptWithLang = onLangDetected
 			go func() {
 				defer wg.Done()
 				sarvamClient.Run(ctx, sess.AudioIn)
@@ -347,7 +440,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runTTSWorker(ctx, sess)
+		runTTSWorker(ctx, sess, h.initiator)
 	}()
 
 	// Greeting closure — dispatched here for web-sim (we already have the
@@ -388,6 +481,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		startSTT()
 		sendGreeting()
 	}
+	h.startMaxCallDurationTimer(ctx, sess)
 
 	// --- g1: WebSocket message loop ---
 	done := h.messageLoop(ctx, sess)
@@ -493,9 +587,9 @@ func topKeys(m map[string]interface{}) []string {
 }
 
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing audio even if a hangup has been requested. A customer
+	// interruption during the AI's goodbye should still trigger barge-in and
+	// cancel the hangup.
 	var pcm []byte
 	if sess.UseUlaw {
 		if sess.EchoCanceller.IsEcho(data) {
@@ -504,6 +598,12 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		}
 		pcm = audio.UlawToPCM(data)
 	} else {
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(data)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
@@ -514,18 +614,14 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Does not depend on Deepgram SpeechStarted (which requires a paid plan tier).
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
@@ -536,6 +632,9 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	var event map[string]interface{}
 	if err := json.Unmarshal(data, &event); err != nil {
 		return false
+	}
+	if sess.Provider == "tata" {
+		event = normalizeTataFrame(sess, event)
 	}
 	switch event["event"] {
 	case "connected":
@@ -548,6 +647,86 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 		return true
 	}
 	return false
+}
+
+func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[string]interface{} {
+	rawEvent := strings.ToLower(firstNonEmpty(
+		pickStr(event, "event", "Event"),
+		pickStr(event, "type", "Type"),
+		pickStr(event, "message", "Message"),
+	))
+
+	callSid := pickStr(event, "ref_id", "refId", "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "uuid")
+	streamSid := pickStr(event, "stream_sid", "streamSid", "stream_id", "streamId", "StreamID", "streamSid")
+	if streamSid == "" {
+		streamSid = sess.StreamSid
+	}
+
+	switch rawEvent {
+	case "connected", "connection_established", "websocket_connected":
+		event["event"] = "connected"
+	case "start", "started", "call_started", "stream_start", "stream_started", "call_connected", "answered":
+		event["event"] = "start"
+	case "media", "audio", "voice", "chunk", "audio_chunk":
+		event["event"] = "media"
+	case "stop", "stopped", "stream_stop", "stream_stopped", "call_ended", "completed", "hangup":
+		event["event"] = "stop"
+	default:
+		if _, ok := event["media"]; ok {
+			event["event"] = "media"
+		}
+	}
+
+	if event["event"] == "start" {
+		start, _ := event["start"].(map[string]interface{})
+		if start == nil {
+			start = map[string]interface{}{}
+			event["start"] = start
+		}
+		if callSid != "" {
+			start["call_sid"] = callSid
+		}
+		if streamSid != "" {
+			start["stream_sid"] = streamSid
+		}
+		for _, key := range []string{
+			"from", "From", "caller", "Caller", "caller_id", "callerId", "caller_id_number", "callerIdNumber",
+			"customer_number", "customerNumber", "customer_no", "customerNo", "call_from", "CallFrom", "call_from_number", "from_number", "ani",
+			"to", "To", "call_to_number", "callToNumber", "called_number", "calledNumber", "did", "DID",
+			"destination", "destination_number", "destinationNumber",
+			"caller_name", "callerName", "customer_name", "customerName", "name", "Name",
+		} {
+			if v := pickStr(event, key); v != "" {
+				start[key] = v
+			}
+		}
+		if codec := strings.ToLower(pickStr(event, "codec", "audio_codec", "encoding")); codec != "" {
+			if codec == "ulaw" || codec == "mulaw" || codec == "pcmu" {
+				sess.UseUlaw = true
+			} else if strings.Contains(codec, "pcm") {
+				sess.UseUlaw = false
+			}
+		}
+	}
+
+	if event["event"] == "media" {
+		media, _ := event["media"].(map[string]interface{})
+		if media == nil {
+			media = map[string]interface{}{}
+			event["media"] = media
+		}
+		if payload := firstNonEmpty(
+			pickStr(media, "payload", "audio", "audio_data", "data", "chunk"),
+			pickStr(event, "payload", "audio", "audio_data", "data", "chunk"),
+		); payload != "" {
+			media["payload"] = payload
+		}
+		if streamSid != "" {
+			event["stream_sid"] = streamSid
+		}
+	}
+
+	return event
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {
@@ -576,6 +755,12 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		case hasCamel && !hasSnake:
 			sess.UseUlaw = true
 		}
+		if sess.Provider == "tata" {
+			// Tata Voice Streaming frames arrive in Twilio-style camelCase and
+			// the media payload size matches 8 kHz μ-law chunks. Keep Tata on
+			// μ-law unless Tata explicitly adds a PCM codec marker above.
+			sess.UseUlaw = true
+		}
 		h.log.Info("ws codec detected",
 			zap.String("stream_sid", sess.StreamSid),
 			zap.Bool("is_exotel", sess.IsExotel),
@@ -587,9 +772,53 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		// event because WebSocket connections cannot send Authorization headers.
 		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
 			sess.UserEmail = email
+			if u, err := h.db.GetUserByEmail(email); err == nil && u != nil {
+				sess.UserID = u.ID
+			}
+		}
+		if phone := pickStr(startData,
+			"from", "From", "caller", "Caller", "caller_id", "callerId", "caller_id_number", "callerIdNumber",
+			"customer_number", "customerNumber", "customer_no", "customerNo", "call_from", "CallFrom", "call_from_number", "from_number", "ani",
+		); phone != "" && sess.LeadPhone == "" {
+			sess.LeadPhone = phone
+		}
+		if name := pickStr(startData, "caller_name", "callerName", "customer_name", "customerName", "name", "Name"); name != "" && sess.LeadName == "" {
+			sess.LeadName = name
+		}
+		if sess.Provider == "tata" && sess.IsInbound && sess.OrgID == 0 && h.db != nil {
+			if did := pickStr(startData,
+				"to", "To", "call_to_number", "callToNumber", "called_number", "calledNumber",
+				"did", "DID", "destination", "destination_number", "destinationNumber",
+			); did != "" {
+				if account, err := h.db.GetInboundTataAccountByDID(did); err == nil && account != nil {
+					sess.OrgID = account.OrgID
+					if sess.Interest == "" {
+						sess.Interest = "inbound enquiry"
+					}
+					h.log.Info("tata inbound account matched",
+						zap.String("did", did),
+						zap.Int64("org_id", account.OrgID),
+						zap.Int64("account_id", account.ID))
+				} else if err != nil {
+					h.log.Warn("tata inbound account lookup failed", zap.String("did", did), zap.Error(err))
+				}
+			}
+		}
+		if sess.IsInbound && sess.LeadName == "" && sess.LeadPhone != "" && sess.OrgID > 0 && h.db != nil {
+			if lead, err := h.db.GetLeadByPhoneOrg(sess.LeadPhone, sess.OrgID, nil, false); err == nil && lead != nil {
+				sess.LeadID = lead.ID
+				sess.LeadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
+				if sess.Interest == "" {
+					sess.Interest = lead.Interest
+				}
+			}
 		}
 
-		if callSid := pickStr(startData, "callSid", "call_sid", "CallSid"); callSid != "" {
+		callSidKeys := []string{"callSid", "call_sid", "CallSid"}
+		if sess.Provider == "tata" {
+			callSidKeys = []string{"ref_id", "refId", "call_sid", "callSid", "CallSid"}
+		}
+		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
 			// Redis lookup precedence:
@@ -652,10 +881,14 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					sess.TTSLanguage = info.TTSLanguage
 					sess.Language = info.TTSLanguage
 				}
+				if info.MaxCallDurationSeconds > 0 {
+					sess.MaxCallDurationSeconds = info.MaxCallDurationSeconds
+				}
 				// Carry credit-bypass flag from the dial initiator so post-call
 				// deduction can be skipped for unlimited manual calls.
 				sess.SkipCredits = info.SkipCredits
 				sess.UserEmail = info.UserEmail
+				sess.UserID = info.UserID
 				// Rebuild SystemPrompt and GreetingText now that we know the
 				// real campaign/org/lead. The initial initializeCall ran
 				// before the start event with all-zero IDs (Exotel's Passthru
@@ -665,6 +898,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				// when the campaign is set to English.
 				if h.promptBuilder != nil {
 					_ = h.initializeCall(ctx, sess)
+					if sess.IsInbound {
+						h.applyInboundReceptionistPrompt(sess)
+					}
 				}
 				// Re-create the TTS provider in case the original startup picked
 				// the wrong one (Exotel calls hit tts.New("") which falls back
@@ -698,7 +934,27 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					if sess.SendGreeting != nil {
 						sess.SendGreeting()
 					}
+					h.startMaxCallDurationTimer(ctx, sess)
 				}
+			}
+			if sess.IsInbound && !sess.IsBridge {
+				if h.promptBuilder != nil {
+					_ = h.initializeCall(ctx, sess)
+					h.applyInboundReceptionistPrompt(sess)
+				}
+				if sess.TTSProvider != "" {
+					if newProv, err := tts.New(sess.TTSProvider, h.ttsKeys); err == nil && newProv != nil {
+						sess.SetTTSInstance(newProv)
+					}
+				}
+				if sess.StartSTT != nil && sess.Language != "" {
+					sess.StartSTT()
+					sess.StartSTT = nil
+				}
+				if sess.SendGreeting != nil {
+					sess.SendGreeting()
+				}
+				h.startMaxCallDurationTimer(ctx, sess)
 			}
 		}
 	}
@@ -717,27 +973,6 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,
 			"connected", "audio stream opened")
 	}
-}
-
-// bargeInEnergyThreshold is the mean-square PCM energy level above which we
-// treat incoming mic audio as speech and trigger barge-in. int16 PCM has a max
-// value of 32767; typical speech RMS is 1000–8000 (mean-square 1e6–64e6).
-// Raised to 1_000_000 (RMS≈1000): TTS echo was measuring ~280K and falsely
-// triggering barge-in, cancelling the agent's greeting mid-sentence.
-const bargeInEnergyThreshold int64 = 1_000_000
-
-// pcmEnergy returns the mean-square energy of a PCM16LE byte slice.
-func pcmEnergy(pcm []byte) int64 {
-	n := len(pcm) / 2
-	if n == 0 {
-		return 0
-	}
-	var sum int64
-	for i := 0; i+1 < len(pcm); i += 2 {
-		s := int64(int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8))
-		sum += s * s
-	}
-	return sum / int64(n)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -808,9 +1043,8 @@ func (h *Handler) leadLabel(ctx context.Context, sess *CallSession) (string, str
 }
 
 func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface{}) {
-	if sess.HangupRequested() {
-		return
-	}
+	// Keep processing media even if a hangup has been requested so a customer
+	// can still barge-in during the AI's goodbye and cancel the hangup.
 	mediaData, _ := event["media"].(map[string]interface{})
 	if mediaData == nil {
 		return
@@ -832,11 +1066,13 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		}
 		pcm = audio.UlawToPCM(raw)
 	} else {
-		// PCM-16 LE — Voicebot applet, browser web-sim. The echo canceller
-		// is currently μ-law-keyed, so it's skipped here; AI-vs-user
-		// overlap is bounded by the mic-muting logic in the client and the
-		// nextPlayTime arithmetic on the synthesis side.
-		pcm = raw
+		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
+		// for echo detection, then continue processing the original PCM.
+		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(raw)) {
+			metrics.EchoSuppressions.Inc()
+			return
+		}
+		pcm = raw // PCM-16 LE — Voicebot applet, browser web-sim
 	}
 	if sess.IsBridge {
 		// Record customer audio for the server-side stereo WAV, then relay
@@ -846,17 +1082,14 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 		return
 	}
 	sess.AppendMicChunk(pcm)
-	// Energy VAD: trigger barge-in immediately when user speaks during TTS.
-	// Fire energy VAD while TTS is playing OR within 500ms of it ending.
-	// The 500ms window catches users who speak the instant the agent finishes
-	// (their audio may still be in-flight when IsTTSPlaying flips to false).
-	// BARGE-IN DISABLED — uncomment to re-enable
-	// recentTTS := sess.IsTTSPlaying() || sess.MsSinceTTSEnd() < 500
-	// if recentTTS && !sess.IsBargeInActive() && pcmEnergy(pcm) > bargeInEnergyThreshold {
-	// 	if sess.TriggerBargeIn() {
-	// 		sess.Log.Info("barge-in: energy VAD triggered", zap.Int64("energy", pcmEnergy(pcm)))
-	// 	}
-	// }
+	// Run VAD on every frame so the adaptive noise floor stays current.
+	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
+	// within 1500ms of the last audio frame being sent (covers carrier/phone
+	// buffering so the customer can interrupt even the end of a long sentence).
+	vadSpeech := sess.VAD.ProcessPCM(pcm)
+	if vadSpeech {
+		sess.TryBargeIn("VAD")
+	}
 	select {
 	case sess.AudioIn <- pcm:
 	default:
@@ -885,6 +1118,11 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	}
 	sess.SystemPrompt = callCtx.SystemPrompt
 	sess.GreetingText = callCtx.GreetingText
+	if callCtx.CallMemoryCount > 0 {
+		sess.Log.Info("call memory injected",
+			zap.Int("entries", callCtx.CallMemoryCount),
+			zap.Int64("lead_id", sess.LeadID))
+	}
 	// Only fill in TTS fields the caller didn't already set via query params.
 	// The Sandbox / web-sim flow passes ?tts_provider=&voice=&tts_language=
 	// to override the org default for one session — without this guard, the
@@ -911,6 +1149,9 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 		sess.TTSLanguage = callCtx.TTSLanguage
 		sess.Language = callCtx.TTSLanguage // drives Deepgram language + LLM prompt language
 	}
+	if hasRealContext && sess.MaxCallDurationSeconds == 0 && callCtx.MaxCallDurationSeconds > 0 {
+		sess.MaxCallDurationSeconds = callCtx.MaxCallDurationSeconds
+	}
 	if callCtx.AgentName != "" {
 		sess.AgentName = callCtx.AgentName
 	}
@@ -932,8 +1173,203 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	return nil
 }
 
+func (h *Handler) startMaxCallDurationTimer(ctx context.Context, sess *CallSession) {
+	if sess.IsBridge || sess.MaxCallDurationSeconds <= 0 || !sess.TryStartMaxDurationTimer() {
+		return
+	}
+	limit := time.Duration(sess.MaxCallDurationSeconds) * time.Second
+	wait := limit - time.Since(sess.CallStart)
+	if wait < 0 {
+		wait = 0
+	}
+	softLead := maxDurationSoftLead(limit)
+	softWait := wait - softLead
+	sess.Log.Info("max call duration: timer started",
+		zap.Duration("limit", limit),
+		zap.Duration("wait", wait),
+		zap.Duration("soft_lead", softLead))
+
+	go func() {
+		hardWait := wait
+		if softWait > 0 {
+			softTimer := time.NewTimer(softWait)
+			select {
+			case <-ctx.Done():
+				softTimer.Stop()
+				return
+			case <-softTimer.C:
+				sess.RequestMaxDurationSoftClose()
+				sess.Log.Info("max call duration: wrap-up mode started",
+					zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+			}
+			hardWait = softLead
+		} else {
+			sess.RequestMaxDurationSoftClose()
+		}
+		timer := time.NewTimer(hardWait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		if sess.HangupRequested() {
+			return
+		}
+		sess.RequestMaxDurationWaitReply()
+		sess.Log.Info("max call duration: waiting for final customer reply",
+			zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+		go h.forceMaxDurationCloseIfNoReply(ctx, sess)
+	}()
+}
+
+func maxDurationSoftLead(limit time.Duration) time.Duration {
+	if limit <= 45*time.Second {
+		return 8 * time.Second
+	}
+	lead := limit / 5
+	if lead < 10*time.Second {
+		return 10 * time.Second
+	}
+	if lead > 30*time.Second {
+		return 30 * time.Second
+	}
+	return lead
+}
+
+func maxDurationClosingLine(language string) string {
+	switch language {
+	case "hi":
+		return "ठीक है, धन्यवाद. मैं अभी यहीं रोकता हूँ. हमारी टीम आगे की जानकारी के साथ follow up करेगी."
+	case "mr":
+		return "ठीक आहे, धन्यवाद. मी आत्ता इथेच थांबतो. आमची टीम पुढील माहिती घेऊन follow up करेल."
+	case "te":
+		return "సరే, ధన్యవాదాలు. నేను ఇప్పటికి ఇక్కడే ఆపుతాను. మా టీమ్ మరిన్ని వివరాలతో follow up చేస్తుంది."
+	case "ta":
+		return "சரி, நன்றி. நான் இப்போது இங்கே நிறுத்துகிறேன். எங்கள் team மேலும் விவரங்களுடன் follow up செய்யும்."
+	case "kn":
+		return "ಸರಿ, ಧನ್ಯವಾದಗಳು. ನಾನು ಈಗ ಇಲ್ಲಿಯೇ ನಿಲ್ಲಿಸುತ್ತೇನೆ. ನಮ್ಮ team ಹೆಚ್ಚಿನ ವಿವರಗಳೊಂದಿಗೆ follow up ಮಾಡುತ್ತದೆ."
+	case "bn":
+		return "ঠিক আছে, ধন্যবাদ. আমি এখন এখানেই থামছি. আমাদের team আরও details নিয়ে follow up করবে."
+	case "gu":
+		return "બરાબર, આભાર. હું અત્યારે અહીં જ અટકું છું. અમારી team વધુ માહિતી સાથે follow up કરશે."
+	case "pa":
+		return "ਠੀਕ ਹੈ, ਧੰਨਵਾਦ. ਮੈਂ ਹੁਣ ਇੱਥੇ ਹੀ ਰੁਕਦਾ ਹਾਂ. ਸਾਡੀ team ਹੋਰ ਜਾਣਕਾਰੀ ਨਾਲ follow up ਕਰੇਗੀ."
+	case "ml":
+		return "ശരി, നന്ദി. ഞാൻ ഇപ്പോൾ ഇവിടെ നിർത്തുന്നു. കൂടുതൽ വിവരങ്ങളുമായി ഞങ്ങളുടെ team follow up ചെയ്യും."
+	default:
+		return "Alright, thank you. Our senior employee will contact you with more details. Have a great day."
+	}
+}
+
+func maxDurationClosingLineForReply(language, reply string) string {
+	if language != "" && language != "en" {
+		return maxDurationClosingLine(language)
+	}
+	reply = strings.ToLower(strings.TrimSpace(reply))
+	switch {
+	case strings.Contains(reply, "can you provide") || strings.Contains(reply, "do you provide") || strings.Contains(reply, "can you help"):
+		return "Yes, we can help with that. Our senior employee will contact you with more details. Have a great day."
+	case isCustomerQuestion(reply):
+		return "Good question. It usually depends on employee count, locations, access points, and attendance process. Our senior employee will contact you with more details. Have a great day."
+	case reply != "":
+		return "Got it, thank you for sharing. Our senior employee will contact you with more details. Have a great day."
+	default:
+		return maxDurationClosingLine(language)
+	}
+}
+
+func isCustomerQuestion(text string) bool {
+	text = strings.TrimSpace(strings.ToLower(text))
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "?") {
+		return true
+	}
+	for _, prefix := range []string{
+		"what ", "why ", "when ", "where ", "who ", "which ", "how ",
+		"can ", "could ", "do ", "does ", "did ", "is ", "are ", "will ", "would ", "should ",
+		"tell me", "explain", "clarify",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) forceMaxDurationCloseIfNoReply(ctx context.Context, sess *CallSession) {
+	delay := sess.PlaybackTracker.RemainingDuration() + 25*time.Second
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-timer.C:
+	}
+	if sess.HangupRequested() || sess.IsMaxDurationClosing() || !sess.ConsumeMaxDurationWaitReply() {
+		return
+	}
+	closeLine := maxDurationClosingLine(sess.Language)
+	sess.Log.Info("max call duration: closing without final reply",
+		zap.Int("max_call_duration_seconds", sess.MaxCallDurationSeconds))
+	sess.RequestMaxDurationClose()
+	sess.BroadcastTranscript("agent", closeLine)
+	sess.AppendHistory("model", closeLine)
+	select {
+	case sess.TTSSentences <- closeLine:
+	default:
+	}
+	select {
+	case sess.TTSSentences <- "":
+	default:
+	}
+	go h.forceMaxDurationHangup(sess, closeLine)
+}
+
+func (h *Handler) forceMaxDurationHangup(sess *CallSession, spokenLine string) {
+	delay := sess.PlaybackTracker.RemainingDuration() + estimateSpeechDuration(spokenLine) + 4*time.Second
+	time.Sleep(delay)
+	if !sess.IsMaxDurationClosing() {
+		return
+	}
+	if sess.WS != nil {
+		_ = sess.WS.Close()
+	}
+	if h.initiator != nil && sess.CallSid != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := h.initiator.Hangup(ctx, sess.CallSid, sess.CampaignID); err != nil {
+			sess.Log.Warn("max call duration: carrier hangup failed",
+				zap.String("call_sid", sess.CallSid),
+				zap.Error(err))
+		}
+	}
+}
+
+func estimateSpeechDuration(text string) time.Duration {
+	words := len(strings.Fields(text))
+	if words == 0 {
+		words = len([]rune(text)) / 8
+	}
+	d := time.Duration(words) * 350 * time.Millisecond
+	if d < 2*time.Second {
+		return 2 * time.Second
+	}
+	if d > 10*time.Second {
+		return 10 * time.Second
+	}
+	return d
+}
+
 // finalizeCall runs post-call processing (Phase 4: native Go, no gRPC).
 func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
+	h.log.Info("finalizeCall: started",
+		zap.String("stream_sid", sess.StreamSid),
+		zap.Int64("lead_id", sess.LeadID),
+		zap.Int("chat_history_len", len(sess.ChatHistory)))
+
 	micChunks, ttsChunks := sess.DrainRecordingBuffers()
 	wavBytes := audio.BuildStereoWAV(micChunks, ttsChunks)
 
@@ -969,6 +1405,122 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		StereoWav:   wavBytes,
 		SkipCredits: sess.SkipCredits,
 		UserEmail:   sess.UserEmail,
+		IsInbound:   sess.IsInbound,
 	}
 	go h.recordingSvc.SaveAndAnalyze(ctx, req)
+}
+
+func (h *Handler) applyInboundReceptionistPrompt(sess *CallSession) {
+	baseKnowledge := h.inboundProductKnowledge(sess.OrgID)
+	if baseKnowledge == "" {
+		baseKnowledge = strings.TrimSpace(sess.SystemPrompt)
+	}
+	lang := sess.Language
+	if lang == "" {
+		lang = sess.TTSLanguage
+	}
+	if lang == "" {
+		lang = "en"
+	}
+	label := inboundLanguageLabel(lang)
+	company := "our team"
+	if sess.AgentName != "" {
+		company = sess.AgentName
+	}
+	if sess.Interest == "" {
+		sess.Interest = "inbound enquiry"
+	}
+	sess.SystemPrompt = fmt.Sprintf(`You are a warm inbound AI receptionist for %s.
+
+The customer called us first. Do not behave like an outbound sales caller and do not say you are calling them.
+
+Goal:
+Greet the caller, identify which product/service they are asking about, collect the caller's name, help with their requirement, then collect phone number before ending.
+
+Rules:
+1. Respond only in %s unless the customer explicitly asks for another language.
+2. Do not switch languages just because the caller speaks, mixes, or is transcribed in another language. Do not mirror the caller's language automatically.
+3. If the caller explicitly asks to continue in another language, switch to that language and stay there until they ask to switch again.
+4. Ask one question at a time.
+5. Keep every reply short and natural for voice. Use one complete sentence when possible, two at most, and always end with punctuation.
+6. If the caller asks about a known product and their name is not known yet, acknowledge the product briefly and ask for their name before answering details. Example: "Sure, I can help with EmpMonitor. May I know who I am speaking with?"
+7. If the caller gives their name, remember it and use it naturally.
+8. After name is known, answer product/service questions from the matching product's knowledge only.
+9. If the product is unclear, ask which product they mean instead of assuming.
+10. Phone number is compulsory before ending. Ask for it near the end if it is missing, even if the caller only wanted basic information.
+11. Do not ask for email address, mail ID, or any written-contact detail. If the caller wants details sent, say the team can call them and ask for their phone number.
+12. When the enquiry is complete and phone number is collected, summarize the next step and end with [HANGUP].
+13. Never reveal you are an AI.
+
+Call context: %s
+
+Available company/product knowledge:
+%s`, company, label, sess.Interest, baseKnowledge)
+
+	sess.GreetingText = inboundGreeting(lang, company)
+}
+
+func (h *Handler) inboundProductKnowledge(orgID int64) string {
+	if h.db == nil || orgID == 0 {
+		return ""
+	}
+	products, err := h.db.GetProductsByOrg(orgID)
+	if err != nil || len(products) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Use this catalog for inbound callers. The company has multiple products, so do not assume the first product. Match by product name or ask a clarifying question.\n")
+	for i, p := range products {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "Product: %s\n", p.Name)
+		if s := strings.TrimSpace(p.ScrapedInfo); s != "" {
+			fmt.Fprintf(&b, "Details: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.ManualNotes); s != "" {
+			fmt.Fprintf(&b, "Notes: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.AgentPersona); s != "" {
+			fmt.Fprintf(&b, "Persona: %s\n", s)
+		}
+		if s := strings.TrimSpace(p.CallFlowInstructions); s != "" {
+			fmt.Fprintf(&b, "Call flow: %s\n", s)
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func inboundLanguageLabel(lang string) string {
+	switch lang {
+	case "hi":
+		return "Hindi"
+	case "mr":
+		return "Marathi"
+	case "bn":
+		return "Bengali"
+	case "gu":
+		return "Gujarati"
+	case "pa":
+		return "Punjabi"
+	case "ta":
+		return "Tamil"
+	case "te":
+		return "Telugu"
+	case "kn":
+		return "Kannada"
+	case "ml":
+		return "Malayalam"
+	default:
+		return "English"
+	}
+}
+
+func inboundGreeting(lang, company string) string {
+	switch lang {
+	case "hi":
+		return fmt.Sprintf("Namaste, %s mein aapka swagat hai. Main aapki kaise madad kar sakta hoon?", company)
+	default:
+		return fmt.Sprintf("Hi, thanks for calling %s. How can I help you today?", company)
+	}
 }

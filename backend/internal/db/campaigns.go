@@ -24,6 +24,7 @@ func (d *DB) EnsureCampaignsTable() error {
 			tts_provider VARCHAR(50) DEFAULT NULL,
 			tts_voice_id VARCHAR(255) DEFAULT NULL,
 			tts_language VARCHAR(10) DEFAULT NULL,
+			max_call_duration_seconds INT DEFAULT NULL,
 			lead_source VARCHAR(100) DEFAULT NULL,
 			channel VARCHAR(20) NOT NULL DEFAULT 'voice',
 			exotel_account_id BIGINT DEFAULT NULL,
@@ -40,6 +41,7 @@ func (d *DB) EnsureCampaignsTable() error {
 		{"tts_provider", "VARCHAR(50) DEFAULT NULL"},
 		{"tts_voice_id", "VARCHAR(255) DEFAULT NULL"},
 		{"tts_language", "VARCHAR(10) DEFAULT NULL"},
+		{"max_call_duration_seconds", "INT DEFAULT NULL"},
 		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
 		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
 		{"exotel_account_id", "BIGINT DEFAULT NULL"},
@@ -57,19 +59,20 @@ func (d *DB) EnsureCampaignsTable() error {
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
 // nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID          int64          `json:"id"`
-	OrgID       int64          `json:"org_id"`
-	ProductID   int64          `json:"product_id"`
-	Name        string         `json:"name"`
-	Status      string         `json:"status"`
-	TTSProvider string         `json:"tts_provider"`
-	TTSVoiceID  string         `json:"tts_voice_id"`
-	TTSLanguage string         `json:"tts_language"`
-	LeadSource  string         `json:"lead_source"`
-	Channel     string         `json:"channel"`
-	ProductName string         `json:"product_name"`
-	CreatedAt   string         `json:"created_at"`
-	Stats       *CampaignStats `json:"stats,omitempty"`
+	ID              int64          `json:"id"`
+	OrgID           int64          `json:"org_id"`
+	ProductID       int64          `json:"product_id"`
+	Name            string         `json:"name"`
+	Status          string         `json:"status"`
+	TTSProvider     string         `json:"tts_provider"`
+	TTSVoiceID      string         `json:"tts_voice_id"`
+	TTSLanguage     string         `json:"tts_language"`
+	LeadSource      string         `json:"lead_source"`
+	Channel         string         `json:"channel"`
+	ExotelAccountID int64          `json:"exotel_account_id"`
+	ProductName     string         `json:"product_name"`
+	CreatedAt       string         `json:"created_at"`
+	Stats           *CampaignStats `json:"stats,omitempty"`
 }
 
 // COALESCE on product_id because campaigns can legitimately have a NULL
@@ -81,13 +84,14 @@ const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.status,'active'), COALESCE(c.tts_provider,''), COALESCE(c.tts_voice_id,''),
 	COALESCE(c.tts_language,''), COALESCE(c.lead_source,''),
 	COALESCE(c.channel,'voice'),
+	COALESCE(c.exotel_account_id,0),
 	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s')`
 
 func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
 	err := row.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 		&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-		&c.Channel, &c.ProductName, &c.CreatedAt)
+		&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt)
 	return c, err
 }
 
@@ -130,7 +134,7 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -182,7 +186,7 @@ func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -208,12 +212,12 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		GROUP BY cl.campaign_id`
 
 	rows, err := d.pool.Query(
-		`SELECT `+campaignCols+`,
+		`SELECT ` + campaignCols + `,
 			COALESCE(s.total,0), COALESCE(s.called,0),
 			COALESCE(s.qualified,0), COALESCE(s.appointments,0)
 		FROM campaigns c
 		LEFT JOIN products p ON c.product_id = p.id
-		LEFT JOIN (`+statsSub+`) s ON s.campaign_id = c.id
+		LEFT JOIN (` + statsSub + `) s ON s.campaign_id = c.id
 		ORDER BY c.created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -225,7 +229,7 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -459,18 +463,23 @@ func (d *DB) GetCampaignLeadsFiltered(campaignID int64, execIDs []int64) ([]Camp
 
 // CampaignLeadsFilter holds optional filters for campaign lead listings.
 type CampaignLeadsFilter struct {
-	CampaignID     int64
-	ExecIDs        []int64
-	Search         string
-	ScheduledFrom  string // ISO datetime or empty
-	ScheduledTo    string // ISO datetime or empty
+	CampaignID    int64
+	ExecIDs       []int64
+	Search        string
+	ScheduledFrom string // ISO datetime or empty
+	ScheduledTo   string // ISO datetime or empty
 }
 
 // GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
 // Use limit=0 to return all matching leads (backward compatibility).
 func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset int64) ([]CampaignLead, error) {
 	search := "%" + filter.Search + "%"
-	q := `SELECT ` + leadColsL + `,
+	q := `SELECT l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.phone,
+		COALESCE(l.source,''), COALESCE(l.status,'new'),
+		COALESCE(l.follow_up_note,''), COALESCE(DATE_FORMAT(l.follow_up_at, '%Y-%m-%dT%H:%i:%sZ'),''),
+		COALESCE(l.interest,''), COALESCE(l.company,''), COALESCE(l.external_id,''), COALESCE(l.crm_provider,''),
+		COALESCE(cl2.executive_id,0),
+		DATE_FORMAT(l.created_at, '%Y-%m-%dT%H:%i:%sZ'),
 		COALESCE(ct.transcript_count, 0) AS transcript_count,
 		COALESCE(ct.recording_count, 0) AS recording_count,
 		COALESCE(ct.dial_attempts, 0) AS dial_attempts,
@@ -507,7 +516,7 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, filter.CampaignID, search, search, search, search, search}
 	if len(filter.ExecIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		q += ` AND COALESCE(cl2.executive_id,0) IN (` + placeholders + `)`
 		for _, id := range filter.ExecIDs {
 			args = append(args, id)
 		}
@@ -555,7 +564,7 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	args := []any{filter.CampaignID, filter.ScheduledFrom, filter.ScheduledTo, filter.CampaignID, search, search, search, search, search}
 	if len(filter.ExecIDs) > 0 {
 		placeholders := strings.Repeat("?,", len(filter.ExecIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
+		q += ` AND COALESCE(cl.executive_id,0) IN (` + placeholders + `)`
 		for _, id := range filter.ExecIDs {
 			args = append(args, id)
 		}
@@ -566,6 +575,38 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	var n int64
 	err := d.pool.QueryRow(q, args...).Scan(&n)
 	return n, err
+}
+
+func campaignExecFilterClause(execIDs []int64, applyExecFilter bool) (string, []any) {
+	if !applyExecFilter || len(execIDs) == 0 {
+		return "", nil
+	}
+	placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
+	args := make([]any, 0, len(execIDs))
+	for _, id := range execIDs {
+		args = append(args, id)
+	}
+	return `COALESCE(cl.executive_id,0) IN (` + placeholders + `)`, args
+}
+
+// CampaignLeadMatchesAccess reports whether a campaign-lead row exists in the
+// org and matches the optional executive restriction.
+func (d *DB) CampaignLeadMatchesAccess(orgID, campaignID, leadID int64, execIDs []int64, applyExecFilter bool) (bool, error) {
+	q := `
+		SELECT COUNT(*)
+		FROM campaign_leads cl
+		JOIN campaigns c ON c.id=cl.campaign_id
+		WHERE c.org_id=? AND cl.campaign_id=? AND cl.lead_id=?`
+	args := []any{orgID, campaignID, leadID}
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	var n int64
+	if err := d.pool.QueryRow(q, args...).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func scanCampaignLead(row interface{ Scan(...any) error }) (*CampaignLead, error) {
@@ -632,28 +673,54 @@ type CallOutcomeStats struct {
 }
 
 // GetCampaignCallOutcomeStats returns the count of calls by outcome for a campaign.
+// Connected/completed calls are derived from transcript rows because that is
+// where duration lives. Failed terminal outcomes are derived from call_logs too:
+// providers can report busy/no-answer without ever producing a transcript row,
+// and the live activity panel is fed by those call_log status callbacks.
 // When applyExecFilter is true, only calls whose lead's executive_id is in execIDs are counted.
 func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, applyExecFilter bool) (CallOutcomeStats, error) {
 	var s CallOutcomeStats
 	q := `
-		SELECT
-			CASE
-				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'completed'
-				WHEN ct.call_duration_s>5 THEN 'connected'
-				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'busy'
-				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'failed'
-				ELSE 'unanswered'
-			END AS outcome,
-			COUNT(*)
-		FROM call_transcripts ct
-		LEFT JOIN leads l ON ct.lead_id=l.id
-		WHERE ct.campaign_id=?`
+		SELECT outcome, COUNT(*)
+		FROM (
+			SELECT
+				CASE
+					WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'completed'
+					WHEN ct.call_duration_s>5 THEN 'connected'
+					ELSE 'unanswered'
+				END AS outcome
+			FROM call_transcripts ct
+			LEFT JOIN leads l ON ct.lead_id=l.id
+			LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
+			WHERE ct.campaign_id=?`
 	args := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
-	q += ` GROUP BY outcome`
+	q += `
+			UNION ALL
+			SELECT
+				CASE
+					WHEN cl.status='busy' THEN 'busy'
+					WHEN cl.status IN ('no-answer','no_answer') THEN 'unanswered'
+					WHEN cl.status IN ('failed','cancelled') THEN 'failed'
+					ELSE ''
+				END AS outcome
+			FROM call_logs cl
+			LEFT JOIN leads l ON cl.lead_id=l.id
+			LEFT JOIN campaign_leads cxl ON cxl.campaign_id=cl.campaign_id AND cxl.lead_id=cl.lead_id
+			WHERE cl.campaign_id=?
+			  AND cl.status IN ('busy','no-answer','no_answer','failed','cancelled')`
+	args = append(args, campaignID)
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + strings.ReplaceAll(c, "cl.executive_id", "cxl.executive_id")
+		args = append(args, a...)
+	}
+	q += `
+		) outcomes
+		WHERE outcome != ''
+		GROUP BY outcome`
 	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return s, err
@@ -682,8 +749,107 @@ func (d *DB) GetCampaignCallOutcomeStats(campaignID int64, execIDs []int64, appl
 	return s, rows.Err()
 }
 
+// GetCampaignCallOutcomeStatsForUser returns call outcomes for one campaign
+// attributed to the user who placed each call.
+func (d *DB) GetCampaignCallOutcomeStatsForUser(campaignID, userID int64) (CallOutcomeStats, error) {
+	var s CallOutcomeStats
+	rows, err := d.pool.Query(`
+		SELECT outcome, COUNT(*)
+		FROM (
+			SELECT
+				CASE
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='completed' THEN 'completed'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='connected' THEN 'connected'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+						AND cl.status IN ('completed','answered','connected') THEN 'connected'
+					WHEN EXISTS (
+						SELECT 1
+						FROM call_transcripts ct
+						WHERE ct.org_id = aa.org_id
+						  AND ct.lead_id = COALESCE(cl.lead_id, aa.lead_id)
+						  AND COALESCE(ct.campaign_id, 0) = COALESCE(cl.campaign_id, aa.campaign_id, 0)
+						  AND ct.call_duration_s > 5
+						  AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+					) THEN 'connected'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome'))='busy' OR cl.status='busy' THEN 'busy'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('failed','cancelled')
+						OR cl.status IN ('failed','cancelled') THEN 'failed'
+					WHEN JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.outcome')) IN ('unanswered','no_answer')
+						OR cl.status IN ('no-answer','no_answer') THEN 'unanswered'
+					ELSE ''
+				END AS outcome
+			FROM agent_activities aa
+			LEFT JOIN call_logs cl ON cl.org_id=aa.org_id
+				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci
+			WHERE aa.campaign_id=?
+				AND aa.user_id=?
+				AND aa.activity_type='call'
+			UNION ALL
+			SELECT
+				CASE
+					WHEN cl.status IN ('busy') THEN 'busy'
+					WHEN cl.status IN ('failed','cancelled') THEN 'failed'
+					WHEN cl.status IN ('no-answer','no_answer','unanswered') THEN 'unanswered'
+					ELSE ''
+				END AS outcome
+			FROM call_logs cl
+			JOIN users u ON u.id=?
+			LEFT JOIN executives e ON e.org_id=cl.org_id AND LOWER(e.email)=LOWER(u.email)
+			WHERE cl.campaign_id=?
+				AND cl.status IN ('no-answer','no_answer','unanswered','busy','failed','cancelled')
+				AND (
+					EXISTS (
+						SELECT 1
+						FROM campaign_user_assignments cua
+						WHERE cua.campaign_id=cl.campaign_id AND cua.user_id=?
+					)
+					OR (e.id IS NOT NULL AND EXISTS (
+						SELECT 1
+						FROM campaign_leads campaign_lead
+						WHERE campaign_lead.campaign_id=cl.campaign_id
+						  AND campaign_lead.lead_id=cl.lead_id
+						  AND campaign_lead.executive_id=e.id
+					))
+				)
+				AND NOT EXISTS (
+					SELECT 1
+					FROM agent_activities aa2
+					WHERE aa2.org_id=cl.org_id
+						AND aa2.activity_type='call'
+						AND JSON_UNQUOTE(JSON_EXTRACT(aa2.metadata,'$.call_sid')) COLLATE utf8mb4_0900_ai_ci = cl.call_sid
+				)
+		) outcomes
+		WHERE outcome != ''
+		GROUP BY outcome`, campaignID, userID, userID, campaignID, userID)
+	if err != nil {
+		return s, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var outcome string
+		var count int64
+		if err := rows.Scan(&outcome, &count); err != nil {
+			return s, err
+		}
+		s.Total += count
+		switch outcome {
+		case "completed":
+			s.Completed += count
+		case "connected":
+			s.Connected += count
+		case "busy":
+			s.Busy += count
+		case "failed":
+			s.Failed += count
+		default:
+			s.Unanswered += count
+		}
+	}
+	return s, rows.Err()
+}
+
 // OrgDashboardSummary is the org-wide top-of-page card row for /crm. Visible
-// to all authenticated roles (Admin / Agent / Viewer) without exposing full
+// to all authenticated roles (Admin / Agent / Executive) without exposing full
 // campaign objects — that's how non-Admins see meaningful numbers even
 // though /api/campaigns itself is admin-gated.
 type OrgDashboardSummary struct {
@@ -706,7 +872,7 @@ func (d *DB) GetOrgDashboardSummary(orgID int64) (OrgDashboardSummary, error) {
 	}
 	err := d.pool.QueryRow(`
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT l.phone) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -729,7 +895,7 @@ func (d *DB) GetAllDashboardSummary() (OrgDashboardSummary, error) {
 	}
 	err := d.pool.QueryRow(`
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT CONCAT(l.org_id, ':', l.phone)) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -766,7 +932,7 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 
 	leadQuery := `
 		SELECT
-			COUNT(*) AS total,
+			COUNT(DISTINCT l.phone) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(l.status,'new') != 'new' THEN 1 ELSE 0 END), 0) AS called,
 			COALESCE(SUM(CASE WHEN l.status IN ('Warm','Summarized','Closed') THEN 1 ELSE 0 END), 0) AS qualified,
 			COALESCE(SUM(CASE WHEN l.status IN ('Summarized','Closed') THEN 1 ELSE 0 END), 0) AS appointments
@@ -775,12 +941,35 @@ func (d *DB) GetDashboardSummaryForCampaigns(orgID int64, campaignIDs, execIDs [
 		JOIN campaigns c ON c.id = cl.campaign_id
 		WHERE c.org_id=? AND c.id IN (` + campaignPlaceholders + `)`
 	leadArgs := append([]any{}, campaignArgs...)
-	if clause, args := execFilterClause(execIDs, applyExecFilter); clause != "" {
+	if clause, args := campaignExecFilterClause(execIDs, applyExecFilter); clause != "" {
 		leadQuery += ` AND ` + clause
 		leadArgs = append(leadArgs, args...)
 	}
 
 	err := d.pool.QueryRow(leadQuery, leadArgs...).Scan(&s.TotalLeads, &s.Called, &s.Qualified, &s.Appointments)
+	return s, err
+}
+
+// GetDashboardSummaryForCampaignsByUser returns visible campaign/lead totals
+// but attributes call counts to the user who actually placed the calls.
+func (d *DB) GetDashboardSummaryForCampaignsByUser(orgID int64, campaignIDs, execIDs []int64, applyExecFilter bool, userID int64) (OrgDashboardSummary, error) {
+	s, err := d.GetDashboardSummaryForCampaigns(orgID, campaignIDs, execIDs, applyExecFilter)
+	if err != nil || len(campaignIDs) == 0 || userID <= 0 {
+		return s, err
+	}
+	campaignPlaceholders := strings.Repeat("?,", len(campaignIDs)-1) + "?"
+	args := make([]any, 0, 2+len(campaignIDs))
+	args = append(args, orgID, userID)
+	for _, id := range campaignIDs {
+		args = append(args, id)
+	}
+	err = d.pool.QueryRow(`
+		SELECT COUNT(DISTINCT aa.lead_id)
+		FROM agent_activities aa
+		WHERE aa.org_id=?
+			AND aa.user_id=?
+			AND aa.activity_type='call'
+			AND aa.campaign_id IN (`+campaignPlaceholders+`)`, args...).Scan(&s.Called)
 	return s, err
 }
 
@@ -791,7 +980,7 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 
 	totalQ := `SELECT COUNT(*) FROM campaign_leads cl JOIN leads l ON l.id=cl.lead_id WHERE cl.campaign_id=?`
 	totalArgs := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		totalQ += ` AND ` + c
 		totalArgs = append(totalArgs, a...)
 	}
@@ -801,7 +990,7 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 
 	statusQ := `SELECT COUNT(*) FROM leads l JOIN campaign_leads cl ON l.id=cl.lead_id WHERE cl.campaign_id=?`
 	statusArgs := []any{campaignID}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := campaignExecFilterClause(execIDs, applyExecFilter); c != "" {
 		statusQ += ` AND ` + c
 		statusArgs = append(statusArgs, a...)
 	}
@@ -813,6 +1002,22 @@ func (d *DB) GetCampaignStats(campaignID int64, execIDs []int64, applyExecFilter
 		return s, err
 	}
 	err := d.pool.QueryRow(statusQ+` AND l.status IN ('Summarized','Closed')`, append([]any{}, statusArgs...)).Scan(&s.Appointments)
+	return s, err
+}
+
+// GetCampaignStatsForUser returns campaign lead totals scoped by normal lead
+// visibility, while counting called leads only for the user who placed calls.
+func (d *DB) GetCampaignStatsForUser(campaignID, userID int64, execIDs []int64, applyExecFilter bool) (CampaignStats, error) {
+	s, err := d.GetCampaignStats(campaignID, execIDs, applyExecFilter)
+	if err != nil || userID <= 0 {
+		return s, err
+	}
+	err = d.pool.QueryRow(`
+		SELECT COUNT(DISTINCT aa.lead_id)
+		FROM agent_activities aa
+		WHERE aa.campaign_id=?
+			AND aa.user_id=?
+			AND aa.activity_type='call'`, campaignID, userID).Scan(&s.Called)
 	return s, err
 }
 
@@ -864,17 +1069,61 @@ func (d *DB) GetCampaignCallLog(campaignID int64, execIDs []int64) ([]CallLogEnt
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
 		WHERE ct.campaign_id=?`
 	args := []any{campaignID}
-	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
-		}
+	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` ORDER BY ct.created_at DESC`
 	rows, err := d.pool.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []CallLogEntry
+	for rows.Next() {
+		var e CallLogEntry
+		if err := rows.Scan(&e.ID, &e.FirstName, &e.LastName, &e.Phone, &e.Source,
+			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome); err != nil {
+			return nil, err
+		}
+		list = append(list, e)
+	}
+	return list, rows.Err()
+}
+
+// GetCampaignCallLogForUser returns the campaign call log attributed to a
+// single dashboard user. Manual/configured-account calls are matched through
+// nearby transcript rows when the provider call log is incomplete.
+func (d *DB) GetCampaignCallLogForUser(campaignID, userID int64) ([]CallLogEntry, error) {
+	q := `
+		SELECT DISTINCT
+			ct.id,
+			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
+			COALESCE(l.phone,''), COALESCE(l.source,''),
+			COALESCE(l.status,''), COALESCE(ct.call_duration_s,0), COALESCE(ct.recording_url,''),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			CASE
+				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
+				WHEN ct.call_duration_s>5 THEN 'Connected'
+				WHEN l.status LIKE 'Call Failed (busy)%' THEN 'Busy'
+				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
+				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
+				ELSE 'No Answer'
+			END AS outcome
+		FROM call_transcripts ct
+		JOIN agent_activities aa ON aa.org_id=ct.org_id
+			AND aa.user_id=?
+			AND aa.campaign_id=ct.campaign_id
+			AND aa.activity_type='call'
+			AND aa.lead_id=ct.lead_id
+			AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.campaign_id=?
+		ORDER BY ct.created_at DESC`
+	rows, err := d.pool.Query(q, userID, campaignID)
 	if err != nil {
 		return nil, err
 	}
@@ -930,14 +1179,12 @@ func (d *DB) GetCampaignRecordingsExport(campaignID int64, execIDs []int64) ([]R
 			END AS outcome
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id = l.id
+		LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
 		WHERE ct.campaign_id = ? AND ct.recording_url IS NOT NULL AND ct.recording_url != ''`
 	args := []any{campaignID}
-	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
-		}
+	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
 	}
 	q += ` ORDER BY ct.created_at DESC`
 	rows, err := d.pool.Query(q, args...)
@@ -978,38 +1225,43 @@ func (d *DB) GetCampaignVoiceSettings(campaignID int64) (VoiceSettings, error) {
 	// platform default keeps the call functional.
 	if campaignID <= 0 {
 		return VoiceSettings{
-			TTSProvider: DefaultTTSProvider,
-			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
-			TTSLanguage: DefaultTTSLanguage,
+			TTSProvider:            DefaultTTSProvider,
+			TTSVoiceID:             DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage:            DefaultTTSLanguage,
+			MaxCallDurationSeconds: 0,
 		}, nil
 	}
 	var orgID int64
 	var provider, voiceID, lang sql.NullString
+	var maxDuration sql.NullInt64
 	err := d.pool.QueryRow(
-		`SELECT COALESCE(tts_provider,''), COALESCE(tts_voice_id,''), COALESCE(tts_language,''), org_id
-		FROM campaigns WHERE id=?`, campaignID,
-	).Scan(&provider, &voiceID, &lang, &orgID)
+		`SELECT COALESCE(tts_provider,''), COALESCE(tts_voice_id,''), COALESCE(tts_language,''), max_call_duration_seconds, org_id
+			FROM campaigns WHERE id=?`, campaignID,
+	).Scan(&provider, &voiceID, &lang, &maxDuration, &orgID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Same reasoning as the campaignID<=0 branch: a missing campaign row
 		// must still produce a usable language so STT can start. Without this
 		// fallback the dial succeeds but the transcript comes back empty.
 		return VoiceSettings{
-			TTSProvider: DefaultTTSProvider,
-			TTSVoiceID:  DefaultVoiceIDFor(DefaultTTSProvider),
-			TTSLanguage: DefaultTTSLanguage,
+			TTSProvider:            DefaultTTSProvider,
+			TTSVoiceID:             DefaultVoiceIDFor(DefaultTTSProvider),
+			TTSLanguage:            DefaultTTSLanguage,
+			MaxCallDurationSeconds: 0,
 		}, nil
 	}
 	if err != nil {
 		return VoiceSettings{}, err
 	}
+	base, _ := d.GetOrganizationVoiceSettings(orgID)
 	if provider.String != "" && voiceID.String != "" {
-		return VoiceSettings{
-			TTSProvider: provider.String,
-			TTSVoiceID:  voiceID.String,
-			TTSLanguage: coalesceStr(lang.String, DefaultTTSLanguage),
-		}, nil
+		base.TTSProvider = provider.String
+		base.TTSVoiceID = voiceID.String
+		base.TTSLanguage = coalesceStr(lang.String, DefaultTTSLanguage)
 	}
-	return d.GetOrganizationVoiceSettings(orgID)
+	if maxDuration.Valid {
+		base.MaxCallDurationSeconds = clampCallDurationSeconds(int(maxDuration.Int64))
+	}
+	return base, nil
 }
 
 // ListCampaignLeadIDs returns the IDs of all leads assigned to a campaign.
@@ -1034,11 +1286,11 @@ func (d *DB) ListCampaignLeadIDs(campaignID int64) ([]int64, error) {
 // SaveCampaignVoiceSettings updates the tts_* columns on a campaign.
 func (d *DB) SaveCampaignVoiceSettings(campaignID int64, vs VoiceSettings) error {
 	_, err := d.pool.Exec(
-		`UPDATE campaigns SET tts_provider=?, tts_voice_id=?, tts_language=? WHERE id=?`,
-		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage), campaignID)
+		`UPDATE campaigns SET tts_provider=?, tts_voice_id=?, tts_language=?, max_call_duration_seconds=? WHERE id=?`,
+		nullString(vs.TTSProvider), nullString(vs.TTSVoiceID), nullString(vs.TTSLanguage),
+		nullInt(vs.MaxCallDurationSeconds), campaignID)
 	return err
 }
-
 
 func coalesceStr(s, def string) string {
 	if s == "" {
@@ -1047,13 +1299,15 @@ func coalesceStr(s, def string) string {
 	return s
 }
 
-// ExotelCreds holds per-campaign telephony credentials (Exotel or Twilio).
+// ExotelCreds holds per-campaign telephony credentials.
 // Field mapping:
 //
 //	Exotel: APIKey=API Key, APIToken=API Token, AccountSID, CallerID=Caller ID, AppID=App ID
 //	Twilio: APIKey=Auth Token, APIToken=API Key SID, APISecret=API Secret, AccountSID, CallerID=From Phone
+//	Tata: APIKey=Bearer/API Token, CallerID=DID/Caller ID, AppID=Agent Number, Subdomain=Click-to-Call endpoint override
 type ExotelCreds struct {
-	Provider   string // "exotel" or "twilio"; empty means exotel
+	AccountID  int64  `json:"-"`
+	Provider   string // "exotel", "twilio", "tata"/"smartflo"/"tata_tele"; empty means exotel
 	APIKey     string `json:"exotel_api_key"`
 	APIToken   string `json:"exotel_api_token"`
 	APISecret  string // Twilio only
@@ -1061,6 +1315,7 @@ type ExotelCreds struct {
 	CallerID   string `json:"exotel_caller_id"`
 	AppID      string `json:"exotel_app_id"`
 	AppType    string `json:"exotel_app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"exotel_region"`    // Exotel region: in, us, sg, etc.
 	Subdomain  string `json:"exotel_subdomain"` // Exotel account subdomain override
 }
@@ -1069,6 +1324,12 @@ type ExotelCreds struct {
 func (e ExotelCreds) IsSet() bool {
 	if e.Provider == "twilio" {
 		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
+	}
+	if e.Provider == "tata" || e.Provider == "smartflo" || e.Provider == "tata_tele" {
+		if e.Direction == "inbound" {
+			return e.APIKey != "" && e.CallerID != ""
+		}
+		return e.APIKey != "" && e.CallerID != "" && e.AppID != ""
 	}
 	// exotel: AppID is required for voice app routing
 	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""
@@ -1144,8 +1405,8 @@ func (d *DB) ExportCampaignLeads(campaignID int64, execIDs []int64, w io.Writer)
 			COALESCE(ct.dial_attempts, 0),
 			COALESCE(ct.recording_count, 0),
 			COALESCE(DATE_FORMAT(pc.scheduled_at, '%Y-%m-%d %H:%i:%s'), '')
-		FROM campaign_leads cl2
-		JOIN leads l ON l.id = cl2.lead_id
+		FROM campaign_leads cl
+		JOIN leads l ON l.id = cl.lead_id
 		LEFT JOIN (
 			SELECT lead_id,
 				COUNT(*) AS dial_attempts,
@@ -1160,13 +1421,12 @@ func (d *DB) ExportCampaignLeads(campaignID int64, execIDs []int64, w io.Writer)
 			WHERE campaign_id = ? AND status = 'pending'
 			GROUP BY lead_id
 		) pc ON pc.lead_id = l.id
-		WHERE cl2.campaign_id = ?`
+		WHERE cl.campaign_id = ?`
 	args := []any{campaignID, campaignID, campaignID}
 	if len(execIDs) > 0 {
-		placeholders := strings.Repeat("?,", len(execIDs)-1) + "?"
-		q += ` AND COALESCE(l.executive_id,0) IN (` + placeholders + `)`
-		for _, id := range execIDs {
-			args = append(args, id)
+		if c, a := campaignExecFilterClause(execIDs, true); c != "" {
+			q += ` AND ` + c
+			args = append(args, a...)
 		}
 	}
 	q += ` ORDER BY l.created_at DESC, l.id DESC`

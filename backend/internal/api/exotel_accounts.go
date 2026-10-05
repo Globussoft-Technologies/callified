@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/globussoft/callified-backend/internal/db"
 )
 
 type exotelAccountOption struct {
@@ -13,6 +15,7 @@ type exotelAccountOption struct {
 	AccountSID string `json:"account_sid"`
 	CallerID   string `json:"caller_id"`
 	AppType    string `json:"app_type"`
+	Direction  string `json:"direction"`
 	Region     string `json:"region"`
 	Subdomain  string `json:"subdomain"`
 }
@@ -20,6 +23,9 @@ type exotelAccountOption struct {
 // ── GET /api/exotel-accounts ─────────────────────────────────────────────────
 
 func (s *Server) listExotelAccounts(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	accounts, err := s.db.GetOrgExotelAccounts(ac.OrgID)
 	if err != nil {
@@ -40,7 +46,32 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	options := make([]exotelAccountOption, 0, len(accounts))
+	// Non-Admins only see org-level accounts explicitly allowed for them.
+	// Admins bypass the filter so they can manage campaigns for any account.
+	if ac.Role != db.RoleAdmin {
+		allowedIDs, err := s.db.GetUserAllowedExotelAccountIDs(ac.UserID)
+		if err != nil {
+			s.logger.Sugar().Errorw("listExotelAccountOptions: allowed ids", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		allowedSet := make(map[int64]bool, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowedSet[id] = true
+		}
+		filtered := make([]db.OrgExotelAccount, 0, len(allowedIDs))
+		for _, a := range accounts {
+			if allowedSet[a.ID] {
+				filtered = append(filtered, a)
+			}
+		}
+		accounts = filtered
+	}
+	var userAccounts []db.OrgExotelAccount
+	if ac.UserID > 0 {
+		userAccounts, _ = s.db.GetUserExotelAccounts(ac.UserID, ac.OrgID)
+	}
+	options := make([]exotelAccountOption, 0, len(accounts)+len(userAccounts))
 	for _, a := range accounts {
 		options = append(options, exotelAccountOption{
 			ID:         a.ID,
@@ -49,6 +80,20 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 			AccountSID: a.AccountSID,
 			CallerID:   a.CallerID,
 			AppType:    a.AppType,
+			Direction:  a.Direction,
+			Region:     a.Region,
+			Subdomain:  a.Subdomain,
+		})
+	}
+	for _, a := range userAccounts {
+		options = append(options, exotelAccountOption{
+			ID:         a.ID,
+			Provider:   a.Provider,
+			Name:       a.Name + " (personal)",
+			AccountSID: a.AccountSID,
+			CallerID:   a.CallerID,
+			AppType:    a.AppType,
+			Direction:  a.Direction,
 			Region:     a.Region,
 			Subdomain:  a.Subdomain,
 		})
@@ -59,6 +104,9 @@ func (s *Server) listExotelAccountOptions(w http.ResponseWriter, r *http.Request
 // ── POST /api/exotel-accounts ────────────────────────────────────────────────
 
 func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	var req struct {
 		Provider   string `json:"provider"`
@@ -70,6 +118,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Direction  string `json:"direction"`
 		Region     string `json:"region"`
 		Subdomain  string `json:"subdomain"`
 	}
@@ -83,7 +132,8 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if err := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); err != "" {
+	req.Direction = normalizeProviderDirection(req.Direction)
+	if err := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); err != "" {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -93,7 +143,7 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.db.CreateOrgExotelAccount(ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain)
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain)
 	if err != nil {
 		s.logger.Sugar().Errorw("createExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -105,6 +155,9 @@ func (s *Server) createExotelAccount(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/exotel-accounts/{id} ────────────────────────────────────────────
 
 func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -121,6 +174,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 		CallerID   string `json:"caller_id"`
 		AppID      string `json:"app_id"`
 		AppType    string `json:"app_type"`
+		Direction  string `json:"direction"`
 		Region     string `json:"region"`
 		Subdomain  string `json:"subdomain"`
 	}
@@ -134,7 +188,8 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	if req.AppType == "" {
 		req.AppType = "exoml"
 	}
-	if errMsg := validateProviderAccount(req.Provider, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID); errMsg != "" {
+	req.Direction = normalizeProviderDirection(req.Direction)
+	if errMsg := validateProviderAccount(req.Provider, req.Direction, req.Name, req.APIKey, req.APIToken, req.APISecret, req.AccountSID, req.CallerID, req.AppID); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -144,7 +199,7 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.db.UpdateOrgExotelAccount(id, ac.OrgID, req.Provider,
 		strings.TrimSpace(req.Name), req.APIKey, req.APIToken, req.APISecret,
-		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Region, req.Subdomain); err != nil {
+		req.AccountSID, req.CallerID, req.AppID, req.AppType, req.Direction, req.Region, req.Subdomain); err != nil {
 		s.logger.Sugar().Errorw("updateExotelAccount", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -155,6 +210,9 @@ func (s *Server) updateExotelAccount(w http.ResponseWriter, r *http.Request) {
 // ── DELETE /api/exotel-accounts/{id} ─────────────────────────────────────────
 
 func (s *Server) deleteExotelAccount(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "provider_accounts.global") {
+		return
+	}
 	ac := getAuth(r)
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -203,11 +261,30 @@ func (s *Server) setCampaignExotelAccount(w http.ResponseWriter, r *http.Request
 }
 
 // validateProviderAccount checks required fields per provider.
-func validateProviderAccount(provider, name, apiKey, apiToken, apiSecret, accountSID, callerID string) string {
+func normalizeProviderDirection(direction string) string {
+	switch strings.ToLower(strings.TrimSpace(direction)) {
+	case "inbound":
+		return "inbound"
+	default:
+		return "outbound"
+	}
+}
+
+func validateProviderAccount(provider, direction, name, apiKey, apiToken, apiSecret, accountSID, callerID, appID string) string {
 	if strings.TrimSpace(name) == "" {
 		return "account name is required"
 	}
 	switch provider {
+	case "tata", "smartflo", "tata_tele":
+		if direction == "inbound" {
+			if apiKey == "" || callerID == "" {
+				return "api_key (Tata API token) and caller_id (Tata DID) are required for inbound Tata Tele"
+			}
+			return ""
+		}
+		if apiKey == "" || callerID == "" || appID == "" {
+			return "api_key (Tata API token), app_id (agent number) and caller_id (Tata number) are required for Tata Tele"
+		}
 	case "twilio":
 		if accountSID == "" || apiKey == "" || apiToken == "" || apiSecret == "" || callerID == "" {
 			return "account_sid, api_key (auth token), api_token (API key SID), api_secret and caller_id (phone number) are required for Twilio"

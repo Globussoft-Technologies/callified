@@ -19,17 +19,19 @@ type User struct {
 	ManagerID    *int64 `json:"manager_id,omitempty"`
 	IsActive     bool   `json:"is_active"`
 	CreatedAt    string `json:"created_at,omitempty"`
+	LastLoginAt  string `json:"last_login_at,omitempty"`
 }
 
 // GetUserByEmail fetches a user by email. Returns nil, nil when not found.
 func (d *DB) GetUserByEmail(email string) (*User, error) {
 	row := d.pool.QueryRow(
 		`SELECT id, COALESCE(org_id,0), email, password_hash, COALESCE(full_name,''), COALESCE(role,'Admin'),
-		        manager_id, COALESCE(is_active,1)
+		        manager_id, COALESCE(is_active,1),
+		        COALESCE(DATE_FORMAT(last_login_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE email = ?`, email)
 	u := &User{}
 	var managerID sql.NullInt64
-	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive)
+	err := row.Scan(&u.ID, &u.OrgID, &u.Email, &u.PasswordHash, &u.FullName, &u.Role, &managerID, &u.IsActive, &u.LastLoginAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -59,7 +61,8 @@ func (d *DB) GetTeamMembers(orgID int64) ([]User, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(org_id,0), email, '', COALESCE(full_name,''), COALESCE(role,'Member'),
 		        manager_id, COALESCE(is_active,1),
-		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), '')
+		        COALESCE(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ'), ''),
+		        COALESCE(DATE_FORMAT(last_login_at, '%Y-%m-%dT%H:%i:%sZ'), '')
 		 FROM users WHERE org_id=? ORDER BY id ASC`, orgID)
 	if err != nil {
 		return nil, err
@@ -82,6 +85,30 @@ func (d *DB) UpdateUserRole(userID int64, role string) error {
 func (d *DB) UpdateUserRoleAndOrg(userID int64, role string, orgID int64) error {
 	_, err := d.pool.Exec(`UPDATE users SET role=?, org_id=? WHERE id=?`, role, orgID, userID)
 	return err
+}
+
+// EnsureUserLoginColumns adds login activity tracking for existing databases.
+func (d *DB) EnsureUserLoginColumns() error {
+	return ensureUserLoginColumns(d.pool)
+}
+
+func ensureUserLoginColumns(exec schemaExecutor) error {
+	if _, err := exec.Exec(`ALTER TABLE users ADD COLUMN last_login_at DATETIME DEFAULT NULL`); err != nil && !isMySQLError(err, 1060) {
+		return fmt.Errorf("add users.last_login_at: %w", err)
+	}
+	return nil
+}
+
+// RecordUserLogin records a completed login using the database's UTC clock.
+func (d *DB) RecordUserLogin(userID int64) error {
+	return recordUserLogin(d.pool, userID)
+}
+
+func recordUserLogin(exec schemaExecutor, userID int64) error {
+	if _, err := exec.Exec(`UPDATE users SET last_login_at=UTC_TIMESTAMP() WHERE id=?`, userID); err != nil {
+		return fmt.Errorf("record user login: %w", err)
+	}
+	return nil
 }
 
 // DeleteUser removes a user scoped to an org (prevents cross-org deletion).

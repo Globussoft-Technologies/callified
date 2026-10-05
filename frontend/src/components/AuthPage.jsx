@@ -91,7 +91,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
             </span>
           </h1>
           <p style={{ color: '#94a3b8', fontSize: '0.95rem', marginTop: '0.5rem' }}>AI-Powered Lead Qualification Platform</p>
-          <span style={{ display: 'none' }} data-version="2.0.1" />
+          <span style={{ display: 'none' }} data-version="1.2.0" />
         </div>
 
         <div className="glass-panel" style={{ padding: '2rem' }}>

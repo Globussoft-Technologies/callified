@@ -8,14 +8,38 @@ import (
 	"fmt"
 )
 
-// APIKey mirrors the api_keys table (never exposes the raw key).
+// APIKey mirrors the api_keys table.
 type APIKey struct {
-	ID        int64  `json:"id"`
-	OrgID     int64  `json:"org_id"`
-	Name      string `json:"name"`
-	KeyPrefix string `json:"key_prefix"` // first 10 chars of the raw key for display
-	IsActive  bool   `json:"is_active"`
-	CreatedAt string `json:"created_at"`
+	ID           int64  `json:"id"`
+	OrgID        int64  `json:"org_id"`
+	Name         string `json:"name"`
+	KeyPrefix    string `json:"key_prefix"`              // first 10 chars of the raw key for display
+	KeyPlaintext string `json:"key_plaintext,omitempty"` // only populated for keys created after this column exists
+	IsActive     bool   `json:"is_active"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// EnsureAPIKeysTable creates/extends the API key table.
+func (d *DB) EnsureAPIKeysTable() error {
+	_, err := d.pool.Exec(`
+		CREATE TABLE IF NOT EXISTS api_keys (
+			id BIGINT AUTO_INCREMENT PRIMARY KEY,
+			org_id BIGINT NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			key_hash VARCHAR(128) NOT NULL UNIQUE,
+			key_prefix VARCHAR(32) DEFAULT '',
+			key_plaintext VARCHAR(255) DEFAULT NULL,
+			is_active TINYINT(1) NOT NULL DEFAULT 1,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			last_used_at TIMESTAMP NULL DEFAULT NULL,
+			INDEX idx_api_keys_org (org_id),
+			INDEX idx_api_keys_hash (key_hash)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+	if err != nil {
+		return fmt.Errorf("create api_keys: %w", err)
+	}
+	_, _ = d.pool.Exec(`ALTER TABLE api_keys ADD COLUMN key_plaintext VARCHAR(255) DEFAULT NULL`)
+	return nil
 }
 
 // GenerateAPIKey creates a cryptographically random API key.
@@ -31,13 +55,13 @@ func GenerateAPIKey() (raw, hashed string, err error) {
 	return
 }
 
-// CreateAPIKey inserts a new API key row (stores hash, not the raw key).
+// CreateAPIKey inserts a new API key row.
 // is_active is set explicitly to 1 so newly generated keys are active regardless
 // of the column's DB default.
-func (d *DB) CreateAPIKey(orgID int64, name, keyHash, keyPrefix string) (int64, error) {
+func (d *DB) CreateAPIKey(orgID int64, name, keyHash, keyPrefix, rawKey string) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO api_keys (org_id, name, key_hash, key_prefix, is_active) VALUES (?,?,?,?,1)`,
-		orgID, name, keyHash, keyPrefix)
+		`INSERT INTO api_keys (org_id, name, key_hash, key_prefix, key_plaintext, is_active) VALUES (?,?,?,?,?,1)`,
+		orgID, name, keyHash, keyPrefix, rawKey)
 	if err != nil {
 		return 0, err
 	}
@@ -47,7 +71,7 @@ func (d *DB) CreateAPIKey(orgID int64, name, keyHash, keyPrefix string) (int64, 
 // GetAPIKeysByOrg returns all API keys for an org (never exposes hashes).
 func (d *DB) GetAPIKeysByOrg(orgID int64) ([]APIKey, error) {
 	rows, err := d.pool.Query(`
-		SELECT id, org_id, name, COALESCE(key_prefix,''), COALESCE(is_active,1),
+		SELECT id, org_id, name, COALESCE(key_prefix,''), COALESCE(key_plaintext,''), COALESCE(is_active,1),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM api_keys WHERE org_id=? ORDER BY id DESC`, orgID)
 	if err != nil {
@@ -57,7 +81,7 @@ func (d *DB) GetAPIKeysByOrg(orgID int64) ([]APIKey, error) {
 	var list []APIKey
 	for rows.Next() {
 		var k APIKey
-		if err := rows.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.IsActive, &k.CreatedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.OrgID, &k.Name, &k.KeyPrefix, &k.KeyPlaintext, &k.IsActive, &k.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, k)

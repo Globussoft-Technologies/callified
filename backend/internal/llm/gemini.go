@@ -5,28 +5,55 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
+var ErrMaxTokens = errors.New("llm stopped at max output tokens")
+
 // GeminiClient calls Google Gemini via REST SSE streaming.
 type GeminiClient struct {
-	apiKey string
-	model  string
-	http   *http.Client
+	apiKey  string
+	baseURL string
+	model   string
+	http    *http.Client
 }
 
-func NewGeminiClient(apiKey, model string) *GeminiClient {
-	return &GeminiClient{apiKey: apiKey, model: model, http: &http.Client{}}
+func NewGeminiClient(apiKey, model, baseURL string) *GeminiClient {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return &GeminiClient{apiKey: apiKey, baseURL: base, model: model, http: &http.Client{}}
 }
 
 // --- request types ---
 
 type geminiRequest struct {
-	SystemInstruction *geminiContent   `json:"system_instruction,omitempty"`
-	Contents          []geminiContent  `json:"contents"`
-	GenerationConfig  map[string]int32 `json:"generationConfig,omitempty"`
+	SystemInstruction *geminiContent        `json:"system_instruction,omitempty"`
+	Contents          []geminiContent       `json:"contents"`
+	GenerationConfig  geminiStreamGenConfig `json:"generationConfig"`
+	Tools             []geminiTool          `json:"tools,omitempty"`
+}
+
+type geminiTool struct {
+	FunctionDeclarations []geminiFunctionDeclaration `json:"functionDeclarations"`
+}
+
+type geminiFunctionDeclaration struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type geminiFunctionCall struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+type geminiStreamGenConfig struct {
+	MaxOutputTokens int32                 `json:"maxOutputTokens"`
+	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiContent struct {
@@ -42,9 +69,12 @@ type geminiPart struct {
 
 type geminiStreamEvent struct {
 	Candidates []struct {
-		Content struct {
+		FinishReason string `json:"finishReason,omitempty"`
+		Content      struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text         string              `json:"text"`
+				Thought      bool                `json:"thought,omitempty"`
+				FunctionCall *geminiFunctionCall `json:"functionCall,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -56,14 +86,14 @@ type geminiStreamEvent struct {
 // geminiTextRequest is used for non-streaming generateContent calls.
 // Supports thinkingConfig to disable reasoning for faster, complete responses.
 type geminiTextRequest struct {
-	SystemInstruction *geminiContent        `json:"system_instruction,omitempty"`
-	Contents          []geminiContent       `json:"contents"`
-	GenerationConfig  geminiTextGenConfig   `json:"generationConfig"`
+	SystemInstruction *geminiContent      `json:"system_instruction,omitempty"`
+	Contents          []geminiContent     `json:"contents"`
+	GenerationConfig  geminiTextGenConfig `json:"generationConfig"`
 }
 
 type geminiTextGenConfig struct {
-	MaxOutputTokens int                    `json:"maxOutputTokens"`
-	ThinkingConfig  *geminiThinkingConfig  `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens int                   `json:"maxOutputTokens"`
+	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiThinkingConfig struct {
@@ -74,7 +104,8 @@ type geminiTextResponse struct {
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
-				Text string `json:"text"`
+				Text    string `json:"text"`
+				Thought bool   `json:"thought,omitempty"`
 			} `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
@@ -109,15 +140,15 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 		return "", fmt.Errorf("gemini: marshal: %w", err)
 	}
 
-	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
-		g.model, g.apiKey,
-	)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	endpoint, bearerAuth := g.endpoint("generateContent", false)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if bearerAuth {
+		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
+	}
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -135,6 +166,9 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 	var sb strings.Builder
 	for _, cand := range result.Candidates {
 		for _, part := range cand.Content.Parts {
+			if part.Thought {
+				continue
+			}
 			sb.WriteString(part.Text)
 		}
 	}
@@ -169,13 +203,22 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	})
 
 	body := geminiRequest{
-		Contents:         contents,
-		GenerationConfig: map[string]int32{"maxOutputTokens": req.MaxTokens},
+		Contents: contents,
+		GenerationConfig: geminiStreamGenConfig{
+			MaxOutputTokens: req.MaxTokens,
+			// Voice turns need only the final spoken reply. Disabling thinking
+			// on models that support zero prevents reasoning tokens from consuming
+			// the realtime token budget. Other models still use the <SAY> gate.
+			ThinkingConfig: voiceThinkingConfig(g.model),
+		},
 	}
 	if req.SystemPrompt != "" {
 		body.SystemInstruction = &geminiContent{
 			Parts: []geminiPart{{Text: req.SystemPrompt}},
 		}
+	}
+	if req.EnableVoiceActions {
+		body.Tools = voiceActionTools()
 	}
 
 	bodyBytes, err := json.Marshal(body)
@@ -183,15 +226,15 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 		return fmt.Errorf("gemini: marshal: %w", err)
 	}
 
-	url := fmt.Sprintf(
-		"https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?key=%s&alt=sse",
-		g.model, g.apiKey,
-	)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	endpoint, bearerAuth := g.endpoint("streamGenerateContent", true)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("gemini: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if bearerAuth {
+		httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
+	}
 
 	resp, err := g.http.Do(httpReq)
 	if err != nil {
@@ -206,6 +249,8 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	hitMaxTokens := false
+	actionDelivered := false
 	for scanner.Scan() {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -226,12 +271,93 @@ func (g *GeminiClient) StreamTokens(ctx context.Context, req TranscriptRequest, 
 			return fmt.Errorf("gemini: api error: %s", event.Error.Message)
 		}
 		for _, cand := range event.Candidates {
+			if cand.FinishReason == "MAX_TOKENS" {
+				hitMaxTokens = true
+			}
 			for _, part := range cand.Content.Parts {
+				// Thought summaries are internal model output, even though the API
+				// represents them as text parts. Never forward them to callers.
+				if part.Thought {
+					continue
+				}
+				if !actionDelivered && part.FunctionCall != nil && req.OnVoiceAction != nil {
+					actionDelivered = true
+					req.OnVoiceAction(VoiceAction{
+						Name:       part.FunctionCall.Name,
+						SpokenText: stringArg(part.FunctionCall.Args, "spoken_text"),
+						Outcome:    stringArg(part.FunctionCall.Args, "outcome"),
+					})
+					continue
+				}
 				if part.Text != "" {
 					onToken(part.Text)
 				}
 			}
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if hitMaxTokens {
+		return ErrMaxTokens
+	}
+	return nil
+}
+
+func voiceActionTools() []geminiTool {
+	return []geminiTool{{
+		FunctionDeclarations: []geminiFunctionDeclaration{{
+			Name: "complete_call",
+			Description: "Finish the phone call after the customer has explicitly confirmed a demo/appointment time, declined, or asked to end. " +
+				"Do not call this while another question is needed.",
+			Parameters: map[string]any{
+				"type": "OBJECT",
+				"properties": map[string]any{
+					"spoken_text": map[string]any{
+						"type":        "STRING",
+						"description": "One short customer-facing confirmation and goodbye in the required call language.",
+					},
+					"outcome": map[string]any{
+						"type": "STRING",
+						"enum": []string{"appointment_booked", "customer_declined", "customer_requested_end"},
+					},
+				},
+				"required": []string{"spoken_text", "outcome"},
+			},
+		}},
+	}}
+}
+
+func stringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func voiceThinkingConfig(model string) *geminiThinkingConfig {
+	// Gemini 2.5 Flash and Flash-Lite support thinkingBudget=0. Pro and newer
+	// model families may require thinking, or use a different configuration;
+	// omitting the field keeps those endpoints compatible.
+	if strings.Contains(strings.ToLower(model), "gemini-2.5-flash") {
+		return &geminiThinkingConfig{ThinkingBudget: 0}
+	}
+	return nil
+}
+
+func (g *GeminiClient) endpoint(method string, stream bool) (string, bool) {
+	if g.baseURL != "" {
+		endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s", g.baseURL, url.PathEscape(g.model), method)
+		if stream {
+			endpoint += "?alt=sse"
+		}
+		return endpoint, true
+	}
+
+	endpoint := fmt.Sprintf(
+		"https://generativelanguage.googleapis.com/v1beta/models/%s:%s?key=%s",
+		url.PathEscape(g.model), method, url.QueryEscape(g.apiKey),
+	)
+	if stream {
+		endpoint += "&alt=sse"
+	}
+	return endpoint, false
 }

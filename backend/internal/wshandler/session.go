@@ -14,6 +14,7 @@ import (
 
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
+	"github.com/globussoft/callified-backend/internal/metrics"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -21,10 +22,12 @@ import (
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
 	// Identity (set on connect / start event)
-	StreamSid  string
-	CallSid    string
-	IsExotel   bool
-	IsWebSim   bool
+	StreamSid string
+	CallSid   string
+	Provider  string
+	IsExotel  bool
+	IsWebSim  bool
+	IsInbound bool
 	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
 	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
 	IsBridge bool
@@ -33,6 +36,8 @@ type CallSession struct {
 	SkipCredits bool
 	// UserEmail is the agent/admin who initiated the call.
 	UserEmail string
+	// UserID is the resolved DB user id of the agent/admin who initiated the call.
+	UserID int64
 	// UseUlaw decides whether inbound/outbound audio is μ-law or PCM-16 LE,
 	// and whether outbound JSON envelopes use camelCase ("streamSid") vs
 	// snake_case ("stream_sid").
@@ -59,14 +64,24 @@ type CallSession struct {
 	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
-	greetingSent   atomic.Bool
-	ttsPlaying     atomic.Bool
-	hangupReq      atomic.Bool
-	dgAlive        atomic.Bool
-	bargeInActive   atomic.Bool  // set on SpeechStarted; cleared when new LLM response starts
-	lastBargeInNano atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
-	lastTTSEndNano atomic.Int64 // UnixNano
-	lastTranscript atomic.Int64 // UnixNano — debounce timestamp
+	greetingSent         atomic.Bool
+	ttsPlaying           atomic.Bool
+	hangupReq            atomic.Bool
+	dgAlive              atomic.Bool
+	maxDurationStarted   atomic.Bool
+	maxDurationSoftClose atomic.Bool
+	maxDurationWaitReply atomic.Bool
+	maxDurationClosing   atomic.Bool
+	finalCloseReq        atomic.Bool
+	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
+	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
+	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
+	confirmedBargeInNano atomic.Int64 // UnixNano of last STT-confirmed barge-in
+	lastBargeInNano      atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
+	lastTTSEndNano       atomic.Int64 // UnixNano
+	lastAudioSentNano    atomic.Int64 // UnixNano of last outbound audio frame sent
+	lastTranscript       atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq          atomic.Uint64
 
 	// Serialization
 	llmMu sync.Mutex // one LLM turn at a time per session
@@ -84,6 +99,7 @@ type CallSession struct {
 	// Audio processing helpers
 	PlaybackTracker *audio.PlaybackTracker
 	EchoCanceller   *audio.EchoCanceller
+	VAD             *audio.VAD
 
 	// Monitor (manager dashboard) WebSocket connections
 	monitorMu    sync.RWMutex
@@ -93,25 +109,32 @@ type CallSession struct {
 	sttFirstAt atomic.Pointer[time.Time]
 
 	// Server-side stereo recording buffers
-	recMu            sync.Mutex
-	micChunks        []audio.TimedChunk
-	ttsChunks        []audio.TimedChunk
-	micRecordCursor  time.Time // virtual playback cursor for mic recording
-	ttsRecordCursor  time.Time // virtual playback cursor for TTS recording
-	ttsNewUtterance  bool      // signals AppendTTSChunk to reset cursor on next chunk
+	recMu           sync.Mutex
+	micChunks       []audio.TimedChunk
+	ttsChunks       []audio.TimedChunk
+	micRecordCursor time.Time // virtual playback cursor for mic recording
+	ttsRecordCursor time.Time // virtual playback cursor for TTS recording
+	ttsNewUtterance bool      // signals AppendTTSChunk to reset cursor on next chunk
 
 	// Chat history — populated by AppendHistory, read by pipeline
-	historyMu   sync.Mutex
-	ChatHistory []llm.ChatMessage
+	historyMu    sync.Mutex
+	ChatHistory  []llm.ChatMessage
+	spokenMu     sync.Mutex
+	recentSpoken []string
+
+	// Recent customer utterances used to keep repeated questions from looping.
+	repeatMu        sync.Mutex
+	recentQuestions []repeatQuestion
 
 	// Voice config — populated after InitializeCall gRPC returns
-	SystemPrompt string
-	GreetingText string
-	TTSProvider  string
-	TTSVoiceID   string
-	TTSLanguage  string
-	AgentName    string
-	Language     string
+	SystemPrompt           string
+	GreetingText           string
+	TTSProvider            string
+	TTSVoiceID             string
+	TTSLanguage            string
+	MaxCallDurationSeconds int
+	AgentName              string
+	Language               string
 
 	// Deferred-init hooks. Real Exotel calls connect with empty URL params
 	// (the campaign context arrives later via the Redis "start" event), so
@@ -233,6 +256,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		CallStart:       time.Now(),
 		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:   audio.NewEchoCanceller(),
+		VAD:             audio.NewVAD(),
 		monitorConns:    make(map[*websocket.Conn]struct{}),
 	}
 	s.dgAlive.Store(true)
@@ -345,6 +369,37 @@ func (s *CallSession) SetTTSPlaying(v bool)  { s.ttsPlaying.Store(v) }
 func (s *CallSession) IsTTSPlaying() bool    { return s.ttsPlaying.Load() }
 func (s *CallSession) RequestHangup()        { s.hangupReq.Store(true) }
 func (s *CallSession) HangupRequested() bool { return s.hangupReq.Load() }
+func (s *CallSession) TryStartMaxDurationTimer() bool {
+	return s.maxDurationStarted.CompareAndSwap(false, true)
+}
+func (s *CallSession) RequestMaxDurationSoftClose() { s.maxDurationSoftClose.Store(true) }
+func (s *CallSession) IsMaxDurationSoftClosing() bool {
+	return s.maxDurationSoftClose.Load()
+}
+func (s *CallSession) RequestMaxDurationWaitReply() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(true)
+}
+func (s *CallSession) ConsumeMaxDurationWaitReply() bool {
+	return s.maxDurationWaitReply.CompareAndSwap(true, false)
+}
+func (s *CallSession) RequestMaxDurationClose() {
+	s.maxDurationSoftClose.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.maxDurationClosing.Store(true)
+	s.RequestHangup()
+}
+func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
+func (s *CallSession) RequestFinalClose() {
+	s.finalCloseReq.Store(true)
+	s.maxDurationWaitReply.Store(false)
+	s.SetBargeInPending(false)
+	s.SetBargeIn(false)
+	s.RequestHangup()
+}
+func (s *CallSession) IsFinalClosing() bool {
+	return s.finalCloseReq.Load() || s.IsMaxDurationClosing()
+}
 func (s *CallSession) StopDG()               { s.dgAlive.Store(false) }
 func (s *CallSession) DGAlive() bool         { return s.dgAlive.Load() }
 func (s *CallSession) SetBargeIn(v bool)     { s.bargeInActive.Store(v) }
@@ -362,7 +417,13 @@ func (s *CallSession) TriggerBargeIn() bool {
 	if !s.lastBargeInNano.CompareAndSwap(last, now) {
 		return false // another goroutine won the race
 	}
+	s.interruptActiveTTS()
+	return true
+}
+
+func (s *CallSession) interruptActiveTTS() {
 	s.SetBargeIn(true)
+	metrics.BargeIns.Inc()
 	s.DrainTTSSentences()
 	go func() {
 		time.Sleep(3 * time.Second)
@@ -376,9 +437,130 @@ func (s *CallSession) TriggerBargeIn() bool {
 	} else if s.IsExotel {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
 	}
-	if frame != nil {
+	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
 	}
+}
+
+// TryBargeIn attempts to trigger a tentative barge-in when customer speech is
+// detected. Returns true if barge-in was actually triggered. It requires TTS to
+// be playing or recently finished (within 800ms of TTS end or 2000ms of last
+// audio sent), and it respects the cooldown/active/pending guards.
+func (s *CallSession) TryBargeIn(source string) bool {
+	if s.IsFinalClosing() {
+		return false
+	}
+	recentTTS := s.IsTTSPlaying() || s.MsSinceTTSEnd() < 800 || s.MsSinceAudioSent() < 2000
+	if !recentTTS || s.IsBargeInActive() || s.IsBargeInPending() {
+		return false
+	}
+	if !s.TentativeTriggerBargeIn() {
+		return false
+	}
+	s.Log.Info("barge-in: triggered",
+		zap.String("source", source),
+		zap.Float64("noise_floor", s.VAD.NoiseFloor()))
+	return true
+}
+
+// SetBargeInPending marks whether a barge-in is waiting for STT confirmation.
+func (s *CallSession) SetBargeInPending(v bool) { s.bargeInPending.Store(v) }
+
+// IsBargeInPending returns true when a barge-in has fired but STT has not yet
+// confirmed it with a real transcript.
+func (s *CallSession) IsBargeInPending() bool { return s.bargeInPending.Load() }
+
+// BargeInDeadline returns the UnixNano deadline by which STT must confirm a
+// pending barge-in. Zero means no deadline is active.
+func (s *CallSession) BargeInDeadline() int64 { return s.bargeInDeadline.Load() }
+
+// TentativeTriggerBargeIn triggers barge-in but keeps it in a pending state.
+// STT must confirm the interruption with a real transcript within 4s;
+// otherwise the barge-in is automatically cancelled so the AI can continue.
+func (s *CallSession) TentativeTriggerBargeIn() bool {
+	now := time.Now().UnixNano()
+	last := s.lastBargeInNano.Load()
+	if now-last < 500*int64(time.Millisecond) {
+		return false
+	}
+	if !s.lastBargeInNano.CompareAndSwap(last, now) {
+		return false
+	}
+	s.SetBargeInPending(true)
+	deadline := time.Now().Add(4000 * time.Millisecond)
+	s.bargeInDeadline.Store(deadline.UnixNano())
+	go func() {
+		time.Sleep(time.Until(deadline))
+		// If still pending, no meaningful transcript arrived — cancel barge-in.
+		if s.bargeInPending.CompareAndSwap(true, false) {
+			s.SetBargeIn(false)
+			s.Log.Info("barge-in: cancelled (no STT confirmation)")
+		}
+	}()
+	return true
+}
+
+// ConfirmBargeIn marks a pending barge-in as confirmed by real STT input.
+// It also clears any pending hangup request — an interruption during the AI's
+// goodbye means the customer wants to keep talking.
+// Returns true if there was a pending barge-in to confirm.
+func (s *CallSession) ConfirmBargeIn() bool {
+	if !s.bargeInPending.CompareAndSwap(true, false) {
+		return false
+	}
+	if s.IsFinalClosing() {
+		s.SetBargeIn(false)
+		s.Log.Info("barge-in: ignored during final close")
+		return true
+	}
+	s.interruptActiveTTS()
+	s.confirmedBargeInNano.Store(time.Now().UnixNano())
+	if s.HangupRequested() {
+		s.hangupReq.Store(false)
+		s.Log.Info("barge-in: confirmed by STT; hangup cancelled")
+	} else {
+		s.Log.Info("barge-in: confirmed by STT")
+	}
+	return true
+}
+
+// RecoverBargeInFromFinalTranscript handles a meaningful transcript.final that
+// arrived while TTS was active even when the provider's speech-start event was
+// missed. Unlike the old cooldown drop, the customer's completed utterance is
+// preserved and the active agent speech is stopped.
+func (s *CallSession) RecoverBargeInFromFinalTranscript() bool {
+	if s.IsFinalClosing() {
+		return false
+	}
+	s.bargeInPending.Store(false)
+	s.interruptActiveTTS()
+	s.confirmedBargeInNano.Store(time.Now().UnixNano())
+	s.Log.Info("barge-in: recovered from distinct final transcript")
+	return true
+}
+
+// ConsumeRecentConfirmedBargeIn returns true once for the transcript that
+// follows an STT-confirmed barge-in. Stale confirmations are ignored so a
+// speech_start event without a final transcript cannot tag a later normal turn.
+func (s *CallSession) ConsumeRecentConfirmedBargeIn(maxAge time.Duration) bool {
+	nano := s.confirmedBargeInNano.Load()
+	if nano == 0 {
+		return false
+	}
+	if time.Since(time.Unix(0, nano)) > maxAge {
+		s.confirmedBargeInNano.CompareAndSwap(nano, 0)
+		return false
+	}
+	return s.confirmedBargeInNano.CompareAndSwap(nano, 0)
+}
+
+// CancelBargeIn cancels a pending barge-in and resets the active flag.
+// Returns true if a pending barge-in was actually cancelled.
+func (s *CallSession) CancelBargeIn() bool {
+	if !s.bargeInPending.CompareAndSwap(true, false) {
+		return false
+	}
+	s.SetBargeIn(false)
 	return true
 }
 
@@ -403,6 +585,21 @@ func (s *CallSession) MsSinceTTSEnd() int64 {
 		return 9999
 	}
 	return (time.Now().UnixNano() - end) / int64(time.Millisecond)
+}
+
+// MarkAudioSent records the current time as when the last outbound audio frame
+// was sent. Used to extend the barge-in window past TTS synthesis end so the
+// customer can interrupt while audio is still playing on the phone.
+func (s *CallSession) MarkAudioSent() { s.lastAudioSentNano.Store(time.Now().UnixNano()) }
+
+// MsSinceAudioSent returns milliseconds since the last outbound audio frame.
+// Returns 9999 if no audio has been sent yet.
+func (s *CallSession) MsSinceAudioSent() int64 {
+	last := s.lastAudioSentNano.Load()
+	if last == 0 {
+		return 9999
+	}
+	return (time.Now().UnixNano() - last) / int64(time.Millisecond)
 }
 
 // StampTranscript records the current time as the latest transcript timestamp
@@ -517,18 +714,80 @@ func (s *CallSession) HistorySnapshot() []llm.ChatMessage {
 	return snap
 }
 
-// MaxTokens returns a token budget based on transcript length, clamped
-// between 500 and 800. A 500-token floor gives enough room for a complete
-// natural reply (acknowledgment + answer + next question) in any language,
-// especially Indic scripts where token counts are higher.
-func (s *CallSession) MaxTokens(transcript string) int32 {
-	words := len(strings.Fields(transcript))
-	tokens := int32(words * 40)
-	if tokens < 500 {
-		return 500
+// RememberAgentSpeech tracks a few sentences that were actually submitted to
+// TTS. It is used to distinguish leaked agent echo from real customer speech.
+func (s *CallSession) RememberAgentSpeech(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
 	}
-	if tokens > 800 {
-		return 800
+	s.spokenMu.Lock()
+	s.recentSpoken = append(s.recentSpoken, text)
+	if len(s.recentSpoken) > 4 {
+		s.recentSpoken = append([]string(nil), s.recentSpoken[len(s.recentSpoken)-4:]...)
+	}
+	s.spokenMu.Unlock()
+}
+
+// IsLikelyRecentAgentEcho compares a final STT utterance with sentences most
+// recently sent to TTS. Audio-level echo suppression runs earlier; this is the
+// text-level last defense before accepting speech during TTS playback.
+func (s *CallSession) IsLikelyRecentAgentEcho(text string) bool {
+	candidate := normalizeQuestionText(text)
+	if len([]rune(candidate)) < 4 {
+		return false
+	}
+	s.spokenMu.Lock()
+	recent := append([]string(nil), s.recentSpoken...)
+	s.spokenMu.Unlock()
+	for i := len(recent) - 1; i >= 0; i-- {
+		spoken := normalizeQuestionText(recent[i])
+		if spoken == "" {
+			continue
+		}
+		if strings.Contains(spoken, candidate) || strings.Contains(candidate, spoken) || questionSimilarity(candidate, spoken) >= 0.72 {
+			return true
+		}
+	}
+	return false
+}
+
+// MaxTokens returns a token budget based on transcript length and language,
+// clamped to a sane range. Indian languages are tokenized less efficiently by
+// LLM subword tokenizers, so they get a higher multiplier and a higher cap.
+func (s *CallSession) MaxTokens(transcript string) int32 {
+	isEnglish := s.Language == "en"
+
+	if s.IsInbound {
+		perWord, minTok, maxTok := int32(34), int32(500), int32(900)
+		if !isEnglish {
+			perWord = 50
+			maxTok = 1600
+		}
+		words := len(strings.Fields(transcript))
+		tokens := int32(words) * perWord
+		if tokens < minTok {
+			return minTok
+		}
+		if tokens > maxTok {
+			return maxTok
+		}
+		return tokens
+	}
+
+	perWord, minTok, maxTok := int32(20), int32(250), int32(450)
+	if !isEnglish {
+		perWord = 24
+		minTok = 320
+		maxTok = 550
+	}
+	words := len(strings.Fields(transcript))
+	tokens := int32(words) * perWord
+	if tokens < minTok {
+		return minTok
+	}
+	if tokens > maxTok {
+		return maxTok
 	}
 	return tokens
 }

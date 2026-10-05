@@ -11,21 +11,21 @@ import (
 
 // Lead mirrors the leads table.
 type Lead struct {
-	ID           int64   `json:"id"`
-	OrgID        int64   `json:"org_id"`
-	FirstName    string  `json:"first_name"`
-	LastName     string  `json:"last_name"`
-	Phone        string  `json:"phone"`
-	Source       string  `json:"source"`
-	Status       string  `json:"status"`
-	FollowUpNote string  `json:"follow_up_note"`
-	FollowUpAt   string  `json:"follow_up_at"`
-	Interest     string  `json:"interest"`
-	Company      string  `json:"company"`
-	ExternalID   string  `json:"external_id"`
-	CRMProvider  string  `json:"crm_provider"`
-	ExecutiveID  int64   `json:"executive_id"`
-	CreatedAt    string  `json:"created_at"`
+	ID           int64  `json:"id"`
+	OrgID        int64  `json:"org_id"`
+	FirstName    string `json:"first_name"`
+	LastName     string `json:"last_name"`
+	Phone        string `json:"phone"`
+	Source       string `json:"source"`
+	Status       string `json:"status"`
+	FollowUpNote string `json:"follow_up_note"`
+	FollowUpAt   string `json:"follow_up_at"`
+	Interest     string `json:"interest"`
+	Company      string `json:"company"`
+	ExternalID   string `json:"external_id"`
+	CRMProvider  string `json:"crm_provider"`
+	ExecutiveID  int64  `json:"executive_id"`
+	CreatedAt    string `json:"created_at"`
 }
 
 func scanLead(row interface{ Scan(...any) error }) (*Lead, error) {
@@ -72,7 +72,12 @@ const leadColsL = `l.id, l.org_id, l.first_name, COALESCE(l.last_name,''), l.pho
 	DATE_FORMAT(l.created_at, '%Y-%m-%d %H:%i:%s')`
 
 func execFilterClause(execIDs []int64, apply bool) (string, []any) {
-	if !apply || len(execIDs) == 0 {
+	return execFilterClauseForAlias("l", execIDs, apply)
+}
+
+func execFilterClauseForAlias(alias string, execIDs []int64, apply bool) (string, []any) {
+	_ = apply
+	if len(execIDs) == 0 {
 		return "", nil
 	}
 	placeholders := make([]string, len(execIDs))
@@ -81,7 +86,7 @@ func execFilterClause(execIDs []int64, apply bool) (string, []any) {
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	return fmt.Sprintf("COALESCE(l.executive_id, 0) IN (%s)", strings.Join(placeholders, ",")), args
+	return fmt.Sprintf("COALESCE(%s.executive_id, 0) IN (%s)", alias, strings.Join(placeholders, ",")), args
 }
 
 // GetAllLeads returns all leads for the given org (or all orgs if orgID == 0).
@@ -203,10 +208,10 @@ type LeadWithCampaign struct {
 // SearchLeadsWithCampaigns searches leads by name/phone in the org and returns
 // one row per campaign membership. If statuses is provided, only leads whose
 // status matches one of the values are returned.
-// When applyExecFilter is true, only leads whose executive_id is in execIDs are returned.
+// When applyExecFilter is true, only campaign-lead rows whose executive_id is in execIDs are returned.
 func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []string, execIDs []int64, applyExecFilter bool) ([]LeadWithCampaign, error) {
 	like := "%" + query + "%"
-	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(l.executive_id,0), c.id, c.name
+	q := `SELECT l.id, l.first_name, COALESCE(l.last_name,''), l.phone, COALESCE(l.company,''), COALESCE(l.source,''), COALESCE(l.status,'new'), COALESCE(cl.executive_id,0), c.id, c.name
 		FROM leads l
 		LEFT JOIN campaign_leads cl ON cl.lead_id = l.id
 		LEFT JOIN campaigns c ON c.id = cl.campaign_id
@@ -220,7 +225,7 @@ func (d *DB) SearchLeadsWithCampaigns(query string, orgID int64, statuses []stri
 		}
 		q += ` AND l.status IN (` + strings.Join(placeholders, ",") + `)`
 	}
-	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+	if c, a := execFilterClauseForAlias("cl", execIDs, applyExecFilter); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
@@ -372,11 +377,26 @@ func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest, 
 	return n > 0, nil
 }
 
-// DeleteLead deletes a lead scoped to the given org. Returns true if deleted.
+// DeleteLead deletes a lead scoped to the given org and removes it from all
+// campaigns it is enrolled in. Returns true if deleted.
 func (d *DB) DeleteLead(id, orgID int64) (bool, error) {
-	res, err := d.pool.Exec(
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM campaign_leads WHERE lead_id=?`, id); err != nil {
+		return false, err
+	}
+
+	res, err := tx.Exec(
 		`DELETE FROM leads WHERE id=? AND (org_id=? OR org_id IS NULL)`, id, orgID)
 	if err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	n, _ := res.RowsAffected()
@@ -546,11 +566,43 @@ type Transcript struct {
 	LeadID        int64           `json:"lead_id"`
 	CampaignID    int64           `json:"campaign_id"`
 	OrgID         int64           `json:"org_id"`
+	CallSid       string          `json:"call_sid"`
 	Transcript    json.RawMessage `json:"transcript"`
 	RecordingURL  string          `json:"recording_url"`
 	TTSLanguage   string          `json:"tts_language"`
 	CallDurationS float64         `json:"call_duration_s"`
 	CreatedAt     string          `json:"created_at"`
+}
+
+// InboundReceptionistCall is a CRM-friendly row for leadless inbound web-sim
+// calls after post-call extraction has created or matched a lead.
+type InboundReceptionistCall struct {
+	TranscriptID  int64           `json:"transcript_id"`
+	LeadID        int64           `json:"lead_id"`
+	FirstName     string          `json:"first_name"`
+	LastName      string          `json:"last_name"`
+	Phone         string          `json:"phone"`
+	Interest      string          `json:"interest"`
+	Status        string          `json:"status"`
+	Transcript    json.RawMessage `json:"transcript"`
+	RecordingURL  string          `json:"recording_url"`
+	CallDurationS float64         `json:"call_duration_s"`
+	CreatedAt     string          `json:"created_at"`
+}
+
+// EnsureCallTranscriptColumns adds metadata needed for newer call surfaces.
+func (d *DB) EnsureCallTranscriptColumns() error {
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN direction VARCHAR(20) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_first_name VARCHAR(255) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_last_name VARCHAR(255) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_phone VARCHAR(50) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_interest VARCHAR(255) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN inbound_status VARCHAR(50) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN status VARCHAR(50) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD COLUMN call_sid VARCHAR(255) DEFAULT NULL`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD INDEX idx_ct_direction_org_created (direction, org_id, created_at)`)
+	_, _ = d.pool.Exec(`ALTER TABLE call_transcripts ADD INDEX idx_ct_call_sid (call_sid)`)
+	return nil
 }
 
 // GetTranscriptsByLead returns all transcripts for a lead.
@@ -575,6 +627,34 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 		list = append(list, t)
 	}
 	return list, rows.Err()
+}
+
+// GetRecentTranscriptForRecordingAttach returns the freshest transcript row
+// created after since for a lead/campaign. Browser/web-sim uploads use this so
+// an older carrier recording for the same lead cannot block the new recording.
+func (d *DB) GetRecentTranscriptForRecordingAttach(leadID, campaignID int64, since time.Time) (*Transcript, error) {
+	args := []any{leadID, since}
+	q := `SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
+		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''), COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts
+		WHERE lead_id=? AND created_at >= ?`
+	if campaignID > 0 {
+		q += ` AND campaign_id=?`
+		args = append(args, campaignID)
+	}
+	q += ` ORDER BY created_at DESC LIMIT 1`
+
+	row := d.pool.QueryRow(q, args...)
+	var t Transcript
+	if err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // GetRecentCallTimeline returns the most recent call transcripts for an org (across all leads).
@@ -605,6 +685,40 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 	return list, rows.Err()
 }
 
+// GetRecentInboundReceptionistCalls returns recent inbound receptionist calls
+// after they have been attached to CRM leads.
+func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]InboundReceptionistCall, error) {
+	rows, err := d.pool.Query(`
+		SELECT ct.id, COALESCE(ct.lead_id,0),
+		       COALESCE(ct.inbound_first_name, l.first_name, ''),
+		       COALESCE(ct.inbound_last_name, l.last_name, ''),
+		       COALESCE(ct.inbound_phone, l.phone, ''),
+		       COALESCE(ct.inbound_interest, l.interest, ''),
+		       COALESCE(ct.inbound_status, l.status, 'new'),
+		       COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
+		       COALESCE(ct.call_duration_s,0),
+		       DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=? AND (ct.direction='inbound' OR l.source='Inbound Call')
+		ORDER BY ct.created_at DESC
+		LIMIT ?`, orgID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []InboundReceptionistCall
+	for rows.Next() {
+		var c InboundReceptionistCall
+		if err := rows.Scan(&c.TranscriptID, &c.LeadID, &c.FirstName, &c.LastName, &c.Phone,
+			&c.Interest, &c.Status, &c.Transcript, &c.RecordingURL, &c.CallDurationS, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, c)
+	}
+	return list, rows.Err()
+}
+
 // SaveCallTranscript inserts a call transcript row and returns the new ID.
 // transcriptJSON should be a JSON array of {role,text} objects.
 // ttsLanguage is the BCP-47-ish language code the call was conducted in
@@ -615,18 +729,42 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 // that populates sess.OrgID, so without the fallback every web-sim row would
 // land with org_id=NULL and get filtered out of the Analytics dashboard.
 func (d *DB) SaveCallTranscript(leadID, campaignID, orgID int64, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
+	return d.SaveCallTranscriptWithCallSid(leadID, campaignID, orgID, "", transcriptJSON, recordingURL, ttsLanguage, durationS)
+}
+
+// SaveCallTranscriptWithCallSid inserts a call transcript and stores the exact
+// call/stream SID so async browser recording uploads attach to the right row.
+func (d *DB) SaveCallTranscriptWithCallSid(leadID, campaignID, orgID int64, callSid, transcriptJSON, recordingURL, ttsLanguage string, durationS float32) (int64, error) {
 	if orgID == 0 && leadID > 0 {
 		_ = d.pool.QueryRow(`SELECT org_id FROM leads WHERE id=?`, leadID).Scan(&orgID)
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, transcript, recording_url, tts_language, call_duration_s)
-		 VALUES (?,?,?,?,?,?,?)`,
+		`INSERT INTO call_transcripts (lead_id, campaign_id, org_id, call_sid, transcript, recording_url, tts_language, call_duration_s)
+		 VALUES (?,?,?,?,?,?,?,?)`,
 		nullInt64(leadID), nullInt64(campaignID), nullInt64(orgID),
-		transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
+		nullString(callSid), transcriptJSON, nullString(recordingURL), nullString(ttsLanguage), durationS)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// GetTranscriptByCallSid fetches the newest transcript row for one exact call SID.
+func (d *DB) GetTranscriptByCallSid(callSid string) (*Transcript, error) {
+	row := d.pool.QueryRow(`
+		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
+		       COALESCE(call_sid,''), COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(tts_language,''), COALESCE(call_duration_s,0),
+		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts WHERE call_sid=? ORDER BY id DESC LIMIT 1`, callSid)
+	var t Transcript
+	if err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.CallSid, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // GetTranscriptByID fetches a single transcript by its primary key.
@@ -650,6 +788,8 @@ func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
 // GetTranscriptByRecordingURL returns the transcript whose recording_url matches
 // the given value and whose org_id matches the caller. Used to authorise access
 // to local recording files served by /api/recordings/{filename}.
+// Also checks call_logs as a fallback because some recordings are saved there
+// before the transcript row is updated.
 func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Transcript, error) {
 	row := d.pool.QueryRow(`
 		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
@@ -661,16 +801,99 @@ func (d *DB) GetTranscriptByRecordingURL(orgID int64, recordingURL string) (*Tra
 		WHERE org_id=? AND recording_url=?`, orgID, recordingURL)
 	var t Transcript
 	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		return &t, nil
+	}
+
+	// Fallback: recordings are sometimes stored in call_logs.recording_url
+	// while call_transcripts.recording_url remains NULL.
+	row = d.pool.QueryRow(`
+		SELECT cl.id, COALESCE(cl.lead_id,0), COALESCE(cl.campaign_id,0), COALESCE(cl.org_id,0),
+		       '[]', COALESCE(cl.recording_url,''),
+		       '',
+		       0,
+		       DATE_FORMAT(cl.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_logs cl
+		WHERE cl.org_id=? AND cl.recording_url=?`, orgID, recordingURL)
+	var ct Transcript
+	err = row.Scan(&ct.ID, &ct.LeadID, &ct.CampaignID, &ct.OrgID, &ct.Transcript, &ct.RecordingURL, &ct.TTSLanguage, &ct.CallDurationS, &ct.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
-	return &t, err
+	return &ct, err
 }
 
 // UpdateCallTranscriptRecording updates the recording URL on an existing transcript.
 func (d *DB) UpdateCallTranscriptRecording(transcriptID int64, recordingURL string) error {
 	_, err := d.pool.Exec(`UPDATE call_transcripts SET recording_url=? WHERE id=?`, recordingURL, transcriptID)
 	return err
+}
+
+// UpdateCallTranscriptContents fills in transcript, duration and language on an
+// existing row. Used when the browser upload created an empty placeholder row
+// before finalizeCall had a chance to populate it.
+func (d *DB) UpdateCallTranscriptContents(transcriptID int64, transcriptJSON string, durationS float32, ttsLanguage string) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_transcripts
+		SET transcript=?, call_duration_s=?, tts_language=?, status='completed'
+		WHERE id=?`,
+		transcriptJSON, durationS, nullString(ttsLanguage), transcriptID)
+	return err
+}
+
+// UpdateCallTranscriptLead attaches a previously leadless inbound transcript to
+// the lead created or matched during post-call extraction.
+func (d *DB) UpdateCallTranscriptLead(transcriptID, leadID int64) error {
+	_, err := d.pool.Exec(`UPDATE call_transcripts SET lead_id=? WHERE id=?`, leadID, transcriptID)
+	return err
+}
+
+// UpdateCallTranscriptDirection marks a transcript as inbound/outbound for
+// call-specific views that should not depend on lead metadata.
+func (d *DB) UpdateCallTranscriptDirection(transcriptID int64, direction string) error {
+	_, err := d.pool.Exec(`UPDATE call_transcripts SET direction=? WHERE id=?`, nullString(direction), transcriptID)
+	return err
+}
+
+// UpdateCallTranscriptInboundDetails stores editable per-call customer details
+// directly on the transcript row.
+func (d *DB) UpdateCallTranscriptInboundDetails(transcriptID int64, firstName, lastName, phone, interest, status string) error {
+	_, err := d.pool.Exec(`
+		UPDATE call_transcripts
+		SET inbound_first_name=?, inbound_last_name=?, inbound_phone=?, inbound_interest=?, inbound_status=?
+		WHERE id=?`,
+		nullString(firstName), nullString(lastName), nullString(phone), nullString(interest), nullString(status), transcriptID)
+	return err
+}
+
+// GetReceptionistCallByTranscript fetches one inbound receptionist call row.
+func (d *DB) GetReceptionistCallByTranscript(orgID, transcriptID int64) (*InboundReceptionistCall, error) {
+	row := d.pool.QueryRow(`
+		SELECT ct.id, COALESCE(ct.lead_id,0),
+		       COALESCE(ct.inbound_first_name, l.first_name, ''),
+		       COALESCE(ct.inbound_last_name, l.last_name, ''),
+		       COALESCE(ct.inbound_phone, l.phone, ''),
+		       COALESCE(ct.inbound_interest, l.interest, ''),
+		       COALESCE(ct.inbound_status, l.status, 'new'),
+		       COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
+		       COALESCE(ct.call_duration_s,0),
+		       DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=? AND ct.id=? AND (ct.direction='inbound' OR l.source='Inbound Call')
+		LIMIT 1`, orgID, transcriptID)
+	var c InboundReceptionistCall
+	if err := row.Scan(&c.TranscriptID, &c.LeadID, &c.FirstName, &c.LastName, &c.Phone,
+		&c.Interest, &c.Status, &c.Transcript, &c.RecordingURL, &c.CallDurationS, &c.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
 }
 
 // UpdateHumanCallTranscriptRecording finds the human-call transcript stub

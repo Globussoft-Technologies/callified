@@ -84,8 +84,8 @@ type RetryWithLead struct {
 // GetRetriesByCampaignWithLead returns retries joined to leads so the UI can
 // render Lead Name + Phone without a second fetch. Drops the org filter
 // implicit (campaign_id alone scopes it because campaigns are org-scoped).
-func (d *DB) GetRetriesByCampaignWithLead(campaignID int64) ([]RetryWithLead, error) {
-	rows, err := d.pool.Query(`
+func (d *DB) GetRetriesByCampaignWithLead(campaignID int64, execIDs []int64, applyExecFilter bool) ([]RetryWithLead, error) {
+	q := `
 		SELECT r.id, r.lead_id,
 		       COALESCE(l.first_name,''), COALESCE(l.last_name,''), COALESCE(l.phone,''),
 		       COALESCE(r.campaign_id,0), COALESCE(r.org_id,0),
@@ -95,8 +95,14 @@ func (d *DB) GetRetriesByCampaignWithLead(campaignID int64) ([]RetryWithLead, er
 		       DATE_FORMAT(r.created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_retries r
 		LEFT JOIN leads l ON l.id = r.lead_id
-		WHERE r.campaign_id=?
-		ORDER BY r.id DESC`, campaignID)
+		WHERE r.campaign_id=?`
+	args := []any{campaignID}
+	if c, a := execFilterClause(execIDs, applyExecFilter); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY r.id DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

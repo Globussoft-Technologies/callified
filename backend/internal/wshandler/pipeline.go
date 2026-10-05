@@ -18,37 +18,11 @@ import (
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
-// runPipeline reads transcripts from sess.Transcripts, debounces them, and
-// dispatches exactly one goroutine per debounce window to call the LLM.
-// Using a pending-slot channel avoids the goroutine-per-transcript pattern
-// that previously spawned 5–8 sleeping goroutines per utterance.
-// Runs until ctx is cancelled or sess.Transcripts is closed.
+// runPipeline processes finalized customer utterances sequentially in arrival
+// order. A transcript.final is never replaced by a newer final: dropping one
+// makes the agent appear to stop or ignore a question. The channel provides
+// bounded backpressure while the LLM handles the preceding turn.
 func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider, store *rstore.Store) {
-	// pending holds the most recent transcript waiting to be dispatched.
-	// Capacity 1: new transcripts overwrite the previous one before dispatch.
-	pending := make(chan string, 1)
-
-	// Dispatcher: drains pending after a 150ms quiet window.
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case transcript, ok := <-pending:
-				if !ok {
-					return
-				}
-				// Wait for the debounce window, then check if a newer
-				// transcript replaced this one in the pipeline.
-				ts := sess.StampTranscript()
-				time.Sleep(150 * time.Millisecond)
-				if sess.LastTranscript() == ts {
-					go processTranscript(ctx, sess, transcript, ts, provider, store)
-				}
-			}
-		}
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -57,33 +31,35 @@ func runPipeline(ctx context.Context, sess *CallSession, provider *llm.Provider,
 			if !ok {
 				return
 			}
-			// Non-blocking send: drop the previous pending transcript if the
-			// dispatcher hasn't consumed it yet (newer utterance supersedes it).
+			ts := sess.StampTranscript()
+			timer := time.NewTimer(75 * time.Millisecond)
 			select {
-			case pending <- transcript:
-			default:
-				// Drain and replace with the newer transcript.
-				select {
-				case <-pending:
-				default:
-				}
-				pending <- transcript
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
 			}
+			processTranscript(ctx, sess, transcript, ts, provider, store)
 		}
 	}
 }
 
 // processTranscript is the per-turn logic: takeover check → backchannel → LLM → TTS queue.
 // ts is the debounce stamp set by the dispatcher in runPipeline — the dispatcher
-// already waited 150ms and confirmed it's still current before calling us.
+// already waited briefly and confirmed it's still current before calling us.
 // Mirrors Python's _process_transcript in ws_handler.py.
 func processTranscript(ctx context.Context, sess *CallSession, transcript string, ts int64, provider *llm.Provider, store *rstore.Store) {
+	if sess.IsFinalClosing() {
+		return
+	}
 	// --- Voicemail detection (highest priority — runs before LLM, takeover, etc.) ---
 	// If the carrier picks up with "you have reached…" / "leave a message after the
 	// beep" we abandon LLM, drop a one-sentence pitch, and hang up. Mirrors
 	// main-branch ws_handler.py 4aa3fa3 voicemail handling.
-	if sess.HangupRequested() {
-		return // already heading for hangup; nothing more to do
+	if sess.HangupRequested() && (!sess.IsBargeInActive() || sess.IsFinalClosing()) {
+		// Hangup was requested, but a barge-in means the customer interrupted the
+		// goodbye and wants to keep talking — let the turn through.
+		return
 	}
 	if isVoicemail(transcript) {
 		handleVoicemail(ctx, sess, transcript)
@@ -104,22 +80,72 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	sess.llmMu.Lock()
 	defer sess.llmMu.Unlock()
 	// Re-check stamp after acquiring lock: a newer transcript may have arrived
-	// while this goroutine was waiting for the lock.
-	if sess.LastTranscript() != ts || sess.HangupRequested() {
+	// while this goroutine was waiting for the lock. Allow the turn through if a
+	// barge-in is active, even if a hangup had been requested.
+	if sess.LastTranscript() != ts || (sess.HangupRequested() && (!sess.IsBargeInActive() || sess.IsFinalClosing())) {
 		return
 	}
 
 	// --- Broadcast user transcript to monitor connections ---
 	sess.BroadcastTranscript("user", transcript)
+	sess.AppendHistory("user", transcript)
 
-	// --- Inject whispers (manager hints) as additional context ---
-	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
-	for _, w := range whispers {
-		sess.AppendHistory("user", "[Manager hint]: "+w)
+	if sess.ConsumeMaxDurationWaitReply() {
+		closeLine := maxDurationClosingLineForReply(sess.Language, transcript)
+		sess.RequestMaxDurationClose()
+		sess.BroadcastTranscript("agent", closeLine)
+		sess.AppendHistory("model", closeLine)
+		select {
+		case sess.TTSSentences <- closeLine:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case sess.TTSSentences <- "":
+		case <-ctx.Done():
+		}
+		return
 	}
 
-	// --- Record user transcript in history ---
-	sess.AppendHistory("user", transcript)
+	// Turn-level control notes (barge-in guidance, repeated-question handling,
+	// manager whispers) are injected into the SYSTEM instruction for this
+	// request only — never into the customer's user-turn message. Notes placed
+	// in the user turn are treated as conversation content and the model
+	// paraphrases them aloud to the customer; system-level notes stay silent.
+	var turnNotes []string
+	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
+		turnNotes = append(turnNotes, "[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.]")
+	}
+	// Keep repeat protection on the live path deterministic and local. The
+	// previous implementation made a separate, non-streaming LLM request here
+	// before starting the actual reply, adding as much as 2.5 seconds to every
+	// customer turn (including "yes" and appointment times). Exact and closely
+	// worded repeats are handled by the Unicode-aware local detector; semantic
+	// and cross-language paraphrases remain covered by the main model, which has
+	// full chat history and the repeated-question policy in its system prompt.
+	repeatDecision := sess.RepeatedQuestionDecision(transcript)
+	allowHangupForTurn := repeatDecision.AllowHangup
+	if instruction := repeatDecision.Instruction; instruction != "" {
+		turnNotes = append(turnNotes, instruction)
+	}
+	if isRepeatOrClarificationRequest(transcript) {
+		allowHangupForTurn = false
+		turnNotes = append(turnNotes, "[CUSTOMER REQUESTED REPETITION OR CLARIFICATION: Repeat or rephrase the previous customer-facing answer clearly. Continue the call. Do not say goodbye, do not end the call, and do not use [HANGUP].]")
+	}
+
+	// --- Manager whispers: current-turn context only, not chat history ---
+	whispers, _ := store.PopAllWhispers(ctx, sess.StreamSid)
+	for _, w := range whispers {
+		turnNotes = append(turnNotes, "[Manager hint]: "+w)
+	}
+
+	systemPrompt := sess.SystemPrompt
+	if len(turnNotes) > 0 {
+		systemPrompt = sess.SystemPrompt +
+			"\n\n[TURN CONTROL NOTES — internal system data. NEVER speak, translate, paraphrase, summarize, or acknowledge any of this. It is invisible to the customer. Customer-facing reply only.]\n" +
+			strings.Join(turnNotes, "\n")
+	}
+
 	history := sess.HistorySnapshot()
 
 	// --- Call LLM (streaming) with latency tracking ---
@@ -131,12 +157,23 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	var err error
 	if provider != nil {
 		err = provider.ProcessTranscript(ctx, llm.TranscriptRequest{
-			Transcript:   transcript,
-			SystemPrompt: sess.SystemPrompt,
-			History:      history[:max(0, len(history)-1)], // exclude the turn we just added
-			Language:     sess.Language,
-			MaxTokens:    sess.MaxTokens(transcript),
+			Transcript:              transcript,
+			SystemPrompt:            systemPrompt,
+			History:                 history[:max(0, len(history)-1)], // exclude the turn we just added
+			Language:                sess.Language,
+			MaxTokens:               sess.MaxTokens(transcript),
+			DropIncompleteRemainder: sess.IsInbound,
 		}, func(chunk llm.SentenceChunk) {
+			if sess.IsFinalClosing() {
+				return
+			}
+			if chunk.HasHangup && !terminalActionAllowed(chunk.HangupOutcome, transcript, history) {
+				sess.Log.Warn("hangup: rejected by terminal action guard",
+					zap.String("outcome", chunk.HangupOutcome))
+				chunk.Text = terminalRecoveryLine(sess.Language, chunk.HangupOutcome)
+				chunk.HasHangup = false
+				chunk.HangupOutcome = ""
+			}
 			if firstChunk && chunk.Text != "" {
 				// Record LLM TTFB: time from transcript to first sentence chunk
 				metrics.LLMFirstByteLatency.Observe(time.Since(tPreLLM).Seconds())
@@ -146,8 +183,15 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 				sess.SetBargeIn(false)
 			}
 			if chunk.HasHangup {
-				hasHangup = true
-				sess.RequestHangup()
+				if allowHangupForTurn {
+					hasHangup = true
+					// An explicit model close is terminal. It must not be
+					// cancelled by a late greeting or other barge-in while the
+					// goodbye audio is draining.
+					sess.RequestFinalClose()
+				} else {
+					sess.Log.Warn("repeat-question: suppressed early hangup")
+				}
 			}
 			if chunk.Text != "" {
 				responseBuilder.WriteString(chunk.Text)
@@ -168,7 +212,16 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	}
 
 	// --- Record AI response in history and broadcast to monitors ---
-	if resp := strings.TrimSpace(responseBuilder.String()); resp != "" {
+	resp := strings.TrimSpace(responseBuilder.String())
+	if resp != "" {
+		// The model occasionally produces an unmistakable final booking or
+		// farewell but omits the [HANGUP] control marker. Infer that terminal
+		// state conservatively so a subsequent "hello" cannot restart the flow.
+		if !hasHangup && allowHangupForTurn && shouldInferFinalClose(resp) {
+			hasHangup = true
+			sess.RequestFinalClose()
+			sess.Log.Info("hangup: inferred final close from agent response")
+		}
 		sess.AppendHistory("model", resp)
 		sess.BroadcastTranscript("agent", resp)
 	}
@@ -182,6 +235,10 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	}
 }
 
+type callHangupper interface {
+	Hangup(ctx context.Context, callSid string, campaignID int64) error
+}
+
 // runTTSWorker reads sentences from sess.TTSSentences, calls the TTS provider,
 // and sends the resulting PCM audio to the phone via the WebSocket.
 // An empty sentence ("") is the HANGUP sentinel: drain + grace period + close.
@@ -191,7 +248,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 // the Redis-hydrated campaign uses a different provider than the pre-loaded
 // default. Without this, a call whose campaign is configured for SmallestAI
 // but whose default was Sarvam would always synthesise via Sarvam.
-func runTTSWorker(ctx context.Context, sess *CallSession) {
+func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHangupper) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,18 +258,46 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 				return
 			}
 			if sentence == "" {
-				// HANGUP sentinel: wait for remaining audio then close
+				// HANGUP sentinel: wait for remaining audio then close. Abort if a
+				// barge-in cancels a normal hangup before playback finishes. A
+				// max-duration close is final and cannot be cancelled by late speech.
 				remaining := sess.PlaybackTracker.RemainingDuration()
 				sess.Log.Info("hangup: waiting for playback drain",
 					zap.Duration("remaining", remaining))
 				waitStart := time.Now()
-				select {
-				case <-time.After(remaining + 7*time.Second):
-				case <-ctx.Done():
+				grace := 7 * time.Second
+				if sess.IsFinalClosing() {
+					grace = time.Second
 				}
-				metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
-				sess.WS.Close() //nolint:errcheck
-				return
+				deadline := time.After(remaining + grace)
+				ticker := time.NewTicker(100 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						return
+					case <-deadline:
+						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+						if initiator != nil && sess.CallSid != "" {
+							hangupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+							if err := initiator.Hangup(hangupCtx, sess.CallSid, sess.CampaignID); err != nil {
+								sess.Log.Warn("hangup: carrier hangup failed",
+									zap.String("call_sid", sess.CallSid),
+									zap.Error(err))
+							}
+							cancel()
+						}
+						sess.WS.Close() //nolint:errcheck
+						return
+					case <-ticker.C:
+						if !sess.HangupRequested() && !sess.IsFinalClosing() {
+							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
+							sess.Log.Info("hangup: aborted by barge-in")
+							return
+						}
+					}
+				}
 			}
 			// Safety: bridge sessions must never synthesise AI audio —
 			// the agent's browser mic is the audio source, not TTS.
@@ -232,9 +317,65 @@ func runTTSWorker(ctx context.Context, sess *CallSession) {
 					zap.String("sentence", sentence))
 				continue
 			}
+			sess.RememberAgentSpeech(sentence)
 			synthesizeAndSend(ctx, sess, provider, sentence)
 		}
 	}
+}
+
+// shouldInferFinalClose recognizes only unambiguous terminal agent responses.
+// It is a fallback for a missing [HANGUP] marker, not a general intent model.
+// A farewell followed by another question is deliberately not terminal.
+func shouldInferFinalClose(response string) bool {
+	lower := strings.ToLower(strings.TrimSpace(response))
+	if lower == "" {
+		return false
+	}
+
+	bookingMarkers := []string{
+		"scheduled your demo",
+		"scheduled the demo",
+		"demo is scheduled",
+		"demo has been scheduled",
+		"confirmed your demo",
+		"demo is confirmed",
+		"booked your demo",
+		"demo has been booked",
+		"calendar invite shortly",
+		"send you an invite for a demo",
+		"send you the invite for a demo",
+	}
+	for _, marker := range bookingMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+
+	if strings.Contains(response, "?") {
+		return false
+	}
+	farewellMarkers := []string{
+		"thank you for your time",
+		"thanks for your time",
+		"have a good day",
+		"goodbye",
+		"आपके समय के लिए धन्यवाद",
+		"आपके समय के लिए शुक्रिया",
+		"तुमच्या वेळेबद्दल धन्यवाद",
+		"আপনার সময়ের জন্য ধন্যবাদ",
+		"તમારા સમય બદલ આભાર",
+		"ਤੁਹਾਡੇ ਸਮੇਂ ਲਈ ਧੰਨਵਾਦ",
+		"உங்கள் நேரத்திற்கு நன்றி",
+		"మీ సమయానికి ధన్యవాదాలు",
+		"ನಿಮ್ಮ ಸಮಯಕ್ಕೆ ಧನ್ಯವಾದಗಳು",
+		"നിങ്ങളുടെ സമയത്തിന് നന്ദി",
+	}
+	for _, marker := range farewellMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // synthesizeAndSend calls the TTS provider for one sentence and streams
@@ -295,10 +436,9 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 // the Voicebot applet decodes the WS payload directly into its outbound RTP
 // stream without a jitter buffer in between.
 func sendAudioFrame(sess *CallSession, pcm8k []byte) {
-	// BARGE-IN DISABLED: do not drop frames on barge-in.
-	// if sess.IsBargeInActive() {
-	// 	return
-	// }
+	if sess.IsBargeInActive() {
+		return
+	}
 	// Record for server-side stereo WAV
 	sess.AppendTTSChunk(pcm8k)
 	// Feed echo canceller (ulaw representation)
@@ -333,12 +473,28 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 	// raw PCM payload. No pacing — the consumer queues the audio itself.
 	sess.PlaybackTracker.AddBytes(len(pcm8k))
 	payloadB64 := base64.StdEncoding.EncodeToString(pcm8k)
-	frame, _ := json.Marshal(map[string]interface{}{
-		"event":     "media",
+	frameData := map[string]interface{}{
+		"event":      "media",
 		"stream_sid": sess.StreamSid,
-		"media":     map[string]string{"payload": payloadB64},
-	})
+		"media":      map[string]string{"payload": payloadB64},
+	}
+	if sess.Provider == "tata" {
+		seq := sess.outboundSeq.Add(1)
+		frameData["streamSid"] = sess.StreamSid
+		frameData["sequenceNumber"] = seq
+		frameData["stream_id"] = sess.StreamSid
+		frameData["stream_sid"] = sess.StreamSid
+		frameData["payload"] = payloadB64
+		frameData["audio"] = payloadB64
+	}
+	frame, _ := json.Marshal(frameData)
 	_ = sess.SendText(frame)
+	// Track when we last sent audio so barge-in stays armed while audio is still
+	// in flight to the phone/carrier (fixes barge-in misses on long sentences).
+	sess.MarkAudioSent()
+
+	// Relay a copy of the agent's outbound audio to any attached monitors so
+	// external consumers can render / play back what the AI is saying.
 	if sess.hasMonitors() {
 		sess.BroadcastAudio("agent", payloadB64, "pcm16_8k")
 	}

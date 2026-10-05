@@ -51,49 +51,52 @@ type LanguagePerf struct {
 }
 
 // GetFullDashboardStats returns the complete analytics payload for an org.
-func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
+func (d *DB) GetFullDashboardStats(orgID int64, execIDs []int64, applyExecFilter bool) (*FullDashboardStats, error) {
 	s := &FullDashboardStats{
 		DailyCalls:          []DailyCallCount{},
 		CampaignPerformance: []CampaignPerf{},
 		TopFailureReasons:   []FailureReason{},
 	}
+	filterClause, filterArgs := execFilterClause(execIDs, applyExecFilter)
+	hasFilter := filterClause != ""
 
 	// ── 1. Aggregate counts ───────────────────────────────────────────────────
-	// Read transcript-only metrics from call_transcripts alone — no LEFT JOIN
-	// here. The previous version joined call_reviews and used COUNT(*) /
-	// SUM(CASE…), which double-counted any transcript that has more than one
-	// review (the review pipeline can write multiple rows per transcript when
-	// it re-runs). That inflation is what made TotalCalls / CallsToday /
-	// pickup-rate disagree with the campaign / sentiment / language tables on
-	// the same dashboard (issue #45). Appointments are counted separately
-	// below so the join-multiplied row count never bleeds into the tiles.
 	var totalCalls, callsToday, callsThisWeek, connected int64
 	var avgDur float64
-	err := d.pool.QueryRow(`
-		SELECT
+	aggQ := `SELECT
 			COUNT(*),
-			COALESCE(SUM(CASE WHEN DATE(created_at)=CURDATE() THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
-			COALESCE(SUM(CASE WHEN status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
-			COALESCE(AVG(NULLIF(call_duration_s,0)),0)
-		FROM call_transcripts
-		WHERE org_id=?`, orgID).
+			COALESCE(SUM(CASE WHEN DATE(ct.created_at)=CURDATE() THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN ct.created_at>=DATE_SUB(NOW(),INTERVAL 6 DAY) THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN ct.status NOT IN ('failed','no-answer','busy','initiated') THEN 1 ELSE 0 END),0),
+			COALESCE(AVG(NULLIF(ct.call_duration_s,0)),0)
+		FROM call_transcripts ct
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=?`
+	aggArgs := []any{orgID}
+	if hasFilter {
+		aggQ += ` AND ` + filterClause
+		aggArgs = append(aggArgs, filterArgs...)
+	}
+	err := d.pool.QueryRow(aggQ, aggArgs...).
 		Scan(&totalCalls, &callsToday, &callsThisWeek, &connected, &avgDur)
 	if err != nil {
 		return s, err
 	}
 
 	// Appointments: distinct transcripts that have at least one review with
-	// appointment_booked=1. COUNT(DISTINCT ct.id) protects against the
-	// multi-review-per-transcript fan-out that broke the previous query.
-	var appointments int64
-	if err := d.pool.QueryRow(`
-		SELECT COALESCE(COUNT(DISTINCT ct.id),0)
+	// appointment_booked=1.
+	apptQ := `SELECT COALESCE(COUNT(DISTINCT ct.id),0)
 		FROM call_transcripts ct
 		JOIN call_reviews cr ON cr.transcript_id=ct.id
-		WHERE ct.org_id=? AND cr.appointment_booked=1`, orgID).
-		Scan(&appointments); err != nil {
-		// Non-fatal — leave at 0 if the review pipeline hasn't populated yet.
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=? AND cr.appointment_booked=1`
+	apptArgs := []any{orgID}
+	if hasFilter {
+		apptQ += ` AND ` + filterClause
+		apptArgs = append(apptArgs, filterArgs...)
+	}
+	var appointments int64
+	if err := d.pool.QueryRow(apptQ, apptArgs...).Scan(&appointments); err != nil {
 		appointments = 0
 	}
 	s.TotalCalls = totalCalls
@@ -106,14 +109,7 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 2. Daily calls (last 7 days) ──────────────────────────────────────────
-	// Always return exactly 7 rows — one per trailing day, padded with 0 for
-	// days that had no calls. Previously the query returned only days that
-	// had data, so the bar chart's day-of-week sequence appeared to start on
-	// a random weekday (issue #45). Recursive CTE generates the date series
-	// (MySQL 8.0+); LEFT JOIN onto call_transcripts so empty days render as
-	// 0 rather than being dropped.
-	rows, err := d.pool.Query(`
-		WITH RECURSIVE days AS (
+	dailyQ := `WITH RECURSIVE days AS (
 			SELECT DATE_SUB(CURDATE(), INTERVAL 6 DAY) AS d
 			UNION ALL
 			SELECT DATE_ADD(d, INTERVAL 1 DAY) FROM days WHERE d < CURDATE()
@@ -122,9 +118,14 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 		       COALESCE(COUNT(ct.id), 0) AS cnt
 		FROM days
 		LEFT JOIN call_transcripts ct
-		  ON DATE(ct.created_at) = days.d AND ct.org_id = ?
-		GROUP BY days.d
-		ORDER BY days.d ASC`, orgID)
+		  ON DATE(ct.created_at) = days.d AND ct.org_id = ?`
+	dailyArgs := []any{orgID}
+	if hasFilter {
+		dailyQ += ` LEFT JOIN leads l ON l.id = ct.lead_id AND ` + filterClause
+		dailyArgs = append(dailyArgs, filterArgs...)
+	}
+	dailyQ += ` GROUP BY days.d ORDER BY days.d ASC`
+	rows, err := d.pool.Query(dailyQ, dailyArgs...)
 	if err != nil {
 		return s, err
 	}
@@ -141,36 +142,42 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 3. Sentiment breakdown (from call_reviews) ────────────────────────────
-	err = d.pool.QueryRow(`
-		SELECT
+	sentQ := `SELECT
 			COALESCE(SUM(CASE WHEN cr.sentiment='positive' THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN cr.sentiment='neutral' THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN cr.sentiment='negative' THEN 1 ELSE 0 END),0)
 		FROM call_reviews cr
 		JOIN call_transcripts ct ON cr.transcript_id=ct.id
-		WHERE ct.org_id=?`, orgID).
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=?`
+	sentArgs := []any{orgID}
+	if hasFilter {
+		sentQ += ` AND ` + filterClause
+		sentArgs = append(sentArgs, filterArgs...)
+	}
+	err = d.pool.QueryRow(sentQ, sentArgs...).
 		Scan(&s.SentimentBreakdown.Positive, &s.SentimentBreakdown.Neutral, &s.SentimentBreakdown.Negative)
 	if err != nil {
-		// Non-fatal: sentiment data optional
 		s.SentimentBreakdown = SentimentBreakdown{}
 	}
 
 	// ── 4. Campaign performance ───────────────────────────────────────────────
-	// COUNT(DISTINCT ct.id) — without DISTINCT, the LEFT JOIN to call_reviews
-	// fans each transcript out into N rows when the review pipeline writes more
-	// than one review per transcript, which made the campaign table's totals
-	// disagree with the Total Calls tile (issue #45).
-	cpRows, err := d.pool.Query(`
-		SELECT ct.campaign_id, c.name,
+	cpQ := `SELECT ct.campaign_id, c.name,
 			COUNT(DISTINCT ct.id) AS calls,
 			COUNT(DISTINCT CASE WHEN cr.appointment_booked=1 THEN ct.id END) AS appts,
 			COALESCE(AVG(cr.quality_score),0) AS avg_score
 		FROM call_transcripts ct
 		JOIN campaigns c ON ct.campaign_id=c.id
 		LEFT JOIN call_reviews cr ON cr.transcript_id=ct.id
-		WHERE ct.org_id=? AND ct.campaign_id IS NOT NULL
-		GROUP BY ct.campaign_id, c.name
-		ORDER BY calls DESC LIMIT 20`, orgID)
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=? AND ct.campaign_id IS NOT NULL`
+	cpArgs := []any{orgID}
+	if hasFilter {
+		cpQ += ` AND ` + filterClause
+		cpArgs = append(cpArgs, filterArgs...)
+	}
+	cpQ += ` GROUP BY ct.campaign_id, c.name ORDER BY calls DESC LIMIT 20`
+	cpRows, err := d.pool.Query(cpQ, cpArgs...)
 	if err == nil {
 		defer cpRows.Close()
 		for cpRows.Next() {
@@ -182,16 +189,18 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 	}
 
 	// ── 5. Top failure reasons ────────────────────────────────────────────────
-	// Mirrors Backup_Callified's routes.py:477 — the reviewer/Gemini-tagged
-	// failure_reason in call_reviews is what the user wants to see (prose like
-	// "The AI failed to actively listen…"), not the 3-value dial status enum.
-	// Limit matches Python (top 10) so the list looks the same in the UI.
-	frRows, err := d.pool.Query(`
-		SELECT cr.failure_reason, COUNT(*) AS cnt
+	frQ := `SELECT cr.failure_reason, COUNT(*) AS cnt
 		FROM call_reviews cr
 		JOIN call_transcripts ct ON cr.transcript_id=ct.id
-		WHERE ct.org_id=? AND cr.failure_reason IS NOT NULL AND cr.failure_reason<>''
-		GROUP BY cr.failure_reason ORDER BY cnt DESC LIMIT 10`, orgID)
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=? AND cr.failure_reason IS NOT NULL AND cr.failure_reason<>''`
+	frArgs := []any{orgID}
+	if hasFilter {
+		frQ += ` AND ` + filterClause
+		frArgs = append(frArgs, filterArgs...)
+	}
+	frQ += ` GROUP BY cr.failure_reason ORDER BY cnt DESC LIMIT 10`
+	frRows, err := d.pool.Query(frQ, frArgs...)
 	if err == nil {
 		defer frRows.Close()
 		for frRows.Next() {
@@ -214,9 +223,10 @@ func (d *DB) GetFullDashboardStats(orgID int64) (*FullDashboardStats, error) {
 // call; for those, fall back to the parent campaign's tts_language so the
 // breakdown isn't dominated by an "unknown" bucket of historical data. Only
 // transcripts whose campaign also has no language remain "unknown".
-func (d *DB) GetLanguagePerformance(orgID int64) ([]LanguagePerf, error) {
-	rows, err := d.pool.Query(`
-		SELECT
+func (d *DB) GetLanguagePerformance(orgID int64, execIDs []int64, applyExecFilter bool) ([]LanguagePerf, error) {
+	filterClause, filterArgs := execFilterClause(execIDs, applyExecFilter)
+	hasFilter := filterClause != ""
+	q := `SELECT
 			COALESCE(NULLIF(ct.tts_language,''), NULLIF(c.tts_language,''), 'unknown') AS language,
 			COUNT(DISTINCT ct.id) AS total_calls,
 			COUNT(DISTINCT CASE WHEN ct.appointment_booked=1 THEN ct.id END) AS appointments,
@@ -225,8 +235,15 @@ func (d *DB) GetLanguagePerformance(orgID int64) ([]LanguagePerf, error) {
 		FROM call_transcripts ct
 		LEFT JOIN campaigns c ON ct.campaign_id=c.id
 		LEFT JOIN call_reviews cr ON cr.transcript_id=ct.id
-		WHERE ct.org_id=?
-		GROUP BY language ORDER BY total_calls DESC`, orgID)
+		LEFT JOIN leads l ON ct.lead_id=l.id
+		WHERE ct.org_id=?`
+	args := []any{orgID}
+	if hasFilter {
+		q += ` AND ` + filterClause
+		args = append(args, filterArgs...)
+	}
+	q += ` GROUP BY language ORDER BY total_calls DESC`
+	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +276,9 @@ type CampaignExportRow struct {
 
 // GetCampaignAnalyticsForExport returns one row per call transcript in a campaign
 // (or across all org campaigns when campaignID == 0).
-func (d *DB) GetCampaignAnalyticsForExport(orgID, campaignID int64) ([]CampaignExportRow, error) {
+func (d *DB) GetCampaignAnalyticsForExport(orgID, campaignID int64, execIDs []int64, applyExecFilter bool) ([]CampaignExportRow, error) {
+	filterClause, filterArgs := execFilterClause(execIDs, applyExecFilter)
+	hasFilter := filterClause != ""
 	q := `
 		SELECT
 			CONCAT(l.first_name,' ',COALESCE(l.last_name,'')) AS lead_name,
@@ -277,6 +296,10 @@ func (d *DB) GetCampaignAnalyticsForExport(orgID, campaignID int64) ([]CampaignE
 	if campaignID > 0 {
 		q += ` AND ct.campaign_id=?`
 		args = append(args, campaignID)
+	}
+	if hasFilter {
+		q += ` AND ` + filterClause
+		args = append(args, filterArgs...)
 	}
 	q += ` ORDER BY ct.id DESC`
 	rows, err := d.pool.Query(q, args...)
@@ -311,7 +334,9 @@ type ScoredLead struct {
 
 // GetScoredLeads returns leads with AI quality scores for the given org/campaign.
 // Pass campaignID=0 to get all scored leads for the org.
-func (d *DB) GetScoredLeads(orgID, campaignID int64) ([]ScoredLead, error) {
+func (d *DB) GetScoredLeads(orgID, campaignID int64, execIDs []int64, applyExecFilter bool) ([]ScoredLead, error) {
+	filterClause, filterArgs := execFilterClause(execIDs, applyExecFilter)
+	hasFilter := filterClause != ""
 	query := `
 		SELECT l.id, CONCAT(l.first_name,' ',COALESCE(l.last_name,'')) AS name,
 			l.phone, COALESCE(l.status,''),
@@ -326,6 +351,10 @@ func (d *DB) GetScoredLeads(orgID, campaignID int64) ([]ScoredLead, error) {
 	if campaignID > 0 {
 		query += ` AND ct.campaign_id=?`
 		args = append(args, campaignID)
+	}
+	if hasFilter {
+		query += ` AND ` + filterClause
+		args = append(args, filterArgs...)
 	}
 	query += ` ORDER BY cr.quality_score DESC, cr.id DESC LIMIT 500`
 

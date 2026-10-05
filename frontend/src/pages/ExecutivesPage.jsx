@@ -55,7 +55,6 @@ export default function ExecutivesPage() {
 
   useEffect(() => { fetchExecutives(); }, [fetchExecutives]);
 
-  const openAdd = () => { setForm(EMPTY_FORM); setEditingId(null); setError(''); setShowForm(true); };
   const openEdit = (e) => {
     setForm({ name: e.name || '', email: e.email || '', phone: e.phone || '' });
     setEditingId(e.id);
@@ -69,12 +68,13 @@ export default function ExecutivesPage() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) { setError('Executive name is required.'); return; }
+    if (!editingId) { setError('Select an executive to edit.'); return; }
     if (form.phone.trim() && !isValidPhone(form.phone)) { setError(PHONE_VALIDATION_MESSAGE); return; }
     setSaving(true);
     setError('');
     try {
-      const method = editingId ? 'PUT' : 'POST';
-      const url = editingId ? `${API_URL}/executives/${editingId}` : `${API_URL}/executives`;
+      const method = 'PUT';
+      const url = `${API_URL}/executives/${editingId}`;
       const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -117,24 +117,15 @@ export default function ExecutivesPage() {
             🧑‍💼 Executives
           </h2>
           <p style={{ margin: '4px 0 0', color: T.muted, fontSize: '0.85rem' }}>
-            Create sales/ops executives and assign them to campaigns and leads.
+            Manage sales/ops executives assigned to campaigns and leads.
           </p>
         </div>
-        <button onClick={openAdd}
-          style={{
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-            border: 'none', borderRadius: 8, color: '#fff',
-            padding: '9px 18px', cursor: 'pointer', fontSize: 13,
-            fontWeight: 600, fontFamily: T.font, whiteSpace: 'nowrap',
-          }}>
-          + Add Executive
-        </button>
       </div>
 
       {showForm && (
         <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
           <h3 style={{ margin: '0 0 1.2rem', color: T.text, fontSize: '1rem', fontWeight: 700 }}>
-            {editingId ? 'Edit Executive' : 'Add New Executive'}
+            Edit Executive
           </h3>
           <form onSubmit={handleSave}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
@@ -167,7 +158,7 @@ export default function ExecutivesPage() {
               </button>
               <button type="submit" className="btn-primary" disabled={saving}
                 style={{ background: T.accent, border: 'none', color: '#fff', padding: '8px 18px', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}>
-                {saving ? 'Saving...' : (editingId ? 'Save Changes' : 'Add Executive')}
+                {saving ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -179,7 +170,7 @@ export default function ExecutivesPage() {
           <div style={{ padding: '2rem', textAlign: 'center', color: T.muted }}>Loading...</div>
         ) : executives.length === 0 ? (
           <div style={{ padding: '2rem', textAlign: 'center', color: T.muted }}>
-            No executives yet. Add one to start assigning leads.
+            No executives found.
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>

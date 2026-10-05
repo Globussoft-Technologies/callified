@@ -15,9 +15,10 @@ type ctxKey struct{}
 
 // AuthClaims holds the fields extracted from a validated JWT.
 type AuthClaims struct {
-	Email string
-	OrgID int64
-	Role  string
+	Email  string
+	OrgID  int64
+	Role   string
+	UserID int64
 }
 
 // jwtClaims maps the Python-issued JWT payload.
@@ -29,10 +30,10 @@ type AuthClaims struct {
 // downgraded into a query-string ticket. (issue #80)
 type jwtClaims struct {
 	jwt.RegisteredClaims
-	OrgID int64  `json:"org_id"`
-	
-	Role  string `json:"role"`
-	Kind  string `json:"kind,omitempty"`
+	OrgID int64 `json:"org_id"`
+
+	Role string `json:"role"`
+	Kind string `json:"kind,omitempty"`
 }
 
 // requireAuth is middleware that validates the Bearer JWT and injects AuthClaims into context.
@@ -66,17 +67,21 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 
 		// Re-validate the user record: disabled/deleted accounts must lose API
 		// access immediately, not when their 30-day JWT expires.
+		var userID int64
 		if s.db != nil && claims.Subject != "" {
 			if u, err := s.db.GetUserByEmail(claims.Subject); err != nil || u == nil || !u.IsActive {
 				writeError(w, http.StatusUnauthorized, "account disabled")
 				return
+			} else if u != nil {
+				userID = u.ID
 			}
 		}
 
 		ac := AuthClaims{
-			Email: claims.Subject, // Python sets sub = email
-			OrgID: claims.OrgID,
-			Role:  claims.Role,
+			Email:  claims.Subject, // Python sets sub = email
+			OrgID:  claims.OrgID,
+			Role:   claims.Role,
+			UserID: userID,
 		}
 		ctx := context.WithValue(r.Context(), ctxKey{}, ac)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -110,7 +115,7 @@ func getAuth(r *http.Request) AuthClaims {
 // token doesn't accidentally bypass authorization. Subsequent re-logins
 // embed the role and skip the lookup.
 //
-// Role model: Admin | TeamLeader | Agent | Viewer. Admin sees everything;
+// Role model: Admin | TeamLeader | Agent | Executive. Admin sees everything;
 // TeamLeader sees self + managed Agents; Agent sees only self.
 func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
@@ -118,15 +123,18 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 			ac := getAuth(r)
 			// Always resolve the role from DB instead of trusting the JWT
 			// claim. Role changes by an Admin (e.g. promoting an Agent to
-			// Admin or demoting to Viewer) must take effect immediately for
+			// Admin or demoting to Executive/Agent) must take effect immediately for
 			// the affected user without forcing a re-login. Trusting the
 			// claim cached the old role for the JWT's full TTL — users
 			// reported "I changed my role but campaigns are still empty"
-			// because their JWT still said Viewer.
+			// because their JWT still carried the old role.
 			role := ac.Role
 			if s.db != nil && ac.Email != "" {
 				if u, err := s.db.GetUserByEmail(ac.Email); err == nil && u != nil {
 					role = u.Role
+					ac.Role = role
+					ctx := context.WithValue(r.Context(), ctxKey{}, ac)
+					r = r.WithContext(ctx)
 				}
 			}
 			// Super-admins can access any role-gated endpoint.
@@ -141,6 +149,26 @@ func (s *Server) requireRole(allowed ...string) func(http.HandlerFunc) http.Hand
 				}
 			}
 			writeError(w, http.StatusForbidden, "forbidden")
+		})
+	}
+}
+
+// requireAdminPermission returns middleware that requires the caller to be
+// an Admin (or SuperAdmin) AND to hold the given permission key. It wires the
+// permission-catalog keys shown in the UI to the actual backend endpoints so
+// unchecking an Admin permission blocks the corresponding API surface.
+func (s *Server) requireAdminPermission(key string) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+			ac := getAuth(r)
+			if !s.isAdminLike(ac.Email) && !s.isSuperAdmin(ac.Email) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			if !s.requirePermission(w, r, key) {
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

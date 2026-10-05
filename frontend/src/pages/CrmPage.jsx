@@ -7,6 +7,7 @@ import DocumentVault from '../components/modals/DocumentVault';
 import TranscriptModal from '../components/modals/TranscriptModal';
 import EmailDraftModal from '../components/modals/EmailDraftModal';
 import { normalizePhone } from '../utils/phone';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
@@ -23,6 +24,9 @@ export default function CrmPage({
   const navigate = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
+  const { hasPermission } = useAuth();
+  const canViewDashboard = true;
+  const canViewLeads = hasPermission('crm.view');
   // Lead State
   const [leads, setLeads] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,22 +59,30 @@ export default function CrmPage({
   const [transcripts, setTranscripts] = useState([]);
 
   // Org-wide dashboard summary (5 numbers). Fetched separately from /api/campaigns
-  // because that route is admin-only — Viewers / Agents need this aggregate
+  // because that route is admin-only — Agents / Executives need this aggregate
   // endpoint to see real numbers on the CRM landing dashboard.
   const [dashSummary, setDashSummary] = useState(null);
 
   useEffect(() => {
-    fetchLeads();
+    if (canViewLeads) {
+      fetchLeads();
+    } else {
+      setLeads([]);
+    }
     apiFetch(`${API_URL}/executives`)
       .then(r => r.json())
       .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
-    apiFetch(`${API_URL}/dashboard/summary`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setDashSummary(d); })
-      .catch(() => { /* leave as null; CrmTab falls back to per-campaign sum */ });
+    if (canViewDashboard) {
+      apiFetch(`${API_URL}/dashboard/summary`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setDashSummary(d); })
+        .catch(() => { /* leave as null; CrmTab falls back to per-campaign sum */ });
+    } else {
+      setDashSummary(null);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canViewDashboard, canViewLeads]);
 
   const fetchLeads = async (page = 1, limit = 100) => {
     try {
@@ -268,6 +280,7 @@ export default function CrmPage({
         webCallActive={webCallActive} handleWebCall={handleWebCall} handleDial={handleDial}
         campaigns={campaigns}
         dashSummary={dashSummary}
+        canViewDashboard={canViewDashboard}
         onCampaignClick={(c) => navigate(`/campaigns?id=${c?.id ?? ''}`)}
       />
 

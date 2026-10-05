@@ -126,6 +126,30 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.isSuperAdmin(req.Email) {
+		existingSub, err := s.db.GetAdminSubscriptionByEmail(req.Email)
+		if err != nil {
+			s.logger.Sugar().Errorw("signup: GetAdminSubscriptionByEmail", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if existingSub == nil {
+			expiresAt := time.Now().UTC().AddDate(0, 0, trialExpiryDays)
+			if _, err := s.db.CreateAdminSubscription(req.Email, expiresAt, "trial"); err != nil {
+				s.logger.Sugar().Errorw("signup: CreateAdminSubscription", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+		if orgID > 0 {
+			if _, err := s.db.SetOrgCreditMinutes(orgID, trialMinutes, "signup-trial", fmt.Sprintf("%d free trial minutes", trialMinutes)); err != nil {
+				s.logger.Sugar().Errorw("signup: SetOrgCreditMinutes", "err", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+		}
+	}
+
 	// Block signup for non-super-admins if subscription is missing/expired/inactive.
 	if !s.isSuperAdmin(req.Email) {
 		if subErr, err := s.checkSubscription(req.Email); err != nil {
@@ -245,6 +269,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if err := s.db.RecordUserLogin(user.ID); err != nil {
+		s.logger.Sugar().Warnw("login: failed to record last login", "err", err, "user_id", user.ID)
+	}
 	s.setSessionCookie(w, r, token)
 
 	// Response shape matches Python auth.py:220 — `user` is nested so the
@@ -339,6 +366,12 @@ func userResponse(s *Server, user *db.User) map[string]any {
 			orgName = org.Name
 		}
 	}
+	hideAiFeatures := s.db.ShouldHideAiFeatures(user.Email)
+	if !hideAiFeatures && user.OrgID > 0 {
+		if sub, err := s.db.ValidateOrgAdminSubscription(user.OrgID); err == nil && sub != nil && sub.Active && strings.EqualFold(sub.Plan, "manual") {
+			hideAiFeatures = true
+		}
+	}
 	return map[string]any{
 		"id":               user.ID,
 		"email":            user.Email,
@@ -347,7 +380,7 @@ func userResponse(s *Server, user *db.User) map[string]any {
 		"org_id":           user.OrgID,
 		"org_name":         orgName,
 		"is_super_admin":   s.isSuperAdmin(user.Email),
-		"hide_ai_features": s.db.ShouldHideAiFeatures(user.Email),
+		"hide_ai_features": hideAiFeatures,
 	}
 }
 

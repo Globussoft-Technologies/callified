@@ -1,6 +1,7 @@
 package wshandler
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -15,6 +16,7 @@ type ActiveSession struct {
 	LeadPhone  string `json:"lead_phone,omitempty"`
 	CampaignID int64  `json:"campaign_id,omitempty"`
 	OrgID      int64  `json:"org_id,omitempty"`
+	UserID     int64  `json:"user_id,omitempty"`
 	UserEmail  string `json:"user_email,omitempty"`
 	IsExotel   bool   `json:"is_exotel"`
 	IsWebSim   bool   `json:"is_web_sim"`
@@ -48,6 +50,7 @@ func (h *Handler) ActiveSessions() []ActiveSession {
 			LeadPhone:  sess.LeadPhone,
 			CampaignID: sess.CampaignID,
 			OrgID:      sess.OrgID,
+			UserID:     sess.UserID,
 			UserEmail:  sess.UserEmail,
 			IsExotel:   sess.IsExotel,
 			IsWebSim:   sess.IsWebSim,
@@ -58,4 +61,31 @@ func (h *Handler) ActiveSessions() []ActiveSession {
 		return true
 	})
 	return out
+}
+
+// CloseCall asks the active media WebSocket for a provider call to close and
+// schedules post-call persistence. Carrier webhooks can arrive before the
+// socket exits naturally; this keeps transcript/recording finalization from
+// being missed.
+func (h *Handler) CloseCall(callSid string) bool {
+	if callSid == "" {
+		return false
+	}
+	raw, ok := h.sessionsByCallSid.Load(callSid)
+	if !ok {
+		return false
+	}
+	sess, ok := raw.(*CallSession)
+	if !ok || sess == nil {
+		return false
+	}
+	sess.RequestHangup()
+	if sess.WS != nil {
+		_ = sess.WS.Close()
+	}
+	go func() {
+		time.Sleep(2 * time.Second)
+		h.finalizeCall(context.Background(), sess)
+	}()
+	return true
 }
