@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { DatePicker } from 'antd';
+import dayjs from 'dayjs';
 import { useToast } from '../contexts/UIContext';
 import UserDetailModal from '../components/modals/UserDetailModal';
 import AppSelect from '../components/common/AppSelect';
@@ -83,6 +85,8 @@ const thStickyStyle = {
   zIndex: 1,
 };
 
+const { RangePicker } = DatePicker;
+
 function Metric({ value, positive, negative }) {
   const n = value || 0;
   if (n === 0) {
@@ -128,7 +132,6 @@ function Badge({ children, color = T.accent }) {
 
 export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const toast = useToast();
-  const [members, setMembers] = useState([]);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -166,13 +169,6 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
     if (period === 'custom') return { from, to };
     return { from: day, to: day };
   }, [period, day, month, from, to]);
-
-  useEffect(() => {
-    apiFetch(`${API_URL}/team`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => setMembers(Array.isArray(data) ? data : []))
-      .catch(() => setMembers([]));
-  }, [apiFetch, API_URL]);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,16 +266,23 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
             </label>
           )}
           {period === 'custom' && (
-            <>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>From</span>
-                <input type="date" value={from} max={maxDate} onChange={e => setFrom(e.target.value)} style={inputStyle} />
-              </label>
-              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 150, flex: '1 1 140px' }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>To</span>
-                <input type="date" value={to} max={maxDate} min={from} onChange={e => setTo(e.target.value)} style={inputStyle} />
-              </label>
-            </>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280, flex: '2 1 300px' }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Date range</span>
+              <RangePicker
+                className="agent-report-range-picker"
+                popupClassName="agent-report-range-popup"
+                value={[dayjs(from), dayjs(to)]}
+                format="DD/MM/YYYY"
+                allowClear={false}
+                separator="to"
+                disabledDate={current => current && current.isAfter(dayjs(maxDate), 'day')}
+                onChange={dates => {
+                  if (!dates?.[0] || !dates?.[1]) return;
+                  setFrom(dates[0].format('YYYY-MM-DD'));
+                  setTo(dates[1].format('YYYY-MM-DD'));
+                }}
+              />
+            </label>
           )}
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 130, flex: '1 1 120px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>

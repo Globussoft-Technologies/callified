@@ -303,7 +303,7 @@ func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeOrg(w, r, id) {
 		return
 	}
-	custom, err := s.db.GetOrgSystemPrompt(id)
+	custom, mode, err := s.db.GetOrgSystemPromptConfig(id)
 	if err != nil {
 		s.logger.Sugar().Errorw("getOrgSystemPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -313,6 +313,7 @@ func (s *Server) getOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"auto_generated": auto,
 		"custom_prompt":  custom,
+		"prompt_mode":    mode,
 	})
 }
 
@@ -345,6 +346,7 @@ func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		CustomPrompt string `json:"custom_prompt"`
+		PromptMode   string `json:"prompt_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -361,7 +363,14 @@ func (s *Server) saveOrgSystemPrompt(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("custom_prompt is %d characters; max is %d", n, maxPromptLen))
 		return
 	}
-	if err := s.db.SaveOrgSystemPrompt(id, body.CustomPrompt); err != nil {
+	if body.PromptMode == "" {
+		body.PromptMode = "replace"
+	}
+	if body.PromptMode != "replace" && body.PromptMode != "extend" {
+		writeError(w, http.StatusBadRequest, "prompt_mode must be replace or extend")
+		return
+	}
+	if err := s.db.SaveOrgSystemPromptConfig(id, body.CustomPrompt, body.PromptMode); err != nil {
 		s.logger.Sugar().Errorw("saveOrgSystemPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

@@ -388,6 +388,7 @@ func userResponse(s *Server, user *db.User) map[string]any {
 
 const tokenTTL = 30 * 24 * time.Hour  // 30 days — matches Python ACCESS_TOKEN_EXPIRE_MINUTES
 const sseTicketTTL = 60 * time.Second // short window — minted just before EventSource connect
+const monitorTicketTTL = 60 * time.Second
 
 func (s *Server) mintToken(email string, orgID int64, role string) (string, error) {
 	claims := &jwtClaims{
@@ -437,6 +438,29 @@ func (s *Server) sseTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ticket": tok, "expires_in": int(sseTicketTTL.Seconds())})
+}
+
+// GET /api/monitor/ticket issues a short-lived, monitor-only WebSocket ticket.
+func (s *Server) monitorTicket(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "monitor.view") {
+		return
+	}
+	ac := getAuth(r)
+	claims := &jwtClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   ac.Email,
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(monitorTicketTTL)),
+		},
+		OrgID: ac.OrgID,
+		Role:  ac.Role,
+		Kind:  "monitor",
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(s.cfg.JWTSecret))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not mint ticket")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": tok, "expires_in": int(monitorTicketTTL.Seconds())})
 }
 
 // ── POST /api/auth/forgot-password ────────────────────────────────────────────

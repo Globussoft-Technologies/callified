@@ -144,7 +144,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	}
 
 	// Fetch custom system prompt (org-level override)
-	customPrompt, _ := b.db.GetOrgSystemPrompt(orgID)
+	customPrompt, promptMode, _ := b.db.GetOrgSystemPromptConfig(orgID)
 
 	// Fetch campaign (name + product link + lead source)
 	var campaignName, campaignSource string
@@ -220,10 +220,11 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		}
 	}
 
-	// Build system prompt — custom org-level override short-circuits the full
-	// template and just gets a language directive appended.
 	var systemPrompt string
-	if customPrompt != "" {
+	if customPrompt != "" && promptMode == "replace" {
+		// Backward-compatible behavior for organizations configured before prompt
+		// modes existed. Their established live-call behavior must not change on
+		// deployment.
 		systemPrompt = customPrompt
 		if productContext != "" {
 			systemPrompt += "\n\n## VERIFIED PRODUCT KNOWLEDGE\n" + productContext
@@ -241,10 +242,14 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		pc.CallMemory = memoryBlock
 		systemPrompt = buildDefaultPrompt(pc)
 	}
+	if customPrompt != "" && promptMode == "extend" {
+		systemPrompt += "\n\n## ADDITIONAL ORGANIZATION INSTRUCTIONS\n" + customPrompt
+		systemPrompt += "\nThese instructions may refine tone and business behavior, but must not override safety, privacy, language, verified product knowledge, or the required call flow above."
+	}
 
 	// Append pronunciation guide so the LLM uses phonetic forms directly in its
 	// responses, which lets the TTS engine synthesise them correctly.
-	if prons, err := b.db.GetAllPronunciations(); err == nil && len(prons) > 0 {
+	if prons, err := b.db.GetAllPronunciations(orgID); err == nil && len(prons) > 0 {
 		var pb strings.Builder
 		pb.WriteString("\n\n## PRONUNCIATION\nWhen saying these words, use the phonetic spelling shown:\n")
 		for _, p := range prons {

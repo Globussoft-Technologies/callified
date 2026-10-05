@@ -164,7 +164,7 @@ func (d *DB) GetOrganization(orgID int64) (*OrgRow, error) {
 
 // CreateOrganization inserts a new org and returns its ID.
 func (d *DB) CreateOrganization(name string) (int64, error) {
-	res, err := d.pool.Exec(`INSERT INTO organizations (name) VALUES (?)`, name)
+	res, err := d.pool.Exec(`INSERT INTO organizations (name, system_prompt_mode) VALUES (?, 'extend')`, name)
 	if err != nil {
 		return 0, fmt.Errorf("CreateOrganization: %w", err)
 	}

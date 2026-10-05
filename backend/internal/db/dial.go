@@ -11,6 +11,7 @@ type CallLog struct {
 	LeadID       int64  `json:"lead_id"`
 	CampaignID   int64  `json:"campaign_id"`
 	OrgID        int64  `json:"org_id"`
+	AgentUserID  int64  `json:"agent_user_id"`
 	CallSid      string `json:"call_sid"`
 	Phone        string `json:"phone"`
 	Provider     string `json:"provider"`
@@ -20,11 +21,11 @@ type CallLog struct {
 }
 
 // SaveCallLog inserts a call attempt record. Returns the new row ID.
-func (d *DB) SaveCallLog(leadID, campaignID, orgID int64, callSid, provider, phone, status string) (int64, error) {
+func (d *DB) SaveCallLog(leadID, campaignID, orgID, agentUserID int64, callSid, provider, phone, status string) (int64, error) {
 	res, err := d.pool.Exec(`
-		INSERT INTO call_logs (lead_id, campaign_id, org_id, call_sid, provider, phone, status)
-		VALUES (?,?,?,?,?,?,?)`,
-		leadID, nullInt64(campaignID), orgID, nullString(callSid), provider, phone, status)
+		INSERT INTO call_logs (lead_id, campaign_id, org_id, agent_user_id, call_sid, provider, phone, status)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		leadID, nullInt64(campaignID), orgID, nullInt64(agentUserID), nullString(callSid), provider, phone, status)
 	if err != nil {
 		return 0, err
 	}
@@ -35,7 +36,13 @@ func (d *DB) SaveCallLog(leadID, campaignID, orgID int64, callSid, provider, pho
 func (d *DB) UpdateCallLogStatus(callSid, status string) error {
 	_, err := d.pool.Exec(
 		`UPDATE call_logs SET status=? WHERE call_sid=?`, status, callSid)
-	return err
+	if err != nil {
+		return err
+	}
+	if code, summary, ok := SystemDispositionForCallStatus(status); ok {
+		return d.SaveSystemDispositionByCallSid(callSid, code, summary)
+	}
+	return nil
 }
 
 // UpdateCallLogRecordingURL saves the recording URL for a given call_sid.
@@ -48,13 +55,13 @@ func (d *DB) UpdateCallLogRecordingURL(callSid, url string) error {
 // GetCallLogByCallSid fetches the most recent call_log row for a call_sid.
 func (d *DB) GetCallLogByCallSid(callSid string) (*CallLog, error) {
 	row := d.pool.QueryRow(`
-		SELECT id, lead_id, COALESCE(campaign_id,0), org_id,
+		SELECT id, lead_id, COALESCE(campaign_id,0), org_id, COALESCE(agent_user_id,0),
 		COALESCE(call_sid,''), COALESCE(phone,''), COALESCE(provider,''),
 		COALESCE(status,''), COALESCE(recording_url,''),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_logs WHERE call_sid=? ORDER BY id DESC LIMIT 1`, callSid)
 	cl := &CallLog{}
-	err := row.Scan(&cl.ID, &cl.LeadID, &cl.CampaignID, &cl.OrgID,
+	err := row.Scan(&cl.ID, &cl.LeadID, &cl.CampaignID, &cl.OrgID, &cl.AgentUserID,
 		&cl.CallSid, &cl.Phone, &cl.Provider, &cl.Status, &cl.RecordingURL, &cl.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -65,13 +72,13 @@ func (d *DB) GetCallLogByCallSid(callSid string) (*CallLog, error) {
 // GetLastDialMeta returns the most recent call_log row across all leads/campaigns.
 func (d *DB) GetLastDialMeta() (*CallLog, error) {
 	row := d.pool.QueryRow(`
-		SELECT id, lead_id, COALESCE(campaign_id,0), org_id,
+		SELECT id, lead_id, COALESCE(campaign_id,0), org_id, COALESCE(agent_user_id,0),
 		COALESCE(call_sid,''), COALESCE(phone,''), COALESCE(provider,''),
 		COALESCE(status,''), COALESCE(recording_url,''),
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_logs ORDER BY id DESC LIMIT 1`)
 	cl := &CallLog{}
-	err := row.Scan(&cl.ID, &cl.LeadID, &cl.CampaignID, &cl.OrgID,
+	err := row.Scan(&cl.ID, &cl.LeadID, &cl.CampaignID, &cl.OrgID, &cl.AgentUserID,
 		&cl.CallSid, &cl.Phone, &cl.Provider, &cl.Status, &cl.RecordingURL, &cl.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

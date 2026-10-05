@@ -9,9 +9,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
+
+type monitorTicketClaims struct {
+	jwt.RegisteredClaims
+	OrgID int64  `json:"org_id"`
+	Kind  string `json:"kind"`
+}
+
+func (h *Handler) validateMonitorTicket(r *http.Request) (int64, bool) {
+	// Unit tests construct a minimal handler without authentication config.
+	if h.cfg == nil || h.cfg.JWTSecret == "" {
+		return 0, true
+	}
+	ticket := r.URL.Query().Get("ticket")
+	if ticket == "" {
+		return 0, false
+	}
+	claims := &monitorTicketClaims{}
+	_, err := jwt.ParseWithClaims(ticket, claims, func(tok *jwt.Token) (any, error) {
+		if _, ok := tok.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(h.cfg.JWTSecret), nil
+	})
+	return claims.OrgID, err == nil && claims.Kind == "monitor" && claims.OrgID > 0
+}
 
 // maxMonitorKeyLen caps stream_sid / call_sid length. Real Twilio/Exotel SIDs
 // are ~34 chars; our internal web_sim SIDs are ~40. 128 leaves generous margin
@@ -151,6 +177,11 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	orgID, authorized := h.validateMonitorTicket(r)
+	if !authorized {
+		http.Error(w, "invalid or expired monitor ticket", http.StatusUnauthorized)
+		return
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -168,6 +199,10 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 			websocket.TextMessage,
 			[]byte(`{"error":"session not found"}`),
 		)
+		return
+	}
+	if orgID > 0 && sess.OrgID != orgID {
+		conn.WriteMessage(websocket.TextMessage, []byte(`{"error":"call is not available to this organization"}`)) //nolint:errcheck
 		return
 	}
 
@@ -215,6 +250,10 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 			}
 			h.log.Info("monitor takeover activated", zap.String("stream_sid", streamSid))
 
+		case "release_takeover":
+			h.store.SetTakeover(r.Context(), streamSid, false)
+			h.log.Info("monitor takeover released", zap.String("stream_sid", streamSid))
+
 		case "audio_chunk":
 			// Manager sends base64 audio directly to the phone (takeover mode).
 			// Only forwarded if takeover is active.
@@ -229,14 +268,25 @@ func (h *Handler) ServeMonitor(w http.ResponseWriter, r *http.Request) {
 			if _, err := base64.StdEncoding.DecodeString(payload); err != nil {
 				continue
 			}
-			frame, _ := json.Marshal(map[string]interface{}{
+			frameData := map[string]interface{}{
 				"event":     "media",
 				"streamSid": streamSid,
 				"media":     map[string]string{"payload": payload},
-			})
+			}
+			if sess.Provider == "tata" {
+				frameData["sequenceNumber"] = sess.outboundSeq.Add(1)
+				frameData["stream_id"] = streamSid
+				frameData["stream_sid"] = streamSid
+				frameData["payload"] = payload
+				frameData["audio"] = payload
+			}
+			frame, _ := json.Marshal(frameData)
 			sess.SendText(frame) //nolint:errcheck
 		}
 	}
 
 	h.log.Info("monitor disconnected", zap.String("stream_sid", streamSid))
+	if h.store.GetTakeover(r.Context(), streamSid) {
+		h.store.SetTakeover(r.Context(), streamSid, false)
+	}
 }

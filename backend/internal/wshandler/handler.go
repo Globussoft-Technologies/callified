@@ -1955,6 +1955,7 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		LeadID:      sess.LeadID,
 		CampaignID:  sess.CampaignID,
 		OrgID:       sess.OrgID,
+		UserID:      sess.UserID,
 		LeadPhone:   sess.LeadPhone,
 		AgentName:   sess.AgentName,
 		TTSLanguage: sess.TTSLanguage,

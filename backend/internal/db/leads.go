@@ -609,7 +609,7 @@ func (d *DB) EnsureCallTranscriptColumns() error {
 func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	rows, err := d.pool.Query(
 		`SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
-		        COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		        COALESCE(call_sid,''), COALESCE(transcript,'[]'), COALESCE(recording_url,''),
 		        COALESCE(tts_language,''),
 		        COALESCE(call_duration_s,0),
 		        DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
@@ -621,7 +621,7 @@ func (d *DB) GetTranscriptsByLead(leadID int64) ([]Transcript, error) {
 	var list []Transcript
 	for rows.Next() {
 		var t Transcript
-		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.CallSid, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, t)
@@ -772,13 +772,13 @@ func (d *DB) GetTranscriptByCallSid(callSid string) (*Transcript, error) {
 func (d *DB) GetTranscriptByID(id int64) (*Transcript, error) {
 	row := d.pool.QueryRow(`
 		SELECT id, COALESCE(lead_id,0), COALESCE(campaign_id,0), COALESCE(org_id,0),
-		       COALESCE(transcript,'[]'), COALESCE(recording_url,''),
+		       COALESCE(call_sid,''), COALESCE(transcript,'[]'), COALESCE(recording_url,''),
 		       COALESCE(tts_language,''),
 		       COALESCE(call_duration_s,0),
 		       DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts WHERE id=?`, id)
 	var t Transcript
-	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
+	err := row.Scan(&t.ID, &t.LeadID, &t.CampaignID, &t.OrgID, &t.CallSid, &t.Transcript, &t.RecordingURL, &t.TTSLanguage, &t.CallDurationS, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

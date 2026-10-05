@@ -34,6 +34,7 @@ func (d *DB) EnsureOrganizationsTable() error {
 			name VARCHAR(255) NOT NULL,
 			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
 			custom_system_prompt TEXT DEFAULT NULL,
+			system_prompt_mode VARCHAR(16) NOT NULL DEFAULT 'replace',
 			tts_provider VARCHAR(50) DEFAULT 'elevenlabs',
 			tts_voice_id VARCHAR(100) DEFAULT NULL,
 			tts_language VARCHAR(10) DEFAULT 'hi',
@@ -49,6 +50,10 @@ func (d *DB) EnsureOrganizationsTable() error {
 		return err
 	}
 	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN max_call_duration_seconds INT DEFAULT NULL`)
+	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
+		return err
+	}
+	_, err = d.pool.Exec(`ALTER TABLE organizations ADD COLUMN system_prompt_mode VARCHAR(16) NOT NULL DEFAULT 'replace' AFTER custom_system_prompt`)
 	if err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
 		return err
 	}
@@ -106,7 +111,7 @@ func (d *DB) GetOrganizationByDomain(domain string) (*Organization, error) {
 func (d *DB) CreateOrganizationWithDomain(name, domain string) (int64, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	res, err := d.pool.Exec(
-		`INSERT INTO organizations (name, domain) VALUES (?, NULLIF(?, ''))`,
+		`INSERT INTO organizations (name, domain, system_prompt_mode) VALUES (?, NULLIF(?, ''), 'extend')`,
 		name, domain)
 	if err != nil {
 		return 0, fmt.Errorf("CreateOrganizationWithDomain: %w", err)
@@ -163,10 +168,40 @@ func (d *DB) GetOrgSystemPrompt(orgID int64) (string, error) {
 	return prompt, err
 }
 
+// GetOrgSystemPromptConfig returns the prompt and how it combines with the
+// protected Callified prompt. Legacy organizations default to replace so a
+// deployment cannot silently change their live agent behavior.
+func (d *DB) GetOrgSystemPromptConfig(orgID int64) (string, string, error) {
+	var prompt, mode string
+	err := d.pool.QueryRow(`SELECT COALESCE(custom_system_prompt,''),
+		COALESCE(NULLIF(system_prompt_mode,''),'replace') FROM organizations WHERE id=?`, orgID).Scan(&prompt, &mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "replace", nil
+	}
+	mode = normalizeSystemPromptMode(mode)
+	return prompt, mode, err
+}
+
+func normalizeSystemPromptMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), "extend") {
+		return "extend"
+	}
+	return "replace"
+}
+
 // SaveOrgSystemPrompt updates the custom_system_prompt column for an org.
 func (d *DB) SaveOrgSystemPrompt(orgID int64, prompt string) error {
 	_, err := d.pool.Exec(
 		`UPDATE organizations SET custom_system_prompt=? WHERE id=?`, nullString(prompt), orgID)
+	return err
+}
+
+func (d *DB) SaveOrgSystemPromptConfig(orgID int64, prompt, mode string) error {
+	if mode != "replace" && mode != "extend" {
+		return fmt.Errorf("invalid system prompt mode")
+	}
+	_, err := d.pool.Exec(`UPDATE organizations SET custom_system_prompt=?, system_prompt_mode=? WHERE id=?`,
+		nullString(prompt), mode, orgID)
 	return err
 }
 
@@ -558,9 +593,58 @@ func (d *DB) CompleteTask(id, orgID int64) error {
 
 // Pronunciation mirrors the pronunciation_guide table.
 type Pronunciation struct {
-	ID       int64  `json:"id"`
-	Word     string `json:"word"`
-	Phonetic string `json:"phonetic"`
+	ID        int64  `json:"id"`
+	OrgID     int64  `json:"org_id"`
+	Word      string `json:"word"`
+	Phonetic  string `json:"phonetic"`
+	CreatedAt string `json:"created_at"`
+	Inherited bool   `json:"inherited"`
+}
+
+// EnsurePronunciationGuideTable scopes pronunciation rules to an organization.
+func (d *DB) EnsurePronunciationGuideTable() error {
+	if _, err := d.pool.Exec(`CREATE TABLE IF NOT EXISTS pronunciation_guide (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		org_id INT NOT NULL DEFAULT 0,
+		word VARCHAR(50) NOT NULL,
+		phonetic VARCHAR(50) NOT NULL,
+		created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`); err != nil {
+		return err
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD COLUMN org_id INT NOT NULL DEFAULT 0 AFTER id`); err != nil && !isMySQLError(err, 1060) {
+		return err
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP`); err != nil && !isMySQLError(err, 1060) {
+		return err
+	}
+
+	rows, err := d.pool.Query(`SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+		WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pronunciation_guide'
+		AND NON_UNIQUE=0 AND INDEX_NAME<>'PRIMARY'
+		GROUP BY INDEX_NAME HAVING GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX)='word'`)
+	if err != nil {
+		return err
+	}
+	var legacyIndexes []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		legacyIndexes = append(legacyIndexes, name)
+	}
+	rows.Close()
+	for _, name := range legacyIndexes {
+		if _, err := d.pool.Exec(fmt.Sprintf("ALTER TABLE pronunciation_guide DROP INDEX `%s`", strings.ReplaceAll(name, "`", "``"))); err != nil {
+			return err
+		}
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD UNIQUE INDEX uq_pronunciation_org_word (org_id, word)`); err != nil && !isMySQLError(err, 1061) {
+		return err
+	}
+	return nil
 }
 
 // GetAllPronunciations returns all pronunciation entries ordered by word.
@@ -573,44 +657,65 @@ type Pronunciation struct {
 // inputs, so any row still matching today is legacy data that pre-dates that
 // validation. Filtering at read time means we don't need a one-shot DB
 // migration to clean it up across every deployment.
-func (d *DB) GetAllPronunciations() ([]Pronunciation, error) {
+func (d *DB) GetAllPronunciations(orgID int64) ([]Pronunciation, error) {
 	rows, err := d.pool.Query(
-		`SELECT id, word, phonetic FROM pronunciation_guide
-		 WHERE LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
-		 ORDER BY word`)
+		`SELECT id, org_id, word, phonetic, COALESCE(DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),'') FROM pronunciation_guide
+		 WHERE org_id IN (0, ?) AND LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
+		 ORDER BY LOWER(TRIM(word)), org_id DESC, id DESC`, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var list []Pronunciation
+	var candidates []Pronunciation
 	for rows.Next() {
 		var p Pronunciation
-		if err := rows.Scan(&p.ID, &p.Word, &p.Phonetic); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrgID, &p.Word, &p.Phonetic, &p.CreatedAt); err != nil {
 			return nil, err
 		}
-		list = append(list, p)
+		p.Inherited = p.OrgID == 0
+		candidates = append(candidates, p)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return preferOrganizationPronunciations(candidates), nil
+}
+
+// preferOrganizationPronunciations expects candidates ordered by normalized
+// word and org_id descending. The first rule for each word is therefore the
+// organization's override; otherwise the inherited org_id=0 rule is retained.
+func preferOrganizationPronunciations(candidates []Pronunciation) []Pronunciation {
+	result := make([]Pronunciation, 0, len(candidates))
+	seen := make(map[string]bool)
+	for _, candidate := range candidates {
+		key := strings.ToLower(strings.TrimSpace(candidate.Word))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, candidate)
+	}
+	return result
 }
 
 // UpsertPronunciation inserts a new entry or updates the phonetic for an existing word.
-func (d *DB) UpsertPronunciation(word, phonetic string) error {
+func (d *DB) UpsertPronunciation(orgID int64, word, phonetic string) error {
 	var id int64
-	err := d.pool.QueryRow(`SELECT id FROM pronunciation_guide WHERE word=?`, word).Scan(&id)
+	err := d.pool.QueryRow(`SELECT id FROM pronunciation_guide WHERE org_id=? AND word=?`, orgID, word).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = d.pool.Exec(`INSERT INTO pronunciation_guide (word, phonetic) VALUES (?,?)`, word, phonetic)
+		_, err = d.pool.Exec(`INSERT INTO pronunciation_guide (org_id, word, phonetic) VALUES (?,?,?)`, orgID, word, phonetic)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	_, err = d.pool.Exec(`UPDATE pronunciation_guide SET phonetic=? WHERE word=?`, phonetic, word)
+	_, err = d.pool.Exec(`UPDATE pronunciation_guide SET phonetic=? WHERE org_id=? AND word=?`, phonetic, orgID, word)
 	return err
 }
 
 // DeletePronunciation deletes a pronunciation entry. Returns true if deleted.
-func (d *DB) DeletePronunciation(id int64) (bool, error) {
-	res, err := d.pool.Exec(`DELETE FROM pronunciation_guide WHERE id=?`, id)
+func (d *DB) DeletePronunciation(orgID, id int64) (bool, error) {
+	res, err := d.pool.Exec(`DELETE FROM pronunciation_guide WHERE id=? AND org_id=?`, id, orgID)
 	if err != nil {
 		return false, err
 	}

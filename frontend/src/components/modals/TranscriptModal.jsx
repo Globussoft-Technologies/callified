@@ -52,9 +52,27 @@ function extractAgentName(turns) {
 function ConclusionCard({ transcriptId, turns }) {
   const { apiFetch } = useAuth();
   const [state, setState] = useState({ status: 'idle', review: null, error: '' });
+  const [disposition, setDisposition] = useState(null);
+  const [options, setOptions] = useState([]);
+  const [editing, setEditing] = useState(false);
+  const [editCode, setEditCode] = useState('');
+  const [editSummary, setEditSummary] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const turnCount = Array.isArray(turns) ? turns.length : 0;
   const interactionHappened = turnCount >= 1;
+
+  const fetchDisposition = useCallback(() => {
+    if (!transcriptId) return Promise.resolve();
+    return apiFetch(`${API_URL}/transcripts/${transcriptId}/disposition`)
+      .then(async (res) => {
+        if (!res.ok) return;
+        const body = await res.json();
+        setDisposition(body.disposition || null);
+        setOptions(Array.isArray(body.options) ? body.options : []);
+      });
+  }, [apiFetch, transcriptId]);
 
   const fetchConclusion = useCallback((force = false) => {
     if (!transcriptId) return;
@@ -66,9 +84,10 @@ function ConclusionCard({ transcriptId, turns }) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) { setState({ status: 'error', review: null, error: body?.error || `HTTP ${res.status}` }); return; }
         setState({ status: 'ready', review: body, error: '' });
+        await fetchDisposition();
       })
       .catch((e) => setState({ status: 'error', review: null, error: e?.message || 'network error' }));
-  }, [apiFetch, transcriptId]);
+  }, [apiFetch, fetchDisposition, transcriptId]);
 
   useEffect(() => {
     if (!transcriptId || !interactionHappened) return;
@@ -136,6 +155,32 @@ function ConclusionCard({ transcriptId, turns }) {
       ? { background: '#fee2e2', color: '#b91c1c', border: '#fca5a5', label: 'Not interested', icon: 'close' }
       : { background: '#fef3c7', color: '#b45309', border: '#fcd34d', label: 'Pending', icon: 'loading' };
 
+  const activeOption = options.find((option) => option.code === disposition?.effective_code);
+  const beginEdit = () => {
+    setEditCode(disposition?.effective_code || options[0]?.code || '');
+    setEditSummary(disposition?.effective_summary || summary);
+    setEditReason('');
+    setEditing(true);
+  };
+  const saveDisposition = async () => {
+    if (!editCode) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/transcripts/${transcriptId}/disposition`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: editCode, summary: editSummary, reason: editReason }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      setDisposition(body);
+      setEditing(false);
+    } catch (error) {
+      setState((current) => ({ ...current, error: error.message || 'Could not save disposition' }));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return wrap(
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: '#1f2937', lineHeight: 1.5 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
@@ -157,8 +202,41 @@ function ConclusionCard({ transcriptId, turns }) {
         }}>
           <AppIcon name={outcomeStyle.icon} /> {outcomeStyle.label}
         </span>
+        {disposition && (
+          <span style={{
+            background: `${activeOption?.color || '#6366f1'}18`, color: activeOption?.color || '#4f46e5',
+            border: `1px solid ${activeOption?.color || '#6366f1'}55`, fontSize: '0.75rem',
+            padding: '2px 8px', borderRadius: 12, fontWeight: 700,
+          }}>
+            {activeOption?.label || disposition.effective_code?.replaceAll('_', ' ')}
+            {Number(disposition.ai_confidence) > 0 && ` · ${Math.round(Number(disposition.ai_confidence) * 100)}%`}
+            {disposition.source === 'human' ? ' · reviewed' : ' · AI'}
+          </span>
+        )}
+        {disposition && !editing && (
+          <button type="button" onClick={beginEdit} style={{
+            border: '1px solid #cbd5e1', background: '#fff', color: '#475569', borderRadius: 6,
+            padding: '2px 8px', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600,
+          }}>Edit disposition</button>
+        )}
       </div>
-      {summary       && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{summary}</div>}
+      {editing ? (
+        <div style={{ display: 'grid', gap: 8, padding: 10, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+          <select value={editCode} onChange={(event) => setEditCode(event.target.value)} className="form-input" style={{ minHeight: 36 }}>
+            {options.filter((option) => option.is_active).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+          </select>
+          <textarea value={editSummary} onChange={(event) => setEditSummary(event.target.value)} rows={3} className="form-input" placeholder="Reviewed call summary" />
+          <input value={editReason} onChange={(event) => setEditReason(event.target.value)} className="form-input" placeholder="Reason for override (optional)" />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button type="button" onClick={() => setEditing(false)} disabled={saving} className="btn-secondary">Cancel</button>
+            <button type="button" onClick={saveDisposition} disabled={saving || !editCode} className="btn-primary">{saving ? 'Saving…' : 'Save review'}</button>
+          </div>
+        </div>
+      ) : (
+        (disposition?.effective_summary || summary) && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{disposition?.effective_summary || summary}</div>
+      )}
+      {disposition?.ai_objections && disposition.ai_objections !== 'None' && <div><span style={{ color: '#c2410c', fontWeight: 700 }}>Objections: </span>{disposition.ai_objections}</div>}
+      {disposition?.ai_next_action && <div><span style={{ color: '#2563eb', fontWeight: 700 }}>Next action: </span>{disposition.ai_next_action}</div>}
       {wentWell      && <div><span style={{ color: '#15803d', fontWeight: 700 }}>What went well: </span>{wentWell}</div>}
       {wentWrong     && <div><span style={{ color: '#dc2626', fontWeight: 700 }}>What went wrong: </span>{wentWrong}</div>}
       {failureReason && !r.appointment_booked && <div><span style={{ color: '#c2410c', fontWeight: 700 }}>Why no booking: </span>{failureReason}</div>}

@@ -1028,16 +1028,20 @@ func (d *DB) GetCampaignStatsForUser(campaignID, userID int64, execIDs []int64, 
 
 // CallLogEntry is one row of the campaign call log (Exotel-style).
 type CallLogEntry struct {
-	ID           int64   `json:"id"`
-	FirstName    string  `json:"first_name"`
-	LastName     string  `json:"last_name"`
-	Phone        string  `json:"phone"`
-	Source       string  `json:"source"`
-	LeadStatus   string  `json:"lead_status"`
-	Duration     float64 `json:"call_duration_s"`
-	RecordingURL string  `json:"recording_url"`
-	CreatedAt    string  `json:"created_at"`
-	Outcome      string  `json:"outcome"`
+	ID                    int64   `json:"id"`
+	FirstName             string  `json:"first_name"`
+	LastName              string  `json:"last_name"`
+	Phone                 string  `json:"phone"`
+	Source                string  `json:"source"`
+	LeadStatus            string  `json:"lead_status"`
+	Duration              float64 `json:"call_duration_s"`
+	RecordingURL          string  `json:"recording_url"`
+	CreatedAt             string  `json:"created_at"`
+	Outcome               string  `json:"outcome"`
+	Disposition           string  `json:"disposition"`
+	DispositionSource     string  `json:"disposition_source"`
+	DispositionConfidence float64 `json:"disposition_confidence"`
+	DispositionSummary    string  `json:"disposition_summary"`
 }
 
 // GetCampaignCallLog returns the call log for all leads in a campaign.
@@ -1069,7 +1073,7 @@ func (d *DB) GetCampaignCallLogFiltered(campaignID int64, execIDs []int64, filte
 			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
 			COALESCE(l.phone,''), COALESCE(l.source,''),
 			COALESCE(l.status,''), COALESCE(ct.call_duration_s,0), COALESCE(ct.recording_url,''),
-			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s') AS created_at,
 			CASE
 				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
 				WHEN ct.call_duration_s>5 THEN 'Connected'
@@ -1077,10 +1081,14 @@ func (d *DB) GetCampaignCallLogFiltered(campaignID int64, execIDs []int64, filte
 				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
 				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
 				ELSE 'No Answer'
-			END AS outcome
+			END AS outcome,
+			COALESCE(NULLIF(cd.final_disposition_code,''), cd.ai_disposition_code, ''),
+			CASE WHEN COALESCE(cd.final_disposition_code,'')<>'' THEN 'human' WHEN cd.id IS NOT NULL THEN 'ai' ELSE '' END,
+			COALESCE(cd.ai_confidence,0), COALESCE(NULLIF(cd.edited_summary,''), cd.ai_summary, '')
 		FROM call_transcripts ct
 		LEFT JOIN leads l ON ct.lead_id=l.id
 		LEFT JOIN campaign_leads cl ON cl.campaign_id=ct.campaign_id AND cl.lead_id=ct.lead_id
+		LEFT JOIN call_dispositions cd ON cd.transcript_id=ct.id
 		WHERE ct.campaign_id=?`
 	args := []any{campaignID}
 	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
@@ -1091,7 +1099,37 @@ func (d *DB) GetCampaignCallLogFiltered(campaignID int64, execIDs []int64, filte
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
-	q += ` ORDER BY ct.created_at DESC`
+	q += ` UNION ALL
+		SELECT -clog.id,
+			COALESCE(l.first_name,''), COALESCE(l.last_name,''), COALESCE(l.phone,clog.phone,''),
+			COALESCE(l.source,''), COALESCE(l.status,''), 0, COALESCE(clog.recording_url,''),
+			DATE_FORMAT(clog.created_at,'%Y-%m-%d %H:%i:%s'),
+			CASE
+				WHEN clog.status='completed' THEN 'Completed'
+				WHEN clog.status IN ('answered','connected','in-progress') THEN 'Connected'
+				WHEN clog.status='busy' THEN 'Busy'
+				WHEN clog.status IN ('failed','cancelled') THEN 'Failed'
+				ELSE 'No Answer'
+			END,
+			COALESCE(NULLIF(cd.final_disposition_code,''), cd.ai_disposition_code, ''),
+			CASE WHEN COALESCE(cd.final_disposition_code,'')<>'' THEN 'human' WHEN cd.id IS NOT NULL THEN 'ai' ELSE '' END,
+			COALESCE(cd.ai_confidence,0), COALESCE(NULLIF(cd.edited_summary,''), cd.ai_summary, '')
+		FROM call_logs clog
+		LEFT JOIN call_transcripts ct2 ON ct2.call_sid=clog.call_sid AND ct2.campaign_id=clog.campaign_id
+		LEFT JOIN leads l ON l.id=clog.lead_id
+		LEFT JOIN campaign_leads cl ON cl.campaign_id=clog.campaign_id AND cl.lead_id=clog.lead_id
+		LEFT JOIN call_dispositions cd ON cd.call_log_id=clog.id
+		WHERE clog.campaign_id=? AND ct2.id IS NULL`
+	args = append(args, campaignID)
+	if c, a := campaignExecFilterClause(execIDs, len(execIDs) > 0); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	if c, a := campaignActivityFilterClause(filter, "clog.created_at"); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY created_at DESC`
 	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -1101,7 +1139,8 @@ func (d *DB) GetCampaignCallLogFiltered(campaignID int64, execIDs []int64, filte
 	for rows.Next() {
 		var e CallLogEntry
 		if err := rows.Scan(&e.ID, &e.FirstName, &e.LastName, &e.Phone, &e.Source,
-			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome); err != nil {
+			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome,
+			&e.Disposition, &e.DispositionSource, &e.DispositionConfidence, &e.DispositionSummary); err != nil {
 			return nil, err
 		}
 		list = append(list, e)
@@ -1125,7 +1164,7 @@ func (d *DB) GetCampaignCallLogForUserFiltered(campaignID, userID int64, filter 
 			COALESCE(l.first_name,''), COALESCE(l.last_name,''),
 			COALESCE(l.phone,''), COALESCE(l.source,''),
 			COALESCE(l.status,''), COALESCE(ct.call_duration_s,0), COALESCE(ct.recording_url,''),
-			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s'),
+			DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s') AS created_at,
 			CASE
 				WHEN ct.call_duration_s>30 AND l.status IN ('Summarized','Closed') THEN 'Completed'
 				WHEN ct.call_duration_s>5 THEN 'Connected'
@@ -1133,7 +1172,10 @@ func (d *DB) GetCampaignCallLogForUserFiltered(campaignID, userID int64, filter 
 				WHEN l.status LIKE 'Call Failed (failed)%' THEN 'Failed'
 				WHEN l.status LIKE 'DND%' THEN 'DND Blocked'
 				ELSE 'No Answer'
-			END AS outcome
+			END AS outcome,
+			COALESCE(NULLIF(cd.final_disposition_code,''), cd.ai_disposition_code, ''),
+			CASE WHEN COALESCE(cd.final_disposition_code,'')<>'' THEN 'human' WHEN cd.id IS NOT NULL THEN 'ai' ELSE '' END,
+			COALESCE(cd.ai_confidence,0), COALESCE(NULLIF(cd.edited_summary,''), cd.ai_summary, '')
 		FROM call_transcripts ct
 		JOIN agent_activities aa ON aa.org_id=ct.org_id
 			AND aa.user_id=?
@@ -1142,13 +1184,39 @@ func (d *DB) GetCampaignCallLogForUserFiltered(campaignID, userID int64, filter 
 			AND aa.lead_id=ct.lead_id
 			AND ABS(TIMESTAMPDIFF(SECOND, aa.created_at, ct.created_at)) <= 14400
 		LEFT JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN call_dispositions cd ON cd.transcript_id=ct.id
 		WHERE ct.campaign_id=?`
 	args := []any{userID, campaignID}
 	if c, a := campaignActivityFilterClause(filter, "ct.created_at"); c != "" {
 		q += ` AND ` + c
 		args = append(args, a...)
 	}
-	q += ` ORDER BY ct.created_at DESC`
+	q += ` UNION ALL
+		SELECT -clog.id,
+			COALESCE(l.first_name,''), COALESCE(l.last_name,''), COALESCE(l.phone,clog.phone,''),
+			COALESCE(l.source,''), COALESCE(l.status,''), 0, COALESCE(clog.recording_url,''),
+			DATE_FORMAT(clog.created_at,'%Y-%m-%d %H:%i:%s'),
+			CASE
+				WHEN clog.status='completed' THEN 'Completed'
+				WHEN clog.status IN ('answered','connected','in-progress') THEN 'Connected'
+				WHEN clog.status='busy' THEN 'Busy'
+				WHEN clog.status IN ('failed','cancelled') THEN 'Failed'
+				ELSE 'No Answer'
+			END,
+			COALESCE(NULLIF(cd.final_disposition_code,''), cd.ai_disposition_code, ''),
+			CASE WHEN COALESCE(cd.final_disposition_code,'')<>'' THEN 'human' WHEN cd.id IS NOT NULL THEN 'ai' ELSE '' END,
+			COALESCE(cd.ai_confidence,0), COALESCE(NULLIF(cd.edited_summary,''), cd.ai_summary, '')
+		FROM call_logs clog
+		LEFT JOIN call_transcripts ct2 ON ct2.call_sid=clog.call_sid AND ct2.campaign_id=clog.campaign_id
+		LEFT JOIN leads l ON l.id=clog.lead_id
+		LEFT JOIN call_dispositions cd ON cd.call_log_id=clog.id
+		WHERE clog.campaign_id=? AND clog.agent_user_id=? AND ct2.id IS NULL`
+	args = append(args, campaignID, userID)
+	if c, a := campaignActivityFilterClause(filter, "clog.created_at"); c != "" {
+		q += ` AND ` + c
+		args = append(args, a...)
+	}
+	q += ` ORDER BY created_at DESC`
 	rows, err := d.pool.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -1158,7 +1226,8 @@ func (d *DB) GetCampaignCallLogForUserFiltered(campaignID, userID int64, filter 
 	for rows.Next() {
 		var e CallLogEntry
 		if err := rows.Scan(&e.ID, &e.FirstName, &e.LastName, &e.Phone, &e.Source,
-			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome); err != nil {
+			&e.LeadStatus, &e.Duration, &e.RecordingURL, &e.CreatedAt, &e.Outcome,
+			&e.Disposition, &e.DispositionSource, &e.DispositionConfidence, &e.DispositionSummary); err != nil {
 			return nil, err
 		}
 		list = append(list, e)

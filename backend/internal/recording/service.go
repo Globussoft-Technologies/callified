@@ -28,6 +28,7 @@ type SaveRequest struct {
 	LeadID      int64
 	CampaignID  int64
 	OrgID       int64
+	UserID      int64
 	LeadPhone   string
 	AgentName   string
 	TTSLanguage string // language the call was synthesised in (hi/mr/bn/gu/pa/ta/te/kn/ml/en)
@@ -211,7 +212,13 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			userTurns++
 		}
 	}
-	shouldAnalyze := s.llm != nil && len(req.ChatHistory) > 0 && req.DurationS >= 10 && userTurns >= 1
+	options := db.DefaultDispositionOptions()
+	if req.CampaignID > 0 {
+		if configured, err := s.database.GetCampaignDispositionOptions(req.OrgID, req.CampaignID); err == nil && len(configured) > 0 {
+			options = configured
+		}
+	}
+	shouldAnalyze := s.llm != nil && len(req.ChatHistory) > 0 && userTurns >= 1
 
 	review := &db.CallReview{
 		TranscriptID: transcriptID,
@@ -221,8 +228,9 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		CallOutcome:  callOutcomePending,
 	}
 	analyzed := false
+	var disposition *analysis
 	if shouldAnalyze {
-		if a, err := s.analyzeCall(ctx, req.ChatHistory); err != nil {
+		if a, err := s.analyzeCall(ctx, req.ChatHistory, options); err != nil {
 			s.log.Warn("recording: Gemini analysis failed", zap.Error(err))
 		} else {
 			review.QualityScore = a.QualityScore
@@ -235,7 +243,16 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			review.Summary = a.Summary
 			review.Insights = a.Insights
 			review.PromptImprovementSuggestion = a.PromptImprovementSuggestion
+			disposition = a
 			analyzed = true
+		}
+	} else if userTurns == 0 {
+		disposition = &analysis{
+			DispositionCode: "no_answer",
+			Summary:         "The customer did not respond during the call.",
+			Sentiment:       "neutral",
+			Confidence:      1,
+			NextAction:      "Retry the call at an appropriate time.",
 		}
 	} else {
 		s.log.Info("recording: skipping Gemini analysis (short/one-sided)",
@@ -250,6 +267,19 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if analyzed {
 		if err := s.database.SaveCallReview(review); err != nil {
 			s.log.Error("recording: SaveCallReview failed", zap.Error(err))
+		}
+	}
+	if disposition != nil {
+		callLogID, _ := s.database.GetCallLogIDByCallSid(callSid)
+		if err := s.database.SaveAICallDisposition(db.AICallDisposition{
+			OrgID: req.OrgID, CampaignID: req.CampaignID, LeadID: req.LeadID,
+			CallLogID: callLogID, TranscriptID: transcriptID, CallSid: callSid,
+			AgentUserID: req.UserID, Code: disposition.DispositionCode,
+			Summary: disposition.Summary, Sentiment: disposition.Sentiment,
+			Confidence: disposition.Confidence, Objections: disposition.Objections,
+			NextAction: disposition.NextAction,
+		}); err != nil {
+			s.log.Error("recording: SaveAICallDisposition failed", zap.Error(err))
 		}
 	}
 
@@ -297,6 +327,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			"sentiment":          review.Sentiment,
 			"appointment_booked": review.AppointmentBooked,
 			"call_outcome":       review.CallOutcome,
+			"disposition":        effectiveDispositionCode(disposition),
 		})
 	}
 
@@ -417,6 +448,10 @@ type analysis struct {
 	Summary                     string  `json:"summary"`
 	Insights                    string  `json:"insights"`
 	PromptImprovementSuggestion string  `json:"prompt_improvement_suggestion"`
+	DispositionCode             string  `json:"disposition_code"`
+	Confidence                  float64 `json:"confidence"`
+	Objections                  string  `json:"objections"`
+	NextAction                  string  `json:"next_action"`
 }
 
 // AnalyzeCall is the public wrapper around analyzeCall. Used by the API
@@ -425,7 +460,15 @@ type analysis struct {
 // "Regenerate" button. Keeps the same prompt and parsing as the post-call
 // path so the conclusion card stays consistent regardless of who triggered it.
 func (s *Service) AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*Analysis, error) {
-	return s.analyzeCall(ctx, history)
+	return s.analyzeCall(ctx, history, db.DefaultDispositionOptions())
+}
+
+func (s *Service) AnalyzeCallForCampaign(ctx context.Context, orgID, campaignID int64, history []llm.ChatMessage) (*Analysis, error) {
+	options, err := s.database.GetCampaignDispositionOptions(orgID, campaignID)
+	if err != nil || len(options) == 0 {
+		options = db.DefaultDispositionOptions()
+	}
+	return s.analyzeCall(ctx, history, options)
 }
 
 // Strict prompt: every prose field MUST be populated (never empty, never
@@ -458,17 +501,27 @@ FIELDS:
 - "failure_reason": 1 sentence in English on why the call didn't convert; if it did, write "N/A — appointment booked". For no-reply calls, write e.g. "Customer did not respond after greeting — likely hung up or wrong number"
 - "what_went_well": 1-2 sentences in English on what the agent did right. If nothing meaningful happened (no reply), say "Agent delivered greeting clearly but had no chance to engage the customer"
 - "what_went_wrong": 1-2 sentences on what the agent could improve. For no-reply calls, say "No opportunity to engage — call ended before any customer interaction"
-- "summary": 1-2 sentence summary referencing what specifically happened in THIS transcript. Record only requirements the customer clearly stated in direct response to a question. Ignore background voices, other people near the phone, TV/radio, and one-off remarks unrelated to the conversation — never present them as the customer's interest or requirement
+- "summary": 2-4 short sentences covering what was discussed, objections raised, and the agreed next action. Reference what specifically happened in THIS transcript. Record only requirements the customer clearly stated in direct response to a question. Ignore background voices, other people near the phone, TV/radio, and one-off remarks unrelated to the conversation — never present them as the customer's interest or requirement
 - "insights": 1 coaching insight in English for next time
 - "prompt_improvement_suggestion": 1 specific, actionable instruction to add to the AI system prompt to improve future calls of this kind
+- "disposition_code": exactly one code from the allowed list supplied with the transcript
+- "confidence": number from 0 to 1 representing confidence in the disposition
+- "objections": concise objections raised by the customer, or "None"
+- "next_action": one concise recommended next action
 
 The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language. Reference specific things from THIS transcript — never write generic filler.
 
 Return ONLY valid JSON. No markdown, no explanation. Keep each string under 240 chars.`
 
-func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*analysis, error) {
+func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage, options []db.DispositionOption) (*analysis, error) {
 	transcript := formatTranscript(history)
-	userMsg := llm.ChatMessage{Role: "user", Text: "Analyze this call transcript:\n\n" + transcript}
+	allowed := make([]string, 0, len(options))
+	for _, option := range options {
+		if option.IsActive || option.ID == 0 {
+			allowed = append(allowed, fmt.Sprintf("%s (%s)", option.Code, option.Label))
+		}
+	}
+	userMsg := llm.ChatMessage{Role: "user", Text: "Allowed disposition codes: " + strings.Join(allowed, ", ") + "\n\nAnalyze this call transcript:\n\n" + transcript}
 
 	// 1500 tokens is enough for the 8-key JSON object including 200-char
 	// strings each. The previous 512 cap truncated mid-key, causing every
@@ -502,7 +555,56 @@ func (s *Service) analyzeCall(ctx context.Context, history []llm.ChatMessage) (*
 		a.Sentiment = "neutral"
 	}
 	normalizeCallOutcome(&a)
+	normalizeDisposition(&a, options)
 	return &a, nil
+}
+
+func normalizeDisposition(a *analysis, options []db.DispositionOption) {
+	allowed := make(map[string]bool, len(options))
+	for _, option := range options {
+		if option.IsActive || option.ID == 0 {
+			allowed[option.Code] = true
+		}
+	}
+	a.DispositionCode = strings.ToLower(strings.TrimSpace(a.DispositionCode))
+	if !allowed[a.DispositionCode] {
+		fallback := ""
+		switch a.CallOutcome {
+		case callOutcomeAppointmentBooked:
+			fallback = "appointment_booked"
+		case callOutcomeNotInterested:
+			fallback = "not_interested"
+		default:
+			fallback = "callback"
+		}
+		if allowed[fallback] {
+			a.DispositionCode = fallback
+		} else {
+			a.DispositionCode = ""
+			for _, option := range options {
+				if allowed[option.Code] {
+					a.DispositionCode = option.Code
+					break
+				}
+			}
+		}
+	}
+	if a.Confidence < 0 {
+		a.Confidence = 0
+	}
+	if a.Confidence > 1 {
+		a.Confidence = 1
+	}
+	if a.Confidence == 0 {
+		a.Confidence = 0.5
+	}
+}
+
+func effectiveDispositionCode(a *analysis) string {
+	if a == nil {
+		return ""
+	}
+	return a.DispositionCode
 }
 
 const (

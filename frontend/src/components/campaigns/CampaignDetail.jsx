@@ -10,6 +10,7 @@ import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../ut
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
 import AppSelect from '../common/AppSelect';
+import DispositionSettingsModal from './DispositionSettingsModal';
 import { Checkbox } from 'antd';
 import {
   BarChartOutlined,
@@ -23,6 +24,7 @@ import {
   ExperimentOutlined,
   FastForwardOutlined,
   FileTextOutlined,
+  FlagOutlined,
   FormOutlined,
   GlobalOutlined,
   HistoryOutlined,
@@ -36,6 +38,7 @@ import {
   StopOutlined,
   TeamOutlined,
   TagOutlined,
+  TagsOutlined,
   UploadOutlined,
   WarningOutlined,
   UserOutlined,
@@ -147,6 +150,20 @@ function withDate(label, tsMs) {
     return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
   }
   return `[${dateStr}] ${label}`;
+}
+
+function activityEventPresentation(label) {
+  const text = String(label || '').replace(/^\s*(?:📞|✅|🎯|❌|⚠️?|ℹ️?)\s*/u, '');
+  const normalized = text.toUpperCase();
+
+  if (normalized.includes('DIALING')) return { Icon: PhoneOutlined, tone: 'dialing', text };
+  if (normalized.includes('CONNECTED')) return { Icon: CheckCircleOutlined, tone: 'connected', text };
+  if (normalized.includes('COMPLETED')) return { Icon: FlagOutlined, tone: 'completed', text };
+  if (normalized.includes('FAILED') || normalized.includes('ERROR')) {
+    return { Icon: CloseCircleOutlined, tone: 'failed', text };
+  }
+  if (normalized.includes('WARNING')) return { Icon: WarningOutlined, tone: 'warning', text };
+  return { Icon: InfoCircleOutlined, tone: 'info', text };
 }
 
 function linkify(text) {
@@ -573,6 +590,7 @@ export default function CampaignDetail({
   const [dispositionFollowUpAt, setDispositionFollowUpAt] = useState('');
   const [dispositionSaving, setDispositionSaving] = useState(false);
   const [dispositionNextLead, setDispositionNextLead] = useState(null);
+  const [showDispositionSettings, setShowDispositionSettings] = useState(false);
 
   // Browser-call account for this machine. When a specific account is selected
   // it is also persisted as the campaign default so AI auto-dial and external
@@ -1547,6 +1565,13 @@ export default function CampaignDetail({
           </button>
         )}
         {canEditCampaign && (
+          <button onClick={() => setShowDispositionSettings(true)}
+            title="Configure AI call outcomes"
+            style={{ ...btnGhost, display: 'inline-flex', alignItems: 'center', gap: 6, height: 32 }}>
+            <TagsOutlined /> Dispositions
+          </button>
+        )}
+        {canEditCampaign && (
           <AppSelect searchable size="small" width={180} popupWidth={210} value={selectedCampaign.lead_source || ''}
             onChange={async src => {
               await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}`, {
@@ -1767,7 +1792,7 @@ export default function CampaignDetail({
       )}
 
       {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
-      {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
+      {!hideAiFeatures && <div className="campaign-activity" style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}><BarChartOutlined /> Live Campaign Activity</span>
           {liveEvents.length > 0 && (
@@ -1784,11 +1809,16 @@ export default function CampaignDetail({
             Listening for new events… start a dial to see activity here.
           </div>
         ) : (
-          liveEvents.map((ev, i) => (
-            <div key={i} style={{ fontSize: '0.8rem', color: T.sub, padding: '3px 0', borderBottom: `1px solid ${T.border}`, fontFamily: T.mono }}>
-              {withDate(ev?.label, ev?.ts)}
-            </div>
-          ))
+          liveEvents.map((ev, i) => {
+            const event = activityEventPresentation(ev?.label);
+            const EventIcon = event.Icon;
+            return (
+              <div key={`${ev?.ts || 'event'}-${i}`} className="campaign-activity-row" data-tone={event.tone}>
+                <span className="campaign-activity-icon" aria-hidden="true"><EventIcon /></span>
+                <span>{withDate(event.text, ev?.ts)}</span>
+              </div>
+            );
+          })
         )}
       </div>}
 
@@ -2284,14 +2314,14 @@ export default function CampaignDetail({
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Lead','Phone','Source','Time','Outcome','Quality','Duration','Recording'].map(h => (
+                {['Lead','Phone','Source','Time','Outcome','Disposition','Quality','Duration','Recording'].map(h => (
                   <th key={h} style={thStyle}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {callLog.length === 0 ? (
-                <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No calls made yet.</td></tr>
+                <tr><td colSpan="9" style={{ ...tdStyle, textAlign: 'center', color: T.muted, padding: '2rem' }}>No calls made yet.</td></tr>
               ) : callLog.map(call => {
                 const review = reviewByTranscript[call.id];
                 const outcomeColors = {
@@ -2323,6 +2353,14 @@ export default function CampaignDetail({
                         {call.outcome === 'DND Blocked' && '🚫 '}
                         {call.outcome}
                       </span>
+                    </td>
+                    <td style={tdStyle} title={call.disposition_summary || ''}>
+                      {call.disposition ? (
+                        <span style={{ padding: '3px 9px', borderRadius: 12, fontSize: '0.72rem', fontWeight: 700, color: '#4f46e5', background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.24)', textTransform: 'capitalize' }}>
+                          {call.disposition.replaceAll('_', ' ')}
+                          {call.disposition_source === 'human' ? ' · reviewed' : ''}
+                        </span>
+                      ) : <span style={{ color: T.muted, fontSize: '0.75rem' }}>Pending</span>}
                     </td>
                     <td style={tdStyle}>
                       {review ? (() => {
@@ -3366,6 +3404,15 @@ export default function CampaignDetail({
           </div>
         </div>
       )}
+
+      <DispositionSettingsModal
+        open={showDispositionSettings}
+        onClose={() => setShowDispositionSettings(false)}
+        campaignId={selectedCampaign.id}
+        apiFetch={apiFetch}
+        apiUrl={API_URL}
+        toast={toast}
+      />
 
     </div>
   );

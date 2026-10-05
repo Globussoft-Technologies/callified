@@ -875,11 +875,11 @@ export default function CampaignsTab({
     borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
     padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12,
   };
-  const smallBtn = (bg, color, border) => ({
-    padding: '5px 14px', borderRadius: 8, border: `1px solid ${border}`,
-    background: bg, color, fontSize: 12, fontWeight: 600,
+  const smallBtn = {
+    padding: '5px 14px', borderRadius: 8,
+    fontSize: 12, fontWeight: 600,
     cursor: 'pointer', fontFamily: 'inherit',
-  });
+  };
   const browserProviderLabel = (campaign) => {
     if (campaign.channel === 'whatsapp') return 'WhatsApp';
     const accountId = campaign.exotel_account_id || campaign.exotelAccountId;
@@ -938,20 +938,20 @@ export default function CampaignsTab({
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     {isAdmin(userRole) && canEditCampaigns && (
                       <button onClick={(e) => { e.stopPropagation(); openAssignModal(campaign); }}
-                        style={smallBtn('#eff6ff', '#2563eb', '#bfdbfe')}>
+                        className="campaign-card-action" data-variant="assign" style={smallBtn}>
                         Assign Users
                       </button>
                     )}
                     {canEditCampaigns && (
                       <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                        style={smallBtn('#fff', '#374151', '#e5e7eb')}>
+                        className="campaign-card-action" data-variant="edit" style={smallBtn}>
                         Edit
                       </button>
                     )}
                     {canDeleteCampaigns && (
-                      <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
+                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
                         disabled={deleting}
-                        style={smallBtn('#fee2e2', '#ef4444', '#fca5a5')}>
+                        className="campaign-card-action" data-variant="danger" style={smallBtn}>
                         {deleting ? '…' : 'Delete'}
                       </button>
                     )}

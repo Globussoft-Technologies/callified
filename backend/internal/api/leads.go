@@ -1611,6 +1611,23 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		if existing, _ := s.db.GetCallReviewByTranscript(id); existing != nil &&
 			(existing.Summary != "" || existing.WhatWentWell != "" || existing.WhatWentWrong != "" ||
 				existing.FailureReason != "" || existing.Insights != "") {
+			if disposition, _ := s.db.GetCallDispositionByTranscript(t.OrgID, id); disposition == nil {
+				code := "callback"
+				if existing.AppointmentBooked || existing.CallOutcome == "appointment_booked" {
+					code = "appointment_booked"
+				} else if existing.CallOutcome == "not_interested" {
+					code = "not_interested"
+				}
+				callLogID, agentUserID := int64(0), int64(0)
+				if callLog, _ := s.db.GetCallLogByCallSid(t.CallSid); callLog != nil {
+					callLogID, agentUserID = callLog.ID, callLog.AgentUserID
+				}
+				_ = s.db.SaveAICallDisposition(db.AICallDisposition{
+					OrgID: t.OrgID, CampaignID: t.CampaignID, LeadID: t.LeadID, CallLogID: callLogID,
+					TranscriptID: id, CallSid: t.CallSid, AgentUserID: agentUserID, Code: code, Summary: existing.Summary,
+					Sentiment: existing.Sentiment, Confidence: 0.5,
+				})
+			}
 			writeJSON(w, http.StatusOK, existing)
 			return
 		}
@@ -1652,7 +1669,7 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		history = append(history, llm.ChatMessage{Role: role, Text: tn.Text})
 	}
 
-	a, err := s.recordingSvc.AnalyzeCall(r.Context(), history)
+	a, err := s.recordingSvc.AnalyzeCallForCampaign(r.Context(), t.OrgID, t.CampaignID, history)
 	if err != nil {
 		s.logger.Sugar().Warnw("postTranscriptConclusion: LLM analysis failed", "id", id, "err", err)
 		writeError(w, http.StatusBadGateway, "AI analysis failed: "+err.Error())
@@ -1675,6 +1692,18 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 	}
 	if err := s.db.SaveCallReview(review); err != nil {
 		s.logger.Sugar().Warnw("postTranscriptConclusion: save review failed", "id", id, "err", err)
+	}
+	callLogID, agentUserID := int64(0), int64(0)
+	if callLog, _ := s.db.GetCallLogByCallSid(t.CallSid); callLog != nil {
+		callLogID, agentUserID = callLog.ID, callLog.AgentUserID
+	}
+	if err := s.db.SaveAICallDisposition(db.AICallDisposition{
+		OrgID: t.OrgID, CampaignID: t.CampaignID, LeadID: t.LeadID,
+		CallLogID: callLogID, TranscriptID: id, CallSid: t.CallSid, AgentUserID: agentUserID,
+		Code: a.DispositionCode, Summary: a.Summary, Sentiment: a.Sentiment,
+		Confidence: a.Confidence, Objections: a.Objections, NextAction: a.NextAction,
+	}); err != nil {
+		s.logger.Sugar().Warnw("postTranscriptConclusion: save disposition failed", "id", id, "err", err)
 	}
 	if saved, _ := s.db.GetCallReviewByTranscript(id); saved != nil {
 		writeJSON(w, http.StatusOK, saved)

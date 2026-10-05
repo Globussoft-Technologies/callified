@@ -4,7 +4,6 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
 import SsoReturn from './pages/SsoReturn';
 import MonitorPage from './pages/MonitorPage';
-import KnowledgePage from './pages/KnowledgePage';
 import SandboxPage from './pages/SandboxPage';
 import AuthPage from './components/AuthPage';
 import TopHeader from './components/TopHeader';
@@ -12,8 +11,6 @@ import OnboardingWizard from './components/OnboardingWizard';
 import CrmPage from './pages/CrmPage';
 import OpsPage from './pages/OpsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
-import WhatsAppPage from './pages/WhatsAppPage';
-import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsPage from './pages/SettingsPage';
 import ProductsPage from './pages/ProductsPage';
 import LogsPage from './pages/LogsPage';
@@ -32,6 +29,7 @@ import InteractionHistoryPage from './pages/InteractionHistoryPage';
 import AgentPresencePage from './pages/AgentPresencePage';
 import AgentReportPage from './pages/AgentReportPage';
 import CampaignProgressPage from './pages/CampaignProgressPage';
+import LeadCallStatusReportPage from './pages/LeadCallStatusReportPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import FeatureFlagsPage from './pages/FeatureFlagsPage';
 import RequireRole from './components/RequireRole';
@@ -43,6 +41,7 @@ import { useOrg } from './contexts/OrgContext';
 import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
 import { useHideAiFeatures } from './hooks/useHideAiFeatures';
+import { isCustomerProductionDomain } from './utils/domainFeatures';
 
 function AdminOnly({ children, userRole }) {
   return (userRole === 'Admin' || userRole === 'SuperAdmin') ? children : <Navigate to="/crm" replace />;
@@ -54,6 +53,7 @@ export default function App() {
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
   const hideAiFeatures = useHideAiFeatures();
+  const hidePrelaunchAiTools = isCustomerProductionDomain();
 
   const location = useLocation();
 
@@ -199,11 +199,17 @@ export default function App() {
         } />
         <Route path="/ops" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <OpsPage apiFetch={apiFetch} API_URL={API_URL} />}</AdminOnly>} />
         <Route path="/analytics" element={<AdminOnly userRole={userRole}><AnalyticsPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
-        <Route path="/whatsapp" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <WhatsAppPage apiFetch={apiFetch} API_URL={API_URL} orgProducts={orgProducts} selectedOrg={selectedOrg} orgTimezone={orgTimezone} />}</AdminOnly>} />
-        <Route path="/integrations" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <IntegrationsPage apiFetch={apiFetch} API_URL={API_URL} orgTimezone={orgTimezone} />}</AdminOnly>} />
-        <Route path="/monitor" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} />}</AdminOnly>} />
-        <Route path="/knowledge" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <KnowledgePage API_URL={API_URL} />}</AdminOnly>} />
-        <Route path="/sandbox" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />}</AdminOnly>} />
+        {/* Hidden until the customer-facing communications module is launched. */}
+        <Route path="/whatsapp" element={<Navigate to="/crm" replace />} />
+        {/* Hidden until CRM credential handling and synchronization are production-ready. */}
+        <Route path="/integrations" element={<Navigate to="/crm" replace />} />
+        <Route path="/monitor" element={<AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <MonitorPage API_URL={API_URL} apiFetch={apiFetch} />}</AdminOnly>} />
+        {/* Hidden until RAG retrieval is integrated with the voice pipeline. */}
+        <Route path="/knowledge" element={<Navigate to="/crm" replace />} />
+        <Route path="/sandbox" element={hidePrelaunchAiTools
+          ? <Navigate to="/crm" replace />
+          : <AdminOnly userRole={userRole}>{hideAiFeatures ? <Navigate to="/crm" replace /> : <SandboxPage API_URL={API_URL} />}</AdminOnly>
+        } />
         <Route path="/products" element={
           <AdminOnly userRole={userRole}>
             <ProductsPage
@@ -240,6 +246,11 @@ export default function App() {
           </AdminOnly>
         } />
         <Route path="/campaign-progress" element={<AdminOnly userRole={userRole}><CampaignProgressPage apiFetch={apiFetch} API_URL={API_URL} /></AdminOnly>} />
+        <Route path="/lead-call-status" element={
+          <RequireRole allow={['Admin', 'SuperAdmin', 'TeamLeader']}>
+            <LeadCallStatusReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} orgTimezone={orgTimezone} />
+          </RequireRole>
+        } />
         <Route path="/team" element={
           <AdminOnly userRole={userRole}>
             <TeamPage apiFetch={apiFetch} API_URL={API_URL} />
@@ -250,8 +261,11 @@ export default function App() {
             <UserManagementPage apiFetch={apiFetch} API_URL={API_URL} currentUser={currentUser} />
           </RequireRole>
         } />
-        <Route path="/ai-receptionist" element={hideAiFeatures ? <Navigate to="/crm" replace /> : <ReceptionistPage />} />
-        <Route path="/receptionist" element={<Navigate to="/ai-receptionist" replace />} />
+        <Route path="/ai-receptionist" element={hidePrelaunchAiTools || hideAiFeatures
+          ? <Navigate to="/crm" replace />
+          : <ReceptionistPage />
+        } />
+        <Route path="/receptionist" element={<Navigate to={hidePrelaunchAiTools ? '/crm' : '/ai-receptionist'} replace />} />
         <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
         <Route path="/delete-leads" element={<DeleteLeadsPage />} />
         <Route path="/subscriptions" element={
