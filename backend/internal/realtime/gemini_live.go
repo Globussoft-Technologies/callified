@@ -34,7 +34,7 @@ type Config struct {
 }
 
 type Callbacks struct {
-	OnAudio                  func([]byte)
+	OnAudio                  func(AudioChunk)
 	OnInterimInputTranscript func(string)
 	OnInputTranscript        func(string)
 	OnOutputTranscript       func(string)
@@ -43,6 +43,13 @@ type Callbacks struct {
 	OnCompleteCall           func(CompleteCallRequest) bool
 	OnLanguageSwitch         func(string) bool
 	OnKnowledgeQuery         func(string) string
+}
+
+// AudioChunk is one raw Gemini Live modelTurn inlineData payload.
+// Live output must be signed PCM16 little-endian at 24 kHz.
+type AudioChunk struct {
+	PCM      []byte
+	MIMEType string
 }
 
 type CompleteCallRequest struct {
@@ -387,9 +394,10 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				part, _ := p.(map[string]any)
 				inline, _ := part["inlineData"].(map[string]any)
 				data, _ := inline["data"].(string)
+				mimeType, _ := inline["mimeType"].(string)
 				if data != "" && c.cb.OnAudio != nil {
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
-						c.cb.OnAudio(b)
+						c.cb.OnAudio(AudioChunk{PCM: b, MIMEType: mimeType})
 					}
 				}
 			}

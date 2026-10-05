@@ -456,27 +456,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					epoch uint64
 					pcm   []byte
 				}
-				audioOut := make(chan liveAudioPacket, 256)
 				audioCtx, cancelAudio := context.WithCancel(ctx)
-				var audioWG sync.WaitGroup
-				audioWG.Add(1)
-				go func() {
-					defer audioWG.Done()
-					for {
-						select {
-						case <-audioCtx.Done():
-							return
-						case packet := <-audioOut:
-							if packet.epoch != sess.PlaybackEpoch() || sess.IsBargeInActive() {
-								continue
-							}
-							sendAudioFrameAtEpoch(sess, packet.pcm, packet.epoch)
-						}
-					}
-				}()
+				livePlayout := newLiveAudioPlayout(audioCtx, sess)
 				defer func() {
 					cancelAudio()
-					audioWG.Wait()
+					livePlayout.Wait()
 				}()
 				var transcriptMu sync.Mutex
 				var inputText, outputText strings.Builder
@@ -494,11 +478,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				provisionalLanguage := ""
 				const maxLanguageCorrections = 2
 				newOutputTurn := true
+				audioThisTurn := false
+				liveResampler := audio.NewDownsampler24To8()
 				queueAudio := func(packet liveAudioPacket) {
-					select {
-					case audioOut <- packet:
-					case <-ctx.Done():
-					}
+					livePlayout.QueuePCM(packet.epoch, packet.pcm)
 				}
 				flushPendingAudio := func() {
 					for _, packet := range pendingAudio {
@@ -516,6 +499,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					if audioReleased {
 						sess.DiscardLivePlayback()
 						audioReleased = false
+					}
+				}
+				flushResamplerTail := func() {
+					if !audioThisTurn {
+						return
+					}
+					tail := liveResampler.Flush()
+					if len(tail) == 0 || outputRejected {
+						return
+					}
+					packet := liveAudioPacket{epoch: sess.PlaybackEpoch(), pcm: tail}
+					if outputApproved {
+						audioReleased = true
+						queueAudio(packet)
+					} else {
+						pendingAudio = append(pendingAudio, packet)
 					}
 				}
 				client := realtime.New(realtime.Config{
@@ -544,12 +543,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 								zap.String("language", language))
 						}
 					},
-					OnAudio: func(pcm24k []byte) {
+					OnAudio: func(chunk realtime.AudioChunk) {
+						if chunk.MIMEType != "audio/pcm;rate=24000" {
+							sess.Log.Error("gemini live: rejected unexpected output audio format",
+								zap.String("mime_type", chunk.MIMEType), zap.Int("bytes", len(chunk.PCM)))
+							return
+						}
+						pcm24k := chunk.PCM
+						prefixLen := min(8, len(pcm24k))
+						sess.Log.Debug("gemini live: accepted output audio chunk",
+							zap.String("mime_type", chunk.MIMEType),
+							zap.Int("decoded_bytes", len(pcm24k)),
+							zap.String("first_bytes_hex", fmt.Sprintf("% x", pcm24k[:prefixLen])))
 						responseWatchdog.Cancel()
 						if sess.IsFinalClosing() {
 							sess.MarkFinalCloseAudioStarted()
 						}
 						if newOutputTurn {
+							// Gemini output is a discontinuous stream across turns. Reset
+							// the FIR only here—not at arbitrary WebSocket chunk boundaries—
+							// so an interrupted response cannot bleed into the next reply.
+							liveResampler.Reset()
 							// A new model turn is the reply to the interruption. Allow
 							// its audio through after the previous turn was cancelled.
 							sess.SetBargeIn(false)
@@ -560,9 +574,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							languageRedirectAwaitingInterrupt = false
 							languageRedirectMu.Unlock()
 						}
+						audioThisTurn = true
+						pcm8k := liveResampler.Process(pcm24k)
+						if len(pcm8k) == 0 {
+							return
+						}
 						packet := liveAudioPacket{
 							epoch: sess.PlaybackEpoch(),
-							pcm:   audio.Decimate3x(pcm24k),
+							pcm:   pcm8k,
 						}
 						liveStateMu.Lock()
 						if outputRejected {
@@ -755,6 +774,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						languageRedirectMu.Unlock()
 
 						liveStateMu.Lock()
+						flushResamplerTail()
 						hadOutput := agent != "" || len(pendingAudio) > 0 || audioReleased
 						validOutput := false
 						if forceLanguageRedirectHold && hadOutput {
@@ -774,6 +794,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						outputRejected = false
 						audioReleased = false
 						liveStateMu.Unlock()
+						if validOutput {
+							// Ordered after every PCM packet from this turn; the playout
+							// worker flushes only this final incomplete 20 ms frame.
+							livePlayout.EndTurn(sess.PlaybackEpoch())
+						}
 						languageRedirectMu.Lock()
 						skipInterruptedRedirectTurn := languageRedirectActive &&
 							(languageRedirectInterrupted || forceLanguageRedirectHold) &&
