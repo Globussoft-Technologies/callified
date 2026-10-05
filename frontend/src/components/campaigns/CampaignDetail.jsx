@@ -24,6 +24,7 @@ import {
   ExperimentOutlined,
   FastForwardOutlined,
   FileTextOutlined,
+  FlagOutlined,
   FormOutlined,
   GlobalOutlined,
   HistoryOutlined,
@@ -149,6 +150,20 @@ function withDate(label, tsMs) {
     return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
   }
   return `[${dateStr}] ${label}`;
+}
+
+function activityEventPresentation(label) {
+  const text = String(label || '').replace(/^\s*(?:📞|✅|🎯|❌|⚠️?|ℹ️?)\s*/u, '');
+  const normalized = text.toUpperCase();
+
+  if (normalized.includes('DIALING')) return { Icon: PhoneOutlined, tone: 'dialing', text };
+  if (normalized.includes('CONNECTED')) return { Icon: CheckCircleOutlined, tone: 'connected', text };
+  if (normalized.includes('COMPLETED')) return { Icon: FlagOutlined, tone: 'completed', text };
+  if (normalized.includes('FAILED') || normalized.includes('ERROR')) {
+    return { Icon: CloseCircleOutlined, tone: 'failed', text };
+  }
+  if (normalized.includes('WARNING')) return { Icon: WarningOutlined, tone: 'warning', text };
+  return { Icon: InfoCircleOutlined, tone: 'info', text };
 }
 
 function linkify(text) {
@@ -1777,7 +1792,7 @@ export default function CampaignDetail({
       )}
 
       {/* Live Dial Events Feed — AI dialer events; hide for AI-hidden users */}
-      {!hideAiFeatures && <div style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
+      {!hideAiFeatures && <div className="campaign-activity" style={{ ...card, marginBottom: 14, padding: 14, maxHeight: 200, overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <span style={{ fontSize: 11, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}><BarChartOutlined /> Live Campaign Activity</span>
           {liveEvents.length > 0 && (
@@ -1794,11 +1809,16 @@ export default function CampaignDetail({
             Listening for new events… start a dial to see activity here.
           </div>
         ) : (
-          liveEvents.map((ev, i) => (
-            <div key={i} style={{ fontSize: '0.8rem', color: T.sub, padding: '3px 0', borderBottom: `1px solid ${T.border}`, fontFamily: T.mono }}>
-              {withDate(ev?.label, ev?.ts)}
-            </div>
-          ))
+          liveEvents.map((ev, i) => {
+            const event = activityEventPresentation(ev?.label);
+            const EventIcon = event.Icon;
+            return (
+              <div key={`${ev?.ts || 'event'}-${i}`} className="campaign-activity-row" data-tone={event.tone}>
+                <span className="campaign-activity-icon" aria-hidden="true"><EventIcon /></span>
+                <span>{withDate(event.text, ev?.ts)}</span>
+              </div>
+            );
+          })
         )}
       </div>}
 

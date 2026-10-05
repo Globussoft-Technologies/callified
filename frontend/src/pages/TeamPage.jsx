@@ -1031,9 +1031,8 @@ export default function TeamPage({ apiFetch, API_URL }) {
                         </button>
                       ) : (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                          <code style={{
-                            background: '#f3f4f6', border: `1px solid ${T.border}`,
-                            borderRadius: 4, padding: '2px 6px', color: T.text, fontSize: 12,
+                          <code className="team-api-key" style={{
+                            borderRadius: 4, padding: '2px 6px', fontSize: 12,
                           }}>
                             {key.key_prefix}…
                           </code>

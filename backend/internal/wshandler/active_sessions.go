@@ -10,19 +10,20 @@ import (
 // by Handler.ActiveSessions for the GET /api/active-calls debug endpoint so
 // operators can grab a live stream_sid without tailing logs.
 type ActiveSession struct {
-	StreamSid  string `json:"stream_sid"`
-	CallSid    string `json:"call_sid,omitempty"`
-	LeadName   string `json:"lead_name,omitempty"`
-	LeadPhone  string `json:"lead_phone,omitempty"`
-	CampaignID int64  `json:"campaign_id,omitempty"`
-	OrgID      int64  `json:"org_id,omitempty"`
-	UserID     int64  `json:"user_id,omitempty"`
-	UserEmail  string `json:"user_email,omitempty"`
-	IsExotel   bool   `json:"is_exotel"`
-	IsWebSim   bool   `json:"is_web_sim"`
-	StartedAt  string `json:"started_at"` // RFC3339
-	DurationS  int    `json:"duration_s"`
-	MonitorURL string `json:"monitor_url"`
+	StreamSid   string `json:"stream_sid"`
+	CallSid     string `json:"call_sid,omitempty"`
+	LeadName    string `json:"lead_name,omitempty"`
+	LeadPhone   string `json:"lead_phone,omitempty"`
+	CampaignID  int64  `json:"campaign_id,omitempty"`
+	OrgID       int64  `json:"org_id,omitempty"`
+	UserID      int64  `json:"user_id,omitempty"`
+	UserEmail   string `json:"user_email,omitempty"`
+	IsExotel    bool   `json:"is_exotel"`
+	IsWebSim    bool   `json:"is_web_sim"`
+	StartedAt   string `json:"started_at"` // RFC3339
+	DurationS   int    `json:"duration_s"`
+	MonitorURL  string `json:"monitor_url"`
+	AudioFormat string `json:"audio_format"`
 }
 
 // ActiveSessions returns a snapshot of every live call session. Safe to call
@@ -57,6 +58,12 @@ func (h *Handler) ActiveSessions() []ActiveSession {
 			StartedAt:  sess.CallStart.UTC().Format(time.RFC3339),
 			DurationS:  int(now.Sub(sess.CallStart).Seconds()),
 			MonitorURL: fmt.Sprintf("/ws/monitor/%s", sess.StreamSid),
+			AudioFormat: func() string {
+				if sess.UseUlaw {
+					return "ulaw_8k"
+				}
+				return "pcm16_8k"
+			}(),
 		})
 		return true
 	})

@@ -2,6 +2,17 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import AppIcon from '../common/AppIcon';
 import AppSelect from '../common/AppSelect';
+import {
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  FlagOutlined,
+  InfoCircleOutlined,
+  LinkOutlined,
+  PhoneOutlined,
+  RocketOutlined,
+  StopOutlined,
+  WarningOutlined,
+} from '@ant-design/icons';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -28,6 +39,10 @@ function withDate(label, tsMs) {
     return label.replace(/\[(\d{2}:\d{2}:\d{2})\]/, `[${dateStr} $1]`);
   }
   return `[${dateStr}] ${label}`;
+}
+
+function stripActivityEmoji(label) {
+  return String(label || '').replace(/^\s*(?:📞|✅|🎯|❌|📵|⚠️?|💥|🚀|🏁|ℹ️?)\s*/u, '');
 }
 
 function parseActivity(entry) {
@@ -57,18 +72,19 @@ function parseActivity(entry) {
       label: line,
     };
   }
-  parsed.raw = parsed.label.replace(/\s*\(\s*\)/g, '');
+  parsed.raw = stripActivityEmoji(parsed.label).replace(/\s*\(\s*\)/g, '');
   return parsed;
 }
 
 export default function LogsTab({ API_URL, apiFetch }) {
+  const initialCampaignFilter = new URLSearchParams(window.location.search).get('campaign_id') || '';
   const { fetchSseTicket } = useAuth();
   const [mode, setMode] = useState('activity');
   const [filter, setFilter] = useState('');
   const [paused, setPaused] = useState(false);
   const [activityLogs, setActivityLogs] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
-  const [campaignFilter, setCampaignFilter] = useState('');
+  const [campaignFilter, setCampaignFilter] = useState(initialCampaignFilter);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
@@ -152,13 +168,33 @@ export default function LogsTab({ API_URL, apiFetch }) {
     return () => { cancelled = true; if (es) es.close(); };
   }, [mode, paused, filter, API_URL, fetchSseTicket]);
 
-  const activityIcon = (text) => {
-    if (text.includes('📞')) return { bg: 'rgba(99,102,241,0.06)', border: 'rgba(99,102,241,0.2)' };
-    if (text.includes('✅') || text.includes('🎯')) return { bg: 'rgba(16,185,129,0.06)', border: 'rgba(16,185,129,0.2)' };
-    if (text.includes('❌')) return { bg: 'rgba(245,158,11,0.06)', border: 'rgba(245,158,11,0.2)' };
-    if (text.includes('📵') || text.includes('⚠️') || text.includes('💥')) return { bg: 'rgba(239,68,68,0.06)', border: 'rgba(239,68,68,0.2)' };
-    if (text.includes('🚀') || text.includes('🏁')) return { bg: 'rgba(139,92,246,0.06)', border: 'rgba(139,92,246,0.2)' };
-    return { bg: T.bg, border: T.border };
+  const activityPresentation = (entry) => {
+    const normalized = `${entry.status} ${entry.raw}`.toUpperCase();
+    if (normalized.includes('DIALING')) {
+      return { Icon: PhoneOutlined, bg: 'rgba(99,102,241,0.08)', border: '#6366f1', color: '#818cf8' };
+    }
+    if (normalized.includes('CONNECTED')) {
+      return { Icon: LinkOutlined, bg: 'rgba(6,182,212,0.08)', border: '#06b6d4', color: '#22d3ee' };
+    }
+    if (normalized.includes('COMPLETED')) {
+      return { Icon: FlagOutlined, bg: 'rgba(16,185,129,0.08)', border: '#10b981', color: '#34d399' };
+    }
+    if (normalized.includes('FAILED') || normalized.includes('ERROR')) {
+      return { Icon: CloseCircleOutlined, bg: 'rgba(239,68,68,0.08)', border: '#ef4444', color: '#f87171' };
+    }
+    if (normalized.includes('NO_ANSWER') || normalized.includes('NO ANSWER') || normalized.includes('BUSY') || normalized.includes('DNC')) {
+      return { Icon: StopOutlined, bg: 'rgba(245,158,11,0.08)', border: '#f59e0b', color: '#fbbf24' };
+    }
+    if (normalized.includes('WARNING')) {
+      return { Icon: WarningOutlined, bg: 'rgba(245,158,11,0.08)', border: '#f59e0b', color: '#fbbf24' };
+    }
+    if (normalized.includes('STARTED') || normalized.includes('STARTING')) {
+      return { Icon: RocketOutlined, bg: 'rgba(139,92,246,0.08)', border: '#8b5cf6', color: '#a78bfa' };
+    }
+    if (normalized.includes('STOPPED') || normalized.includes('FINISHED')) {
+      return { Icon: CheckCircleOutlined, bg: 'rgba(139,92,246,0.08)', border: '#8b5cf6', color: '#a78bfa' };
+    }
+    return { Icon: InfoCircleOutlined, bg: T.bg, border: T.border, color: T.muted };
   };
 
   const parsedLogs = useMemo(() => activityLogs.map(parseActivity), [activityLogs]);
@@ -388,14 +424,23 @@ export default function LogsTab({ API_URL, apiFetch }) {
               </div>
             ) : (
               pageLogs.map((p, i) => {
-                const style = activityIcon(p.raw);
+                const style = activityPresentation(p);
+                const ActivityIcon = style.Icon;
                 return (
                   <div key={`${safePage}-${i}`} style={{
+                    display: 'grid', gridTemplateColumns: '26px minmax(0, 1fr)', alignItems: 'center', gap: 9,
                     padding: '8px 12px', marginBottom: 4, borderRadius: 6,
                     background: style.bg, borderLeft: `3px solid ${style.border}`,
                     fontSize: 13, color: T.sub, fontFamily: T.font,
                   }}>
-                    {withDate(p.raw, p.tsMs)}
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 24, height: 24, borderRadius: 6,
+                      color: style.color, background: `${style.color}14`, fontSize: 14,
+                    }} aria-hidden="true">
+                      <ActivityIcon />
+                    </span>
+                    <span>{withDate(p.raw, p.tsMs)}</span>
                   </div>
                 );
               })

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatDate } from '../../utils/dateFormat';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -22,27 +23,23 @@ export default function SettingsTab({
   selectedOrg,
   promptDirty, handleSaveSystemPrompt, promptSaving, promptSaved, systemPromptAuto, systemPromptCustom,
   setSystemPromptCustom, setPromptDirty,
-  orgTimezone
+  orgTimezone, timezone, setTimezone, timezoneSaving, handleSaveTimezone
 }) {
   const hideAiFeatures = useHideAiFeatures();
   const navigate = useNavigate();
-  const [callActions, setCallActions] = useState({
-    dial: true,
-    browserCall: true,
-    simWebCall: true,
-  });
-  const [callActionsSaved, setCallActionsSaved] = useState(false);
-
-  useEffect(() => {
+  const [callActions, setCallActions] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('callified_call_actions') || '{}');
-      setCallActions({
+      return {
         dial: saved.dial !== false,
         browserCall: saved.browserCall !== false,
         simWebCall: saved.simWebCall !== false,
-      });
-    } catch { /* ignore */ }
-  }, []);
+      };
+    } catch {
+      return { dial: true, browserCall: true, simWebCall: true };
+    }
+  });
+  const [callActionsSaved, setCallActionsSaved] = useState(false);
 
   const handleCallActionChange = (key) => {
     setCallActions(prev => ({ ...prev, [key]: !prev[key] }));
@@ -81,16 +78,47 @@ export default function SettingsTab({
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
-          {hideAiFeatures ? 'Settings' : <><span style={{ color: T.amber }}>AI Voice</span> Settings</>}
+          Settings
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          {hideAiFeatures
-            ? 'Configure call action visibility and other preferences.'
-            : 'Configure how the AI pronounces product names, brand names, and technical terms during calls.'}
+          Manage organization defaults, AI behavior, and your personal workspace preferences.
         </p>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        <div style={card}>
+          <h3 style={{ margin: '0 0 18px', fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="settings" /> Organization</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) minmax(240px, 1fr) auto', gap: 14, alignItems: 'end' }}>
+            <div>
+              <label style={labelStyle}>Organization</label>
+              <input value={selectedOrg?.name || ''} readOnly style={{ ...inputStyle, cursor: 'default' }} />
+            </div>
+            <div>
+              <label style={labelStyle}>Timezone</label>
+              <AppSelect
+                value={timezone}
+                onChange={setTimezone}
+                searchable
+                options={[
+                  'Asia/Kolkata', 'Asia/Dubai', 'Asia/Singapore', 'Europe/London',
+                  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+                ].map(value => ({ value, label: value }))}
+                width="100%"
+              />
+            </div>
+            <button onClick={handleSaveTimezone} disabled={timezoneSaving} style={{
+              height: 42, padding: '0 18px', border: 'none', borderRadius: 8,
+              background: T.accent, color: '#fff', fontWeight: 700, cursor: timezoneSaving ? 'wait' : 'pointer',
+            }}>{timezoneSaving ? 'Saving...' : 'Save'}</button>
+          </div>
+          <button onClick={() => navigate('/exotel-accounts')} style={{
+            marginTop: 16, padding: 0, border: 0, background: 'transparent', color: T.accent,
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+          }}>Manage provider accounts →</button>
+        </div>
+
+        {!hideAiFeatures && <h3 style={{ margin: '8px 0 -6px', fontSize: 14, color: T.muted, textTransform: 'uppercase' }}>Voice &amp; AI</h3>}
 
         {/* Pronunciation Guide */}
         {!hideAiFeatures && (<div style={card}>
@@ -182,27 +210,11 @@ export default function SettingsTab({
           )}
         </div>)}
 
-        {/* How it works */}
-        {!hideAiFeatures && (<div style={{
-          ...card,
-          background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.2)',
-          boxShadow: 'none',
-        }}>
-          <h4 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 700, color: T.amber }}><AppIcon name="idea" /> How it works</h4>
-          <p style={{ color: T.sub, fontSize: 13, margin: 0, lineHeight: 1.7 }}>
-            The pronunciation guide is injected into the AI's prompt at the start of every call.
-            When the AI generates a response containing a mapped word, it will use the phonetic version instead.
-            The TTS engine then speaks the phonetic text, resulting in correct pronunciation.
-            <br /><br />
-            <strong style={{ color: T.text }}>Example:</strong> If you add "Adsgpt" → "Ads G P T", the AI will say "Ads G P T" instead of trying to sound out "Adsgpt".
-          </p>
-        </div>)}
-
         {/* System Prompt */}
         {!hideAiFeatures && selectedOrg && (
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="robot" /> AI System Prompt</h3>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="robot" /> Additional AI Instructions</h3>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 {!promptDirty && promptSaved && (
                   <span style={{ color: '#10b981', fontSize: 13, fontWeight: 600 }}><AppIcon name="check" /> Saved</span>
@@ -223,7 +235,7 @@ export default function SettingsTab({
               </div>
             </div>
             <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
-              This is the product knowledge the AI receives during calls. Edit to customize what the AI knows.
+              Add organization-wide guidance without replacing Callified's protected safety, language, product, and call-flow rules.
             </p>
 
             {systemPromptAuto && !systemPromptCustom && (
@@ -242,7 +254,7 @@ export default function SettingsTab({
 
             <div>
               <label style={labelStyle}>
-                <AppIcon name="edit" /> Custom System Prompt {systemPromptCustom ? '(Active)' : '(Optional Override)'}
+                <AppIcon name="edit" /> Organization Instructions {systemPromptCustom ? '(Active)' : '(Optional)'}
               </label>
               <textarea
                 rows={8}
@@ -261,35 +273,15 @@ export default function SettingsTab({
                 </span>
               </div>
               <p style={{ color: T.muted, fontSize: 12, marginTop: 6 }}>
-                If empty, the auto-generated version from your products is used. If you write a custom prompt, it overrides the auto-generated one.
+                Product knowledge remains managed in Products. These instructions are appended to every AI call for this organization.
               </p>
             </div>
           </div>
         )}
 
-        {/* Provider Accounts shortcut for non-AI users */}
-        {hideAiFeatures && (
-          <div style={card}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}>Provider Accounts</h3>
-            </div>
-            <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
-              Manage your Exotel telephony provider accounts.
-            </p>
-            <button
-              onClick={() => navigate('/exotel-accounts')}
-              style={{
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: 'none',
-                borderRadius: 8, color: '#fff', padding: '10px 18px',
-                cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: T.font,
-              }}>
-              Manage Provider Accounts
-            </button>
-          </div>
-        )}
-
         {/* Call Action Visibility */}
-        {!hideAiFeatures && (<div style={card}>
+        <h3 style={{ margin: '8px 0 -6px', fontSize: 14, color: T.muted, textTransform: 'uppercase' }}>Personal Preferences</h3>
+        <div style={card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: T.text }}><AppIcon name="phone" /> Call Action Visibility</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -308,7 +300,7 @@ export default function SettingsTab({
             </div>
           </div>
           <p style={{ color: T.muted, fontSize: 13, marginBottom: 16, marginTop: 0 }}>
-            Choose which call buttons appear in the lead action row on the campaign page.
+            Choose which call buttons appear in this browser. These preferences do not affect other team members or devices.
           </p>
 
           {hideAiFeatures ? (
@@ -346,7 +338,7 @@ export default function SettingsTab({
               <span style={{ fontSize: 14, color: T.text, fontWeight: 600 }}><AppIcon name={icon} /> {label}</span>
             </label>
           )))}
-        </div>)}
+        </div>
 
       </div>
     </div>

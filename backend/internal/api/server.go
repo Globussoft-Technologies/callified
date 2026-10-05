@@ -598,6 +598,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// short-lived ?ticket=… (kind="sse") minted by /api/sse/ticket — the
 	// long-lived auth JWT must never appear in URLs. (issue #80)
 	mux.HandleFunc("GET /api/sse/ticket", auth(s.sseTicket))
+	mux.HandleFunc("GET /api/monitor/ticket", auth(s.monitorTicket))
 	mux.HandleFunc("GET /api/sse/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/live-logs", s.requireSSETicket(s.liveLogs))
 	mux.HandleFunc("GET /api/sse/campaign/{id}/events", s.requireSSETicket(s.campaignEvents))

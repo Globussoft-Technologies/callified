@@ -32,6 +32,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureOrganizationsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure organizations table: %w", err)
 	}
+	if err := d.EnsurePronunciationGuideTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure pronunciation guide table: %w", err)
+	}
 	if err := d.EnsureUserLoginColumns(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure user login columns: %w", err)
 	}

@@ -132,7 +132,7 @@ func (s *Server) getReports(w http.ResponseWriter, r *http.Request) {
 // @Failure     500  {object}  ErrorResponse
 // @Router      /api/pronunciation [get]
 func (s *Server) listPronunciations(w http.ResponseWriter, r *http.Request) {
-	list, err := s.db.GetAllPronunciations()
+	list, err := s.db.GetAllPronunciations(getAuth(r).OrgID)
 	if err != nil {
 		s.logger.Sugar().Errorw("listPronunciations", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -179,7 +179,7 @@ func (s *Server) addPronunciation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "phonetic must differ from word")
 		return
 	}
-	if err := s.db.UpsertPronunciation(body.Word, body.Phonetic); err != nil {
+	if err := s.db.UpsertPronunciation(getAuth(r).OrgID, body.Word, body.Phonetic); err != nil {
 		s.logger.Sugar().Errorw("addPronunciation", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -208,7 +208,7 @@ func (s *Server) deletePronunciation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	deleted, err := s.db.DeletePronunciation(id)
+	deleted, err := s.db.DeletePronunciation(getAuth(r).OrgID, id)
 	if err != nil {
 		s.logger.Sugar().Errorw("deletePronunciation", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

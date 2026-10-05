@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { Navigate } from 'react-router-dom';
 import SettingsTab from '../components/tabs/SettingsTab';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/UIContext';
 
 export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezone }) {
+  const { hasPermission } = useAuth();
+  const toast = useToast();
   // Pronunciation State
   const [pronunciations, setPronunciations] = useState([]);
   const [pronFormData, setPronFormData] = useState({ word: '', phonetic: '' });
@@ -13,19 +18,30 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptDirty, setPromptDirty] = useState(false);
   const [promptSaved, setPromptSaved] = useState(false);
+  const [timezone, setTimezone] = useState(orgTimezone || 'Asia/Kolkata');
+  const [timezoneSaving, setTimezoneSaving] = useState(false);
+
+  useEffect(() => {
+    setTimezone(selectedOrg?.timezone || orgTimezone || 'Asia/Kolkata');
+  }, [selectedOrg, orgTimezone]);
 
   const fetchPronunciations = async () => {
-    try { const res = await apiFetch(`${API_URL}/pronunciation`); setPronunciations(await res.json()); } catch { /* ignore */ }
+    try {
+      const res = await apiFetch(`${API_URL}/pronunciation`);
+      if (!res.ok) throw new Error('Unable to load pronunciation rules');
+      setPronunciations(await res.json());
+    } catch (error) { toast(error.message, 'error'); }
   };
 
   const fetchSystemPrompt = async (orgId) => {
     try {
       const res = await apiFetch(`${API_URL}/organizations/${orgId}/system-prompt`);
+      if (!res.ok) throw new Error('Unable to load AI instructions');
       const data = await res.json();
       setSystemPromptAuto(data.auto_generated || '');
       setSystemPromptCustom(data.custom_prompt || '');
       setPromptDirty(false);
-    } catch { /* ignore */ }
+    } catch (error) { toast(error.message, 'error'); }
   };
 
   useEffect(() => {
@@ -44,35 +60,68 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
     }
     setPronError('');
     try {
-      await apiFetch(`${API_URL}/pronunciation`, {
+      const res = await apiFetch(`${API_URL}/pronunciation`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(pronFormData)
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Unable to save pronunciation rule');
+      }
       setPronFormData({ word: '', phonetic: '' });
       fetchPronunciations();
-    } catch(e) { console.error(e); }
+    } catch (error) { setPronError(error.message); }
   };
 
   const handleDeletePronunciation = async (id) => {
     try {
-      await apiFetch(`${API_URL}/pronunciation/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_URL}/pronunciation/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Unable to remove pronunciation rule');
       fetchPronunciations();
-    } catch(e) { console.error(e); }
+    } catch (error) { toast(error.message, 'error'); }
   };
 
   const handleSaveSystemPrompt = async () => {
     if (!selectedOrg) return;
     setPromptSaving(true);
-    await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
-      method: 'PUT', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ custom_prompt: systemPromptCustom })
-    });
-    setPromptSaving(false);
-    setPromptDirty(false);
-    setPromptSaved(true);
-    setTimeout(() => setPromptSaved(false), 3000);
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/system-prompt`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ custom_prompt: systemPromptCustom })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Unable to save AI instructions');
+      }
+      setPromptDirty(false);
+      setPromptSaved(true);
+      setTimeout(() => setPromptSaved(false), 3000);
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setPromptSaving(false);
+    }
   };
+
+  const handleSaveTimezone = async () => {
+    if (!selectedOrg) return;
+    setTimezoneSaving(true);
+    try {
+      const res = await apiFetch(`${API_URL}/organizations/${selectedOrg.id}/timezone`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone }),
+      });
+      if (!res.ok) throw new Error('Unable to save organization timezone');
+      toast('Organization timezone saved', 'success');
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setTimezoneSaving(false);
+    }
+  };
+
+  if (!hasPermission('settings.manage')) return <Navigate to="/crm" replace />;
 
   return (
     <SettingsTab
@@ -85,6 +134,8 @@ export default function SettingsPage({ apiFetch, API_URL, selectedOrg, orgTimezo
       promptSaving={promptSaving} promptSaved={promptSaved} systemPromptAuto={systemPromptAuto}
       systemPromptCustom={systemPromptCustom} setSystemPromptCustom={setSystemPromptCustom}
       setPromptDirty={setPromptDirty}
+      timezone={timezone} setTimezone={setTimezone}
+      timezoneSaving={timezoneSaving} handleSaveTimezone={handleSaveTimezone}
     />
   );
 }

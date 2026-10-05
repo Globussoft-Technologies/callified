@@ -558,9 +558,56 @@ func (d *DB) CompleteTask(id, orgID int64) error {
 
 // Pronunciation mirrors the pronunciation_guide table.
 type Pronunciation struct {
-	ID       int64  `json:"id"`
-	Word     string `json:"word"`
-	Phonetic string `json:"phonetic"`
+	ID        int64  `json:"id"`
+	Word      string `json:"word"`
+	Phonetic  string `json:"phonetic"`
+	CreatedAt string `json:"created_at"`
+}
+
+// EnsurePronunciationGuideTable scopes pronunciation rules to an organization.
+func (d *DB) EnsurePronunciationGuideTable() error {
+	if _, err := d.pool.Exec(`CREATE TABLE IF NOT EXISTS pronunciation_guide (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		org_id INT NOT NULL DEFAULT 0,
+		word VARCHAR(50) NOT NULL,
+		phonetic VARCHAR(50) NOT NULL,
+		created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`); err != nil {
+		return err
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD COLUMN org_id INT NOT NULL DEFAULT 0 AFTER id`); err != nil && !isMySQLError(err, 1060) {
+		return err
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP`); err != nil && !isMySQLError(err, 1060) {
+		return err
+	}
+
+	rows, err := d.pool.Query(`SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+		WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='pronunciation_guide'
+		AND NON_UNIQUE=0 AND INDEX_NAME<>'PRIMARY'
+		GROUP BY INDEX_NAME HAVING GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX)='word'`)
+	if err != nil {
+		return err
+	}
+	var legacyIndexes []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		legacyIndexes = append(legacyIndexes, name)
+	}
+	rows.Close()
+	for _, name := range legacyIndexes {
+		if _, err := d.pool.Exec(fmt.Sprintf("ALTER TABLE pronunciation_guide DROP INDEX `%s`", strings.ReplaceAll(name, "`", "``"))); err != nil {
+			return err
+		}
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE pronunciation_guide ADD UNIQUE INDEX uq_pronunciation_org_word (org_id, word)`); err != nil && !isMySQLError(err, 1061) {
+		return err
+	}
+	return nil
 }
 
 // GetAllPronunciations returns all pronunciation entries ordered by word.
@@ -573,11 +620,11 @@ type Pronunciation struct {
 // inputs, so any row still matching today is legacy data that pre-dates that
 // validation. Filtering at read time means we don't need a one-shot DB
 // migration to clean it up across every deployment.
-func (d *DB) GetAllPronunciations() ([]Pronunciation, error) {
+func (d *DB) GetAllPronunciations(orgID int64) ([]Pronunciation, error) {
 	rows, err := d.pool.Query(
-		`SELECT id, word, phonetic FROM pronunciation_guide
-		 WHERE LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
-		 ORDER BY word`)
+		`SELECT id, word, phonetic, COALESCE(DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),'') FROM pronunciation_guide
+		 WHERE org_id=? AND LOWER(TRIM(word)) <> LOWER(TRIM(phonetic))
+		 ORDER BY word`, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -585,7 +632,7 @@ func (d *DB) GetAllPronunciations() ([]Pronunciation, error) {
 	var list []Pronunciation
 	for rows.Next() {
 		var p Pronunciation
-		if err := rows.Scan(&p.ID, &p.Word, &p.Phonetic); err != nil {
+		if err := rows.Scan(&p.ID, &p.Word, &p.Phonetic, &p.CreatedAt); err != nil {
 			return nil, err
 		}
 		list = append(list, p)
@@ -594,23 +641,23 @@ func (d *DB) GetAllPronunciations() ([]Pronunciation, error) {
 }
 
 // UpsertPronunciation inserts a new entry or updates the phonetic for an existing word.
-func (d *DB) UpsertPronunciation(word, phonetic string) error {
+func (d *DB) UpsertPronunciation(orgID int64, word, phonetic string) error {
 	var id int64
-	err := d.pool.QueryRow(`SELECT id FROM pronunciation_guide WHERE word=?`, word).Scan(&id)
+	err := d.pool.QueryRow(`SELECT id FROM pronunciation_guide WHERE org_id=? AND word=?`, orgID, word).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, err = d.pool.Exec(`INSERT INTO pronunciation_guide (word, phonetic) VALUES (?,?)`, word, phonetic)
+		_, err = d.pool.Exec(`INSERT INTO pronunciation_guide (org_id, word, phonetic) VALUES (?,?,?)`, orgID, word, phonetic)
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	_, err = d.pool.Exec(`UPDATE pronunciation_guide SET phonetic=? WHERE word=?`, phonetic, word)
+	_, err = d.pool.Exec(`UPDATE pronunciation_guide SET phonetic=? WHERE org_id=? AND word=?`, phonetic, orgID, word)
 	return err
 }
 
 // DeletePronunciation deletes a pronunciation entry. Returns true if deleted.
-func (d *DB) DeletePronunciation(id int64) (bool, error) {
-	res, err := d.pool.Exec(`DELETE FROM pronunciation_guide WHERE id=?`, id)
+func (d *DB) DeletePronunciation(orgID, id int64) (bool, error) {
+	res, err := d.pool.Exec(`DELETE FROM pronunciation_guide WHERE id=? AND org_id=?`, id, orgID)
 	if err != nil {
 		return false, err
 	}
