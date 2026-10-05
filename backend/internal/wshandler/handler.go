@@ -411,6 +411,47 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return true
 				})
 				defer responseWatchdog.Stop()
+				// Gemini's automatic activity detection handles the end of a spoken
+				// turn, but it does not decide what to do when the customer does not
+				// speak at all. Keep that policy on our side: after a completed agent
+				// response, give the customer 30 seconds, ask three short check-ins at
+				// ten-second intervals, then ask Gemini for one final goodbye. The
+				// normal final-audio path will hang up only after that goodbye is sent.
+				inactivityWatchdog := newLiveInactivityWatchdog(30*time.Second, 10*time.Second, 3,
+					func(attempt int) bool {
+						if sess.IsFinalClosing() || ctx.Err() != nil {
+							return false
+						}
+						instruction := "SYSTEM CUSTOMER-INACTIVITY EVENT: The customer has been silent. " +
+							"Speak exactly one brief customer-facing check-in asking whether they are still there. " +
+							"Do not advance the call flow, say goodbye, or mention this event."
+						if !sess.RequestLiveResponse(instruction) {
+							sess.Log.Warn("gemini live: inactivity reminder unavailable", zap.Int("attempt", attempt))
+							return false
+						}
+						sess.Log.Info("gemini live: requested inactivity reminder", zap.Int("attempt", attempt))
+						return true
+					},
+					func() {
+						if sess.IsFinalClosing() || ctx.Err() != nil {
+							return
+						}
+						responseWatchdog.Cancel()
+						sess.RequestFinalClose()
+						instruction := "SYSTEM CUSTOMER-INACTIVITY CLOSE: The customer did not respond after three check-ins. " +
+							"Speak exactly one short, polite goodbye. Do not ask a question, mention silence or timeouts, or continue the call flow."
+						if !sess.RequestLiveResponse(instruction) {
+							sess.Log.Warn("gemini live: inactivity goodbye unavailable; ending call")
+							select {
+							case sess.TTSSentences <- "":
+							case <-ctx.Done():
+							}
+							return
+						}
+						sess.Log.Info("gemini live: closing after customer inactivity")
+					},
+				)
+				defer inactivityWatchdog.Stop()
 				type liveAudioPacket struct {
 					epoch uint64
 					pcm   []byte
@@ -484,6 +525,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					Language: sess.Language, Greeting: sess.GreetingText,
 				}, realtime.Callbacks{
 					OnInterimInputTranscript: func(text string) {
+						if strings.TrimSpace(text) != "" {
+							// Interim transcription proves the customer is speaking. Do not
+							// wait for a long utterance to become final before cancelling the
+							// inactivity sequence.
+							inactivityWatchdog.CustomerSpoke()
+						}
 						language, detected := languageGuard.ProvisionalCustomer(text)
 						if !detected {
 							return
@@ -531,8 +578,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						liveStateMu.Unlock()
 					},
 					OnInputTranscript: func(text string) {
-						if strings.TrimSpace(text) != "" && sess.IsBargeInPending() {
-							sess.ConfirmBargeIn()
+						if strings.TrimSpace(text) != "" {
+							inactivityWatchdog.CustomerSpoke()
+							if sess.IsBargeInPending() {
+								sess.ConfirmBargeIn()
+							}
 						}
 						transcriptMu.Lock()
 						inputText.WriteString(text)
@@ -653,6 +703,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						return allowed
 					},
+					OnLanguageSwitch: func(language string) bool {
+						previous := languageGuard.Confirmed()
+						if !languageGuard.ApplyExplicitSwitch(language) {
+							sess.Log.Warn("gemini live: rejected unsupported language tool request",
+								zap.String("language", language))
+							return false
+						}
+						responseWatchdog.Cancel()
+						if previous != language {
+							sess.DiscardLivePlayback()
+							sess.Log.Info("gemini live: accepted explicit semantic language switch",
+								zap.String("from", previous),
+								zap.String("to", language))
+						}
+						return true
+					},
 					OnKnowledgeQuery: func(query string) string {
 						query = strings.TrimSpace(query)
 						if query == "" || h.ragClient == nil || sess.OrgID == 0 {
@@ -769,6 +835,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if validOutput {
 							languageCorrections = 0
 							correctionCustomer = ""
+						}
+						if validOutput && !sess.IsFinalClosing() {
+							inactivityWatchdog.Arm()
 						}
 						if validOutput && sess.IsFinalClosing() && sess.FinalCloseAudioStarted() {
 							select {

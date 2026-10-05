@@ -41,6 +41,7 @@ type Callbacks struct {
 	OnInterrupted            func()
 	OnTurnComplete           func()
 	OnCompleteCall           func(CompleteCallRequest) bool
+	OnLanguageSwitch         func(string) bool
 	OnKnowledgeQuery         func(string) string
 }
 
@@ -224,6 +225,21 @@ func (c *Client) setupMessage() map[string]any {
 			"required": []string{"query"},
 		},
 	}
+	switchLanguage := map[string]any{
+		"name":        "switch_language",
+		"description": "Switch the reply language only when the customer explicitly requests another language. Never call this merely because the customer speaks, mixes, or is transcribed in another language.",
+		"parameters": map[string]any{
+			"type": "OBJECT",
+			"properties": map[string]any{
+				"language_code": map[string]any{
+					"type":        "STRING",
+					"description": "The explicitly requested reply language.",
+					"enum":        []string{"en", "hi", "mr", "ta", "te", "kn", "bn", "gu", "pa", "ml"},
+				},
+			},
+			"required": []string{"language_code"},
+		},
+	}
 	return map[string]any{
 		"setup": map[string]any{
 			"model": "models/" + model,
@@ -254,7 +270,7 @@ func (c *Client) setupMessage() map[string]any {
 			},
 			"contextWindowCompression": map[string]any{"slidingWindow": map[string]any{}},
 			"sessionResumption":        map[string]any{},
-			"tools":                    []any{map[string]any{"functionDeclarations": []any{completeCall, searchKnowledge}}},
+			"tools":                    []any{map[string]any{"functionDeclarations": []any{completeCall, searchKnowledge, switchLanguage}}},
 		},
 	}
 }
@@ -302,17 +318,16 @@ func liveLanguageGuidance(language string) string {
 		return ""
 	}
 	return fmt.Sprintf(`## LIVE AUDIO LANGUAGE — HIGHEST PRIORITY
-The campaign language %s (%s) controls ONLY the opening greeting. It is not a language lock for the rest of the call.
-Maintain one CURRENT_REPLY_LANGUAGE, initially %s. Change it only after either an explicit language request or a clearly recognized, completed customer utterance in another language.
-A completed transcription written in an unambiguous native script—Telugu, Kannada, Tamil, Bengali, Gujarati, Gurmukhi, or Malayalam—is strong language evidence even when the sentence contains only two meaningful words. Reply to that turn immediately in the language of that script.
-Never switch because of noise, accent, pronunciation alone, a partial transcription, or one unclear short Latin-script phrase. In particular, do not guess Tamil or any other language from ambiguous English-like words. When evidence is unclear, retain CURRENT_REPLY_LANGUAGE and ask a brief clarification in it.
-For mixed-language speech, switch only when the dominant meaningful content clearly uses another language; otherwise retain CURRENT_REPLY_LANGUAGE and preserve natural English product terms.
-A Latin-script transcription may represent an Indian language. In that case, rely on the customer's audio, pronunciation, and conversation context; never assume the language is English merely because the transcription uses Latin letters.
+Maintain one CURRENT_REPLY_LANGUAGE, initially the campaign language %s (%s).
+CURRENT_REPLY_LANGUAGE is locked. Change it only when the customer explicitly requests another supported language, for example "speak in Hindi", "Kannada dalli mathadi", or "switch to English".
+When an explicit request occurs, call switch_language with the requested language code before speaking in that language. Wait for the tool result. Change CURRENT_REPLY_LANGUAGE only when the tool result is accepted.
+Never switch merely because the customer speaks, mixes, or is transcribed in another language. Native script, Romanized speech, accent, pronunciation, noise, partial transcription, and model language detection are not permission to switch.
+If the customer uses another language without requesting a switch, continue in CURRENT_REPLY_LANGUAGE. If necessary, ask in CURRENT_REPLY_LANGUAGE whether they want you to change languages, and switch only after an explicit confirmation.
 ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY: Whenever CURRENT_REPLY_LANGUAGE is English, use ONLY a clear, natural Indian English accent, pronunciation, rhythm, intonation, and prosody for the entire utterance from its first word to its last. Keep the same Indian English accent on every English turn, including after interruptions, language switches, tool calls, and recovery responses. Never drift into or imitate an American, British, Australian, or any other non-Indian English accent. Use simple conversational phrasing familiar to Indian customers. This rule overrides the delivery style of all English examples, persona text, and call-flow text.
 A short acknowledgement such as yes, no, okay, haan, or its translated equivalent inherits CURRENT_REPLY_LANGUAGE and must not cause a switch or a reversion.
-Once a language change is confirmed, update CURRENT_REPLY_LANGUAGE and keep using it until another qualifying change occurs. Never translate a clearly understood customer sentence into %s and then answer in %s.
-The language used in persona text, call-flow steps, examples, product knowledge, or earlier agent messages must never override the customer's latest clearly recognized language.
-Never announce or discuss a language switch.`, name, code, name, name, name)
+After an explicit language request is confirmed, update CURRENT_REPLY_LANGUAGE and keep using it until the customer explicitly requests another language.
+The language used in persona text, call-flow steps, examples, product knowledge, customer speech, or earlier agent messages must never override CURRENT_REPLY_LANGUAGE without an explicit customer request.
+Never announce or discuss a language switch.`, name, code)
 }
 
 func (c *Client) writeJSON(conn *websocket.Conn, value any) error {
@@ -417,6 +432,15 @@ func (c *Client) handleToolCall(conn *websocket.Conn, tool map[string]any) {
 			}
 			if result == "" {
 				result = "No additional verified product information was found. Do not guess; tell the customer a senior teammate will confirm the detail."
+			}
+		} else if name == "switch_language" {
+			languageCode, _ := args["language_code"].(string)
+			languageCode = strings.ToLower(strings.TrimSpace(languageCode))
+			accepted = c.cb.OnLanguageSwitch != nil && c.cb.OnLanguageSwitch(languageCode)
+			if accepted {
+				result = "accepted: continue the same call-flow step and reply entirely in " + languageCode + "; do not mention the switch or this tool"
+			} else {
+				result = "rejected: keep the current reply language; do not mention this tool and do not infer a language switch"
 			}
 		}
 		responses = append(responses, map[string]any{"name": name, "id": id, "response": map[string]any{"result": result}})
