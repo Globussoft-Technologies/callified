@@ -390,7 +390,7 @@ func buildDefaultPrompt(pc promptContext) string {
 	// mode this feature exists to prevent.
 	b.WriteString("## CALL FLOW\n")
 	if pc.CallMemory != "" && pc.CallFlowInstructions != "" {
-		b.WriteString("1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question. Example: \"Just to confirm — this is for fifteen users across two Bengaluru locations, correct?\"\n")
+		b.WriteString("1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question.\n")
 		b.WriteString("2. Whatever the customer corrects, accept it and update the details. Then ask when they are free for a short demo and book it.\n")
 		b.WriteString("3. When a time is confirmed → repeat the time, thank them, then end with [HANGUP].\n")
 		b.WriteString("4. If the customer asks to hang up / is not interested → say a short thanks and end with [HANGUP].\n")

@@ -55,6 +55,16 @@ type Initiator struct {
 	tata   *TataClient
 	twilio *TwilioClient
 	log    *zap.Logger
+	// prepareLive starts a Gemini Live session before a Tata call is answered.
+	// Its returned function binds the session to the carrier call SID, or
+	// cancels it when called with an empty SID after a failed dial.
+	prepareLive func(CallData) func(string)
+}
+
+// SetLivePreparer is wired by the WebSocket handler after both components are
+// constructed. It is only invoked for Tata Gemini Live calls.
+func (i *Initiator) SetLivePreparer(prepare func(CallData) func(string)) {
+	i.prepareLive = prepare
 }
 
 // New creates an Initiator wired to the supported telephony providers.
@@ -208,6 +218,11 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	case "twilio":
 		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
 	case "tata", "smartflo", "tata_tele":
+		var bindPrepared func(string)
+		if !data.IsBridge && i.prepareLive != nil &&
+			(strings.EqualFold(data.TTSProvider, "gemini_live") || strings.TrimSpace(data.TTSProvider) == "") {
+			bindPrepared = i.prepareLive(data)
+		}
 		var tataClient *TataClient
 		if creds.IsSet() {
 			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
@@ -218,6 +233,13 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
 		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
+		if bindPrepared != nil {
+			if err != nil {
+				bindPrepared("")
+			} else {
+				bindPrepared(callSid)
+			}
+		}
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
