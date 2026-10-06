@@ -49,11 +49,15 @@ type Handler struct {
 	log               *zap.Logger
 	sessions          sync.Map // stream_sid → *CallSession (for monitor WebSocket)
 	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
+	preparedLive      sync.Map // Tata call_sid → *preparedGeminiCall while ringing
 }
 
 // SetInitiator wires the dial initiator after main has constructed it.
 func (h *Handler) SetInitiator(i *dial.Initiator) {
 	h.initiator = i
+	if i != nil {
+		i.SetLivePreparer(h.prepareGeminiCall)
+	}
 }
 
 // New creates a Handler wired to the provided dependencies.
@@ -365,29 +369,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sess.GeminiLive {
+			sess.LogLiveStartup("gemini_task_started")
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				languageGuard := newLiveLanguageGuard(sess.Language)
-				appointmentTimezone := "Asia/Kolkata"
-				if h.db != nil && sess.OrgID > 0 {
-					if configured, err := h.db.GetOrgTimezone(sess.OrgID); err == nil && strings.TrimSpace(configured) != "" {
-						appointmentTimezone = strings.TrimSpace(configured)
-					}
-				}
-				appointmentLocation, err := time.LoadLocation(appointmentTimezone)
-				if err != nil {
-					appointmentTimezone = "Asia/Kolkata"
-					appointmentLocation, _ = time.LoadLocation(appointmentTimezone)
-				}
-				callNow := time.Now().In(appointmentLocation)
-				liveSystemPrompt := sess.SystemPrompt + fmt.Sprintf(
-					"\n\nCURRENT LOCAL DATE AND TIME: %s (%s). Follow the configured call flow for scheduling. "+
-						"Collect both a customer-provided day/date and exact time, asking only for whichever detail is missing. "+
-						"After both are available, complete and confirm the appointment without requesting an extra acknowledgement unless the call flow explicitly requires one. "+
-						"When completing an appointment, pass appointment_date as YYYY-MM-DD and appointment_time as HH:MM in this timezone.",
-					callNow.Format("2006-01-02 15:04"), appointmentTimezone,
-				)
+				liveSystemPrompt, appointmentTimezone := h.livePromptAndTimezone(sess)
 				responseWatchdog := newLiveResponseWatchdog(geminiLiveResponseTimeout, func(customerText string) bool {
 					if sess.IsFinalClosing() || ctx.Err() != nil {
 						return false
@@ -485,6 +472,31 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				outputApproved := false
 				outputRejected := false
 				audioReleased := false
+				defer func() {
+					// Gemini may not emit turnComplete before the caller disconnects.
+					// Preserve any transcription fragments already received instead
+					// of saving an empty call despite recorded customer/AI audio.
+					transcriptMu.Lock()
+					user, agent := strings.TrimSpace(inputText.String()), strings.TrimSpace(outputText.String())
+					inputText.Reset()
+					outputText.Reset()
+					transcriptMu.Unlock()
+					liveStateMu.Lock()
+					spoken := audioReleased
+					liveStateMu.Unlock()
+					if user != "" {
+						sess.AppendHistory("user", user)
+						sess.BroadcastTranscript("user", user)
+					}
+					if agent != "" && spoken {
+						sess.AppendHistory("model", agent)
+						sess.BroadcastTranscript("agent", agent)
+					}
+					if user != "" || (agent != "" && spoken) {
+						sess.Log.Info("gemini live: saved unfinished transcribed turn",
+							zap.Bool("customer_text", user != ""), zap.Bool("agent_text", agent != "" && spoken))
+					}
+				}()
 				languageCorrections := 0
 				correctionCustomer := ""
 				var languageRedirectMu sync.Mutex
@@ -497,6 +509,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				queueAudio := func(packet liveAudioPacket) {
 					select {
 					case audioOut <- packet:
+						sess.MarkFirstLiveAudioQueued()
 					case <-ctx.Done():
 					}
 				}
@@ -518,12 +531,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						audioReleased = false
 					}
 				}
-				client := realtime.New(realtime.Config{
-					URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
-					AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-					Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
-					Language: sess.Language, Greeting: sess.GreetingText,
-				}, realtime.Callbacks{
+				liveCallbacks := realtime.Callbacks{
+					OnStartupStage: func(stage string, elapsed time.Duration) {
+						sess.LogLiveStartup(stage, zap.Int64("since_gemini_run_ms", elapsed.Milliseconds()))
+					},
 					OnInterimInputTranscript: func(text string) {
 						if strings.TrimSpace(text) != "" {
 							// Interim transcription proves the customer is speaking. Do not
@@ -846,11 +857,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 					},
-				})
+				}
+				prepared := h.takePreparedGeminiCall(sess.CallSid)
+				var client *realtime.Client
+				if prepared != nil {
+					client = prepared.client
+					sess.LogLiveStartup("pre_answer_session_attached")
+				} else {
+					client = realtime.New(realtime.Config{
+						URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
+						AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
+						Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
+						Language: sess.Language, Greeting: sess.GreetingText,
+					}, liveCallbacks)
+				}
 				sess.SetLiveResponder(client.RequestResponse)
 				defer sess.SetLiveResponder(nil)
-				if err := client.Run(ctx, sess.AudioIn); err != nil && ctx.Err() == nil {
-					sess.Log.Error("gemini live session failed", zap.Error(err))
+				var liveErr error
+				if prepared != nil {
+					liveErr = prepared.runAttached(ctx, sess.CarrierMediaReady(), sess.AudioIn, func() {
+						sess.LogLiveStartup("pre_answer_greeting_released")
+						prepared.sink.attach(liveCallbacks)
+					}, func() {
+						sess.LogLiveStartup("first_audio_deadline_exceeded")
+					})
+				} else {
+					liveErr = client.Run(ctx, sess.AudioIn)
+				}
+				if liveErr != nil && ctx.Err() == nil {
+					sess.LogLiveStartup("session_failed", zap.Error(liveErr))
+					sess.Log.Error("gemini live session failed", zap.Error(liveErr))
 					// Gemini Live is the selected provider. Do not silently fall
 					// back to the legacy STT/LLM/TTS pipeline; end the failed call.
 					sess.RequestFinalClose()
@@ -1242,6 +1278,11 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {
+	if sess.Provider == "tata" {
+		// The call context is not final until Redis/DB hydration below. Keep
+		// the start timestamp so every subsequent stage uses one clock.
+		sess.liveStartAtNano.CompareAndSwap(0, time.Now().UnixNano())
+	}
 	// Extract stream_sid and call_sid from the "start" event. Exotel sometimes
 	// sends snake_case (call_sid / stream_sid) and sometimes Twilio-style
 	// camelCase (callSid / streamSid) depending on the integration; read both
@@ -1333,6 +1374,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
+			if sess.Provider == "tata" {
+				sess.LogLiveStartup("tata_start_received")
+			}
 			// Redis lookup precedence:
 			//   1) under the carrier-issued call_sid (set by dial.Initiator)
 			//   2) under "phone:<E164>" (set by manual-call web-sim mode)
@@ -1361,6 +1405,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				zap.String("hit_key", hitKey),
 				zap.Bool("ok", ok),
 			)
+			if sess.Provider == "tata" {
+				sess.LogLiveStartup("redis_lookup_complete", zap.Bool("found_pending_call", ok))
+			}
 			if ok {
 				// Only overwrite when Redis has something — otherwise we wipe
 				// good values (e.g. set from query params on web-sim) with
@@ -1415,6 +1462,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					}
 				}
 				h.configureVoicePipeline(sess)
+				sess.MarkLiveContextReady()
 				// Re-create the TTS provider in case the original startup picked
 				// the wrong one (Exotel calls hit tts.New("") which falls back
 				// to ElevenLabs — wrong if the campaign uses sarvam/smallest).
@@ -1456,6 +1504,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					h.applyInboundReceptionistPrompt(sess)
 				}
 				h.configureVoicePipeline(sess)
+				sess.MarkLiveContextReady()
 				if sess.TTSProvider != "" && !sess.GeminiLive {
 					if newProv, err := tts.New(sess.TTSProvider, h.ttsKeys); err == nil && newProv != nil {
 						sess.SetTTSInstance(newProv)
@@ -1588,6 +1637,9 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	if err != nil || len(raw) == 0 {
 		return
 	}
+	// A real media frame is the earliest proof that Tata's bidirectional media
+	// path is ready. Prepared Gemini greeting audio is held until this point.
+	sess.MarkCarrierMediaReady()
 
 	var pcm []byte
 	if sess.UseUlaw {
