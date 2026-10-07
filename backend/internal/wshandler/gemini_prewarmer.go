@@ -17,12 +17,34 @@ import (
 // The same connection is attached to the answered call, so the model's opening
 // turn and its later replies share one conversation and one voice.
 type preparedGeminiCall struct {
-	client  *realtime.Client
-	sink    *preparedGeminiCallbacks
-	audioIn chan []byte
-	done    chan error
-	cancel  context.CancelFunc
-	timer   *time.Timer
+	client         *realtime.Client
+	sink           *preparedGeminiCallbacks
+	audioIn        chan []byte
+	done           chan error
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	attached       bool
+	preAnswerTimer *time.Timer
+	unclaimedTimer *time.Timer
+}
+
+// The pre-answer deadlines must never cancel a session after its media stream
+// has attached. Coordinate the timer callbacks with attachment under one lock.
+func (p *preparedGeminiCall) cancelIfUnattached() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.attached {
+		p.cancel()
+	}
+}
+
+func (p *preparedGeminiCall) markAttached() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.attached = true
+	if p.preAnswerTimer != nil {
+		p.preAnswerTimer.Stop()
+	}
 }
 
 // preparedGeminiCallbacks preserves model events generated before Tata opens
@@ -188,12 +210,16 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 	if sess.Language == "" {
 		sess.Language = data.TTSLanguage
 	}
-	prepareCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	if err := h.initializeCall(prepareCtx, sess); err != nil || sess.GreetingText == "" ||
+	initCtx, cancelInit := context.WithTimeout(context.Background(), 2*time.Minute)
+	initErr := h.initializeCall(initCtx, sess)
+	cancelInit()
+	if initErr != nil || sess.GreetingText == "" ||
 		!strings.EqualFold(sess.TTSProvider, "gemini_live") {
-		cancel()
 		return nil
 	}
+	// The Live session has no pre-answer deadline of its own. It remains active
+	// until the answered call ends; only an unattached session is timed out.
+	liveCtx, cancel := context.WithCancel(context.Background())
 	livePrompt, _ := h.livePromptAndTimezone(sess)
 	sink := newPreparedGeminiCallbacks()
 	client := realtime.New(realtime.Config{
@@ -206,15 +232,16 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 		client: client, sink: sink, audioIn: make(chan []byte, 512),
 		done: make(chan error, 1), cancel: cancel,
 	}
-	go func() { prepared.done <- client.Run(prepareCtx, prepared.audioIn) }()
+	prepared.preAnswerTimer = time.AfterFunc(2*time.Minute, prepared.cancelIfUnattached)
+	go func() { prepared.done <- client.Run(liveCtx, prepared.audioIn) }()
 	return func(callSID string) {
 		if callSID == "" {
 			cancel()
 			return
 		}
-		prepared.timer = time.AfterFunc(90*time.Second, func() {
+		prepared.unclaimedTimer = time.AfterFunc(90*time.Second, func() {
 			if h.preparedLive.CompareAndDelete(callSID, prepared) {
-				cancel()
+				prepared.cancelIfUnattached()
 			}
 		})
 		h.preparedLive.Store(callSID, prepared)
@@ -227,8 +254,9 @@ func (h *Handler) takePreparedGeminiCall(callSID string) *preparedGeminiCall {
 		return nil
 	}
 	prepared := value.(*preparedGeminiCall)
-	if prepared.timer != nil {
-		prepared.timer.Stop()
+	prepared.markAttached()
+	if prepared.unclaimedTimer != nil {
+		prepared.unclaimedTimer.Stop()
 	}
 	select {
 	case err := <-prepared.done:

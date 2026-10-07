@@ -82,3 +82,33 @@ func TestPreparedGeminiCallBuffersCustomerAudioUntilGreeting(t *testing.T) {
 		t.Fatal("prepared session did not finish")
 	}
 }
+
+func TestPreparedGeminiPreAnswerTimeoutDoesNotEndAttachedCall(t *testing.T) {
+	liveCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prepared := &preparedGeminiCall{cancel: cancel}
+	prepared.preAnswerTimer = time.AfterFunc(20*time.Millisecond, prepared.cancelIfUnattached)
+	prepared.markAttached()
+
+	// Even if a timeout callback was already queued when the call attached,
+	// it must not cancel the active Live session.
+	prepared.cancelIfUnattached()
+	select {
+	case <-liveCtx.Done():
+		t.Fatal("attached Gemini Live session was cancelled by pre-answer timeout")
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestPreparedGeminiPreAnswerTimeoutCancelsUnattachedCall(t *testing.T) {
+	liveCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	prepared := &preparedGeminiCall{cancel: cancel}
+	prepared.preAnswerTimer = time.AfterFunc(20*time.Millisecond, prepared.cancelIfUnattached)
+
+	select {
+	case <-liveCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("unattached Gemini Live session was not cancelled")
+	}
+}
