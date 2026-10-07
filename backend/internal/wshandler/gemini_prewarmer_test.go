@@ -32,6 +32,54 @@ func TestPreparedGeminiCallbacksReplayInOrder(t *testing.T) {
 	}
 }
 
+func TestPreparedGeminiCallLifetimeAfterAttach(t *testing.T) {
+	prepared, liveCtx := newPreparedGeminiCall(nil, newPreparedGeminiCallbacks())
+	defer prepared.cancel()
+	if deadline, ok := liveCtx.Deadline(); ok {
+		t.Fatalf("live connection has a pre-answer deadline: %v", deadline)
+	}
+	h := &Handler{log: zap.NewNop()}
+	const callSID = "answered-call"
+	h.preparedLive.Store(callSID, prepared)
+	expired := make(chan struct{})
+	prepared.timer = time.AfterFunc(100*time.Millisecond, func() {
+		if h.preparedLive.CompareAndDelete(callSID, prepared) {
+			prepared.cancel()
+		}
+		close(expired)
+	})
+	if got := h.takePreparedGeminiCall(callSID); got != prepared {
+		t.Fatal("prepared connection was not transferred to the answered call")
+	}
+	select {
+	case <-liveCtx.Done():
+		t.Fatal("answered call was cancelled by the pre-answer lifetime")
+	case <-expired:
+		t.Fatal("pre-answer expiry timer was not stopped")
+	case <-time.After(150 * time.Millisecond):
+	}
+	callCtx, endCall := context.WithCancel(context.Background())
+	carrierReady := make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		finished <- prepared.runAttached(callCtx, carrierReady, nil, func() {}, func() {})
+	}()
+	endCall()
+	select {
+	case err := <-finished:
+		if err != context.Canceled {
+			t.Fatalf("attached call returned %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("attached call did not end on carrier cancellation")
+	}
+	select {
+	case <-liveCtx.Done():
+	default:
+		t.Fatal("live connection was not cancelled when the answered call ended")
+	}
+}
+
 func TestPreparedGeminiCallBuffersCustomerAudioUntilGreeting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -25,6 +25,14 @@ type preparedGeminiCall struct {
 	timer   *time.Timer
 }
 
+func newPreparedGeminiCall(client *realtime.Client, sink *preparedGeminiCallbacks) (*preparedGeminiCall, context.Context) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &preparedGeminiCall{
+		client: client, sink: sink, audioIn: make(chan []byte, 512),
+		done: make(chan error, 1), cancel: cancel,
+	}, ctx
+}
+
 // preparedGeminiCallbacks preserves model events generated before Tata opens
 // the media stream, then replays them in order through the normal call handler.
 type preparedGeminiCallbacks struct {
@@ -188,10 +196,11 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 	if sess.Language == "" {
 		sess.Language = data.TTSLanguage
 	}
-	prepareCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	if err := h.initializeCall(prepareCtx, sess); err != nil || sess.GreetingText == "" ||
+	initializeCtx, cancelInitialize := context.WithTimeout(context.Background(), 2*time.Minute)
+	err := h.initializeCall(initializeCtx, sess)
+	cancelInitialize()
+	if err != nil || sess.GreetingText == "" ||
 		!strings.EqualFold(sess.TTSProvider, "gemini_live") {
-		cancel()
 		return nil
 	}
 	livePrompt, _ := h.livePromptAndTimezone(sess)
@@ -202,19 +211,18 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 		Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
 		Language: sess.Language, Greeting: sess.GreetingText,
 	}, sink.callbacks(h.log, data.LeadID))
-	prepared := &preparedGeminiCall{
-		client: client, sink: sink, audioIn: make(chan []byte, 512),
-		done: make(chan error, 1), cancel: cancel,
-	}
+	// The connection survives the ringing-to-answer handoff. Only the separate
+	// pre-answer timer and the attached call's lifecycle may cancel it.
+	prepared, prepareCtx := newPreparedGeminiCall(client, sink)
 	go func() { prepared.done <- client.Run(prepareCtx, prepared.audioIn) }()
 	return func(callSID string) {
 		if callSID == "" {
-			cancel()
+			prepared.cancel()
 			return
 		}
 		prepared.timer = time.AfterFunc(90*time.Second, func() {
 			if h.preparedLive.CompareAndDelete(callSID, prepared) {
-				cancel()
+				prepared.cancel()
 			}
 		})
 		h.preparedLive.Store(callSID, prepared)
