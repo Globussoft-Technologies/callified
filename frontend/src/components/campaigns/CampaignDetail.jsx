@@ -1636,9 +1636,6 @@ export default function CampaignDetail({
           <div className="campaign-voice-controls">
             <div className="campaign-voice-selects">
               <AppSelect size="small" value={campVoice.tts_provider || undefined} placeholder="Provider" options={[
-                { value: 'elevenlabs', label: 'ElevenLabs' },
-                { value: 'sarvam', label: 'Sarvam AI' },
-                { value: 'smallest', label: 'Smallest AI' },
                 { value: 'gemini_live', label: 'Gemini Live' },
               ]} onChange={provider => setCampVoice(value => ({...value, tts_provider: provider, tts_voice_id: (INDIAN_VOICES[provider] || [])[0]?.id || ''}))} />
               <AppSelect searchable size="small" value={campVoice.tts_voice_id || undefined} placeholder="Voice" popupWidth={260}
