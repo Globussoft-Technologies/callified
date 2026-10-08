@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
 import AppIcon from '../components/common/AppIcon';
@@ -50,7 +50,7 @@ const PROVIDER_LABELS = {
   twilio: 'Twilio',
 };
 
-export default function ExotelAccountsPage() {
+export default function ExotelAccountsPage({ tourFormMode = null, tourActive = false }) {
   const { apiFetch } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +61,7 @@ export default function ExotelAccountsPage() {
   const [showForm, setShowForm] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showApiToken, setShowApiToken] = useState(false);
+  const tourOwnedForm = useRef(false);
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -108,10 +109,27 @@ export default function ExotelAccountsPage() {
   };
   const closeForm = () => { setShowForm(false); setEditingId(null); setForm({ ...EMPTY_FORM }); setError(''); setShowApiKey(false); setShowApiToken(false); };
 
+  useEffect(() => {
+    if (tourFormMode) {
+      tourOwnedForm.current = true;
+      setForm({ ...EMPTY_FORM, provider: tourFormMode });
+      setEditingId(null);
+      setError('');
+      setShowForm(true);
+      setShowApiKey(false);
+      setShowApiToken(false);
+    } else if (tourOwnedForm.current) {
+      tourOwnedForm.current = false;
+      setShowForm(false);
+      setForm({ ...EMPTY_FORM });
+    }
+  }, [tourFormMode]);
+
   const setField = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (tourActive) return;
     const { provider, name, api_key, api_token, api_secret, account_sid, caller_id } = form;
     if (!name.trim()) { setError('Account name is required.'); return; }
     if (provider === 'twilio') {
@@ -164,6 +182,7 @@ export default function ExotelAccountsPage() {
   };
 
   const handleDelete = async (id) => {
+    if (tourActive) return;
     if (!window.confirm('Delete this provider account?')) return;
     try {
       await apiFetch(`${API_URL}/exotel-accounts/${id}`, { method: 'DELETE' });
@@ -192,7 +211,7 @@ export default function ExotelAccountsPage() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button onClick={() => openAdd('outbound')}
+          <button data-tour="provider-account-add" onClick={() => openAdd('outbound')}
             style={{
               background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
               border: 'none', borderRadius: 8, color: '#fff',
@@ -213,7 +232,7 @@ export default function ExotelAccountsPage() {
           <form onSubmit={handleSave}>
 
             {/* Provider selector */}
-            <div style={{ marginBottom: '1.2rem' }}>
+            <div data-tour="provider-account-usage" style={{ marginBottom: '1.2rem' }}>
               <label style={labelStyle}>Account Usage <span style={{ color: T.red }}>*</span></label>
               <div style={{ display: 'flex', gap: 8, marginBottom: '1rem' }}>
                 {[
@@ -252,7 +271,7 @@ export default function ExotelAccountsPage() {
             </div>
 
             {/* Account Name */}
-            <div style={{ marginBottom: '1rem' }}>
+            <div data-tour="provider-account-name" style={{ marginBottom: '1rem' }}>
               <label style={labelStyle}>Account Name <span style={{ color: T.red }}>*</span></label>
               <input style={inputStyle} placeholder={isInbound ? 'e.g. Tata Inbound Receptionist' : 'e.g. Main Caller, Sales India'}
                 value={form.name} onChange={e => setField('name', e.target.value)} />
@@ -260,7 +279,7 @@ export default function ExotelAccountsPage() {
 
             {/* Exotel fields */}
             {isExotel && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
+              <div data-tour="provider-account-exotel-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
                   <label style={labelStyle}>API Key <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
@@ -345,7 +364,7 @@ export default function ExotelAccountsPage() {
 
             {/* Tata Tele fields */}
             {isTata && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
+              <div data-tour="provider-account-tata-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
                   <label style={labelStyle}>API Token <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
@@ -442,7 +461,7 @@ export default function ExotelAccountsPage() {
               }}>{error}</div>
             )}
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button type="submit" disabled={saving}
+              <button data-tour="provider-account-save" type="submit" disabled={saving}
                 style={{
                   background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
                   border: 'none', borderRadius: 8, color: '#fff',
@@ -467,6 +486,7 @@ export default function ExotelAccountsPage() {
       )}
 
       {/* Accounts list */}
+      <div data-tour="provider-account-list">
       {loading ? (
         <div style={{ color: T.muted, textAlign: 'center', padding: '2rem' }}>Loading…</div>
       ) : accounts.length === 0 ? (
@@ -478,7 +498,7 @@ export default function ExotelAccountsPage() {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {accounts.map(a => {
+          {accounts.map((a, index) => {
             const badge = PROVIDER_BADGE[a.provider] || PROVIDER_BADGE.exotel;
             return (
               <div key={a.id} style={{ ...card, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -508,7 +528,7 @@ export default function ExotelAccountsPage() {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                  <button onClick={() => openEdit(a)}
+                  <button data-tour={index === 0 ? 'provider-account-edit' : undefined} onClick={() => openEdit(a)}
                     style={{
                       background: 'rgba(99,102,241,0.08)', border: `1px solid rgba(99,102,241,0.25)`,
                       borderRadius: 6, color: T.accent, padding: '5px 14px',
@@ -526,6 +546,7 @@ export default function ExotelAccountsPage() {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

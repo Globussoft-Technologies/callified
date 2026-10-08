@@ -1,12 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { API_URL } from '../constants/api';
+import { TOUR_KEY_PREFIX } from '../utils/dashboardTour';
 
 const AuthContext = createContext(null);
 
-// Clear everything the app may have stored in the browser so a logout leaves
-// no cached credentials, preferences, or stale data behind.
+// Clear credentials and cached data on logout. Keep only the non-sensitive,
+// versioned tour completion flags so the same user is not nagged at next login.
 function clearBrowserData() {
-  try { localStorage.clear(); } catch { /* ignore */ }
+  try {
+    const tourFlags = Object.keys(localStorage)
+      .filter(key => key.startsWith(TOUR_KEY_PREFIX) && localStorage.getItem(key) === 'done');
+    localStorage.clear();
+    tourFlags.forEach(key => localStorage.setItem(key, 'done'));
+  } catch { /* ignore */ }
   try { sessionStorage.clear(); } catch { /* ignore */ }
   try {
     if (typeof document !== 'undefined' && document.cookie) {
