@@ -4,9 +4,9 @@ import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import AppIcon from '../common/AppIcon';
 
 const T = {
-  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
   accent: '#6366f1', cyan: '#0891b2', green: '#10b981', amber: '#f59e0b',
-  red: '#ef4444', text: '#111827', sub: '#374151', muted: '#9ca3af',
+  red: '#ef4444', text: 'var(--text-primary)', sub: 'var(--text-secondary)', muted: 'var(--text-muted)',
   font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
 };
 
@@ -27,15 +27,23 @@ const labelStyle = {
 };
 
 export default function ProductsTab({
-  orgProducts, selectedOrg, orgs,
+  orgProducts, selectedOrg,
   newProductName, setNewProductName, showProductInput, setShowProductInput,
   handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping, scrapeError,
   apiFetch, API_URL,
   onProductsRefresh,
+  tourExample = false,
 }) {
   const toast = useToast();
   const confirm = useConfirm();
-  const [productPrompts, setProductPrompts] = React.useState({});
+  const [productPrompts, setProductPrompts] = React.useState(tourExample ? {
+    'tour-example-product': {
+      agent_persona: 'You are a helpful sales advisor. Explain the product clearly and answer questions honestly.',
+      call_flow_instructions: 'Greet the customer, ask what they need, explain relevant features, confirm interest, and agree on a follow-up.',
+      expanded: true,
+      websiteUrl: 'https://example.com',
+    },
+  } : {});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
   const [nameError, setNameError] = useState('');
@@ -112,6 +120,7 @@ export default function ProductsTab({
   };
 
   React.useEffect(() => {
+    if (tourExample) return;
     if (!orgProducts || orgProducts.length === 0) return;
     orgProducts.forEach(p => {
       if (loadedProductIds.current.has(p.id)) return;
@@ -140,7 +149,7 @@ export default function ProductsTab({
         });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgProducts]);
+  }, [orgProducts, tourExample]);
 
   const updateProductPrompt = (productId, field, value) => {
     setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
@@ -205,7 +214,7 @@ export default function ProductsTab({
 
       {/* Page title */}
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
+        <h2 data-tour="products" style={{ margin: 0, width: 'fit-content', fontSize: 22, fontWeight: 700, color: T.text }}>
           <AppIcon name="product" /> {hideAiFeatures ? 'Products' : <><span style={{ color: T.cyan }}>Product</span> Knowledge</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
@@ -233,7 +242,7 @@ export default function ProductsTab({
               <AppIcon name="product" /> Products in <span style={{ color: T.cyan }}>{selectedOrg.name}</span>
             </h3>
             {!showProductInput ? (
-              <button data-testid="add-product-btn"
+              <button data-testid="add-product-btn" data-product-tour="add"
                 onClick={() => setShowProductInput(true)}
                 style={{
                   padding: '8px 16px', borderRadius: 8, border: 'none',
@@ -243,7 +252,7 @@ export default function ProductsTab({
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input data-testid="product-name-input" autoFocus
+                <input data-testid="product-name-input" data-product-tour="name" autoFocus
                   placeholder="Product name (e.g. AdsGPT)..."
                   value={newProductName}
                   onChange={e => { setNewProductName(e.target.value); if (nameError) setNameError(''); }}
@@ -328,7 +337,7 @@ export default function ProductsTab({
 
                     {!hideAiFeatures && (
                     <div style={{ marginBottom: 12 }}>
-                      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+                      <div data-product-tour="website" style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                         <div style={{ flex: 1 }}>
                           <label style={labelStyle}>Website URL</label>
                           <input placeholder="https://..."
@@ -357,7 +366,7 @@ export default function ProductsTab({
                     )}
 
                     {!hideAiFeatures && <div>
-                      <button
+                      <button data-product-tour="details"
                         onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}
                         style={{
                           background: 'rgba(8,145,178,0.06)', border: `1px solid rgba(8,145,178,0.2)`,
@@ -518,7 +527,7 @@ export default function ProductsTab({
                           <div style={{ borderTop: `1px solid ${T.border}`, margin: '16px 0', paddingTop: 16 }}>
                             {(p.scraped_info || p.manual_notes) && (
                               <div style={{ marginBottom: 12 }}>
-                                <button disabled={pp.generatingPersona} onClick={() => handleGeneratePersona(p.id)} style={{
+                                <button data-product-tour="generate" disabled={pp.generatingPersona} onClick={() => handleGeneratePersona(p.id)} style={{
                                   width: '100%', padding: '9px 16px', borderRadius: 8, border: 'none',
                                   background: 'linear-gradient(135deg, #818cf8, #6366f1)',
                                   color: '#fff', fontWeight: 600, fontSize: 13,
@@ -529,7 +538,7 @@ export default function ProductsTab({
                               </div>
                             )}
 
-                            <div style={{ marginBottom: 12 }}>
+                            <div data-product-tour="persona" style={{ marginBottom: 12 }}>
                               <label style={{ ...labelStyle, color: '#7c3aed' }}><AppIcon name="user" /> Agent Persona</label>
                               <textarea rows={4} value={pp.agent_persona}
                                 onChange={e => updateProductPrompt(p.id, 'agent_persona', e.target.value)}
@@ -537,7 +546,7 @@ export default function ProductsTab({
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 80, lineHeight: 1.6 }} />
                             </div>
 
-                            <div style={{ marginBottom: 16 }}>
+                            <div data-product-tour="flow" style={{ marginBottom: 16 }}>
                               <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> Call Flow Instructions</label>
                               <textarea rows={5} value={pp.call_flow_instructions}
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
@@ -546,7 +555,7 @@ export default function ProductsTab({
                             </div>
 
                             <div style={{ display: 'flex', gap: 10 }}>
-                              <button disabled={pp.generating} onClick={() => handleGenerateProductPrompt(p.id)} style={{
+                                <button disabled={pp.generating} onClick={() => handleGenerateProductPrompt(p.id)} style={{
                                 padding: '9px 16px', borderRadius: 8, border: 'none',
                                 background: 'linear-gradient(135deg, #f59e0b, #d97706)',
                                 color: '#fff', fontWeight: 600, fontSize: 13,
@@ -554,7 +563,7 @@ export default function ProductsTab({
                               }}>
                                 {pp.generating ? <><AppIcon name="loading" spin /> Generating...</> : <><AppIcon name="robot" /> Generate Prompt</>}
                               </button>
-                              <button disabled={pp.saving} onClick={() => handleSaveProductPrompt(p.id)} style={{
+                                <button data-product-tour="save" disabled={pp.saving} onClick={() => handleSaveProductPrompt(p.id)} style={{
                                 padding: '9px 16px', borderRadius: 8, border: 'none',
                                 background: 'linear-gradient(135deg, #10b981, #059669)',
                                 color: '#fff', fontWeight: 600, fontSize: 13,

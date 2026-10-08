@@ -195,7 +195,7 @@ export default function ManualDialPage({ apiFetch, API_URL, campaigns = [] }) {
   return (
     <div style={{ padding: '24px', maxWidth: 960, margin: '0 auto', fontFamily: T.font }}>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="phone" /> Manual Dial</h1>
+        <h1 style={{ margin: 0, width: 'fit-content', fontSize: 24, fontWeight: 700, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}><AppIcon name="phone" /> Manual Dial</h1>
         <p style={{ margin: '6px 0 0', color: T.muted, fontSize: '0.9rem' }}>
           Search any customer and place an AI or browser call.
         </p>

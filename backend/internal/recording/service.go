@@ -35,6 +35,7 @@ type SaveRequest struct {
 	ChatHistory []llm.ChatMessage
 	DurationS   float32
 	StereoWav   []byte // nil → no server-side recording
+	GeminiLive  bool   // verify Live customer transcripts against recorded audio
 	// SkipCredits=true: do not deduct this call from the org's prepaid balance.
 	SkipCredits bool
 	// UserEmail is the agent/admin who initiated the call; recordings are saved
@@ -103,7 +104,6 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if len(req.StereoWav) > 0 {
 		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, campaignName, req.StereoWav)
 	}
-
 	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
 	//    Mirrors recording_service.py: role mapping model→AI / user→User,
 	//    empty-text turns dropped.
@@ -181,6 +181,23 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if req.IsInbound {
 		if err := s.database.UpdateCallTranscriptDirection(transcriptID, "inbound"); err != nil {
 			s.log.Warn("recording: mark inbound transcript failed", zap.Int64("transcript_id", transcriptID), zap.Error(err))
+		}
+	}
+
+	// Persist the live transcript first so the dashboard is not held up by a
+	// second model request. Store audio corrections as review suggestions only;
+	// automated lead extraction, dispositions and confirmations use live text.
+	if req.GeminiLive {
+		_, suggestions, err := s.verifyCustomerTranscript(ctx, req.ChatHistory, req.StereoWav)
+		if err != nil {
+			s.log.Warn("recording: customer audio verification failed; keeping live transcript", zap.Error(err))
+		} else if len(suggestions) > 0 {
+			correctedJSON, _ := historyToTranscriptWithSuggestions(req.ChatHistory, suggestions)
+			if err := s.database.UpdateCallTranscriptText(transcriptID, correctedJSON); err != nil {
+				s.log.Warn("recording: failed to save verified customer transcript", zap.Error(err))
+			} else {
+				s.log.Info("recording: saved customer transcript suggestions for review", zap.Int64("transcript_id", transcriptID), zap.Int("suggested_turns", len(suggestions)))
+			}
 		}
 	}
 
@@ -848,12 +865,17 @@ func (s *Service) sendAppointmentConfirmation(ctx context.Context, orgID int64, 
 // Returns (json_string, turn_count). The caller checks turn_count to decide
 // whether to persist (Python: `if transcript_turns: save_call_transcript(...)`).
 func historyToTranscript(history []llm.ChatMessage) (string, int) {
+	return historyToTranscriptWithSuggestions(history, nil)
+}
+
+func historyToTranscriptWithSuggestions(history []llm.ChatMessage, suggestions map[int]string) (string, int) {
 	type persistedTurn struct {
-		Role string `json:"role"`
-		Text string `json:"text"`
+		Role          string `json:"role"`
+		Text          string `json:"text"`
+		SuggestedText string `json:"suggested_text,omitempty"`
 	}
 	out := make([]persistedTurn, 0, len(history))
-	for _, m := range history {
+	for i, m := range history {
 		text := strings.TrimSpace(m.Text)
 		if text == "" {
 			continue
@@ -862,7 +884,7 @@ func historyToTranscript(history []llm.ChatMessage) (string, int) {
 		if m.Role == "model" {
 			role = "AI"
 		}
-		out = append(out, persistedTurn{Role: role, Text: text})
+		out = append(out, persistedTurn{Role: role, Text: text, SuggestedText: suggestions[i]})
 	}
 	b, err := json.Marshal(out)
 	if err != nil {

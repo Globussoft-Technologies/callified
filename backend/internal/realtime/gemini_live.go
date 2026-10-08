@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -16,6 +17,12 @@ import (
 const liveCallControl = `
 
 ## LIVE CALL CONTROL
+## LIVE OPENING — HIGHEST PRIORITY
+There is no separate TTS greeting in a Gemini Live call. The first clientContent
+message supplies the exact customer-facing greeting. Speak that greeting
+verbatim as your first customer-facing words. Do not replace it with a
+previous-call confirmation, a call-flow question, or an acknowledgement.
+Only continue to the next call-flow step after that greeting has been spoken.
 Never emit or speak textual call-control markers.
 Keep an internal record of the current CALL FLOW step. Complete every required step in order. Do not advance until the customer clearly answers the current step.
 When the customer asks a question, answer it directly from PRODUCT KNOWLEDGE. If the answer is not present, use search_product_knowledge. Then return naturally to the same unanswered CALL FLOW step.
@@ -35,6 +42,7 @@ type Config struct {
 
 type Callbacks struct {
 	OnAudio                  func([]byte)
+	OnStartupStage           func(string, time.Duration)
 	OnInterimInputTranscript func(string)
 	OnInputTranscript        func(string)
 	OnOutputTranscript       func(string)
@@ -79,6 +87,12 @@ func (c *Client) RequestResponse(instruction string) bool {
 }
 
 func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
+	startupAt := time.Now()
+	startupStage := func(stage string) {
+		if c.cb.OnStartupStage != nil {
+			c.cb.OnStartupStage(stage, time.Since(startupAt))
+		}
+	}
 	if strings.TrimSpace(c.cfg.Model) == "" {
 		return fmt.Errorf("gemini live: missing model")
 	}
@@ -86,6 +100,7 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 	if err != nil {
 		return err
 	}
+	startupStage("websocket_connect_started")
 	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, endpoint, header)
 	if err != nil {
 		if resp != nil {
@@ -94,14 +109,16 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 		return fmt.Errorf("gemini live connect: %w", err)
 	}
 	defer conn.Close()
+	startupStage("websocket_connected")
 
 	if err := c.writeJSON(conn, c.setupMessage()); err != nil {
 		return err
 	}
+	startupStage("setup_sent")
 
 	ready := make(chan struct{})
 	errCh := make(chan error, 2)
-	go func() { errCh <- c.receive(ctx, conn, ready) }()
+	go func() { errCh <- c.receive(ctx, conn, ready, startupAt) }()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -109,11 +126,15 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 		return err
 	case <-ready:
 	}
+	startupStage("setup_complete")
 	if strings.TrimSpace(c.cfg.Greeting) != "" {
-		_ = c.writeJSON(conn, map[string]any{"clientContent": map[string]any{
+		if err := c.writeJSON(conn, map[string]any{"clientContent": map[string]any{
 			"turns":        []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Begin the call now using this exact greeting: " + c.cfg.Greeting}}}},
 			"turnComplete": true,
-		}})
+		}}); err != nil {
+			return fmt.Errorf("gemini live greeting request: %w", err)
+		}
+		startupStage("greeting_requested")
 	}
 	for {
 		select {
@@ -283,6 +304,15 @@ func buildLiveSystemPrompt(prompt, language string) string {
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		lower := strings.ToLower(line)
+		// Shared prompts were originally written for the legacy TTS pipeline,
+		// where Callified spoke the introduction before the LLM received a
+		// customer turn. Gemini Live produces that opening audio itself, so
+		// retaining this statement makes it skip its introduction and jump
+		// straight to the follow-up question.
+		if strings.Contains(lower, "already spoken by tts") {
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally, then ", "Opening: speak the exact clientContent greeting once, then ")
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally.", "Opening: speak the exact clientContent greeting once.")
+		}
 		if strings.Contains(strings.ToUpper(line), "[HANGUP]") ||
 			strings.Contains(strings.ToUpper(line), "[LANG:") ||
 			strings.TrimSpace(lower) == "## language" ||
@@ -336,8 +366,9 @@ func (c *Client) writeJSON(conn *websocket.Conn, value any) error {
 	return conn.WriteJSON(value)
 }
 
-func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<- struct{}) error {
+func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<- struct{}, startupAt time.Time) error {
 	readyOnce := sync.Once{}
+	firstAudioLogged := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -389,6 +420,12 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				data, _ := inline["data"].(string)
 				if data != "" && c.cb.OnAudio != nil {
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
+						if !firstAudioLogged {
+							firstAudioLogged = true
+							if c.cb.OnStartupStage != nil {
+								c.cb.OnStartupStage("first_model_audio", time.Since(startupAt))
+							}
+						}
 						c.cb.OnAudio(b)
 					}
 				}

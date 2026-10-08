@@ -56,6 +56,18 @@ Example: Thank you. [hangup]`
 	assert.Contains(t, got, "Do not ask for an additional yes/okay confirmation")
 }
 
+func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
+	prompt := `## CALL FLOW
+1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question.`
+
+	got := buildLiveSystemPrompt(prompt, "en")
+
+	assert.NotContains(t, got, "already spoken by TTS")
+	assert.Contains(t, got, "Opening: speak the exact clientContent greeting once, then confirm")
+	assert.Contains(t, got, "There is no separate TTS greeting in a Gemini Live call")
+	assert.Contains(t, got, "Speak that greeting\nverbatim as your first customer-facing words")
+}
+
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
 	client := New(Config{}, Callbacks{})
 	assert.True(t, client.RequestResponse("close the call"))

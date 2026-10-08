@@ -105,7 +105,7 @@ const SUPER_ADMIN_TABS = [
 
 const font = "'DM Sans', sans-serif";
 
-export default function TopHeader({ userRole, currentUser, handleLogout, apiFetch }) {
+export default function TopHeader({ userRole, currentUser, handleLogout, apiFetch, onStartTour, onStartProviderTour, onStartCallGuide, onStartAnalyticsGuide, onStartProductGuide, canStartProviderTour = false, canStartCallGuide = false, canStartAnalyticsGuide = false, canStartProductGuide = false, tourMoreOpen = false }) {
   const navigate = useNavigate();
   const location = useLocation();
   const activeTab = location.pathname.split('/').filter(Boolean)[0] || 'crm';
@@ -118,6 +118,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const [moreOpen, setMoreOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
   const notifRef = useRef(null);
@@ -145,13 +146,13 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   }, [apiFetch]);
 
   useEffect(() => {
-    if (!moreOpen) return;
+    if (!moreOpen || tourMoreOpen) return;
     const onDocClick = (e) => {
       if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [moreOpen]);
+  }, [moreOpen, tourMoreOpen]);
 
   useEffect(() => {
     if (!notifOpen) return;
@@ -165,14 +166,17 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   useEffect(() => {
     if (!userOpen) return;
     const onDocClick = (e) => {
-      if (userRef.current && !userRef.current.contains(e.target)) setUserOpen(false);
+      if (userRef.current && !userRef.current.contains(e.target)) {
+        setUserOpen(false);
+        setHelpOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [userOpen]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setMoreOpen(false); setNotifOpen(false); setUserOpen(false); }, [location.pathname]);
+  useEffect(() => { setMoreOpen(false); setNotifOpen(false); setUserOpen(false); setHelpOpen(false); }, [location.pathname]);
 
   const visibleMoreTabs = MORE_ADMIN_TABS
     .filter(t => !HIDDEN_TAB_IDS.has(t.id))
@@ -261,13 +265,14 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
               <div ref={moreRef} className="top-nav-more">
                 <button
                   data-testid="tab-more"
+                  data-tour="more-menu-trigger"
                   onClick={() => setMoreOpen(o => !o)}
                   aria-haspopup="true"
-                  aria-expanded={moreOpen}
+                  aria-expanded={moreOpen || tourMoreOpen}
                   className={`top-nav-more-trigger${moreActive ? ' is-active' : ''}`}>
                   More <AppIcon name="down" />
                 </button>
-                {moreOpen && (
+                {(moreOpen || tourMoreOpen) && (
                   <div role="menu" className="top-nav-mega-menu">
                     {MORE_GROUPS.map(group => {
                       const tabs = roleFilteredMoreTabs.filter(t => group.tabIds.includes(t.id));
@@ -275,7 +280,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
                       return <section key={group.id} className="top-nav-menu-group">
                         <h3>{group.label}</h3>
                         {tabs.map(t => (
-                          <button key={t.id} data-testid={t.testid} role="menuitem"
+                          <button key={t.id} data-testid={t.testid} data-tour={t.id === 'exotel-accounts' ? 'provider-account-link' : undefined} role="menuitem"
                             className={activeTab === t.id ? 'is-active' : ''}
                             onClick={() => goTo(t.path)}>
                             <AppIcon name={NAV_ICONS[t.id]} />
@@ -433,7 +438,7 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
         {/* User menu */}
         {currentUser && (
           <div ref={userRef} className="top-user-menu">
-            <button type="button" className="top-user-trigger" onClick={() => setUserOpen(open => !open)}
+            <button type="button" className="top-user-trigger" onClick={() => { setUserOpen(open => !open); setHelpOpen(false); }}
               aria-haspopup="menu" aria-expanded={userOpen}>
               <span className="top-user-avatar">{userInitial}</span>
               <span className="top-user-copy">
@@ -448,6 +453,27 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
                 <span>{currentUser.email}</span>
                 {orgName && <small>{orgName}</small>}
               </div>
+              <button type="button" role="menuitem" aria-expanded={helpOpen} aria-controls="top-user-guides"
+                onClick={() => setHelpOpen(open => !open)}>
+                <AppIcon name="book" /> Help &amp; guides <span className="top-user-guides-chevron" aria-hidden="true">{helpOpen ? '⌃' : '⌄'}</span>
+              </button>
+              {helpOpen && <div id="top-user-guides" className="top-user-guides" role="group" aria-label="Help and guides">
+                <button type="button" role="menuitem" onClick={() => { setUserOpen(false); setHelpOpen(false); onStartTour?.(); }}>
+                  Explore Callified
+                </button>
+                {canStartProductGuide && <button type="button" role="menuitem" onClick={() => { setUserOpen(false); setHelpOpen(false); onStartProductGuide?.(); }}>
+                  Set up a product
+                </button>}
+                {canStartProviderTour && <button type="button" role="menuitem" onClick={() => { setUserOpen(false); setHelpOpen(false); onStartProviderTour?.(); }}>
+                  Set up a provider account
+                </button>}
+                {canStartCallGuide && <button type="button" role="menuitem" onClick={() => { setUserOpen(false); setHelpOpen(false); onStartCallGuide?.(); }}>
+                  Make a call
+                </button>}
+                {canStartAnalyticsGuide && <button type="button" role="menuitem" onClick={() => { setUserOpen(false); setHelpOpen(false); onStartAnalyticsGuide?.(); }}>
+                  Understand analytics
+                </button>}
+              </div>}
               <button type="button" role="menuitem" onClick={() => goTo('/settings')}>
                 <AppIcon name="settings" /> Account settings
               </button>
