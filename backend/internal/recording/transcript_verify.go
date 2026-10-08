@@ -30,8 +30,8 @@ type transcriptCorrectionResponse struct {
 var transcriptDigits = regexp.MustCompile(`[0-9]+`)
 
 // verifyCustomerTranscript listens to the customer channel after the call.
-// Live audio and the conversation itself are never changed. Uncertain or
-// malformed verification results leave the original transcript untouched.
+// Corrections are review suggestions only; the history used for automated
+// decisions and the canonical transcript always retain the original text.
 func (s *Service) verifyCustomerTranscript(ctx context.Context, history []llm.ChatMessage, stereo []byte) ([]llm.ChatMessage, map[int]string, error) {
 	if len(stereo) == 0 || len(stereo) > maxVerificationAudioBytes || s.cfg == nil {
 		return history, nil, nil
@@ -84,8 +84,7 @@ func applyTranscriptCorrections(history []llm.ChatMessage, userHistoryIndices []
 	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &response); err != nil {
 		return history, nil, fmt.Errorf("invalid transcript verification JSON: %w", err)
 	}
-	verified := append([]llm.ChatMessage(nil), history...)
-	originals := make(map[int]string)
+	suggestions := make(map[int]string)
 	seen := make(map[int]bool)
 	for _, correction := range response.Corrections {
 		if correction.Index < 0 || correction.Index >= len(userHistoryIndices) || seen[correction.Index] || !strings.EqualFold(correction.Confidence, "high") {
@@ -93,15 +92,14 @@ func applyTranscriptCorrections(history []llm.ChatMessage, userHistoryIndices []
 		}
 		seen[correction.Index] = true
 		i := userHistoryIndices[correction.Index]
-		original := strings.TrimSpace(verified[i].Text)
+		original := strings.TrimSpace(history[i].Text)
 		corrected := strings.TrimSpace(correction.Corrected)
 		if !safeTranscriptCorrection(original, corrected) {
 			continue
 		}
-		originals[i] = original
-		verified[i].Text = corrected
+		suggestions[i] = corrected
 	}
-	return verified, originals, nil
+	return history, suggestions, nil
 }
 
 func safeTranscriptCorrection(original, corrected string) bool {

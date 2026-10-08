@@ -185,19 +185,18 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	}
 
 	// Persist the live transcript first so the dashboard is not held up by a
-	// second model request. Only replace customer text when the audio pass finds
-	// a conservative, high-confidence correction; keep the live text for audit.
+	// second model request. Store audio corrections as review suggestions only;
+	// automated lead extraction, dispositions and confirmations use live text.
 	if req.GeminiLive {
-		verified, originals, err := s.verifyCustomerTranscript(ctx, req.ChatHistory, req.StereoWav)
+		_, suggestions, err := s.verifyCustomerTranscript(ctx, req.ChatHistory, req.StereoWav)
 		if err != nil {
 			s.log.Warn("recording: customer audio verification failed; keeping live transcript", zap.Error(err))
-		} else if len(originals) > 0 {
-			correctedJSON, _ := historyToTranscriptWithOriginals(verified, originals)
+		} else if len(suggestions) > 0 {
+			correctedJSON, _ := historyToTranscriptWithSuggestions(req.ChatHistory, suggestions)
 			if err := s.database.UpdateCallTranscriptText(transcriptID, correctedJSON); err != nil {
 				s.log.Warn("recording: failed to save verified customer transcript", zap.Error(err))
 			} else {
-				req.ChatHistory = verified
-				s.log.Info("recording: customer transcript corrected from audio", zap.Int64("transcript_id", transcriptID), zap.Int("corrected_turns", len(originals)))
+				s.log.Info("recording: saved customer transcript suggestions for review", zap.Int64("transcript_id", transcriptID), zap.Int("suggested_turns", len(suggestions)))
 			}
 		}
 	}
@@ -866,14 +865,14 @@ func (s *Service) sendAppointmentConfirmation(ctx context.Context, orgID int64, 
 // Returns (json_string, turn_count). The caller checks turn_count to decide
 // whether to persist (Python: `if transcript_turns: save_call_transcript(...)`).
 func historyToTranscript(history []llm.ChatMessage) (string, int) {
-	return historyToTranscriptWithOriginals(history, nil)
+	return historyToTranscriptWithSuggestions(history, nil)
 }
 
-func historyToTranscriptWithOriginals(history []llm.ChatMessage, originals map[int]string) (string, int) {
+func historyToTranscriptWithSuggestions(history []llm.ChatMessage, suggestions map[int]string) (string, int) {
 	type persistedTurn struct {
-		Role     string `json:"role"`
-		Text     string `json:"text"`
-		LiveText string `json:"live_text,omitempty"`
+		Role          string `json:"role"`
+		Text          string `json:"text"`
+		SuggestedText string `json:"suggested_text,omitempty"`
 	}
 	out := make([]persistedTurn, 0, len(history))
 	for i, m := range history {
@@ -885,7 +884,7 @@ func historyToTranscriptWithOriginals(history []llm.ChatMessage, originals map[i
 		if m.Role == "model" {
 			role = "AI"
 		}
-		out = append(out, persistedTurn{Role: role, Text: text, LiveText: originals[i]})
+		out = append(out, persistedTurn{Role: role, Text: text, SuggestedText: suggestions[i]})
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
