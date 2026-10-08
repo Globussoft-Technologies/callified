@@ -47,6 +47,14 @@ func (p *preparedGeminiCall) markAttached() {
 	}
 }
 
+func newPreparedGeminiCall(client *realtime.Client, sink *preparedGeminiCallbacks) (*preparedGeminiCall, context.Context) {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &preparedGeminiCall{
+		client: client, sink: sink, audioIn: make(chan []byte, 512),
+		done: make(chan error, 1), cancel: cancel,
+	}, ctx
+}
+
 // preparedGeminiCallbacks preserves model events generated before Tata opens
 // the media stream, then replays them in order through the normal call handler.
 type preparedGeminiCallbacks struct {
@@ -219,7 +227,6 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 	}
 	// The Live session has no pre-answer deadline of its own. It remains active
 	// until the answered call ends; only an unattached session is timed out.
-	liveCtx, cancel := context.WithCancel(context.Background())
 	livePrompt, _ := h.livePromptAndTimezone(sess)
 	sink := newPreparedGeminiCallbacks()
 	client := realtime.New(realtime.Config{
@@ -228,15 +235,14 @@ func (h *Handler) prepareGeminiCall(data dial.CallData) func(string) {
 		Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
 		Language: sess.Language, Greeting: sess.GreetingText,
 	}, sink.callbacks(h.log, data.LeadID))
-	prepared := &preparedGeminiCall{
-		client: client, sink: sink, audioIn: make(chan []byte, 512),
-		done: make(chan error, 1), cancel: cancel,
-	}
+	// The connection survives the ringing-to-answer handoff. Only the separate
+	// pre-answer timer and the attached call's lifecycle may cancel it.
+	prepared, prepareCtx := newPreparedGeminiCall(client, sink)
 	prepared.preAnswerTimer = time.AfterFunc(2*time.Minute, prepared.cancelIfUnattached)
-	go func() { prepared.done <- client.Run(liveCtx, prepared.audioIn) }()
+	go func() { prepared.done <- client.Run(prepareCtx, prepared.audioIn) }()
 	return func(callSID string) {
 		if callSID == "" {
-			cancel()
+			prepared.cancel()
 			return
 		}
 		prepared.unclaimedTimer = time.AfterFunc(90*time.Second, func() {
