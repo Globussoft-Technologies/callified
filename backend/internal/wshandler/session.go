@@ -89,6 +89,8 @@ type CallSession struct {
 	lastTranscript         atomic.Int64 // UnixNano — debounce timestamp
 	outboundSeq            atomic.Uint64
 	playbackEpoch          atomic.Uint64 // invalidates queued Gemini audio after barge-in
+	echoSuppressedFrames   atomic.Uint64 // per-call inbound frames omitted by echo suppression
+	audioInDroppedFrames   atomic.Uint64 // per-call inbound frames lost to a full AI audio queue
 
 	// Serialization
 	llmMu  sync.Mutex // one LLM turn at a time per session

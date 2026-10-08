@@ -466,7 +466,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					audioWG.Wait()
 				}()
 				var transcriptMu sync.Mutex
-				var inputText, outputText strings.Builder
+				var outputText strings.Builder
 				var liveStateMu sync.Mutex
 				var pendingAudio []liveAudioPacket
 				outputApproved := false
@@ -474,27 +474,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				audioReleased := false
 				defer func() {
 					// Gemini may not emit turnComplete before the caller disconnects.
-					// Preserve any transcription fragments already received instead
-					// of saving an empty call despite recorded customer/AI audio.
+					// Final customer segments are committed on arrival; preserve only
+					// unfinished agent output here.
 					transcriptMu.Lock()
-					user, agent := strings.TrimSpace(inputText.String()), strings.TrimSpace(outputText.String())
-					inputText.Reset()
+					agent := strings.TrimSpace(outputText.String())
 					outputText.Reset()
 					transcriptMu.Unlock()
 					liveStateMu.Lock()
 					spoken := audioReleased
 					liveStateMu.Unlock()
-					if user != "" {
-						sess.AppendHistory("user", user)
-						sess.BroadcastTranscript("user", user)
-					}
 					if agent != "" && spoken {
 						sess.AppendHistory("model", agent)
 						sess.BroadcastTranscript("agent", agent)
 					}
-					if user != "" || (agent != "" && spoken) {
+					if agent != "" && spoken {
 						sess.Log.Info("gemini live: saved unfinished transcribed turn",
-							zap.Bool("customer_text", user != ""), zap.Bool("agent_text", agent != "" && spoken))
+							zap.Bool("agent_text", true))
 					}
 				}()
 				languageCorrections := 0
@@ -589,16 +584,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						liveStateMu.Unlock()
 					},
 					OnInputTranscript: func(text string) {
-						if strings.TrimSpace(text) != "" {
-							inactivityWatchdog.CustomerSpoke()
-							if sess.IsBargeInPending() {
-								sess.ConfirmBargeIn()
-							}
+						currentInput := commitLiveCustomerTranscript(sess, text)
+						if currentInput == "" {
+							return
 						}
-						transcriptMu.Lock()
-						inputText.WriteString(text)
-						currentInput := strings.TrimSpace(inputText.String())
-						transcriptMu.Unlock()
+						inactivityWatchdog.CustomerSpoke()
+						if sess.IsBargeInPending() {
+							sess.ConfirmBargeIn()
+						}
+						correctionCustomer = currentInput
 						language, languageChanged := languageGuard.ObserveCustomer(currentInput)
 						if languageChanged {
 							sess.Log.Info("gemini live: confirmed customer language",
@@ -752,15 +746,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						sess.SetTTSPlaying(false)
 						sess.MarkTTSEnd()
 						transcriptMu.Lock()
-						user, agent := strings.TrimSpace(inputText.String()), strings.TrimSpace(outputText.String())
-						inputText.Reset()
+						agent := strings.TrimSpace(outputText.String())
 						outputText.Reset()
 						transcriptMu.Unlock()
-						if language, changed := languageGuard.ObserveCustomer(user); changed {
-							sess.Log.Info("gemini live: confirmed customer language",
-								zap.String("language", language),
-								zap.String("text", user))
-						}
 						languageRedirectMu.Lock()
 						forceLanguageRedirectHold := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -800,11 +788,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						languageRedirectMu.Unlock()
 
-						if user != "" {
-							correctionCustomer = user
-							sess.AppendHistory("user", user)
-							sess.BroadcastTranscript("user", user)
-						}
 						if validOutput && agent != "" {
 							sess.AppendHistory("model", agent)
 							sess.BroadcastTranscript("agent", agent)
@@ -1137,28 +1120,30 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	// cancel the hangup.
 	var pcm []byte
 	if sess.UseUlaw {
-		if sess.EchoCanceller.IsEcho(data) {
-			metrics.EchoSuppressions.Inc()
-			return
-		}
 		pcm = audio.UlawToPCM(data)
 	} else {
-		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
-		// for echo detection, then continue processing the original PCM.
-		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(data)) {
-			metrics.EchoSuppressions.Inc()
-			return
-		}
 		pcm = data // PCM-16 LE — Voicebot applet, browser web-sim
 	}
+	// Preserve the unfiltered customer channel for diagnosis. Previously,
+	// frames classified as echo vanished from both Gemini input and the WAV.
+	sess.AppendMicChunk(pcm)
+	var echoFrame []byte
+	if sess.UseUlaw {
+		echoFrame = data
+	} else {
+		// Echo canceller stores μ-law TTS history.
+		echoFrame = audio.PCMToUlaw(data)
+	}
+	if sess.EchoCanceller.IsEcho(echoFrame) {
+		metrics.EchoSuppressions.Inc()
+		sess.echoSuppressedFrames.Add(1)
+		return
+	}
 	if sess.IsBridge {
-		// Record customer audio for the server-side stereo WAV, then relay
-		// to the agent browser via BridgeCh.
-		sess.AppendMicChunk(pcm)
+		// Customer audio is already recorded; relay it to the agent browser.
 		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
 		return
 	}
-	sess.AppendMicChunk(pcm)
 	// Run VAD on every frame so the adaptive noise floor stays current.
 	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
 	// within 1500ms of the last audio frame being sent (covers carrier/phone
@@ -1173,6 +1158,7 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	select {
 	case sess.AudioIn <- pcm:
 	default: // drop if buffer full
+		sess.audioInDroppedFrames.Add(1)
 	}
 }
 
@@ -1643,28 +1629,29 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 
 	var pcm []byte
 	if sess.UseUlaw {
-		if sess.EchoCanceller.IsEcho(raw) {
-			metrics.EchoSuppressions.Inc()
-			return
-		}
 		pcm = audio.UlawToPCM(raw)
 	} else {
-		// Echo canceller stores μ-law TTS history; convert incoming PCM to μ-law
-		// for echo detection, then continue processing the original PCM.
-		if sess.EchoCanceller.IsEcho(audio.PCMToUlaw(raw)) {
-			metrics.EchoSuppressions.Inc()
-			return
-		}
 		pcm = raw // PCM-16 LE — Voicebot applet, browser web-sim
 	}
+	// The recording must contain the carrier's complete customer channel even
+	// if echo suppression later decides not to forward a frame to Gemini.
+	sess.AppendMicChunk(pcm)
+	var echoFrame []byte
+	if sess.UseUlaw {
+		echoFrame = raw
+	} else {
+		echoFrame = audio.PCMToUlaw(raw)
+	}
+	if sess.EchoCanceller.IsEcho(echoFrame) {
+		metrics.EchoSuppressions.Inc()
+		sess.echoSuppressedFrames.Add(1)
+		return
+	}
 	if sess.IsBridge {
-		// Record customer audio for the server-side stereo WAV, then relay
-		// to the agent browser via BridgeCh.
-		sess.AppendMicChunk(pcm)
+		// Customer audio is already recorded; relay it to the agent browser.
 		bridgeSendRealtime(sess.BridgeCh, append([]byte(nil), pcm...))
 		return
 	}
-	sess.AppendMicChunk(pcm)
 	// Run VAD on every frame so the adaptive noise floor stays current.
 	// Arm barge-in while TTS is playing, within 500ms of synthesis ending, or
 	// within 1500ms of the last audio frame being sent (covers carrier/phone
@@ -1679,6 +1666,7 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	select {
 	case sess.AudioIn <- pcm:
 	default:
+		sess.audioInDroppedFrames.Add(1)
 	}
 
 	// Relay a copy of the caller's inbound audio to any attached monitors.
@@ -1978,7 +1966,9 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 	h.log.Info("finalizeCall: started",
 		zap.String("stream_sid", sess.StreamSid),
 		zap.Int64("lead_id", sess.LeadID),
-		zap.Int("chat_history_len", len(sess.ChatHistory)))
+		zap.Int("chat_history_len", len(sess.ChatHistory)),
+		zap.Uint64("echo_suppressed_frames", sess.echoSuppressedFrames.Load()),
+		zap.Uint64("audio_in_dropped_frames", sess.audioInDroppedFrames.Load()))
 
 	micChunks, ttsChunks := sess.DrainRecordingBuffers()
 	wavBytes := audio.BuildStereoWAV(micChunks, ttsChunks)
@@ -2014,6 +2004,7 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		ChatHistory: sess.HistorySnapshot(),
 		DurationS:   float32(time.Since(sess.CallStart).Seconds()),
 		StereoWav:   wavBytes,
+		GeminiLive:  sess.GeminiLive,
 		SkipCredits: sess.SkipCredits,
 		UserEmail:   sess.UserEmail,
 		IsInbound:   sess.IsInbound,
