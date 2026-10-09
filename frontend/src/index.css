@@ -27,6 +27,22 @@ html[data-theme='dark'] {
   --text-muted: #94a3b8;
 }
 
+.transcript-modal {
+  --transcript-purple: #7c3aed;
+  --transcript-blue: #2563eb;
+  --transcript-green: #15803d;
+  --transcript-red: #dc2626;
+  --transcript-orange: #c2410c;
+}
+
+html[data-theme='dark'] .transcript-modal {
+  --transcript-purple: #a78bfa;
+  --transcript-blue: #60a5fa;
+  --transcript-green: #4ade80;
+  --transcript-red: #f87171;
+  --transcript-orange: #fb923c;
+}
+
 /* Focused global navigation keeps high-frequency work visible and groups the rest. */
 .focused-top-header { isolation: isolate; }
 .focused-top-nav { display: flex; align-items: stretch; align-self: stretch; min-width: 0; flex: 1; gap: 2px; overflow: visible; }
