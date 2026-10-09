@@ -6,17 +6,17 @@ import { API_URL } from '../../constants/api';
 import AppIcon from '../common/AppIcon';
 
 const T = {
-  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
   accent: '#6366f1', green: '#10b981',
-  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  text: 'var(--text-primary)', sub: 'var(--text-secondary)', muted: 'var(--text-muted)',
   font: "'DM Sans', sans-serif",
 };
 
 const SENTIMENT_STYLE = {
-  positive: { color: '#15803d', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  emoji: '😊' },
-  neutral:  { color: '#6b7280', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐' },
-  negative: { color: '#dc2626', bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',  emoji: '☹️' },
-  annoyed:  { color: '#c2410c', bg: 'rgba(251,146,60,0.12)',  border: 'rgba(251,146,60,0.3)', emoji: '😤' },
+  positive: { color: 'var(--transcript-green)', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.3)',  emoji: '😊' },
+  neutral:  { color: T.muted, bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)', emoji: '😐' },
+  negative: { color: 'var(--transcript-red)', bg: 'rgba(239,68,68,0.12)',   border: 'rgba(239,68,68,0.3)',  emoji: '☹️' },
+  annoyed:  { color: 'var(--transcript-orange)', bg: 'rgba(251,146,60,0.12)',  border: 'rgba(251,146,60,0.3)', emoji: '😤' },
 };
 
 const LANG_NAMES = {
@@ -100,19 +100,19 @@ function ConclusionCard({ transcriptId, turns }) {
   const wrap = (children) => (
     <div style={{
       marginTop: 14, padding: '14px 16px', borderRadius: 10,
-      background: '#ffffff', border: '1px solid #c4b5fd',
+      background: T.card, border: '1px solid #c4b5fd',
       boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
     }}>
-      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#7c3aed', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--transcript-purple)', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <AppIcon name="robot" /> AI Conclusion
-          <span style={{ fontSize: '0.7rem', fontWeight: 500, color: '#6b7280' }}>(Gemini)</span>
+          <span style={{ fontSize: '0.7rem', fontWeight: 500, color: T.muted }}>(Gemini)</span>
         </span>
         <button type="button" onClick={() => fetchConclusion(true)} disabled={state.status === 'loading'}
           title="Regenerate"
           style={{
             background: 'transparent', border: '1px solid rgba(139,92,246,0.3)',
-            color: '#7c3aed', borderRadius: 6, padding: '3px 10px',
+            color: 'var(--transcript-purple)', borderRadius: 6, padding: '3px 10px',
             fontSize: '0.72rem', cursor: state.status === 'loading' ? 'wait' : 'pointer',
             fontWeight: 600,
           }}><AppIcon name="retry" /> Regenerate</button>
@@ -122,11 +122,11 @@ function ConclusionCard({ transcriptId, turns }) {
   );
 
   if (state.status === 'loading' || state.status === 'idle')
-    return wrap(<div style={{ color: '#6b7280', fontSize: '0.85rem' }}>Generating conclusion…</div>);
+    return wrap(<div style={{ color: T.sub, fontSize: '0.85rem' }}>Generating conclusion…</div>);
   if (state.status === 'error')
-    return wrap(<div style={{ color: '#dc2626', fontSize: '0.82rem' }}>Could not generate conclusion: {state.error}</div>);
+    return wrap(<div style={{ color: 'var(--transcript-red)', fontSize: '0.82rem' }}>Could not generate conclusion: {state.error}</div>);
   if (state.status === 'empty')
-    return wrap(<div style={{ color: '#6b7280', fontSize: '0.85rem' }}>No transcript turns to analyse.</div>);
+    return wrap(<div style={{ color: T.sub, fontSize: '0.85rem' }}>No transcript turns to analyse.</div>);
 
   const r = state.review || {};
   const summary       = (r.summary || '').trim();
@@ -182,7 +182,7 @@ function ConclusionCard({ transcriptId, turns }) {
   };
 
   return wrap(
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: '#1f2937', lineHeight: 1.5 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem', color: T.sub, lineHeight: 1.5 }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
         {score > 0 && (
           <span style={{ background: '#fef9c3', color: '#a16207', border: '1px solid #fde047', fontSize: '0.75rem', padding: '2px 8px', borderRadius: 12, fontWeight: 600 }}>
@@ -204,7 +204,7 @@ function ConclusionCard({ transcriptId, turns }) {
         </span>
         {disposition && (
           <span style={{
-            background: `${activeOption?.color || '#6366f1'}18`, color: activeOption?.color || '#4f46e5',
+            background: `${activeOption?.color || '#6366f1'}18`, color: `color-mix(in srgb, ${activeOption?.color || '#4f46e5'} 55%, var(--text-primary))`,
             border: `1px solid ${activeOption?.color || '#6366f1'}55`, fontSize: '0.75rem',
             padding: '2px 8px', borderRadius: 12, fontWeight: 700,
           }}>
@@ -215,13 +215,13 @@ function ConclusionCard({ transcriptId, turns }) {
         )}
         {disposition && !editing && (
           <button type="button" onClick={beginEdit} style={{
-            border: '1px solid #cbd5e1', background: '#fff', color: '#475569', borderRadius: 6,
+            border: `1px solid ${T.border}`, background: T.card, color: T.sub, borderRadius: 6,
             padding: '2px 8px', fontSize: '0.72rem', cursor: 'pointer', fontWeight: 600,
           }}>Edit disposition</button>
         )}
       </div>
       {editing ? (
-        <div style={{ display: 'grid', gap: 8, padding: 10, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+        <div style={{ display: 'grid', gap: 8, padding: 10, background: 'var(--surface-muted)', border: `1px solid ${T.border}`, borderRadius: 8 }}>
           <select value={editCode} onChange={(event) => setEditCode(event.target.value)} className="form-input" style={{ minHeight: 36 }}>
             {options.filter((option) => option.is_active).map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
           </select>
@@ -233,15 +233,15 @@ function ConclusionCard({ transcriptId, turns }) {
           </div>
         </div>
       ) : (
-        (disposition?.effective_summary || summary) && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Summary: </span>{disposition?.effective_summary || summary}</div>
+        (disposition?.effective_summary || summary) && <div><span style={{ color: 'var(--transcript-purple)', fontWeight: 700 }}>Summary: </span>{disposition?.effective_summary || summary}</div>
       )}
-      {disposition?.ai_objections && disposition.ai_objections !== 'None' && <div><span style={{ color: '#c2410c', fontWeight: 700 }}>Objections: </span>{disposition.ai_objections}</div>}
-      {disposition?.ai_next_action && <div><span style={{ color: '#2563eb', fontWeight: 700 }}>Next action: </span>{disposition.ai_next_action}</div>}
-      {wentWell      && <div><span style={{ color: '#15803d', fontWeight: 700 }}>What went well: </span>{wentWell}</div>}
-      {wentWrong     && <div><span style={{ color: '#dc2626', fontWeight: 700 }}>What went wrong: </span>{wentWrong}</div>}
-      {failureReason && !r.appointment_booked && <div><span style={{ color: '#c2410c', fontWeight: 700 }}>Why no booking: </span>{failureReason}</div>}
-      {suggestion    && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Suggested next step: </span>{suggestion}</div>}
-      {!suggestion && insights && <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>Coaching insight: </span>{insights}</div>}
+      {disposition?.ai_objections && disposition.ai_objections !== 'None' && <div><span style={{ color: 'var(--transcript-orange)', fontWeight: 700 }}>Objections: </span>{disposition.ai_objections}</div>}
+      {disposition?.ai_next_action && <div><span style={{ color: 'var(--transcript-blue)', fontWeight: 700 }}>Next action: </span>{disposition.ai_next_action}</div>}
+      {wentWell      && <div><span style={{ color: 'var(--transcript-green)', fontWeight: 700 }}>What went well: </span>{wentWell}</div>}
+      {wentWrong     && <div><span style={{ color: 'var(--transcript-red)', fontWeight: 700 }}>What went wrong: </span>{wentWrong}</div>}
+      {failureReason && !r.appointment_booked && <div><span style={{ color: 'var(--transcript-orange)', fontWeight: 700 }}>Why no booking: </span>{failureReason}</div>}
+      {suggestion    && <div><span style={{ color: 'var(--transcript-purple)', fontWeight: 700 }}>Suggested next step: </span>{suggestion}</div>}
+      {!suggestion && insights && <div><span style={{ color: 'var(--transcript-purple)', fontWeight: 700 }}>Coaching insight: </span>{insights}</div>}
     </div>
   );
 }
@@ -281,7 +281,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
   const close = () => setTranscriptLead(null);
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) close(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+    <div className="modal-overlay transcript-modal" onClick={e => { if (e.target === e.currentTarget) close(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
       <div style={{
         position: 'relative',
         background: T.card,
@@ -419,7 +419,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                           </div>
                           <div style={{
                             maxWidth: '75%', padding: '10px 14px', borderRadius: 12,
-                            background: isAI ? 'rgba(99,102,241,0.06)' : '#ffffff',
+                            background: isAI ? 'rgba(99,102,241,0.06)' : T.card,
                             border: `1px solid ${isAI ? 'rgba(99,102,241,0.15)' : T.border}`,
                             color: T.text, fontSize: '0.88rem', lineHeight: 1.55,
                           }}>
