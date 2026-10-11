@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { API_URL } from '../constants/api';
 import loginIcon from '../assets/tg_image_3608761279.png';
 import AppIcon from './common/AppIcon';
+import './AuthPage.css';
 
 export default function AuthPage({ redirectTo = '/crm' }) {
   const { login, signup } = useAuth();
@@ -79,11 +80,11 @@ export default function AuthPage({ redirectTo = '/crm' }) {
   };
 
   return (
-    <div style={{
+    <div className="auth-workspace" style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', padding: '20px'
     }}>
-      <div style={{ width: '100%', maxWidth: '440px' }}>
+      <div className="auth-workspace-content" style={{ width: '100%', maxWidth: '440px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '2rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 0 }}>
             <img src={loginIcon} alt="" style={{ height: '1.2em', width: '1.2em', objectFit: 'contain' }} />
@@ -94,11 +95,13 @@ export default function AuthPage({ redirectTo = '/crm' }) {
           <p style={{ color: '#94a3b8', fontSize: '0.95rem', marginTop: '0.5rem' }}>AI-Powered Lead Qualification Platform</p>
           <span style={{ display: 'none' }} data-version="1.2.0" />
         </div>
+        <h2 className="auth-workspace-heading">{authPage === 'signup' ? 'Create your workspace' : authPage === 'forgot' ? 'Reset your password' : 'Access your workspace'}</h2>
 
         <div className="glass-panel" style={{ padding: '2rem' }}>
           {authPage !== 'forgot' && (
-            <div style={{ display: 'flex', marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
+            <div className="auth-workspace-tabs" style={{ display: 'flex', marginBottom: '1.5rem', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
               <button data-testid="auth-login-tab" onClick={() => { setAuthPage('login'); setAuthError(''); setForgotSuccess(''); }}
+                aria-pressed={authPage === 'login'}
                 style={{
                   flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
                   background: authPage === 'login' ? 'rgba(167,139,250,0.2)' : 'transparent',
@@ -107,6 +110,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
                 Login
               </button>
               <button data-testid="auth-signup-tab" onClick={() => { setAuthPage('signup'); setAuthError(''); setForgotSuccess(''); }}
+                aria-pressed={authPage === 'signup'}
                 style={{
                   flex: 1, padding: '10px', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem',
                   background: authPage === 'signup' ? 'rgba(34,211,238,0.2)' : 'transparent',
@@ -244,7 +248,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
                     width: '100%', padding: '12px', marginTop: '0.5rem', fontSize: '1rem', fontWeight: 700,
                     background: authPage === 'login' ? 'linear-gradient(135deg, #a78bfa, #7c3aed)' : 'linear-gradient(135deg, #22d3ee, #06b6d4)'
                   }}>
-                  {authLoading ? 'Please wait...' : (authPage === 'login' ? 'Login' : 'Create Account')}
+                  {authLoading ? 'Please wait...' : (authPage === 'login' ? 'Continue' : 'Create Account')}
                 </button>
               </form>
               {authPage === 'login' && (
