@@ -514,8 +514,18 @@ func (d *DB) UpdateProductManualImages(id int64, images []ProductImage) error {
 
 // DeleteProduct deletes a product.
 func (d *DB) DeleteProduct(id int64) error {
-	_, err := d.pool.Exec(`DELETE FROM products WHERE id=?`, id)
-	return err
+	tx, err := d.pool.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM product_research_jobs WHERE product_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM products WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetProductPrompt returns agent_persona and call_flow_instructions for a product.
