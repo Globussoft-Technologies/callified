@@ -492,14 +492,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							zap.Bool("agent_text", true))
 					}
 				}()
-				languageCorrections := 0
-				correctionCustomer := ""
 				var languageRedirectMu sync.Mutex
 				languageRedirectActive := false
 				languageRedirectInterrupted := false
 				languageRedirectAwaitingInterrupt := false
 				provisionalLanguage := ""
-				const maxLanguageCorrections = 2
 				newOutputTurn := true
 				queueAudio := func(packet liveAudioPacket) {
 					select {
@@ -592,7 +589,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if sess.IsBargeInPending() {
 							sess.ConfirmBargeIn()
 						}
-						correctionCustomer = currentInput
 						language, languageChanged := languageGuard.ObserveCustomer(currentInput)
 						if languageChanged {
 							sess.Log.Info("gemini live: confirmed customer language",
@@ -639,24 +635,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						responseWatchdog.Cancel()
 						transcriptMu.Lock()
 						outputText.WriteString(text)
-						currentOutput := strings.TrimSpace(outputText.String())
 						transcriptMu.Unlock()
 						languageRedirectMu.Lock()
 						holdLanguageRedirectOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
 						liveStateMu.Lock()
-						if !outputRejected {
-							if !holdLanguageRedirectOutput {
-								switch languageGuard.ValidateAgent(currentOutput, false) {
-								case liveLanguageAccept:
-									if !outputApproved {
-										outputApproved = true
-										flushPendingAudio()
-									}
-								case liveLanguageReject:
-									rejectOutput()
-								}
-							}
+						if !outputRejected && !holdLanguageRedirectOutput && !outputApproved {
+							// Do not suppress Gemini's audio based on a transcript-language
+							// guess. The selected campaign language and explicit customer
+							// language-switch requests still guide the model, but its reply
+							// must always be playable.
+							outputApproved = true
+							flushPendingAudio()
 						}
 						liveStateMu.Unlock()
 					},
@@ -759,15 +749,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if forceLanguageRedirectHold && hadOutput {
 							rejectOutput()
 						} else if hadOutput && !outputRejected {
-							if languageGuard.ValidateAgent(agent, true) == liveLanguageAccept {
-								outputApproved = true
-								flushPendingAudio()
-								validOutput = true
-							} else {
-								rejectOutput()
-							}
+							outputApproved = true
+							flushPendingAudio()
+							validOutput = true
 						}
-						rejectedOutput := hadOutput && !validOutput
 						pendingAudio = nil
 						outputApproved = false
 						outputRejected = false
@@ -796,39 +781,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						newOutputTurn = true
 						if skipInterruptedRedirectTurn {
 							sess.Log.Debug("gemini live: discarded interrupted pre-switch response")
-							responseWatchdog.Arm(correctionCustomer)
 							return
-						}
-						if rejectedOutput {
-							if languageCorrections < maxLanguageCorrections {
-								languageCorrections++
-								label := langLabels[languageGuard.Expected()]
-								if label == "" {
-									// An unconstrained turn cannot produce a wrong-language
-									// verdict, but retain a safe instruction if state changes
-									// between validation and correction.
-									label = langLabels[languageGuard.Confirmed()]
-								}
-								instruction := "SYSTEM LANGUAGE-CORRECTION EVENT: Reply to the customer's latest utterance now. " +
-									"You MUST respond unmistakably and entirely in " + label + ". " +
-									"Do not use another language except natural English product names. " +
-									"Do not mention this correction. Customer utterance: " + correctionCustomer
-								if sess.RequestLiveResponse(instruction) {
-									sess.Log.Warn("gemini live: blocked wrong-language response and requested correction",
-										zap.String("expected_language", languageGuard.Confirmed()),
-										zap.Int("attempt", languageCorrections))
-								} else {
-									sess.Log.Warn("gemini live: language correction unavailable")
-								}
-							} else {
-								sess.Log.Error("gemini live: wrong-language response persisted after corrections",
-									zap.String("expected_language", languageGuard.Confirmed()))
-							}
-							return
-						}
-						if validOutput {
-							languageCorrections = 0
-							correctionCustomer = ""
 						}
 						if validOutput && !sess.IsFinalClosing() {
 							inactivityWatchdog.Arm()
