@@ -844,6 +844,13 @@ func (d *DB) UpdateCallTranscriptContents(transcriptID int64, transcriptJSON str
 	return err
 }
 
+// UpdateCallTranscriptText applies an audio-verified transcript without
+// changing the recording URL, duration, or other call metadata.
+func (d *DB) UpdateCallTranscriptText(transcriptID int64, transcriptJSON string) error {
+	_, err := d.pool.Exec(`UPDATE call_transcripts SET transcript=? WHERE id=?`, transcriptJSON, transcriptID)
+	return err
+}
+
 // UpdateCallTranscriptLead attaches a previously leadless inbound transcript to
 // the lead created or matched during post-call extraction.
 func (d *DB) UpdateCallTranscriptLead(transcriptID, leadID int64) error {

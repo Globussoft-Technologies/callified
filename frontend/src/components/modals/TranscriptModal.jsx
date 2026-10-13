@@ -427,6 +427,12 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                               {isAI ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
                             </div>
                             {turn.text}
+                            {!isAI && turn.suggested_text && (
+                              <details style={{ marginTop: 8, borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>
+                                <summary style={{ cursor: 'pointer', fontSize: '0.75rem', color: T.accent }}>Suggested correction · Unreviewed</summary>
+                                <div style={{ marginTop: 6 }}>{turn.suggested_text}</div>
+                              </details>
+                            )}
                           </div>
                         </div>
                       );

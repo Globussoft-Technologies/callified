@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import AcceptInvitePage from './pages/AcceptInvitePage';
@@ -7,7 +7,11 @@ import MonitorPage from './pages/MonitorPage';
 import SandboxPage from './pages/SandboxPage';
 import AuthPage from './components/AuthPage';
 import TopHeader from './components/TopHeader';
-import OnboardingWizard from './components/OnboardingWizard';
+import DashboardTour from './components/DashboardTour';
+import ProviderAccountsTour from './components/ProviderAccountsTour';
+import MakeCallGuide from './components/MakeCallGuide';
+import AnalyticsGuide from './components/AnalyticsGuide';
+import ProductGuide from './components/ProductGuide';
 import CrmPage from './pages/CrmPage';
 import OpsPage from './pages/OpsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
@@ -42,13 +46,14 @@ import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
 import { useHideAiFeatures } from './hooks/useHideAiFeatures';
 import { isCustomerProductionDomain } from './utils/domainFeatures';
+import { dashboardTourKey } from './utils/dashboardTour';
 
 function AdminOnly({ children, userRole }) {
   return (userRole === 'Admin' || userRole === 'SuperAdmin') ? children : <Navigate to="/crm" replace />;
 }
 
 export default function App() {
-  const { authToken, currentUser, apiFetch, logout, loading } = useAuth();
+  const { authToken, currentUser, apiFetch, logout, loading, permissions, hasPermission } = useAuth();
   const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
@@ -59,9 +64,13 @@ export default function App() {
 
   // RBAC Global State
   const userRole = currentUser?.role || 'Agent';
+  const canManageProviderAccounts = ['Admin', 'SuperAdmin'].includes(userRole) && hasPermission('provider_accounts.global') && !hideAiFeatures;
 
   const [campaigns, setCampaigns] = useState([]);
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [campaignsReady, setCampaignsReady] = useState(false);
+  const [tourMode, setTourMode] = useState(null);
+  const [tourUi, setTourUi] = useState({ moreOpen: false, providerForm: null });
+  const tourKey = dashboardTourKey(currentUser, selectedOrg);
 
   const fetchCampaigns = async () => {
     try {
@@ -80,23 +89,38 @@ export default function App() {
 
   useEffect(() => {
     if (!currentUser) return;
+    let active = true;
+    setCampaignsReady(false);
     // Campaign list is scoped by role on the backend.
     // campaigns.
     if (userRole === 'Admin' || userRole === 'SuperAdmin' || userRole === 'TeamLeader' || userRole === 'Agent' || userRole === 'Executive') {
-      fetchCampaigns();
+      fetchCampaigns().finally(() => { if (active) setCampaignsReady(true); });
     } else {
       setCampaigns([]);
+      setCampaignsReady(true);
     }
-    // Check onboarding status
-    (async () => {
-      try {
-        const res = await apiFetch(`${API_URL}/onboarding/status`);
-        const data = await res.json();
-        if (!data.completed) setShowOnboarding(true);
-      } catch { /* ignore */ }
-    })();
+    return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, userRole]);
+
+  useEffect(() => {
+    if (!tourKey || permissions === null || !campaignsReady) return;
+    try {
+      if (localStorage.getItem(tourKey) !== 'done') setTourMode(mode => mode || 'product');
+    } catch { /* tour remains available from the user menu */ }
+  }, [tourKey, permissions, campaignsReady]);
+
+  const closeProductTour = useCallback(() => {
+    if (tourKey) {
+      try { localStorage.setItem(tourKey, 'done'); } catch { /* private browsing */ }
+    }
+    setTourMode(null);
+    setTourUi({ moreOpen: false, providerForm: null });
+  }, [tourKey]);
+  const closeProviderTour = useCallback(() => {
+    setTourMode(null);
+    setTourUi({ moreOpen: false, providerForm: null });
+  }, []);
 
   // ─── PUBLIC ROUTES (no auth required) ───
   if (location.pathname === '/reset-password') {
@@ -128,20 +152,35 @@ export default function App() {
 
   return (
     <div className="dashboard-container">
-      {showOnboarding && (
-        <OnboardingWizard
-          apiFetch={apiFetch} API_URL={API_URL}
-          selectedOrg={selectedOrg}
-          orgProducts={orgProducts}
-          fetchOrgProducts={fetchOrgProducts}
-          onComplete={() => setShowOnboarding(false)}
-        />
-      )}
       <TopHeader
         userRole={userRole} currentUser={currentUser}
         handleLogout={logout}
         apiFetch={apiFetch}
+        onStartTour={() => setTourMode('product')}
+        onStartProviderTour={() => setTourMode('provider')}
+        onStartCallGuide={() => setTourMode('call')}
+        onStartAnalyticsGuide={() => setTourMode('analytics')}
+        onStartProductGuide={() => setTourMode('products')}
+        canStartCallGuide={hasPermission('calls.browser_call') && !hideAiFeatures}
+        canStartAnalyticsGuide={['Admin', 'SuperAdmin'].includes(userRole) && hasPermission('reports.view')}
+        canStartProductGuide={['Admin', 'SuperAdmin'].includes(userRole) && hasPermission('products.manage') && !hideAiFeatures}
+        canStartProviderTour={canManageProviderAccounts}
+        tourMoreOpen={tourUi.moreOpen}
       />
+
+      {tourMode === 'product' && <DashboardTour
+        fixedCard
+        campaigns={campaigns}
+        canViewCampaigns={hasPermission('campaigns.view') && ['Admin', 'SuperAdmin', 'TeamLeader', 'Agent', 'Executive'].includes(userRole)}
+        canCreateCampaigns={hasPermission('campaigns.create')}
+        canViewProducts={['Admin', 'SuperAdmin'].includes(userRole)}
+        hideAiFeatures={hideAiFeatures}
+        onClose={closeProductTour}
+      />}
+      {tourMode === 'provider' && <ProviderAccountsTour onStepChange={setTourUi} onClose={closeProviderTour} />}
+      {tourMode === 'call' && <MakeCallGuide onClose={closeProviderTour} />}
+      {tourMode === 'analytics' && <AnalyticsGuide onClose={closeProviderTour} />}
+      {tourMode === 'products' && <ProductGuide onClose={closeProviderTour} />}
 
       <main className="main-content">
       <Routes>
@@ -266,7 +305,7 @@ export default function App() {
           : <ReceptionistPage />
         } />
         <Route path="/receptionist" element={<Navigate to={hidePrelaunchAiTools ? '/crm' : '/ai-receptionist'} replace />} />
-        <Route path="/exotel-accounts" element={<ExotelAccountsPage />} />
+        <Route path="/exotel-accounts" element={<ExotelAccountsPage tourFormMode={tourUi.providerForm} tourActive={tourMode === 'provider'} />} />
         <Route path="/delete-leads" element={<DeleteLeadsPage />} />
         <Route path="/subscriptions" element={
           <RequireRole allow={['Admin', 'SuperAdmin']}>

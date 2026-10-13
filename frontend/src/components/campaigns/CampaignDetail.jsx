@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatDateTime } from '../../utils/dateFormat';
-import { VOICE_RECOMMENDATIONS } from '../../constants/voices';
 import AuthAudio from '../AuthAudio';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
@@ -10,6 +9,8 @@ import { isValidPhone, normalizePhone, PHONE_VALIDATION_MESSAGE } from '../../ut
 import { LEAD_STATUSES } from '../../constants/leadStatuses';
 import { isAdmin, isAgent, isExecutive } from '../../utils/roles';
 import AppSelect from '../common/AppSelect';
+import CampaignVoiceSettings from './CampaignVoiceSettings';
+import CampaignDetailTabs from './CampaignDetailTabs';
 import DispositionSettingsModal from './DispositionSettingsModal';
 import { Checkbox } from 'antd';
 import {
@@ -27,16 +28,13 @@ import {
   FlagOutlined,
   FormOutlined,
   GlobalOutlined,
-  HistoryOutlined,
   InfoCircleOutlined,
   LoadingOutlined,
   MessageOutlined,
   PhoneOutlined,
   PlusOutlined,
-  RedoOutlined,
   SoundOutlined,
   StopOutlined,
-  TeamOutlined,
   TagOutlined,
   TagsOutlined,
   UploadOutlined,
@@ -93,20 +91,6 @@ function leadStatusLabel(status) {
       {status}
     </span>
   );
-}
-
-function campaignVoiceOptions(voiceCatalog, provider, language) {
-  const recommendedIds = VOICE_RECOMMENDATIONS[language]?.[provider]?.top || [];
-  const voices = voiceCatalog[provider] || [];
-  const recommended = voices.filter(voice => recommendedIds.includes(voice.id));
-  const others = voices.filter(voice => !recommendedIds.includes(voice.id));
-  const toOptions = list => list.map(voice => ({ value: voice.id, label: voice.name }));
-
-  if (recommended.length === 0) return toOptions(voices);
-  return [
-    { label: 'Recommended', options: toOptions(recommended) },
-    { label: 'All Voices', options: toOptions(others) },
-  ];
 }
 
 const btnPrimary = {
@@ -475,7 +459,6 @@ export default function CampaignDetail({
   handleBack, fetchCampaignLeads, fetchCallLog, fetchCampaigns,
   statusBadge, getProductName, getCampaignStats,
   campVoice, setCampVoice, handleSaveCampVoice, handleResetCampVoice, campVoiceSaveStatus,
-  INDIAN_VOICES, INDIAN_LANGUAGES,
   liveEvents, setLiveEvents,
   handleLeadStatusChange, handleEditLead, handleRemoveLead, handleDeleteLead,
   campaignLeadsTotal,
@@ -1631,82 +1614,7 @@ export default function CampaignDetail({
 
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
       {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
-        <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}><SoundOutlined /> Voice Settings</div>
-          <div className="campaign-voice-controls">
-            <div className="campaign-voice-selects">
-              <AppSelect size="small" value={campVoice.tts_provider || undefined} placeholder="Provider" options={[
-                { value: 'elevenlabs', label: 'ElevenLabs' },
-                { value: 'sarvam', label: 'Sarvam AI' },
-                { value: 'smallest', label: 'Smallest AI' },
-                { value: 'gemini_live', label: 'Gemini Live' },
-              ]} onChange={provider => setCampVoice(value => ({...value, tts_provider: provider, tts_voice_id: (INDIAN_VOICES[provider] || [])[0]?.id || ''}))} />
-              <AppSelect searchable size="small" value={campVoice.tts_voice_id || undefined} placeholder="Voice" popupWidth={260}
-                options={campaignVoiceOptions(INDIAN_VOICES, campVoice.tts_provider, campVoice.tts_language)}
-                onChange={voiceId => setCampVoice(value => ({...value, tts_voice_id: voiceId}))} />
-              <AppSelect searchable size="small" value={campVoice.tts_language || undefined} placeholder="Language"
-                options={INDIAN_LANGUAGES.map(language => ({ value: language.code, label: language.name }))}
-                onChange={language => setCampVoice(value => ({...value, tts_language: language}))} />
-            </div>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: T.muted, fontWeight: 700, whiteSpace: 'nowrap' }}>
-              Max Call Time
-              <input
-                className="form-input"
-                type="number"
-                min="0"
-                max="60"
-                step="1"
-                value={campVoice.max_call_duration_seconds ? Math.round(Number(campVoice.max_call_duration_seconds) / 60) : ''}
-                onChange={e => {
-                  const minutes = Math.max(0, Math.min(60, Number(e.target.value || 0)));
-                  setCampVoice(v => ({ ...v, max_call_duration_seconds: minutes ? minutes * 60 : 0 }));
-                }}
-                placeholder="No limit"
-                style={{ ...inputStyle, height: 32, width: 92 }}
-              />
-              min
-            </label>
-            {canSaveVoiceSettings && <button style={{
-                background: campVoiceSaveStatus === 'saved' ? T.green
-                  : campVoiceSaveStatus === 'error' ? T.red
-                  : T.accent,
-                border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8,
-                cursor: campVoiceSaveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap',
-                opacity: campVoiceSaveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font,
-              }}
-              disabled={campVoiceSaveStatus === 'saving'}
-              onClick={handleSaveCampVoice}>
-              {campVoiceSaveStatus === 'saving' ? 'Saving…'
-                : campVoiceSaveStatus === 'saved' ? '✓ Saved'
-                : campVoiceSaveStatus === 'error' ? '✗ Failed'
-                : 'Save'}
-            </button>}
-            {canSaveVoiceSettings && <button style={{ ...btnGhost, fontSize: 12 }} onClick={handleResetCampVoice}>Reset to Org Default</button>}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>
-            {campVoice.tts_provider
-              ? (() => {
-                  const providerLabel = campVoice.tts_provider === 'elevenlabs' ? 'ElevenLabs'
-                    : campVoice.tts_provider === 'sarvam' ? 'Sarvam AI'
-                    : campVoice.tts_provider === 'gemini_live' ? 'Gemini Live'
-                    : 'Smallest AI';
-                  const voiceLabel = (INDIAN_VOICES[campVoice.tts_provider] || [])
-                    .find(v => v.id === campVoice.tts_voice_id)?.name
-                    || campVoice.tts_voice_id || 'none';
-                  const langLabel = INDIAN_LANGUAGES
-                    .find(l => l.code === campVoice.tts_language)?.name
-                    || campVoice.tts_language;
-                  const maxMinutes = Number(campVoice.max_call_duration_seconds || 0) / 60;
-                  return `Current: ${providerLabel} - ${voiceLabel}` + (langLabel ? ` (${langLabel})` : '') + (maxMinutes > 0 ? ` · Max call time ${Math.round(maxMinutes)} min` : ' · No max limit');
-                })()
-              : 'Using org default'}
-          </div>
-          {VOICE_RECOMMENDATIONS[campVoice.tts_language]?.[campVoice.tts_provider]?.note && (
-            <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}>
-              <InfoCircleOutlined /> {VOICE_RECOMMENDATIONS[campVoice.tts_language][campVoice.tts_provider].note}
-            </div>
-          )}
-        </div>
+        <CampaignVoiceSettings voice={campVoice} onChange={setCampVoice} canSave={canSaveVoiceSettings} saveStatus={campVoiceSaveStatus} onSave={handleSaveCampVoice} onReset={handleResetCampVoice} />
       )}
 
       {/* Browser Call Account (per-machine) — hidden for WhatsApp campaigns */}
@@ -2169,28 +2077,12 @@ export default function CampaignDetail({
       {/* Search + Tab Switcher */}
       {!autoDialEnabled && (<>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: 3, gap: 2, width: 'fit-content' }}>
-          {[
-            { id: 'leads', icon: TeamOutlined, label: `Leads (${campaignLeadsTotal})`, activeColor: T.accent, hidden: !hasPermission('crm.view') },
-            { id: 'calllog', icon: HistoryOutlined, label: `Call Log (${callLog.length})`, activeColor: T.green, hidden: !canViewTranscripts && !canViewRecordings },
-            { id: 'insights', icon: BarChartOutlined, label: 'Call Insights', activeColor: '#a855f7', hidden: hideAiFeatures || !canViewReports },
-            { id: 'retries', icon: RedoOutlined, label: 'Retries', activeColor: T.amber, hidden: hideAiFeatures || !canViewReports },
-          ].filter(tab => !tab.hidden).map(tab => (
-            <button key={tab.id}
-              onClick={() => handleDetailTabChange(tab.id)}
-              style={{
-                padding: '6px 18px', borderRadius: 6, border: 'none', cursor: 'pointer',
-                fontSize: 13, fontWeight: 600, fontFamily: T.font,
-                background: detailTab === tab.id ? tab.activeColor : 'transparent',
-                color: detailTab === tab.id ? '#fff' : T.muted,
-                transition: 'all 0.15s',
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-              }}>
-              <tab.icon />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+          <CampaignDetailTabs activeTab={detailTab} onChange={handleDetailTabChange} leadCount={campaignLeadsTotal} callCount={callLog.length} visible={[
+            hasPermission('crm.view') && 'leads',
+            (canViewTranscripts || canViewRecordings) && 'calllog',
+            !hideAiFeatures && canViewReports && 'insights',
+            !hideAiFeatures && canViewReports && 'retries',
+          ].filter(Boolean)} />
         <input
           type="text"
           placeholder="Search leads by name, phone, company or source..."

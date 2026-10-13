@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,7 +63,13 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text string `json:"text"`
+	Text       string            `json:"text,omitempty"`
+	InlineData *geminiInlineData `json:"inlineData,omitempty"`
+}
+
+type geminiInlineData struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
 }
 
 // --- response types (SSE) ---
@@ -171,6 +178,58 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 		}
 	}
 	return strings.TrimSpace(sb.String()), nil
+}
+
+// GenerateAudioText sends a customer-only WAV and instructions to a Gemini
+// generateContent model. It is for asynchronous post-call verification only.
+func (g *GeminiClient) GenerateAudioText(ctx context.Context, instruction string, wav []byte, maxOutputTokens int) (string, error) {
+	if g.apiKey == "" {
+		return "", fmt.Errorf("gemini: GEMINI_API_KEY not set")
+	}
+	if len(wav) == 0 {
+		return "", fmt.Errorf("gemini: empty audio")
+	}
+	body, err := json.Marshal(geminiTextRequest{
+		Contents: []geminiContent{{Role: "user", Parts: []geminiPart{
+			{Text: instruction},
+			{InlineData: &geminiInlineData{MIMEType: "audio/wav", Data: base64.StdEncoding.EncodeToString(wav)}},
+		}}},
+		GenerationConfig: geminiTextGenConfig{MaxOutputTokens: maxOutputTokens},
+	})
+	if err != nil {
+		return "", fmt.Errorf("gemini: marshal audio request: %w", err)
+	}
+	endpoint, bearerAuth := g.endpoint("generateContent", false)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("gemini: build audio request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	g.applyAuth(req, bearerAuth)
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gemini: audio request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gemini: audio request status %d", resp.StatusCode)
+	}
+	var result geminiTextResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("gemini: decode audio response: %w", err)
+	}
+	if result.Error != nil {
+		return "", fmt.Errorf("gemini: audio API error %d: %s", result.Error.Code, result.Error.Message)
+	}
+	var out strings.Builder
+	for _, cand := range result.Candidates {
+		for _, part := range cand.Content.Parts {
+			if !part.Thought {
+				out.WriteString(part.Text)
+			}
+		}
+	}
+	return strings.TrimSpace(out.String()), nil
 }
 
 // StreamTokens streams tokens from Gemini, calling onToken for each text chunk.
