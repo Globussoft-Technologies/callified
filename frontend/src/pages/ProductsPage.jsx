@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ProductsTab from '../components/tabs/ProductsTab';
+import { createResearchRequests, finishResearchRequest } from '../utils/researchRequests';
 
 async function readResearch(response) {
   const data = await response.json().catch(() => ({}));
@@ -16,7 +17,14 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
   const [research, setResearch] = useState({});
   const loadedResearch = useRef(new Set());
   const activeOrg = useRef(selectedOrg?.id);
-  useEffect(() => { activeOrg.current = selectedOrg?.id; }, [selectedOrg?.id]);
+  const researchRequests = useRef(createResearchRequests());
+  const scrapingRequest = useRef(null);
+  useEffect(() => {
+    activeOrg.current = selectedOrg?.id;
+    researchRequests.current.invalidate();
+    scrapingRequest.current = null;
+    setScraping(null);
+  }, [selectedOrg?.id]);
 
   useEffect(() => {
     let active = true;
@@ -27,10 +35,14 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
       if (loaded.has(key)) continue;
       loaded.add(key);
       pending.add(key);
+      const token = researchRequests.current.begin(key);
       apiFetch(`${API_URL}/products/${product.id}/research/latest`).then(async response => {
         if (response.status === 404) { pending.delete(key); return; }
         const data = await readResearch(response);
-        if (active) { setResearch(previous => ({ ...previous, [product.id]: data })); pending.delete(key); }
+        if (active && researchRequests.current.isCurrent(key, token)) {
+          setResearch(previous => ({ ...previous, [product.id]: data }));
+        }
+        pending.delete(key);
       }).catch(() => { loaded.delete(key); pending.delete(key); });
     }
     return () => { active = false; pending.forEach(key => loaded.delete(key)); };
@@ -67,20 +79,24 @@ export default function ProductsPage({ apiFetch, API_URL, selectedOrg, orgs, org
 
   const handleScrapeProduct = async (productId, refresh = false) => {
     const orgID = selectedOrg?.id;
+    const key = `${orgID}:${productId}`;
+    const token = researchRequests.current.begin(key);
+    scrapingRequest.current = token;
     setScraping(productId);
     setScrapeError(prev => ({ ...prev, [productId]: null }));
     try {
       const res = await apiFetch(`${API_URL}/products/${productId}/scrape`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh }) });
       const data = await readResearch(res);
-      if (activeOrg.current !== orgID) return;
+      if (activeOrg.current !== orgID || !researchRequests.current.isCurrent(key, token)) return;
       setResearch(previous => ({ ...previous, [productId]: data }));
       if (data.job.status === 'failed') setScrapeError(previous => ({ ...previous, [productId]: data.job.error }));
     } catch(e) {
-      if (activeOrg.current !== orgID) return;
+      if (activeOrg.current !== orgID || !researchRequests.current.isCurrent(key, token)) return;
       console.error(e);
       setScrapeError(prev => ({ ...prev, [productId]: e.message || 'Network error — check your connection.' }));
+    } finally {
+      finishResearchRequest(scrapingRequest, token, () => setScraping(null));
     }
-    setScraping(null);
   };
 
   const handleApplyResearch = async productId => {
