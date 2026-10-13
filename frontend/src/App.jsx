@@ -6,6 +6,7 @@ import SsoReturn from './pages/SsoReturn';
 import MonitorPage from './pages/MonitorPage';
 import SandboxPage from './pages/SandboxPage';
 import AuthPage from './components/AuthPage';
+import WorkspacePreloader from './components/common/WorkspacePreloader';
 import TopHeader from './components/TopHeader';
 import DashboardTour from './components/DashboardTour';
 import ProviderAccountsTour from './components/ProviderAccountsTour';
@@ -135,15 +136,7 @@ export default function App() {
 
   // ─── AUTH PAGES (after all hooks) ───
   if (loading) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
-          <div style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTop: '3px solid #a78bfa', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <span style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Loading...</span>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
+    return <WorkspacePreloader />;
   }
 
   if (!currentUser) {

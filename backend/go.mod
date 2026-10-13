@@ -3,6 +3,7 @@ module github.com/globussoft/callified-backend
 go 1.25.0
 
 require (
+	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/anthropics/anthropic-sdk-go v1.39.0
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.23
@@ -12,8 +13,8 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/prometheus/client_golang v1.23.2
 	github.com/pkg/sftp v1.13.11
+	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.5.4
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/http-swagger v1.3.4
@@ -23,6 +24,7 @@ require (
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.41.0
+	golang.org/x/net v0.56.0
 )
 
 require (
@@ -69,7 +71,6 @@ require (
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

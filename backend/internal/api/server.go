@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -27,24 +28,27 @@ import (
 
 // Server holds shared dependencies for all REST handlers.
 type Server struct {
-	db           *db.DB
-	cfg          *config.Config
-	logger       *zap.Logger
-	dispatcher   *webhook.Dispatcher
-	store        *rstore.Store
-	initiator    *dial.Initiator
-	billingSvc   *billing.Service
-	emailSvc     *email.Service
-	ragClient    *rag.Client
-	waAgent      *wa.Agent
-	waSender     waSenderIface
-	llmProvider  *llm.Provider      // Phase 4: Gemini-powered generation endpoints
-	wsHandler    activeCallLister   // wired in main.go via SetWSHandler — used by /api/active-calls
-	recordingSvc callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
-	s3           *storage.S3Client  // nil when S3 is not configured
-	oci          *storage.OCIClient // nil when OCI is not configured
-	nas          *storage.NASClient // nil outside test* deployments
-	loginLimiter *loginRateLimiter
+	db            *db.DB
+	cfg           *config.Config
+	logger        *zap.Logger
+	dispatcher    *webhook.Dispatcher
+	store         *rstore.Store
+	initiator     *dial.Initiator
+	billingSvc    *billing.Service
+	emailSvc      *email.Service
+	ragClient     *rag.Client
+	waAgent       *wa.Agent
+	waSender      waSenderIface
+	llmProvider   *llm.Provider      // Phase 4: Gemini-powered generation endpoints
+	wsHandler     activeCallLister   // wired in main.go via SetWSHandler — used by /api/active-calls
+	recordingSvc  callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+	s3            *storage.S3Client  // nil when S3 is not configured
+	oci           *storage.OCIClient // nil when OCI is not configured
+	nas           *storage.NASClient // nil outside test* deployments
+	loginLimiter  *loginRateLimiter
+	researchOnce  sync.Once
+	researchSlots chan struct{}
+	researchMu    sync.Mutex
 }
 
 // callAnalyzer is the slice of recording.Service the API needs for on-demand
@@ -630,6 +634,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// prompts (config) — Admin-only. draft-email runs against a single lead
 	// and is fine for any agent.
 	mux.HandleFunc("POST /api/products/{id}/scrape", adminAuth(s.scrapeProduct))
+	mux.HandleFunc("GET /api/products/{id}/research/latest", adminAuth(s.latestProductResearch))
+	mux.HandleFunc("GET /api/products/{id}/research/{jobID}", adminAuth(s.productResearchStatus))
+	mux.HandleFunc("POST /api/products/{id}/research/{jobID}/apply", adminAuth(s.applyProductResearch))
 	mux.HandleFunc("POST /api/products/{id}/generate-prompt", adminAuth(s.generateProductPrompt))
 	mux.HandleFunc("POST /api/products/{id}/generate-persona", adminAuth(s.generateProductPersona))
 	mux.HandleFunc("POST /api/organizations/{id}/generate-prompt", adminAuth(s.generateOrgPrompt))
