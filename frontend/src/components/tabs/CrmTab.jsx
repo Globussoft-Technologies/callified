@@ -162,7 +162,7 @@ export default function CrmTab({
       {/* Heading + toggle */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>Dashboard</h2>
+          <h2 style={{ margin: 0, width: 'fit-content', fontSize: 22, fontWeight: 700, color: T.text }}>Dashboard</h2>
           {activeCampaigns.length > 0 && (
             <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
               AI is running {activeCampaigns.length} active campaign{activeCampaigns.length !== 1 ? 's' : ''}
@@ -172,7 +172,7 @@ export default function CrmTab({
       </div>
 
       {/* 5 stat cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div data-tour="dashboard-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 16 }}>
         {statCards.map(s => (
           <div key={s.label}
             onClick={() => setActiveModal(s.modal)}
@@ -186,7 +186,6 @@ export default function CrmTab({
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }}>
                 {s.label}
-                <span style={{ fontSize: 9, color: s.color }}>↗</span>
               </div>
               <span style={{ fontSize: 10, fontWeight: 700, color: T.green, background: 'rgba(16,185,129,0.1)', padding: '1px 7px', borderRadius: 20 }}>
                 {s.badge}

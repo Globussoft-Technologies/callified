@@ -65,26 +65,32 @@ type CallSession struct {
 	agentConnected atomic.Bool
 
 	// Atomic flags — safe to read/write without locks
-	greetingSent         atomic.Bool
-	ttsPlaying           atomic.Bool
-	hangupReq            atomic.Bool
-	dgAlive              atomic.Bool
-	maxDurationStarted   atomic.Bool
-	maxDurationSoftClose atomic.Bool
-	maxDurationWaitReply atomic.Bool
-	maxDurationClosing   atomic.Bool
-	finalCloseReq        atomic.Bool
-	finalCloseAudio      atomic.Bool  // native Live closing audio has started
-	bargeInActive        atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
-	bargeInPending       atomic.Bool  // true while waiting for STT confirmation of a barge-in
-	bargeInDeadline      atomic.Int64 // UnixNano; STT must confirm by this time
-	confirmedBargeInNano atomic.Int64 // UnixNano of last STT-confirmed barge-in
-	lastBargeInNano      atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
-	lastTTSEndNano       atomic.Int64 // UnixNano
-	lastAudioSentNano    atomic.Int64 // UnixNano of last outbound audio frame sent
-	lastTranscript       atomic.Int64 // UnixNano — debounce timestamp
-	outboundSeq          atomic.Uint64
-	playbackEpoch        atomic.Uint64 // invalidates queued Gemini audio after barge-in
+	greetingSent           atomic.Bool
+	ttsPlaying             atomic.Bool
+	hangupReq              atomic.Bool
+	dgAlive                atomic.Bool
+	maxDurationStarted     atomic.Bool
+	maxDurationSoftClose   atomic.Bool
+	maxDurationWaitReply   atomic.Bool
+	maxDurationClosing     atomic.Bool
+	finalCloseReq          atomic.Bool
+	finalCloseAudio        atomic.Bool  // native Live closing audio has started
+	bargeInActive          atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
+	bargeInPending         atomic.Bool  // true while waiting for STT confirmation of a barge-in
+	bargeInDeadline        atomic.Int64 // UnixNano; STT must confirm by this time
+	confirmedBargeInNano   atomic.Int64 // UnixNano of last STT-confirmed barge-in
+	lastBargeInNano        atomic.Int64 // UnixNano of last barge-in trigger — prevents re-triggering
+	lastTTSEndNano         atomic.Int64 // UnixNano
+	lastAudioSentNano      atomic.Int64 // UnixNano of last outbound audio frame sent
+	liveStartAtNano        atomic.Int64 // Tata start event for Gemini greeting latency diagnostics
+	firstLiveAudioQueued   atomic.Bool
+	firstLiveAudioSent     atomic.Bool
+	liveContextReadyLogged atomic.Bool
+	lastTranscript         atomic.Int64 // UnixNano — debounce timestamp
+	outboundSeq            atomic.Uint64
+	playbackEpoch          atomic.Uint64 // invalidates queued Gemini audio after barge-in
+	echoSuppressedFrames   atomic.Uint64 // per-call inbound frames omitted by echo suppression
+	audioInDroppedFrames   atomic.Uint64 // per-call inbound frames lost to a full AI audio queue
 
 	// Serialization
 	llmMu  sync.Mutex // one LLM turn at a time per session
@@ -99,6 +105,12 @@ type CallSession struct {
 	AudioIn      chan []byte // ulaw→PCM frames from WS → STT goroutine
 	Transcripts  chan string // STT results → pipeline orchestrator
 	TTSSentences chan string // sentences from pipeline → TTS worker
+	// carrierMediaReady closes on the first inbound carrier media frame. For a
+	// Tata call it is the earliest protocol-level proof that the bidirectional
+	// media path is established; prepared Gemini greeting audio must not be
+	// released before then.
+	carrierMediaReady chan struct{}
+	carrierMediaOnce  sync.Once
 
 	// TTS barge-in cancellation
 	cancelTTS context.CancelFunc
@@ -268,25 +280,40 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 	isWebSim := strings.HasPrefix(streamSid, "web_sim_")
 	isExotel := !isWebSim && !strings.HasPrefix(streamSid, "SM")
 	s := &CallSession{
-		StreamSid:       streamSid,
-		IsExotel:        isExotel,
-		IsWebSim:        isWebSim,
-		UseUlaw:         isExotel, // legacy default; overridden by start-frame casing detection
-		WS:              ws,
-		Log:             log,
-		AudioIn:         make(chan []byte, 512),
-		Transcripts:     make(chan string, 32),
-		TTSSentences:    make(chan string, 64),
-		BridgeCh:        make(chan []byte, 10), // 10 frames × 20 ms = 200 ms max latency
-		CallStart:       time.Now(),
-		PlaybackTracker: audio.NewPlaybackTracker(isExotel),
-		EchoCanceller:   audio.NewEchoCanceller(),
-		VAD:             audio.NewVAD(),
-		monitorConns:    make(map[*websocket.Conn]struct{}),
+		StreamSid:         streamSid,
+		IsExotel:          isExotel,
+		IsWebSim:          isWebSim,
+		UseUlaw:           isExotel, // legacy default; overridden by start-frame casing detection
+		WS:                ws,
+		Log:               log,
+		AudioIn:           make(chan []byte, 512),
+		Transcripts:       make(chan string, 32),
+		TTSSentences:      make(chan string, 64),
+		carrierMediaReady: make(chan struct{}),
+		BridgeCh:          make(chan []byte, 10), // 10 frames × 20 ms = 200 ms max latency
+		CallStart:         time.Now(),
+		PlaybackTracker:   audio.NewPlaybackTracker(isExotel),
+		EchoCanceller:     audio.NewEchoCanceller(),
+		VAD:               audio.NewVAD(),
+		monitorConns:      make(map[*websocket.Conn]struct{}),
 	}
 	s.dgAlive.Store(true)
 	return s
 }
+
+// MarkCarrierMediaReady marks the carrier's bidirectional media path ready.
+// It is intentionally driven by an actual carrier media frame, not a timer.
+func (s *CallSession) MarkCarrierMediaReady() {
+	s.carrierMediaOnce.Do(func() {
+		close(s.carrierMediaReady)
+		if s.Provider == "tata" && s.GeminiLive {
+			s.LogLiveStartup("carrier_media_ready")
+		}
+	})
+}
+
+// CarrierMediaReady is closed once the first inbound media frame arrives.
+func (s *CallSession) CarrierMediaReady() <-chan struct{} { return s.carrierMediaReady }
 
 // --- Monitor connection management ---
 
@@ -679,6 +706,41 @@ func (s *CallSession) MsSinceTTSEnd() int64 {
 // was sent. Used to extend the barge-in window past TTS synthesis end so the
 // customer can interrupt while audio is still playing on the phone.
 func (s *CallSession) MarkAudioSent() { s.lastAudioSentNano.Store(time.Now().UnixNano()) }
+
+// LogLiveStartup records the first-greeting milestones without logging audio,
+// transcript text, credentials, or customer details. A missing Tata start is -1.
+func (s *CallSession) LogLiveStartup(stage string, extra ...zap.Field) {
+	start := s.liveStartAtNano.Load()
+	elapsedMS := int64(-1)
+	if start != 0 {
+		elapsedMS = time.Since(time.Unix(0, start)).Milliseconds()
+	}
+	fields := []zap.Field{
+		zap.String("stage", stage),
+		zap.String("call_sid", s.CallSid),
+		zap.String("stream_sid", s.StreamSid),
+		zap.Int64("since_tata_start_ms", elapsedMS),
+	}
+	s.Log.Info("gemini live startup timing", append(fields, extra...)...)
+}
+
+func (s *CallSession) MarkFirstLiveAudioQueued() {
+	if s.GeminiLive && s.firstLiveAudioQueued.CompareAndSwap(false, true) {
+		s.LogLiveStartup("first_audio_queued")
+	}
+}
+
+func (s *CallSession) MarkLiveContextReady() {
+	if s.GeminiLive && s.liveContextReadyLogged.CompareAndSwap(false, true) {
+		s.LogLiveStartup("context_ready")
+	}
+}
+
+func (s *CallSession) MarkFirstLiveAudioSent() {
+	if s.GeminiLive && s.firstLiveAudioSent.CompareAndSwap(false, true) {
+		s.LogLiveStartup("first_audio_written_to_carrier_ws")
+	}
+}
 
 // MsSinceAudioSent returns milliseconds since the last outbound audio frame.
 // Returns 9999 if no audio has been sent yet.

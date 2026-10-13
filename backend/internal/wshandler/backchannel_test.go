@@ -14,17 +14,17 @@ func TestIsExplicitLangSwitch(t *testing.T) {
 		{"speak in tamil", "ta", true},
 
 		// Romanized/transliterated requests
-		{"kannada alli", "kn", true},
+		{"kannada alli mathadi", "kn", true},
 		{"kannada dhalli mathadi", "kn", true},
 		{"hindi mein bolo", "hi", true},
-		{"marathi madhe", "mr", true},
+		{"marathi madhe bol", "mr", true},
 		{"punjabi vich bolo", "pa", true},
 		{"panjabi me bolo", "pa", true},
 		{"telugu lo matladandi", "te", true},
 		{"tamil la pesunga", "ta", true},
 		{"malayalam parayu", "ml", true},
 		{"bengali te bolo", "bn", true},
-		{"gujarati ma", "gu", true},
+		{"gujarati ma bolo", "gu", true},
 
 		// Native script requests
 		{"ಕನ್ನಡದಲ್ಲಿ ಮಾತಾಡ್ತೀರಾ?", "kn", true},
@@ -47,6 +47,9 @@ func TestIsExplicitLangSwitch(t *testing.T) {
 
 		// Non-switch phrases
 		{"i like kannada food", "", false},
+		{"i studied in hindi medium", "", false},
+		{"the document is available in marathi", "", false},
+		{"don't speak in hindi, speak in english", "en", true},
 	}
 
 	for _, c := range cases {

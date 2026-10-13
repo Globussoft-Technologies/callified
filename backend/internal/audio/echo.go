@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"encoding/binary"
 	"math"
 	"sync"
 )
@@ -19,16 +20,11 @@ var ulawLinear [256]int16
 
 func init() {
 	for i := range 256 {
-		b := byte(i)
-		sign := b & 0x80
-		exp := (b >> 4) & 0x07
-		mant := b & 0x0F
-		sample := int16((int(mant)<<1 | 1) << (int(exp) + 2))
-		sample += 33
-		if sign != 0 {
-			sample = -sample
-		}
-		ulawLinear[i] = sample
+		// Use the same G.711 decoder as the customer audio path. The old
+		// hand-written table did not invert the mu-law bits, so 0xff (silence)
+		// was interpreted as a loud sample and skewed echo decisions.
+		pcm := UlawToPCM([]byte{byte(i)})
+		ulawLinear[i] = int16(binary.LittleEndian.Uint16(pcm))
 	}
 }
 

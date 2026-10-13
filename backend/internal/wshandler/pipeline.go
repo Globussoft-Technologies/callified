@@ -525,8 +525,12 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 				"streamSid": sess.StreamSid,
 				"media":     map[string]string{"payload": payloadB64},
 			})
-			_ = sess.SendText(frame)
+			if err := sess.SendText(frame); err != nil {
+				sess.Log.Warn("outbound audio frame write failed", zap.Error(err))
+				return
+			}
 			sess.MarkAudioSent()
+			sess.MarkFirstLiveAudioSent()
 			if sess.hasMonitors() {
 				sess.BroadcastAudio("agent", payloadB64, "ulaw_8k")
 			}
@@ -554,10 +558,14 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 		frameData["audio"] = payloadB64
 	}
 	frame, _ := json.Marshal(frameData)
-	_ = sess.SendText(frame)
+	if err := sess.SendText(frame); err != nil {
+		sess.Log.Warn("outbound audio frame write failed", zap.Error(err))
+		return
+	}
 	// Track when we last sent audio so barge-in stays armed while audio is still
 	// in flight to the phone/carrier (fixes barge-in misses on long sentences).
 	sess.MarkAudioSent()
+	sess.MarkFirstLiveAudioSent()
 
 	// Relay a copy of the agent's outbound audio to any attached monitors so
 	// external consumers can render / play back what the AI is saying.

@@ -14,9 +14,9 @@ const (
 	liveLanguageReject
 )
 
-// liveLanguageGuard keeps language selection deterministic around Gemini Live.
-// Native-script evidence is reliable enough to switch immediately; ambiguous
-// short Latin transcripts retain the previously confirmed language.
+// liveLanguageGuard keeps Gemini Live locked to one reply language. Customer
+// speech, script, accent, and model language guesses are never switch
+// authority; only an explicit request in the final customer transcript is.
 type liveLanguageGuard struct {
 	mu        sync.RWMutex
 	confirmed string
@@ -36,9 +36,22 @@ func (g *liveLanguageGuard) Confirmed() string {
 	return g.confirmed
 }
 
-// Expected returns the language Callified may safely enforce for the current
-// customer turn. An empty value means the transcript is ambiguous (commonly a
-// Romanized Indian language), so Gemini Live must follow the audio naturally.
+// ApplyExplicitSwitch accepts a semantic switch_language tool call after
+// Gemini has understood an explicit customer request. The supported-language
+// allowlist remains server-owned so arbitrary model output cannot alter state.
+func (g *liveLanguageGuard) ApplyExplicitSwitch(target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	if _, supported := langLabels[target]; !supported {
+		return false
+	}
+	g.mu.Lock()
+	g.confirmed = target
+	g.expected = target
+	g.mu.Unlock()
+	return true
+}
+
+// Expected returns the currently locked reply language.
 func (g *liveLanguageGuard) Expected() string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
@@ -48,36 +61,26 @@ func (g *liveLanguageGuard) Expected() string {
 func (g *liveLanguageGuard) ObserveCustomer(text string) (string, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	detected := detectCustomerLanguage(text, g.confirmed)
-	if detected == "" {
-		g.expected = ""
+	target, requested := isExplicitLangSwitch(text)
+	if !requested {
+		g.expected = g.confirmed
 		return g.confirmed, false
 	}
-	g.expected = detected
-	if detected == g.confirmed {
+	g.expected = target
+	if target == g.confirmed {
 		return g.confirmed, false
 	}
-	g.confirmed = detected
-	return detected, true
+	g.confirmed = target
+	return target, true
 }
 
-// ProvisionalCustomer inspects Gemini's low-latency interim transcript without
-// mutating the confirmed language. Final input transcription remains the only
-// authority that can switch a call, so unstable interim hypotheses cannot
-// cause false language changes.
+// ProvisionalCustomer may recognize an explicit request early, but it never
+// mutates state. The final transcript remains the only switch authority.
 func (g *liveLanguageGuard) ProvisionalCustomer(text string) (string, bool) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
-	detected := detectCustomerLanguage(text, g.confirmed)
-	return detected, detected != "" && detected != g.confirmed
-}
-
-func detectCustomerLanguage(text, current string) string {
-	if explicit, ok := isExplicitLangSwitch(text); ok {
-		return explicit
-	}
-	detected := dominantSupportedScript(text, current)
-	return detected
+	target, requested := isExplicitLangSwitch(text)
+	return target, requested && target != g.confirmed
 }
 
 // ValidateAgent returns pending until enough output text exists to make an
@@ -145,26 +148,6 @@ func (g *liveLanguageGuard) ValidateAgent(text string, final bool) liveLanguageV
 		return liveLanguageReject
 	}
 	return liveLanguagePending
-}
-
-func dominantSupportedScript(text, current string) string {
-	counts, _ := supportedScriptCounts(text)
-	bestLanguage, bestCount, total := "", 0, 0
-	for language, count := range counts {
-		total += count
-		if count > bestCount {
-			bestLanguage, bestCount = language, count
-		}
-	}
-	if bestCount < 2 || bestCount*100 < total*70 {
-		return ""
-	}
-	// Hindi and Marathi share Devanagari. Preserve either when already known;
-	// otherwise default to Hindi until the customer explicitly requests Marathi.
-	if bestLanguage == "hi" && current == "mr" {
-		return "mr"
-	}
-	return bestLanguage
 }
 
 func supportedScriptCounts(text string) (map[string]int, int) {

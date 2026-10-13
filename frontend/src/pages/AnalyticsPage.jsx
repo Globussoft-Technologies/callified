@@ -3,10 +3,10 @@ import { useAuth } from '../contexts/AuthContext';
 import AppSelect from '../components/common/AppSelect';
 
 const T = {
-  bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
+  bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
   accent: '#6366f1', green: '#10b981', amber: '#f59e0b',
   red: '#ef4444', pink: '#ec4899',
-  text: '#111827', sub: '#374151', muted: '#9ca3af',
+  text: 'var(--text-primary)', sub: 'var(--text-secondary)', muted: 'var(--text-muted)',
   font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
 };
 
@@ -31,16 +31,38 @@ const LANG_NAMES = {
   gu: 'Gujarati', pa: 'Punjabi', or: 'Odia', as: 'Assamese',
 };
 
+const EXAMPLE_DAILY_COUNTS = [5, 7, 9, 8, 10, 8, 18];
+const exampleDailyCalls = EXAMPLE_DAILY_COUNTS.map((count, index) => {
+  const date = new Date();
+  date.setDate(date.getDate() - 6 + index);
+  return { date: date.toISOString().slice(0, 10), count };
+});
+const EXAMPLE_ANALYTICS = {
+  total_calls: 120, calls_today: 18, pickup_rate: 0.6,
+  appointment_rate: 0.15, avg_call_duration_sec: 96, calls_this_week: 65,
+  daily_calls: exampleDailyCalls,
+  sentiment_breakdown: { positive: 38, neutral: 24, negative: 10 },
+  campaign_performance: [
+    { campaign_id: 'example-1', name: 'Example property campaign', calls: 70, appointments: 11, avg_score: 4.2 },
+    { campaign_id: 'example-2', name: 'Example follow-up campaign', calls: 50, appointments: 7, avg_score: 3.8 },
+  ],
+  top_failure_reasons: [{ reason: 'No answer', count: 18 }, { reason: 'Busy', count: 7 }],
+};
+const EXAMPLE_LANGUAGES = [
+  { language: 'hi', total_calls: 75, appointments: 12, conversion_rate: 16, avg_score: 4.2, avg_duration: 101 },
+  { language: 'en', total_calls: 45, appointments: 6, conversion_rate: 13, avg_score: 3.9, avg_duration: 88 },
+];
+
 function ScoreBadge({ score }) {
   const color = score >= 4 ? T.green : score >= 3 ? T.amber : score > 0 ? T.red : T.muted;
   return <span style={{ color, fontWeight: 700, fontFamily: T.mono }}>{score > 0 ? score.toFixed(1) : '—'}</span>;
 }
 
-export default function AnalyticsPage({ apiFetch, API_URL }) {
+export default function AnalyticsPage({ apiFetch, API_URL, tourExample = false }) {
   const { currentUser } = useAuth();
-  const [data, setData]       = useState(null);
-  const [langData, setLangData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [data, setData]       = useState(tourExample ? EXAMPLE_ANALYTICS : null);
+  const [langData, setLangData] = useState(tourExample ? EXAMPLE_LANGUAGES : []);
+  const [loading, setLoading] = useState(!tourExample);
   const [executives, setExecutives] = useState([]);
   const [selectedExecutiveIds, setSelectedExecutiveIds] = useState([]);
   const [showAgentFilter, setShowAgentFilter] = useState(false);
@@ -48,13 +70,15 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   const [agentReportUserId, setAgentReportUserId] = useState(null);
 
   useEffect(() => {
+    if (tourExample) return;
     apiFetch(`${API_URL}/executives`)
       .then(r => r.json())
       .then(d => setExecutives(Array.isArray(d) ? d : []))
       .catch(() => {});
-  }, [apiFetch, API_URL]);
+  }, [apiFetch, API_URL, tourExample]);
 
   useEffect(() => {
+    if (tourExample) return;
     (async () => {
       setLoading(true);
       try {
@@ -72,7 +96,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       } catch (e) { console.error('Failed to load analytics', e); }
       finally { setLoading(false); }
     })();
-  }, [selectedExecutiveIds, apiFetch, API_URL]);
+  }, [selectedExecutiveIds, apiFetch, API_URL, tourExample]);
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Loading analytics…</div>;
   if (!data)   return <div style={{ padding: '3rem', textAlign: 'center', color: T.muted, fontFamily: T.font }}>Failed to load analytics data.</div>;
@@ -98,6 +122,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   ];
 
   const handleExportCSV = async () => {
+    if (tourExample) return;
     try {
       const params = new URLSearchParams();
       if (selectedExecutiveIds?.length) params.set('executive_ids', selectedExecutiveIds.join(','));
@@ -114,6 +139,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   };
 
   const handleExportReport = async () => {
+    if (tourExample) return;
     try {
       const params = new URLSearchParams();
       if (selectedExecutiveIds?.length) params.set('executive_ids', selectedExecutiveIds.join(','));
@@ -126,6 +152,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
   };
 
   const handleDownloadAgentReport = async () => {
+    if (tourExample) return;
     try {
       const userId = agentReportUserId || currentUser?.id;
       if (!userId) {
@@ -158,7 +185,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
           </h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>Real-time metrics from your AI dialer campaigns.</p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div data-analytics-tour="filters" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setShowAgentFilter(v => !v)}
@@ -173,7 +200,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
             {showAgentFilter && (
               <div style={{
                 position: 'absolute', top: 'calc(100% + 6px)', right: 0, minWidth: 220,
-                background: '#fff', border: `1px solid ${T.border}`, borderRadius: 8,
+                background: T.card, border: `1px solid ${T.border}`, borderRadius: 8,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.10)', padding: '8px 10px', zIndex: 50,
                 maxHeight: 300, overflowY: 'auto'
               }}>
@@ -259,7 +286,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       </div>
 
       {/* Stat cards — 4 top row, 2 second row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
+      <div data-analytics-tour="summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 12 }}>
         {statCards.slice(0, 4).map(s => (
           <div key={s.label} style={{ ...card, padding: '18px 22px' }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>{s.label}</div>
@@ -280,7 +307,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 12, marginBottom: 16 }}>
 
         {/* Daily Calls Bar Chart */}
-        <div style={{ ...card, padding: '20px 24px' }}>
+        <div data-analytics-tour="daily" style={{ ...card, padding: '20px 24px' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
             Daily Calls (Last 7 Days)
           </div>
@@ -311,7 +338,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
         </div>
 
         {/* Customer Sentiment */}
-        <div style={{ ...card, padding: '20px 24px' }}>
+        <div data-analytics-tour="sentiment" style={{ ...card, padding: '20px 24px' }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 20 }}>
             Customer Sentiment
           </div>
@@ -342,7 +369,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       </div>
 
       {/* Campaign Performance */}
-      <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
+      <div data-analytics-tour="campaigns" style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
           Campaign Performance
         </div>
@@ -402,7 +429,7 @@ export default function AnalyticsPage({ apiFetch, API_URL }) {
       )}
 
       {/* Language Performance */}
-      <div style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
+      <div data-analytics-tour="languages" style={{ ...card, padding: '20px 28px', marginBottom: 16 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 16 }}>
           Language Performance
         </div>

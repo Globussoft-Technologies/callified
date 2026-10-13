@@ -30,6 +30,8 @@ func TestSetupEnablesNativeLiveAudioFeatures(t *testing.T) {
 	assert.Contains(t, setup, `"sessionResumption":{}`)
 	assert.Contains(t, setup, `"complete_call"`)
 	assert.Contains(t, setup, `"search_product_knowledge"`)
+	assert.Contains(t, setup, `"switch_language"`)
+	assert.Contains(t, setup, `"language_code"`)
 	assert.Contains(t, setup, `"appointment_date"`)
 	assert.Contains(t, setup, `"appointment_time"`)
 	assert.Contains(t, setup, "Product: Globus CRM")
@@ -52,6 +54,18 @@ Example: Thank you. [hangup]`
 	assert.Contains(t, got, "Collect both a customer-provided day/date and an exact clock time")
 	assert.Contains(t, got, "ask only for the missing detail")
 	assert.Contains(t, got, "Do not ask for an additional yes/okay confirmation")
+}
+
+func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
+	prompt := `## CALL FLOW
+1. Intro (already spoken by TTS): acknowledge it naturally, then confirm the key details from PREVIOUS CALLS in ONE question.`
+
+	got := buildLiveSystemPrompt(prompt, "en")
+
+	assert.NotContains(t, got, "already spoken by TTS")
+	assert.Contains(t, got, "Opening: speak the exact clientContent greeting once, then confirm")
+	assert.Contains(t, got, "There is no separate TTS greeting in a Gemini Live call")
+	assert.Contains(t, got, "Speak that greeting\nverbatim as your first customer-facing words")
 }
 
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
@@ -138,18 +152,20 @@ ONLY switch language if the customer explicitly asks.
 If they use another language, do NOT switch. Keep replying in the configured language.`, "te")
 
 	assert.Contains(t, got, "Telugu (te)")
-	assert.Contains(t, got, "controls ONLY the opening greeting")
-	assert.Contains(t, got, "explicit language request")
+	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE is locked")
+	assert.Contains(t, got, "explicitly requests another supported language")
+	assert.Contains(t, got, "call switch_language")
+	assert.Contains(t, got, "Change CURRENT_REPLY_LANGUAGE only when the tool result is accepted")
 	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE")
-	assert.Contains(t, got, "unambiguous native script")
-	assert.Contains(t, got, "one unclear short Latin-script phrase")
+	assert.Contains(t, got, "Native script, Romanized speech")
+	assert.Contains(t, got, "switch only after an explicit confirmation")
 	assert.Contains(t, got, "ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY")
 	assert.Contains(t, got, "use ONLY a clear, natural Indian English accent")
 	assert.Contains(t, got, "entire utterance from its first word to its last")
 	assert.Contains(t, got, "Never drift into or imitate an American, British, Australian")
 	assert.NotContains(t, got, "Respond only in Telugu")
-	assert.NotContains(t, got, "ONLY switch language")
-	assert.NotContains(t, got, "do NOT switch")
+	assert.NotContains(t, got, "Change it only after either")
+	assert.NotContains(t, got, "strong language evidence")
 	assert.NotContains(t, got, "[LANG:te]")
 	assert.NotContains(t, got, "## LANGUAGE")
 	assert.NotContains(t, got, "Banned formal/written register")

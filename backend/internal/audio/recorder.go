@@ -3,13 +3,14 @@ package audio
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"time"
 )
 
 const (
 	recSampleRate  = 8000
 	recBitDepth    = 16
-	recChannels    = 2 // stereo: L=user, R=AI
+	recChannels    = 2                               // stereo: L=user, R=AI
 	recBytesPerSec = recSampleRate * recBitDepth / 8 // per mono channel
 )
 
@@ -58,6 +59,44 @@ func BuildStereoWAV(micChunks, ttsChunks []TimedChunk) []byte {
 		copy(stereo[i*4+2:i*4+4], aiBuf[i*2:i*2+2])
 	}
 	return encodeWAV(stereo, recChannels, recSampleRate, recBitDepth)
+}
+
+// CustomerMonoWAV extracts the customer (left) channel from our PCM16 stereo
+// recording. Never send the mixed call to post-call customer transcription:
+// the agent channel can otherwise be attributed to the customer.
+func CustomerMonoWAV(stereo []byte) ([]byte, error) {
+	if len(stereo) < 44 || string(stereo[:4]) != "RIFF" || string(stereo[8:12]) != "WAVE" {
+		return nil, errors.New("invalid WAV header")
+	}
+	var channels, sampleRate, bits uint32
+	var data []byte
+	for pos := 12; pos+8 <= len(stereo); {
+		size := int(binary.LittleEndian.Uint32(stereo[pos+4 : pos+8]))
+		start := pos + 8
+		if size < 0 || size > len(stereo)-start {
+			return nil, errors.New("invalid WAV chunk size")
+		}
+		switch string(stereo[pos : pos+4]) {
+		case "fmt ":
+			if size < 16 || binary.LittleEndian.Uint16(stereo[start:start+2]) != 1 {
+				return nil, errors.New("unsupported WAV format")
+			}
+			channels = uint32(binary.LittleEndian.Uint16(stereo[start+2 : start+4]))
+			sampleRate = binary.LittleEndian.Uint32(stereo[start+4 : start+8])
+			bits = uint32(binary.LittleEndian.Uint16(stereo[start+14 : start+16]))
+		case "data":
+			data = stereo[start : start+size]
+		}
+		pos = start + size + size%2
+	}
+	if channels != 2 || sampleRate != recSampleRate || bits != recBitDepth || len(data) == 0 || len(data)%4 != 0 {
+		return nil, errors.New("unsupported stereo WAV layout")
+	}
+	mono := make([]byte, len(data)/2)
+	for i := 0; i < len(mono)/2; i++ {
+		copy(mono[i*2:i*2+2], data[i*4:i*4+2])
+	}
+	return encodeWAV(mono, 1, recSampleRate, recBitDepth), nil
 }
 
 // pcmPeak returns the absolute peak sample value of a PCM16LE buffer.
@@ -147,13 +186,13 @@ func encodeWAV(data []byte, channels, sampleRate, bitDepth int) []byte {
 	binary.Write(&buf, binary.LittleEndian, uint32(36+dataLen)) //nolint:errcheck
 	buf.WriteString("WAVE")
 	buf.WriteString("fmt ")
-	binary.Write(&buf, binary.LittleEndian, uint32(16))              //nolint:errcheck
-	binary.Write(&buf, binary.LittleEndian, uint16(1))               // PCM
-	binary.Write(&buf, binary.LittleEndian, uint16(channels))        //nolint:errcheck
-	binary.Write(&buf, binary.LittleEndian, uint32(sampleRate))      //nolint:errcheck
-	binary.Write(&buf, binary.LittleEndian, uint32(byteRate))        //nolint:errcheck
-	binary.Write(&buf, binary.LittleEndian, uint16(blockAlign))      //nolint:errcheck
-	binary.Write(&buf, binary.LittleEndian, uint16(bitDepth))        //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint32(16))         //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint16(1))          // PCM
+	binary.Write(&buf, binary.LittleEndian, uint16(channels))   //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint32(sampleRate)) //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint32(byteRate))   //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint16(blockAlign)) //nolint:errcheck
+	binary.Write(&buf, binary.LittleEndian, uint16(bitDepth))   //nolint:errcheck
 	buf.WriteString("data")
 	binary.Write(&buf, binary.LittleEndian, uint32(dataLen)) //nolint:errcheck
 	buf.Write(data)

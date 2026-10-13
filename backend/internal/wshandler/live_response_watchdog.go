@@ -63,3 +63,14 @@ func (w *liveResponseWatchdog) Cancel() {
 }
 
 func (w *liveResponseWatchdog) Stop() { w.Cancel() }
+
+// The discarded turn is not a reply. Give the replacement turn a fresh deadline.
+func (w *liveResponseWatchdog) RecoverDiscardedRedirect(customerText string, closing bool) {
+	if !closing {
+		w.Arm(customerText)
+	}
+}
+
+func liveOutputCanPlay(rejected, awaitingRedirectInterrupt bool) bool {
+	return !rejected && !awaitingRedirectInterrupt
+}

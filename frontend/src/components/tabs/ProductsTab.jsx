@@ -3,6 +3,7 @@ import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import AppIcon from '../common/AppIcon';
 import AppSelect from '../common/AppSelect';
+import { fetchProductPrompt } from '../../utils/productPrompt';
 import './ProductsTab.css';
 import ProductResearchPreview from '../campaigns/ProductResearchPreview';
 
@@ -122,14 +123,10 @@ export default function ProductsTab({
     }
   };
 
-  React.useEffect(() => {
-    if (tourExample) return;
-    if (!orgProducts || orgProducts.length === 0) return;
-    orgProducts.forEach(p => {
-      if (loadedProductIds.current.has(p.id)) return;
+  const loadProductPrompt = (p) => {
       loadedProductIds.current.add(p.id);
-      apiFetch(`${API_URL}/products/${p.id}/prompt`)
-        .then(res => res.ok ? res.json() : { agent_persona: '', call_flow_instructions: '' })
+      setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], promptLoading: true, promptError: '', promptLoaded: false } }));
+      return fetchProductPrompt(apiFetch, `${API_URL}/products/${p.id}/prompt`)
         .then(data => {
           setProductPrompts(prev => ({
             ...prev,
@@ -140,6 +137,8 @@ export default function ProductsTab({
               savedPersona: data.agent_persona || '',
               savedFlow: data.call_flow_instructions || '',
               promptLoaded: true,
+              promptLoading: false,
+              promptError: '',
               expanded: prev[p.id]?.expanded || false,
               generating: prev[p.id]?.generating || false,
               saving: prev[p.id]?.saving || false,
@@ -147,12 +146,20 @@ export default function ProductsTab({
             }
           }));
         })
-        .catch(() => {
+        .catch(error => {
+          loadedProductIds.current.delete(p.id);
           setProductPrompts(prev => ({
             ...prev,
-            [p.id]: { ...(prev[p.id] || {}), agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false }
+            [p.id]: { ...(prev[p.id] || {}), promptLoaded: false, promptLoading: false, promptError: error.message || 'Could not load product settings.' }
           }));
         });
+  };
+
+  React.useEffect(() => {
+    if (tourExample) return;
+    if (!orgProducts || orgProducts.length === 0) return;
+    orgProducts.forEach(p => {
+      if (!loadedProductIds.current.has(p.id)) loadProductPrompt(p);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts, tourExample]);
@@ -200,6 +207,10 @@ export default function ProductsTab({
   };
 
   const handleSaveProductPrompt = async (productId) => {
+    if (!productPrompts[productId]?.promptLoaded || productPrompts[productId]?.promptLoading) {
+      toast('Load product settings successfully before saving.');
+      return;
+    }
     updateProductPrompt(productId, 'saving', true);
     try {
       const pp = productPrompts[productId];
@@ -310,6 +321,10 @@ export default function ProductsTab({
                   <div className="product-expandable-row" key={p.id}>
                     <button data-product-tour="details" className={`product-summary-row ${pp.expanded ? 'expanded' : ''}`} aria-expanded={Boolean(pp.expanded)} aria-controls={`product-editor-${p.id}`} onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}><strong>{p.name}</strong><span>{p.website_url || 'No website added'}</span><span className={p.scraped_info ? 'product-ready' : 'product-draft'}>{p.scraped_info ? 'Website imported' : p.manual_notes ? 'Manual notes' : 'No knowledge added'}</span><span className={configured(p) ? 'product-ready' : 'product-draft'}>{configured(p) ? 'Configured' : 'Draft'}</span><AppIcon name={pp.expanded ? 'down' : 'right'} /></button>
                     <div className="product-expanded-editor" id={`product-editor-${p.id}`} hidden={!pp.expanded}>
+                    {!hideAiFeatures && pp.promptError && <div role="alert" style={{ marginBottom: 12, color: T.red }}>
+                      {pp.promptError} Your existing settings have not been changed.{' '}
+                      <button disabled={pp.promptLoading} onClick={() => loadProductPrompt(p)}>Retry loading settings</button>
+                    </div>}
 
                     {/* Product name row */}
                     <div className="product-editor-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -555,7 +570,7 @@ export default function ProductsTab({
                               </div>
                             )}
 
-                            <div style={{ marginBottom: 12 }}>
+                            <div data-product-tour="persona" style={{ marginBottom: 12 }}>
                               <label style={{ ...labelStyle, color: '#7c3aed' }}><AppIcon name="user" /> Agent Persona</label>
                               <textarea data-product-tour="persona" aria-label={`Agent persona for ${p.name}`} disabled={!pp.promptLoaded} rows={4} value={pp.agent_persona}
                                 onChange={e => updateProductPrompt(p.id, 'agent_persona', e.target.value)}
@@ -563,7 +578,7 @@ export default function ProductsTab({
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 80, lineHeight: 1.6 }} />
                             </div>
 
-                            <div style={{ marginBottom: 16 }}>
+                            <div data-product-tour="flow" style={{ marginBottom: 16 }}>
                               <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> Call Flow Instructions</label>
                               <textarea data-product-tour="flow" aria-label={`Call flow for ${p.name}`} disabled={!pp.promptLoaded} rows={5} value={pp.call_flow_instructions}
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
@@ -572,7 +587,7 @@ export default function ProductsTab({
                             </div>
 
                             <div style={{ display: 'flex', gap: 10 }}>
-                              <button disabled={pp.generating} onClick={() => handleGenerateProductPrompt(p.id)} style={{
+                                <button disabled={pp.generating} onClick={() => handleGenerateProductPrompt(p.id)} style={{
                                 padding: '9px 16px', borderRadius: 8, border: 'none',
                                 background: 'linear-gradient(135deg, #f59e0b, #d97706)',
                                 color: '#fff', fontWeight: 600, fontSize: 13,
