@@ -3,11 +3,13 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import CampaignDetail from '../campaigns/CampaignDetail';
 import CampaignModals from '../campaigns/CampaignModals';
+import CampaignOverview from '../campaigns/CampaignOverview';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import AppIcon from '../common/AppIcon';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizePhone } from '../../utils/phone';
 import { isAdmin } from '../../utils/roles';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts,
@@ -18,6 +20,7 @@ export default function CampaignsTab({
   dialingId, webCallActive, orgTimezone
 }) {
   const { fetchSseTicket, currentUser, hasPermission } = useAuth();
+  const { isDark } = useTheme();
   const toast = useToast();
   const confirm = useConfirm();
   const location = useLocation();
@@ -173,6 +176,10 @@ export default function CampaignsTab({
       fetchCampVoice(target.id);
       startEventStream(target.id).catch(() => {});
       setDetailTab('leads');
+      if (location.state?.addLeads && hasPermission('crm.assign')) {
+        setShowAddLeadsModal(true);
+        navigate(location.pathname, { replace: true, state: {} });
+      }
     } else {
       setAutoOpened(true);
       navigate('/campaigns', { replace: true });
@@ -875,11 +882,6 @@ export default function CampaignsTab({
     borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
     padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: 12,
   };
-  const smallBtn = {
-    padding: '5px 14px', borderRadius: 8,
-    fontSize: 12, fontWeight: 600,
-    cursor: 'pointer', fontFamily: 'inherit',
-  };
   const browserProviderLabel = (campaign) => {
     if (campaign.channel === 'whatsapp') return 'WhatsApp';
     const accountId = campaign.exotel_account_id || campaign.exotelAccountId;
@@ -903,115 +905,14 @@ export default function CampaignsTab({
   }
 
   return (
-    <div style={{ padding: '28px 32px', background: '#f4f5f9', minHeight: '100%' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
-          Campaigns
-        </h2>
-        {canCreateCampaigns && (
-          <button
-            onClick={() => setShowCreateModal(true)}
-            style={{ background: '#6366f1', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 20px', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-            + Create Campaign
-          </button>
-        )}
-      </div>
-
-      {campaigns.length === 0 ? (
-        <div style={{ ...cardStyle, textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>
-          No campaigns yet. Create one to start dialing!
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
-          {campaigns.map(campaign => {
-            const stats = getCampaignStats(campaign);
-            const calledPct = stats.total > 0 ? Math.round((stats.called / stats.total) * 100) : 0;
-            const typeColor = campaign.channel === 'whatsapp' ? '#25D366' : '#6366f1';
-            return (
-              <div key={campaign.id} style={cardStyle}>
-                {/* Card header: name + edit/delete */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: '#111827', wordBreak: 'break-word', flex: 1, marginRight: 10 }}>
-                    {campaign.name}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    {isAdmin(userRole) && canEditCampaigns && (
-                      <button onClick={(e) => { e.stopPropagation(); openAssignModal(campaign); }}
-                        className="campaign-card-action" data-variant="assign" style={smallBtn}>
-                        Assign Users
-                      </button>
-                    )}
-                    {canEditCampaigns && (
-                      <button onClick={(e) => { e.stopPropagation(); handleEditCampaign(campaign); }}
-                        className="campaign-card-action" data-variant="edit" style={smallBtn}>
-                        Edit
-                      </button>
-                    )}
-                    {canDeleteCampaigns && (
-                        <button onClick={(e) => { e.stopPropagation(); confirmDeleteCampaign(campaign.id, campaign.name); }}
-                        disabled={deleting}
-                        className="campaign-card-action" data-variant="danger" style={smallBtn}>
-                        {deleting ? '…' : 'Delete'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Badges */}
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: typeColor, background: `${typeColor}18` }}>
-                    {campaign.channel === 'whatsapp' ? 'WhatsApp' : 'Voice'}
-                  </span>
-                  {campaign.product_id > 0 ? (
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#0891b2', background: 'rgba(8,145,178,0.1)' }}>
-                      {getProductName(campaign.product_id)}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 20, color: '#f59e0b', background: 'rgba(245,158,11,0.1)' }}>
-                      <AppIcon name="warning" /> No product
-                    </span>
-                  )}
-                  {statusBadge(campaign.status || 'active')}
-                </div>
-
-                <div style={{ fontSize: 12, color: '#6b7280', lineHeight: 1.35 }}>
-                  <span style={{ fontWeight: 700, color: '#374151' }}>Browser Provider:</span> {browserProviderLabel(campaign)}
-                </div>
-
-                {/* Stats */}
-                <div style={{ display: 'flex', gap: 24 }}>
-                  {[
-                    { label: 'Total',     val: stats.total,     color: '#111827' },
-                    { label: 'Called',    val: stats.called,    color: '#111827' },
-                    { label: 'Remaining', val: stats.remaining, color: '#f59e0b' },
-                    { label: 'Qualified', val: stats.qualified, color: '#10b981' },
-                    { label: 'Booked',    val: stats.booked,    color: '#6366f1' },
-                  ].map(({ label, val, color }) => (
-                    <div key={label}>
-                      <span style={{ fontSize: 12, color: '#9ca3af' }}>{label}: </span>
-                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: val === 0 ? '#9ca3af' : color }}>{val}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Progress bar */}
-                <div style={{ height: 5, background: '#e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${calledPct}%`, background: 'linear-gradient(90deg, #6366f1, #ec4899)', borderRadius: 3, transition: 'width 0.4s' }} />
-                </div>
-
-                {/* View Leads button */}
-                <div>
-                  <button onClick={() => navigate(`/campaigns/${campaign.id}`)}
-                    style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 13, fontWeight: 600, padding: 0, fontFamily: 'inherit' }}>
-                    View Leads →
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+    <div className="campaign-overview-page">
+      <CampaignOverview campaigns={campaigns} getStats={getCampaignStats} providerLabel={browserProviderLabel}
+        onCreate={() => setShowCreateModal(true)} onOpen={(id, addLeads = false) => navigate(`/campaigns/${id}`, { state: { addLeads } })}
+        onAssign={openAssignModal} onEdit={handleEditCampaign} onDelete={confirmDeleteCampaign}
+        canCreate={canCreateCampaigns} canAssign={isAdmin(userRole) && canEditCampaigns}
+        canEdit={canEditCampaigns} canDelete={canDeleteCampaigns} deleting={deleting}
+        canAddLeads={hasPermission('crm.assign')} isDark={isDark}
+        apiFetch={apiFetch} API_URL={API_URL} />
 
       <CampaignModals
         showCreateModal={showCreateModal}
