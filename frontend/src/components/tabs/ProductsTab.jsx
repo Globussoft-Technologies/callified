@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
 import './ProductsTab.css';
 
 const T = {
@@ -285,7 +286,7 @@ export default function ProductsTab({
             )}
           </div>
 
-          <div className="products-search-toolbar"><input aria-label="Search products" placeholder="Search products" value={search} onChange={e => setSearch(e.target.value)} /><select aria-label="Product configuration" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All products</option><option value="configured">Configured</option><option value="draft">Draft</option></select></div>
+          <div className="products-search-toolbar"><input aria-label="Search products" placeholder="Search products" value={search} onChange={e => setSearch(e.target.value)} /><AppSelect aria-label="Product configuration" width={180} value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All products' }, { value: 'configured', label: 'Configured' }, { value: 'draft', label: 'Draft' }]} /></div>
           <div className="products-table-heading"><span>Product</span><span>Website</span><span>Knowledge</span><span>Persona &amp; flow</span><span /></div>
           {orgProducts.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: T.muted, background: T.bg, borderRadius: 8, fontSize: 14 }}>
