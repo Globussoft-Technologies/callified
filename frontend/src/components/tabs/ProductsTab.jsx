@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { useToast, useConfirm } from '../../contexts/UIContext';
 import { useHideAiFeatures } from '../../hooks/useHideAiFeatures';
 import AppIcon from '../common/AppIcon';
+import AppSelect from '../common/AppSelect';
+import { fetchProductPrompt } from '../../utils/productPrompt';
+import './ProductsTab.css';
 
 const T = {
   bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
@@ -37,22 +40,19 @@ export default function ProductsTab({
   const toast = useToast();
   const confirm = useConfirm();
   const [productPrompts, setProductPrompts] = React.useState(tourExample ? {
-    'tour-example-product': {
-      agent_persona: 'You are a helpful sales advisor. Explain the product clearly and answer questions honestly.',
-      call_flow_instructions: 'Greet the customer, ask what they need, explain relevant features, confirm interest, and agree on a follow-up.',
-      expanded: true,
-      websiteUrl: 'https://example.com',
-    },
+    'tour-example-product': { agent_persona: 'You are a helpful sales advisor.', call_flow_instructions: 'Greet, qualify, explain, and agree on a follow-up.', savedPersona: 'You are a helpful sales advisor.', savedFlow: 'Greet, qualify, explain, and agree on a follow-up.', expanded: true, tab: 'persona', promptLoaded: true, websiteUrl: 'https://example.com' },
   } : {});
   const [confirmDeleteId, setConfirmDeleteId] = React.useState(null);
   const loadedProductIds = React.useRef(new Set());
   const [nameError, setNameError] = useState('');
   const fileInputRefs = React.useRef({});
   const hideAiFeatures = useHideAiFeatures();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
 
   const getWebsiteUrl = (productId) => productPrompts[productId]?.websiteUrl;
   const setWebsiteUrl = (productId, url) =>
-    setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url } }));
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url, dirty: true } }));
 
   const handleScrapeWithSave = async (productId) => {
     const currentUrl = getWebsiteUrl(productId);
@@ -119,14 +119,10 @@ export default function ProductsTab({
     }
   };
 
-  React.useEffect(() => {
-    if (tourExample) return;
-    if (!orgProducts || orgProducts.length === 0) return;
-    orgProducts.forEach(p => {
-      if (loadedProductIds.current.has(p.id)) return;
+  const loadProductPrompt = (p) => {
       loadedProductIds.current.add(p.id);
-      apiFetch(`${API_URL}/products/${p.id}/prompt`)
-        .then(res => res.ok ? res.json() : { agent_persona: '', call_flow_instructions: '' })
+      setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], promptLoading: true, promptError: '', promptLoaded: false } }));
+      return fetchProductPrompt(apiFetch, `${API_URL}/products/${p.id}/prompt`)
         .then(data => {
           setProductPrompts(prev => ({
             ...prev,
@@ -134,6 +130,11 @@ export default function ProductsTab({
               ...(prev[p.id] || {}),
               agent_persona: data.agent_persona || '',
               call_flow_instructions: data.call_flow_instructions || '',
+              savedPersona: data.agent_persona || '',
+              savedFlow: data.call_flow_instructions || '',
+              promptLoaded: true,
+              promptLoading: false,
+              promptError: '',
               expanded: prev[p.id]?.expanded || false,
               generating: prev[p.id]?.generating || false,
               saving: prev[p.id]?.saving || false,
@@ -141,18 +142,26 @@ export default function ProductsTab({
             }
           }));
         })
-        .catch(() => {
+        .catch(error => {
+          loadedProductIds.current.delete(p.id);
           setProductPrompts(prev => ({
             ...prev,
-            [p.id]: { ...(prev[p.id] || {}), agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false }
+            [p.id]: { ...(prev[p.id] || {}), promptLoaded: false, promptLoading: false, promptError: error.message || 'Could not load product settings.' }
           }));
         });
+  };
+
+  React.useEffect(() => {
+    if (tourExample) return;
+    if (!orgProducts || orgProducts.length === 0) return;
+    orgProducts.forEach(p => {
+      if (!loadedProductIds.current.has(p.id)) loadProductPrompt(p);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgProducts, tourExample]);
 
   const updateProductPrompt = (productId, field, value) => {
-    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value, ...(['agent_persona', 'call_flow_instructions', 'manualNotes'].includes(field) ? { dirty: true } : {}) } }));
   };
 
   const handleGenerateProductPrompt = async (productId) => {
@@ -194,6 +203,10 @@ export default function ProductsTab({
   };
 
   const handleSaveProductPrompt = async (productId) => {
+    if (!productPrompts[productId]?.promptLoaded || productPrompts[productId]?.promptLoading) {
+      toast('Load product settings successfully before saving.');
+      return;
+    }
     updateProductPrompt(productId, 'saving', true);
     try {
       const pp = productPrompts[productId];
@@ -202,28 +215,38 @@ export default function ProductsTab({
         body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '' })
       });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      toast('Persona & call flow saved!');
+      const product = orgProducts.find(p => p.id === productId);
+      const details = await apiFetch(`${API_URL}/products/${productId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manual_notes: pp.manualNotes ?? product?.manual_notes ?? '', website_url: pp.websiteUrl ?? product?.website_url ?? '' }),
+      });
+      if (!details.ok) throw new Error('Persona saved, but product notes or website could not be saved. Please retry.');
+      setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], dirty: false, savedPersona: pp.agent_persona, savedFlow: pp.call_flow_instructions } }));
+      onProductsRefresh?.();
+      toast('Product details saved!');
     } catch(e) { toast('Failed to save: ' + (e.message || e)); }
     updateProductPrompt(productId, 'saving', false);
   };
 
   const orgName = selectedOrg ? selectedOrg.name : 'No organization selected';
+  const configured = p => Boolean(productPrompts[p.id]?.agent_persona?.trim() && productPrompts[p.id]?.call_flow_instructions?.trim());
+  const filteredProducts = orgProducts.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === 'all' || (filter === 'configured' ? configured(p) : !configured(p))));
 
   return (
-    <div style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
+    <div className="products-workspace" style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
 
       {/* Page title */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 data-tour="products" style={{ margin: 0, width: 'fit-content', fontSize: 22, fontWeight: 700, color: T.text }}>
+      <div className="products-page-heading" style={{ marginBottom: 24 }}>
+        <h2 data-tour="products" style={{ margin: 0, fontSize: 22, fontWeight: 700, color: T.text }}>
           <AppIcon name="product" /> {hideAiFeatures ? 'Products' : <><span style={{ color: T.cyan }}>Product</span> Knowledge</>}
         </h2>
         <p style={{ margin: '4px 0 0', fontSize: 13, color: T.muted }}>
-          {hideAiFeatures ? 'Manage your products.' : 'Manage your products. The AI learns from this to have informed conversations.'}
+          {orgName} / Products
         </p>
       </div>
 
       {/* Org card */}
-      <div style={{ ...card, padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="products-org-banner" style={{ ...card, padding: '16px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
         <AppIcon name="bank" style={{ fontSize: 22, color: T.cyan }} />
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 2 }}>
@@ -235,9 +258,9 @@ export default function ProductsTab({
 
       {/* Products section */}
       {selectedOrg && (
-        <div style={{ ...card, padding: '24px 28px' }}>
+        <div className="products-section" style={{ ...card, padding: '24px 28px' }}>
           {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div className="products-section-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: T.text }}>
               <AppIcon name="product" /> Products in <span style={{ color: T.cyan }}>{selectedOrg.name}</span>
             </h3>
@@ -274,19 +297,28 @@ export default function ProductsTab({
             )}
           </div>
 
+          <div className="products-search-toolbar"><input aria-label="Search products" placeholder="Search products" value={search} onChange={e => setSearch(e.target.value)} /><AppSelect aria-label="Product configuration" width={180} value={filter} onChange={setFilter} options={[{ value: 'all', label: 'All products' }, { value: 'configured', label: 'Configured' }, { value: 'draft', label: 'Draft' }]} /></div>
+          <div className="products-table-heading"><span>Product</span><span>Website</span><span>Knowledge</span><span>Persona &amp; flow</span><span /></div>
           {orgProducts.length === 0 ? (
             <div style={{ padding: '2rem', textAlign: 'center', color: T.muted, background: T.bg, borderRadius: 8, fontSize: 14 }}>
               No products yet. Add one to configure AI knowledge.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {orgProducts.map(p => {
+            <div className="products-row-list">
+              {filteredProducts.length === 0 && <div className="products-no-results">No products match your filters.</div>}
+              {filteredProducts.map(p => {
                 const pp = productPrompts[p.id] || { agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false };
                 return (
-                  <div key={p.id} style={{ background: T.bg, borderRadius: 10, padding: '16px 20px', border: `1px solid ${T.border}` }}>
+                  <div className="product-expandable-row" key={p.id}>
+                    <button data-product-tour="details" className={`product-summary-row ${pp.expanded ? 'expanded' : ''}`} aria-expanded={Boolean(pp.expanded)} aria-controls={`product-editor-${p.id}`} onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}><strong>{p.name}</strong><span>{p.website_url || 'No website added'}</span><span className={p.scraped_info ? 'product-ready' : 'product-draft'}>{p.scraped_info ? 'Website imported' : p.manual_notes ? 'Manual notes' : 'No knowledge added'}</span><span className={configured(p) ? 'product-ready' : 'product-draft'}>{configured(p) ? 'Configured' : 'Draft'}</span><AppIcon name={pp.expanded ? 'down' : 'right'} /></button>
+                    <div className="product-expanded-editor" id={`product-editor-${p.id}`} hidden={!pp.expanded}>
+                    {!hideAiFeatures && pp.promptError && <div role="alert" style={{ marginBottom: 12, color: T.red }}>
+                      {pp.promptError} Your existing settings have not been changed.{' '}
+                      <button disabled={pp.promptLoading} onClick={() => loadProductPrompt(p)}>Retry loading settings</button>
+                    </div>}
 
                     {/* Product name row */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                    <div className="product-editor-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
                         {pp.editingName ? (
                           <>
@@ -340,10 +372,9 @@ export default function ProductsTab({
                       <div data-product-tour="website" style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
                         <div style={{ flex: 1 }}>
                           <label style={labelStyle}>Website URL</label>
-                          <input placeholder="https://..."
+                          <input aria-label={`Website for ${p.name}`} placeholder="https://..."
                             value={getWebsiteUrl(p.id) !== undefined ? getWebsiteUrl(p.id) : (p.website_url || '')}
                             onChange={e => setWebsiteUrl(p.id, e.target.value)}
-                            onBlur={e => handleSaveProduct(p.id, { website_url: e.target.value })}
                             style={{ ...inputStyle, background: T.card }} />
                         </div>
                         <button onClick={() => handleScrapeWithSave(p.id)} disabled={scraping === p.id} style={{
@@ -366,22 +397,13 @@ export default function ProductsTab({
                     )}
 
                     {!hideAiFeatures && <div>
-                      <button data-product-tour="details"
-                        onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}
-                        style={{
-                          background: 'rgba(8,145,178,0.06)', border: `1px solid rgba(8,145,178,0.2)`,
-                          color: T.cyan, padding: '8px 14px', borderRadius: 8, cursor: 'pointer',
-                          fontSize: 13, fontWeight: 600, fontFamily: T.font, width: '100%', textAlign: 'left',
-                        }}>
-                        <AppIcon name={pp.expanded ? 'down' : 'right'} /> Product Details, Persona &amp; Call Flow
-                        {p.scraped_info ? <AppIcon name="checkCircle" style={{ marginLeft: 7 }} /> : null}{pp.agent_persona ? <AppIcon name="user" style={{ marginLeft: 7 }} /> : null}
-                      </button>
+                      <div className="product-editor-tabs" role="tablist" aria-label={`Sections for ${p.name}`}>{[['details', 'Product details'], ['persona', 'Persona & call flow'], ['images', 'Images']].map(([value, label]) => <button key={value} role="tab" aria-selected={(pp.tab || 'details') === value} onClick={() => updateProductPrompt(p.id, 'tab', value)}>{label}</button>)}</div>
 
                       {pp.expanded && (
-                        <div style={{ marginTop: 12, padding: '16px 18px', background: T.card, borderRadius: 8, border: `1px solid ${T.border}` }}>
+                        <div className="product-editor-panels">
 
                           {p.scraped_info && (
-                            <div style={{ marginBottom: 16 }}>
+                            <div hidden={(pp.tab || 'details') !== 'details'} style={{ marginBottom: 16 }}>
                               <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> AI-Extracted Info</label>
                               <textarea readOnly value={p.scraped_info} style={{
                                 width: '100%', boxSizing: 'border-box', padding: 12, borderRadius: 8,
@@ -394,7 +416,7 @@ export default function ProductsTab({
                           )}
 
                           {p.image_urls && p.image_urls.length > 0 && (
-                            <div style={{ marginBottom: 16 }}>
+                            <div hidden={pp.tab !== 'images'} style={{ marginBottom: 16 }}>
                               <label style={{ ...labelStyle, color: '#f59e0b' }}><AppIcon name="image" /> Scraped Images ({p.image_urls.length})</label>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                                 {p.image_urls.map((url, i) => (
@@ -426,7 +448,7 @@ export default function ProductsTab({
                           )}
 
                           {/* Manual Images */}
-                          <div style={{ marginBottom: 16 }}>
+                          <div hidden={pp.tab !== 'images'} style={{ marginBottom: 16 }}>
                             <label style={{ ...labelStyle, color: '#8b5cf6' }}><AppIcon name="camera" /> Custom Images (AI uses these labels for WhatsApp matching)</label>
 
                             {p.manual_images && p.manual_images.length > 0 && (
@@ -516,15 +538,15 @@ export default function ProductsTab({
                             </div>
                           </div>
 
-                          <div style={{ marginBottom: 16 }}>
+                          <div hidden={(pp.tab || 'details') !== 'details'} style={{ marginBottom: 16 }}>
                             <label style={labelStyle}><AppIcon name="note" /> Manual Notes</label>
-                            <textarea placeholder="Pricing, USPs, objection handling..."
-                              defaultValue={p.manual_notes}
-                              onBlur={e => handleSaveProduct(p.id, { manual_notes: e.target.value })}
+                            <textarea aria-label={`Manual notes for ${p.name}`} placeholder="Pricing, USPs, objection handling..."
+                              value={pp.manualNotes ?? p.manual_notes ?? ''}
+                              onChange={e => updateProductPrompt(p.id, 'manualNotes', e.target.value)}
                               rows={3} style={{ ...inputStyle, resize: 'vertical', minHeight: 70, lineHeight: 1.6 }} />
                           </div>
 
-                          <div style={{ borderTop: `1px solid ${T.border}`, margin: '16px 0', paddingTop: 16 }}>
+                          <div className="product-persona-panel" hidden={pp.tab !== 'persona'}>
                             {(p.scraped_info || p.manual_notes) && (
                               <div style={{ marginBottom: 12 }}>
                                 <button data-product-tour="generate" disabled={pp.generatingPersona} onClick={() => handleGeneratePersona(p.id)} style={{
@@ -540,7 +562,7 @@ export default function ProductsTab({
 
                             <div data-product-tour="persona" style={{ marginBottom: 12 }}>
                               <label style={{ ...labelStyle, color: '#7c3aed' }}><AppIcon name="user" /> Agent Persona</label>
-                              <textarea rows={4} value={pp.agent_persona}
+                              <textarea data-product-tour="persona" aria-label={`Agent persona for ${p.name}`} disabled={!pp.promptLoaded} rows={4} value={pp.agent_persona}
                                 onChange={e => updateProductPrompt(p.id, 'agent_persona', e.target.value)}
                                 placeholder="e.g. You are Meera, a professional sales agent..."
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 80, lineHeight: 1.6 }} />
@@ -548,7 +570,7 @@ export default function ProductsTab({
 
                             <div data-product-tour="flow" style={{ marginBottom: 16 }}>
                               <label style={{ ...labelStyle, color: T.cyan }}><AppIcon name="file" /> Call Flow Instructions</label>
-                              <textarea rows={5} value={pp.call_flow_instructions}
+                              <textarea data-product-tour="flow" aria-label={`Call flow for ${p.name}`} disabled={!pp.promptLoaded} rows={5} value={pp.call_flow_instructions}
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
                                 placeholder="e.g. Step 1: Greet. Step 2: Qualify..."
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 100, lineHeight: 1.6 }} />
@@ -563,20 +585,14 @@ export default function ProductsTab({
                               }}>
                                 {pp.generating ? <><AppIcon name="loading" spin /> Generating...</> : <><AppIcon name="robot" /> Generate Prompt</>}
                               </button>
-                                <button data-product-tour="save" disabled={pp.saving} onClick={() => handleSaveProductPrompt(p.id)} style={{
-                                padding: '9px 16px', borderRadius: 8, border: 'none',
-                                background: 'linear-gradient(135deg, #10b981, #059669)',
-                                color: '#fff', fontWeight: 600, fontSize: 13,
-                                fontFamily: T.font, cursor: pp.saving ? 'not-allowed' : 'pointer',
-                              }}>
-                                {pp.saving ? <><AppIcon name="loading" spin /> Saving...</> : <><AppIcon name="save" /> Save Persona &amp; Flow</>}
-                              </button>
                             </div>
                           </div>
                         </div>
                       )}
                     </div>}
 
+                    {!hideAiFeatures && <footer className="product-editor-footer"><span>{pp.dirty ? 'Unsaved changes' : 'No pending changes'}</span><div><button disabled={pp.saving || !pp.dirty} onClick={() => setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], manualNotes: p.manual_notes || '', websiteUrl: p.website_url || '', agent_persona: pp.savedPersona || '', call_flow_instructions: pp.savedFlow || '', dirty: false } }))}>Discard changes</button><button data-product-tour="save" className="product-save-button" disabled={pp.saving || !pp.promptLoaded} onClick={() => handleSaveProductPrompt(p.id)}><AppIcon name={pp.saving ? 'loading' : 'save'} spin={pp.saving} /> {pp.saving ? 'Saving...' : 'Save product details'}</button></div></footer>}
+                    </div>
                   </div>
                 );
               })}

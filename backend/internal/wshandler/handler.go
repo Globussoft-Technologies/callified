@@ -493,6 +493,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}()
 				var languageRedirectMu sync.Mutex
+				latestCustomerInput := ""
 				languageRedirectActive := false
 				languageRedirectInterrupted := false
 				languageRedirectAwaitingInterrupt := false
@@ -586,6 +587,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							return
 						}
 						inactivityWatchdog.CustomerSpoke()
+						languageRedirectMu.Lock()
+						latestCustomerInput = currentInput
+						languageRedirectMu.Unlock()
 						if sess.IsBargeInPending() {
 							sess.ConfirmBargeIn()
 						}
@@ -640,7 +644,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						holdLanguageRedirectOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
 						liveStateMu.Lock()
-						if !outputRejected && !holdLanguageRedirectOutput && !outputApproved {
+						if liveOutputCanPlay(outputRejected, holdLanguageRedirectOutput) && !outputApproved {
 							// Do not suppress Gemini's audio based on a transcript-language
 							// guess. The selected campaign language and explicit customer
 							// language-switch requests still guide the model, but its reply
@@ -748,7 +752,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						validOutput := false
 						if forceLanguageRedirectHold && hadOutput {
 							rejectOutput()
-						} else if hadOutput && !outputRejected {
+						} else if hadOutput && liveOutputCanPlay(outputRejected, forceLanguageRedirectHold) {
 							outputApproved = true
 							flushPendingAudio()
 							validOutput = true
@@ -781,6 +785,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						newOutputTurn = true
 						if skipInterruptedRedirectTurn {
 							sess.Log.Debug("gemini live: discarded interrupted pre-switch response")
+							languageRedirectMu.Lock()
+							customerInput := latestCustomerInput
+							languageRedirectMu.Unlock()
+							responseWatchdog.RecoverDiscardedRedirect(customerInput, sess.IsFinalClosing())
 							return
 						}
 						if validOutput && !sess.IsFinalClosing() {
