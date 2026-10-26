@@ -568,10 +568,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							epoch: sess.PlaybackEpoch(),
 							pcm:   audio.Decimate3x(pcm24k),
 						}
+						languageRedirectMu.Lock()
+						holdOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
+						languageRedirectMu.Unlock()
 						liveStateMu.Lock()
 						if outputRejected {
 							liveStateMu.Unlock()
 							return
+						}
+						if !outputApproved && liveOutputCanPlay(outputRejected, holdOutput) {
+							outputApproved = true
+							flushPendingAudio()
 						}
 						if outputApproved {
 							audioReleased = true

@@ -101,7 +101,9 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 		return err
 	}
 	startupStage("websocket_connect_started")
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, endpoint, header)
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 10 * time.Second
+	conn, resp, err := dialer.DialContext(ctx, endpoint, header)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("gemini live connect: %w (status %d)", err, resp.StatusCode)
@@ -118,6 +120,7 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 
 	ready := make(chan struct{})
 	errCh := make(chan error, 2)
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	go func() { errCh <- c.receive(ctx, conn, ready, startupAt) }()
 	select {
 	case <-ctx.Done():
@@ -363,15 +366,25 @@ Never announce or discuss a language switch.`, name, code)
 func (c *Client) writeJSON(conn *websocket.Conn, value any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return conn.WriteJSON(value)
 }
 
 func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<- struct{}, startupAt time.Time) error {
 	readyOnce := sync.Once{}
 	firstAudioLogged := false
+	setupReceived := false
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
+			if e, ok := err.(interface{ Timeout() bool }); ok && e.Timeout() {
+				if !setupReceived {
+					return fmt.Errorf("gemini live setup timed out: %w", err)
+				}
+				if !firstAudioLogged {
+					return fmt.Errorf("gemini live greeting audio timed out: %w", err)
+				}
+			}
 			return err
 		}
 		var msg map[string]any
@@ -384,6 +397,14 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 			return fmt.Errorf("gemini live api error %v: %s", code, message)
 		}
 		if _, ok := msg["setupComplete"]; ok {
+			if !setupReceived {
+				setupReceived = true
+				if strings.TrimSpace(c.cfg.Greeting) != "" {
+					_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+				} else {
+					_ = conn.SetReadDeadline(time.Time{})
+				}
+			}
 			readyOnce.Do(func() { close(ready) })
 			continue
 		}
@@ -422,6 +443,7 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
 						if !firstAudioLogged {
 							firstAudioLogged = true
+							_ = conn.SetReadDeadline(time.Time{})
 							if c.cb.OnStartupStage != nil {
 								c.cb.OnStartupStage("first_model_audio", time.Since(startupAt))
 							}
