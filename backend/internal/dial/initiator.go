@@ -58,12 +58,12 @@ type Initiator struct {
 	// prepareLive starts a Gemini Live session before a carrier call is answered.
 	// Its returned function binds the session to the carrier call SID, or
 	// cancels it when called with an empty SID after a failed dial.
-	prepareLive func(CallData) func(string)
+	prepareLive func(context.Context, CallData) func(string)
 }
 
 // SetLivePreparer is wired by the WebSocket handler after both components are
-// constructed. It is only invoked for Tata Gemini Live calls.
-func (i *Initiator) SetLivePreparer(prepare func(CallData) func(string)) {
+// constructed. It is invoked for non-bridge Gemini Live carrier calls.
+func (i *Initiator) SetLivePreparer(prepare func(context.Context, CallData) func(string)) {
 	i.prepareLive = prepare
 }
 
@@ -217,7 +217,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	preparedBound := false
 	if provider != "twilio" && !data.IsBridge && i.prepareLive != nil &&
 		(strings.EqualFold(data.TTSProvider, "gemini_live") || strings.TrimSpace(data.TTSProvider) == "") {
-		bindPrepared = i.prepareLive(data)
+		bindPrepared = i.prepareLive(ctx, data)
 		defer func() {
 			if bindPrepared != nil && !preparedBound {
 				bindPrepared("")
