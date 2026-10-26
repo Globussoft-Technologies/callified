@@ -13,7 +13,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/realtime"
 )
 
-// preparedGeminiCall owns one Live connection while the Tata call is ringing.
+// preparedGeminiCall owns one Live connection while the carrier call is ringing.
 // The same connection is attached to the answered call, so the model's opening
 // turn and its later replies share one conversation and one voice.
 type preparedGeminiCall struct {
@@ -278,17 +278,22 @@ func (p *preparedGeminiCall) runAttached(ctx context.Context, carrierReady <-cha
 	defer p.cancel()
 	forwardCtx, cancelForward := context.WithCancel(ctx)
 	defer cancelForward()
-	// Tata's start envelope only confirms WebSocket setup. Wait for its first
-	// actual media frame before replaying the prepared greeting, so the carrier
-	// cannot drop it while its playback path is still coming up. This uses no
-	// fixed delay. Customer PCM remains buffered until that greeting is ready.
+	// Prefer the first inbound media frame as readiness evidence, but bound
+	// that wait because carriers may suppress silence until the caller speaks.
+	// Customer PCM remains buffered until the prepared greeting is ready.
 	go func() {
+		mediaTimer := time.NewTimer(500 * time.Millisecond)
+		defer mediaTimer.Stop()
 		select {
 		case <-carrierReady:
-			attach()
+		case <-mediaTimer.C:
+			// Some carriers do not send silence frames. Do not require the
+			// customer to speak before allowing the AI to greet them.
+			onTimeout()
 		case <-forwardCtx.Done():
 			return
 		}
+		attach()
 		select {
 		case <-p.sink.firstAudio:
 		case <-time.After(3 * time.Second):
