@@ -487,6 +487,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /webhook/exotel/human-call", s.exotelHumanCallXML)
 	mux.HandleFunc("POST /webhook/exotel/status", s.exotelStatus)
 	mux.HandleFunc("POST /webhook/tata/status", s.tataStatus)
+	mux.HandleFunc("POST /webhook/plivo/answer", s.plivoAnswer)
+	mux.HandleFunc("POST /webhook/plivo/status", s.plivoStatus)
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("GET /crm-webhook", s.crmWebhook)

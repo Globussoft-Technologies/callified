@@ -75,6 +75,7 @@ func main() {
 	// Exotel VoiceBot WebSocket endpoint
 	mux.Handle("/media-stream", wsHandler)
 	mux.Handle("/media-stream/tata", wsHandler)
+	mux.Handle("/media-stream/plivo", wsHandler)
 
 	// Browser simulator WebSocket endpoint (dev/QA)
 	mux.Handle("/ws/sandbox", wsHandler)

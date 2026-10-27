@@ -21,6 +21,7 @@ import (
 // CallSession holds all per-call state for one WebSocket connection.
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
+	LivePreparationSID string
 	// Identity (set on connect / start event)
 	StreamSid  string
 	CallSid    string
@@ -493,6 +494,8 @@ func (s *CallSession) interruptActiveTTS() {
 		frame, _ = json.Marshal(map[string]string{"type": "clear"})
 	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	} else if s.Provider == "plivo" {
+		frame, _ = json.Marshal(map[string]string{"event": "clearAudio", "streamId": s.StreamSid})
 	}
 	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
@@ -512,6 +515,8 @@ func (s *CallSession) DiscardLivePlayback() {
 		frame, _ = json.Marshal(map[string]string{"type": "clear"})
 	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	} else if s.Provider == "plivo" {
+		frame, _ = json.Marshal(map[string]string{"event": "clearAudio", "streamId": s.StreamSid})
 	}
 	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)

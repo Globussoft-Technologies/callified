@@ -525,6 +525,9 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 				"streamSid": sess.StreamSid,
 				"media":     map[string]string{"payload": payloadB64},
 			})
+			if sess.Provider == "plivo" {
+				frame, _ = json.Marshal(map[string]any{"event": "playAudio", "media": map[string]any{"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": payloadB64}})
+			}
 			if err := sess.SendText(frame); err != nil {
 				sess.Log.Warn("outbound audio frame write failed", zap.Error(err))
 				return

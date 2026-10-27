@@ -275,6 +275,13 @@ func validateProviderAccount(provider, direction, name, apiKey, apiToken, apiSec
 		return "account name is required"
 	}
 	switch provider {
+	case "plivo":
+		if direction == "inbound" {
+			return "Plivo inbound routing is not supported yet"
+		}
+		if accountSID == "" || apiToken == "" || callerID == "" {
+			return "Plivo Auth ID, Auth Token and caller number are required"
+		}
 	case "tata", "smartflo", "tata_tele":
 		if direction == "inbound" {
 			if apiKey == "" || callerID == "" {

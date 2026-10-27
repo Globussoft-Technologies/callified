@@ -39,12 +39,14 @@ const EMPTY_FORM = {
 };
 
 const PROVIDER_BADGE = {
+  plivo: { label: 'Plivo', bg: 'rgba(16,185,129,0.08)', color: '#059669', border: 'rgba(16,185,129,0.25)' },
   exotel: { label: 'Exotel', bg: 'rgba(99,102,241,0.08)', color: '#6366f1', border: 'rgba(99,102,241,0.25)' },
   twilio: { label: 'Twilio', bg: 'rgba(239,68,68,0.06)', color: '#ef4444', border: 'rgba(239,68,68,0.2)' },
   tata: { label: 'Tata Tele', bg: 'rgba(16,185,129,0.08)', color: '#059669', border: 'rgba(16,185,129,0.25)' },
 };
 
 const PROVIDER_LABELS = {
+  plivo: 'Plivo',
   exotel: 'Exotel',
   tata: 'Tata Tele',
   twilio: 'Twilio',
@@ -137,6 +139,8 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
         setError('Account SID, Auth Token, API Key SID, API Secret and Phone Number are required for Twilio.');
         return;
       }
+    } else if (provider === 'plivo') {
+      if (!account_sid || !api_token || !caller_id) { setError('Auth ID, Auth Token and Caller Number are required for Plivo.'); return; }
     } else if (provider === 'tata') {
       if (form.direction === 'inbound') {
         if (!api_key || !caller_id) {
@@ -158,7 +162,9 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
     try {
       const payload = form.provider === 'tata'
         ? { ...form, api_token: form.api_token || form.api_key, account_sid: form.account_sid || form.app_id }
-        : form;
+        : form.provider === 'plivo'
+          ? { ...form, api_key: '', api_secret: '', app_id: '', app_type: 'exoml', region: '', subdomain: '' }
+          : form;
       const method = editingId ? 'PUT' : 'POST';
       const url = editingId
         ? `${API_URL}/exotel-accounts/${editingId}`
@@ -254,7 +260,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
               </div>
               <label style={labelStyle}>Provider <span style={{ color: T.red }}>*</span></label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {(isInbound ? ['tata'] : ['exotel', 'tata' /* , 'twilio' */]).map(p => (
+                {(isInbound ? ['tata'] : ['exotel', 'tata', 'plivo' /* , 'twilio' */]).map(p => (
                   <button key={p} type="button"
                     onClick={() => setField('provider', p)}
                     style={{
@@ -278,6 +284,11 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
             </div>
 
             {/* Exotel fields */}
+            {form.provider === 'plivo' && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <div><label style={labelStyle} htmlFor="plivo-auth-id">Auth ID *</label><input id="plivo-auth-id" style={inputStyle} value={form.account_sid} onChange={e => setField('account_sid', e.target.value)} required /></div>
+              <div><label style={labelStyle} htmlFor="plivo-auth-token">Auth Token *</label><div style={{ position: 'relative' }}><input id="plivo-auth-token" type={showApiToken ? 'text' : 'password'} autoComplete="new-password" style={{ ...inputStyle, paddingRight: 60 }} value={form.api_token} onChange={e => setField('api_token', e.target.value)} required /><button type="button" aria-label={showApiToken ? 'Hide Auth Token' : 'Show Auth Token'} onClick={() => setShowApiToken(v => !v)} style={{ position: 'absolute', right: 8, top: 8 }}>{showApiToken ? 'Hide' : 'Show'}</button></div></div>
+              <div><label style={labelStyle} htmlFor="plivo-caller">Caller Number *</label><input id="plivo-caller" type="tel" placeholder="+91" style={inputStyle} value={form.caller_id} onChange={e => setField('caller_id', e.target.value)} required /></div>
+            </div>}
             {isExotel && (
               <div data-tour="provider-account-exotel-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
@@ -521,9 +532,9 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                     <span>{a.provider === 'tata' ? ((a.direction || 'outbound') === 'inbound' ? 'Inbound DID' : 'DID') : 'Caller'}: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>
                     {a.app_id && <span>App: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
                     {a.provider === 'tata' && (a.direction || 'outbound') !== 'inbound' && a.app_id && <span>Agent: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_id}</span></span>}
-                    {a.provider !== 'twilio' && a.provider !== 'tata' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
+                    {a.provider === 'exotel' && <span>Type: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.app_type || 'exoml'}</span></span>}
                     {a.provider === 'tata' && a.subdomain && <span>Endpoint: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain}</span></span>}
-                    {a.provider !== 'twilio' && a.provider !== 'tata' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
+                    {a.provider === 'exotel' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
                     <span>Key: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.api_key.slice(0, 8)}…</span></span>
                   </div>
                 </div>
