@@ -53,6 +53,8 @@ const T = {
   font: "'DM Sans', sans-serif", mono: "'DM Mono', monospace",
 };
 
+const providerLabel = provider => ({ tata: 'Tata Tele', plivo: 'Plivo', twilio: 'Twilio', exotel: 'Exotel' }[provider] || provider || 'Exotel');
+
 const card = {
   background: T.card, border: `1px solid ${T.border}`,
   borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
@@ -1454,11 +1456,11 @@ export default function CampaignDetail({
 
   const callingAccountOptions = mergeProviderAccount(orgExotelAccounts, campaignDefaultAccount)
     .filter(a => (a.direction || 'outbound') !== 'inbound')
-    .filter(a => a.provider === 'tata' || a.app_type === 'voicebot');
+    .filter(a => a.provider === 'tata' || a.provider === 'plivo' || a.app_type === 'voicebot');
   const findCallingAccount = (id) => callingAccountOptions.find(a => String(a.id) === String(id))
     || orgExotelAccounts.find(a => String(a.id) === String(id) && (a.direction || 'outbound') !== 'inbound');
   const campaignDefaultLabel = campaignDefaultAccount
-    ? `Use campaign default ([${campaignDefaultAccount.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id})`
+    ? `Use campaign default ([${providerLabel(campaignDefaultAccount.provider)}] ${campaignDefaultAccount.name} · ${campaignDefaultAccount.caller_id})`
     : 'Use campaign default';
 
   const handleSaveExotelAccount = async () => {
@@ -1589,7 +1591,7 @@ export default function CampaignDetail({
       {selectedCampaign.channel !== 'whatsapp' && (
         <div style={{ ...card, marginBottom: 16, padding: '14px 18px' }}>
           <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
-            <DesktopOutlined /> Browser Call Account (this machine)
+            <DesktopOutlined /> Calling Account (outbound & browser)
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <AppSelect searchable size="small" popupWidth={460}
@@ -1622,7 +1624,7 @@ export default function CampaignDetail({
                 { value: '', label: campaignDefaultLabel },
                 ...callingAccountOptions.map(account => ({
                   value: String(account.id),
-                  label: `[${account.provider === 'tata' ? 'Tata Tele' : 'Exotel'}] ${account.name} · ${account.caller_id}`,
+                  label: `[${providerLabel(account.provider)}] ${account.name} · ${account.caller_id}`,
                 })),
               ]}
               width="min(420px, 100%)"
@@ -1636,7 +1638,7 @@ export default function CampaignDetail({
                   return `Dialing from: ${a.name || a.account_sid} · ${a.account_sid} · ${a.caller_id || 'no caller ID'} (${source})`;
                 })()
               : orgExotelAccounts.length === 0
-                ? 'No saved voicebot accounts — go to More → Provider Accounts to add one'
+                ? 'No saved calling accounts — go to More → Provider Accounts to add one'
                 : canChangeBrowserCallAccount
                   ? 'Select a browser call account before calling. This choice is saved only in this browser.'
                   : 'This account is fixed by the campaign/lead assignment. Contact admin to change it.'}
