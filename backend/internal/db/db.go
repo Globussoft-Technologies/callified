@@ -53,6 +53,9 @@ func New(dsn string) (*DB, error) {
 	if err := d.EnsureProductsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure products table: %w", err)
 	}
+	if err := d.EnsureProductResearchTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure product research jobs: %w", err)
+	}
 	if err := d.EnsureCampaignsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure campaigns table: %w", err)
 	}

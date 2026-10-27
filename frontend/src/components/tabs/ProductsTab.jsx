@@ -5,6 +5,7 @@ import AppIcon from '../common/AppIcon';
 import AppSelect from '../common/AppSelect';
 import { fetchProductPrompt } from '../../utils/productPrompt';
 import './ProductsTab.css';
+import ProductResearchPreview from '../campaigns/ProductResearchPreview';
 
 const T = {
   bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
@@ -35,6 +36,7 @@ export default function ProductsTab({
   handleAddProduct, handleDeleteProduct, handleSaveProduct, handleScrapeProduct, scraping, scrapeError,
   apiFetch, API_URL,
   onProductsRefresh,
+  research = {}, handleApplyResearch,
   tourExample = false,
 }) {
   const toast = useToast();
@@ -54,7 +56,8 @@ export default function ProductsTab({
   const setWebsiteUrl = (productId, url) =>
     setProductPrompts(prev => ({ ...prev, [productId]: { ...(prev[productId] || {}), websiteUrl: url, dirty: true } }));
 
-  const handleScrapeWithSave = async (productId) => {
+  const handleScrapeWithSave = async (productId, refresh = false) => {
+    try {
     const currentUrl = getWebsiteUrl(productId);
     const product = orgProducts.find(p => p.id === productId);
     if (currentUrl !== undefined && currentUrl !== (product?.website_url || '')) {
@@ -62,7 +65,8 @@ export default function ProductsTab({
     }
     const urlToScrape = currentUrl !== undefined ? currentUrl : product?.website_url;
     if (!urlToScrape) { toast('Please enter a website URL first.'); return; }
-    await handleScrapeProduct(productId);
+    await handleScrapeProduct(productId, refresh);
+    } catch (error) { toast(error.message || 'Could not save the website URL'); }
   };
 
   const handleUploadImage = async (productId) => {
@@ -230,7 +234,11 @@ export default function ProductsTab({
 
   const orgName = selectedOrg ? selectedOrg.name : 'No organization selected';
   const configured = p => Boolean(productPrompts[p.id]?.agent_persona?.trim() && productPrompts[p.id]?.call_flow_instructions?.trim());
-  const filteredProducts = orgProducts.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === 'all' || (filter === 'configured' ? configured(p) : !configured(p))));
+  const searchQuery = search.trim().toLowerCase();
+  const filteredProducts = orgProducts.filter(p =>
+    [p.name, p.website_url].some(value => (value || '').toLowerCase().includes(searchQuery)) &&
+    (filter === 'all' || (filter === 'configured' ? configured(p) : !configured(p)))
+  );
 
   return (
     <div className="products-workspace" style={{ padding: '28px 32px', background: T.bg, minHeight: '100%', fontFamily: T.font }}>
@@ -308,6 +316,7 @@ export default function ProductsTab({
               {filteredProducts.length === 0 && <div className="products-no-results">No products match your filters.</div>}
               {filteredProducts.map(p => {
                 const pp = productPrompts[p.id] || { agent_persona: '', call_flow_instructions: '', expanded: false, generating: false, saving: false };
+                const researchBusy = ['queued', 'fetching', 'summarizing'].includes(research[p.id]?.job?.status);
                 return (
                   <div className="product-expandable-row" key={p.id}>
                     <button data-product-tour="details" className={`product-summary-row ${pp.expanded ? 'expanded' : ''}`} aria-expanded={Boolean(pp.expanded)} aria-controls={`product-editor-${p.id}`} onClick={() => updateProductPrompt(p.id, 'expanded', !pp.expanded)}><strong>{p.name}</strong><span>{p.website_url || 'No website added'}</span><span className={p.scraped_info ? 'product-ready' : 'product-draft'}>{p.scraped_info ? 'Website imported' : p.manual_notes ? 'Manual notes' : 'No knowledge added'}</span><span className={configured(p) ? 'product-ready' : 'product-draft'}>{configured(p) ? 'Configured' : 'Draft'}</span><AppIcon name={pp.expanded ? 'down' : 'right'} /></button>
@@ -377,13 +386,13 @@ export default function ProductsTab({
                             onChange={e => setWebsiteUrl(p.id, e.target.value)}
                             style={{ ...inputStyle, background: T.card }} />
                         </div>
-                        <button onClick={() => handleScrapeWithSave(p.id)} disabled={scraping === p.id} style={{
+                        <button onClick={() => handleScrapeWithSave(p.id)} disabled={scraping === p.id || researchBusy} style={{
                           height: 38, padding: '0 16px', borderRadius: 8, border: 'none', whiteSpace: 'nowrap',
                           background: scraping === p.id ? T.muted : 'linear-gradient(135deg, #0891b2, #06b6d4)',
                           color: '#fff', fontWeight: 600, fontSize: 13, fontFamily: T.font,
                           cursor: scraping === p.id ? 'not-allowed' : 'pointer',
                         }}>
-                          {scraping === p.id ? <><AppIcon name="loading" spin /> Analyzing...</> : ((getWebsiteUrl(p.id) || p.website_url) ? <><AppIcon name="search" /> Scrape Website</> : <><AppIcon name="robot" /> AI Research</>)}
+                          {scraping === p.id || researchBusy ? <><AppIcon name="loading" spin /> Researching...</> : <><AppIcon name="search" /> Research website</>}
                         </button>
                       </div>
                       {scrapeError?.[p.id] && (
@@ -396,6 +405,7 @@ export default function ProductsTab({
                     </div>
                     )}
 
+                    {!hideAiFeatures && <ProductResearchPreview data={research[p.id]} productName={p.name} canApply={(getWebsiteUrl(p.id) ?? p.website_url ?? '') === (p.website_url || '') && !pp.saving} onApply={() => handleApplyResearch?.(p.id)} onRetry={() => handleScrapeWithSave(p.id)} onRefresh={() => handleScrapeWithSave(p.id, true)} />}
                     {!hideAiFeatures && <div>
                       <div className="product-editor-tabs" role="tablist" aria-label={`Sections for ${p.name}`}>{[['details', 'Product details'], ['persona', 'Persona & call flow'], ['images', 'Images']].map(([value, label]) => <button key={value} role="tab" aria-selected={(pp.tab || 'details') === value} onClick={() => updateProductPrompt(p.id, 'tab', value)}>{label}</button>)}</div>
 

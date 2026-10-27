@@ -5,6 +5,7 @@ import { API_URL } from '../constants/api';
 import loginIcon from '../assets/tg_image_3608761279.png';
 import AppIcon from './common/AppIcon';
 import './AuthPage.css';
+import WorkspacePreloader from './common/WorkspacePreloader';
 
 export default function AuthPage({ redirectTo = '/crm' }) {
   const { login, signup } = useAuth();
@@ -84,6 +85,7 @@ export default function AuthPage({ redirectTo = '/crm' }) {
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       background: 'linear-gradient(135deg, #0f0c29, #302b63, #24243e)', padding: '20px'
     }}>
+      {authLoading && authPage !== 'forgot' && <WorkspacePreloader message={authPage === 'signup' ? 'Creating your workspace...' : 'Signing you in...'} />}
       <div className="auth-workspace-content" style={{ width: '100%', maxWidth: '440px' }}>
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '2rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 0 }}>

@@ -1073,87 +1073,7 @@ func crawlSiteImages(ctx context.Context, baseURL string, maxPages int) []string
 // POST /api/products/{id}/scrape
 // Fetches the product's website_url and asks the LLM to extract product context.
 func (s *Server) scrapeProduct(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermission(w, r, "products.manage") {
-		return
-	}
-	if s.llmProvider == nil {
-		writeError(w, http.StatusServiceUnavailable, "LLM not configured")
-		return
-	}
-	id, err := parseID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	product, ok := s.authorizeProduct(w, r, id)
-	if !ok {
-		return
-	}
-	if product.WebsiteURL == "" {
-		writeError(w, http.StatusBadRequest, "product has no website_url")
-		return
-	}
-
-	// Crawl homepage + up to 5 key sub-pages (60s total budget)
-	crawlCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-	allText := crawlSite(crawlCtx, product.WebsiteURL, 6)
-
-	if len(strings.TrimSpace(allText)) < 50 {
-		writeError(w, http.StatusBadGateway, "Website is not accessible or blocks automated access (e.g. Amazon, Flipkart). Please add product details manually in the notes field instead.")
-		return
-	}
-
-	// Extract images from ALL crawled pages (homepage + sub-pages in parallel).
-	imageURLs := crawlSiteImages(crawlCtx, product.WebsiteURL, 10)
-	if len(imageURLs) > 0 {
-		if err := s.db.UpdateProductImageURLs(id, imageURLs); err != nil {
-			s.logger.Sugar().Warnw("scrapeProduct: UpdateProductImageURLs", "err", err, "product_id", id)
-		}
-	}
-
-	// Trim to 20000 chars for LLM context
-	text := allText
-	if len(text) > 20000 {
-		text = text[:20000]
-	}
-
-	// Ask LLM to extract detailed product info from all crawled pages
-	prompt := fmt.Sprintf(`You are analyzing a company website (multiple pages) to build a detailed product brief for a sales AI agent.
-
-Extract and summarize ALL of the following — use only information present on the pages:
-
-1. Company name and one-line tagline
-2. What the product/service does (2-3 sentences)
-3. Key features and benefits (bullet points, be thorough)
-4. Target customers / ideal use cases
-5. Pricing, plans, or packages (exact details if visible)
-6. How it works / onboarding steps
-7. Unique selling points vs competitors (if mentioned)
-8. Social proof: testimonials, customers, case studies, stats
-9. Contact info / support channels
-
-Be factual and detailed (max 600 words). Clearly label each section.
-
-Website URL: %s
-Crawled page content:
-%s`, product.WebsiteURL, text)
-
-	s.logger.Sugar().Infow("scrapeProduct: calling LLM", "product_id", id, "textLen", len(text))
-	scraped, err := s.llmProvider.GenerateText(r.Context(), prompt, "Extract product info from this website", 3000)
-	if err != nil {
-		s.logger.Sugar().Errorw("scrapeProduct: LLM error", "err", err, "product_id", id)
-		writeError(w, http.StatusInternalServerError, "LLM error: "+err.Error())
-		return
-	}
-	s.logger.Sugar().Infow("scrapeProduct: success", "product_id", id, "scrapedLen", len(scraped))
-
-	if err := s.db.UpdateProduct(id, "", "", scraped, ""); err != nil {
-		s.logger.Sugar().Errorw("scrapeProduct: UpdateProduct", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"scraped_info": scraped})
+	s.startProductResearch(w, r)
 }
 
 // POST /api/products/{id}/generate-prompt
@@ -1338,19 +1258,10 @@ Write it in second person ("You are..."). Max 400 words.`
 
 // fetchRawHTML fetches a URL and returns raw HTML bytes (up to 300KB).
 func fetchRawHTML(ctx context.Context, rawURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	return io.ReadAll(io.LimitReader(resp.Body, 300_000))
+	client := newWebsiteClient()
+	defer client.CloseIdleConnections()
+	body, _, err := fetchWebsitePage(ctx, client, rawURL)
+	return body, err
 }
 
 // extractInternalLinks parses href attributes from html and returns same-host URLs.

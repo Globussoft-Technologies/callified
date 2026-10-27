@@ -54,7 +54,8 @@ export default function ScheduledCallsPage({ apiFetch, API_URL, orgTimezone }) {
 
   const thStyle = {
     fontSize: 10, fontWeight: 700, color: T.muted, textTransform: 'uppercase',
-    letterSpacing: '0.07em', padding: '0 12px 12px', textAlign: 'left',
+    letterSpacing: 0, padding: '14px 12px', textAlign: 'left',
+    lineHeight: '20px', verticalAlign: 'middle',
     borderBottom: `1px solid ${T.border}`,
   };
   const tdStyle = {

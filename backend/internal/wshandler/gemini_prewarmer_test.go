@@ -160,3 +160,23 @@ func TestPreparedGeminiPreAnswerTimeoutCancelsUnattachedCall(t *testing.T) {
 		t.Fatal("unattached Gemini Live session was not cancelled")
 	}
 }
+
+func TestPreparedGreetingDoesNotWaitForCustomerSpeech(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := newPreparedGeminiCallbacks()
+	close(sink.firstAudio)
+	prepared := &preparedGeminiCall{sink: sink, audioIn: make(chan []byte), done: make(chan error, 1), cancel: cancel}
+	attached := make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		finished <- prepared.runAttached(ctx, make(chan struct{}), nil, func() { close(attached) }, func() {})
+	}()
+	select {
+	case <-attached:
+	case <-time.After(time.Second):
+		t.Fatal("greeting remained blocked waiting for a silent customer's media")
+	}
+	cancel()
+	<-finished
+}

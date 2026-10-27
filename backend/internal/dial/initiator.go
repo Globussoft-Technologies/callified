@@ -55,15 +55,15 @@ type Initiator struct {
 	tata   *TataClient
 	twilio *TwilioClient
 	log    *zap.Logger
-	// prepareLive starts a Gemini Live session before a Tata call is answered.
+	// prepareLive starts a Gemini Live session before a carrier call is answered.
 	// Its returned function binds the session to the carrier call SID, or
 	// cancels it when called with an empty SID after a failed dial.
-	prepareLive func(CallData) func(string)
+	prepareLive func(context.Context, CallData) func(string)
 }
 
 // SetLivePreparer is wired by the WebSocket handler after both components are
-// constructed. It is only invoked for Tata Gemini Live calls.
-func (i *Initiator) SetLivePreparer(prepare func(CallData) func(string)) {
+// constructed. It is invoked for non-bridge Gemini Live carrier calls.
+func (i *Initiator) SetLivePreparer(prepare func(context.Context, CallData) func(string)) {
 	i.prepareLive = prepare
 }
 
@@ -213,16 +213,22 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		pending.ExotelAccountID = creds.AccountID
 	}
 	var callSid string
+	var bindPrepared func(string)
+	preparedBound := false
+	if provider != "twilio" && !data.IsBridge && i.prepareLive != nil &&
+		(strings.EqualFold(data.TTSProvider, "gemini_live") || strings.TrimSpace(data.TTSProvider) == "") {
+		bindPrepared = i.prepareLive(ctx, data)
+		defer func() {
+			if bindPrepared != nil && !preparedBound {
+				bindPrepared("")
+			}
+		}()
+	}
 
 	switch provider {
 	case "twilio":
 		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
 	case "tata", "smartflo", "tata_tele":
-		var bindPrepared func(string)
-		if !data.IsBridge && i.prepareLive != nil &&
-			(strings.EqualFold(data.TTSProvider, "gemini_live") || strings.TrimSpace(data.TTSProvider) == "") {
-			bindPrepared = i.prepareLive(data)
-		}
 		var tataClient *TataClient
 		if creds.IsSet() {
 			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
@@ -233,13 +239,6 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
 		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
-		if bindPrepared != nil {
-			if err != nil {
-				bindPrepared("")
-			} else {
-				bindPrepared(callSid)
-			}
-		}
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
@@ -249,6 +248,10 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		statusURL := fmt.Sprintf("%s/webhook/exotel/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
 		callSid, err = exotelClient.InitiateCall(ctx, data.LeadPhone, "", statusURL)
+	}
+	if bindPrepared != nil && err == nil && callSid != "" {
+		bindPrepared(callSid)
+		preparedBound = true
 	}
 	if err != nil {
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))

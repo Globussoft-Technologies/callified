@@ -12,6 +12,7 @@ import AppSelect from '../common/AppSelect';
 import CampaignVoiceSettings from './CampaignVoiceSettings';
 import CampaignDetailTabs from './CampaignDetailTabs';
 import DispositionSettingsModal from './DispositionSettingsModal';
+import CampaignSummary from './CampaignSummary';
 import { Checkbox } from 'antd';
 import {
   BarChartOutlined,
@@ -1577,40 +1578,7 @@ export default function CampaignDetail({
         )}
       </div>
 
-      {/* Metrics grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
-        {[
-          { label: 'Total Leads', val: stats.total, color: T.accent },
-          { label: 'Called', val: stats.called, color: T.sub },
-          { label: 'Remaining', val: stats.remaining, color: T.amber },
-          { label: 'Qualified', val: stats.qualified, color: T.pink },
-          { label: 'Appointments', val: stats.booked, color: T.green },
-        ].map(s => (
-          <div key={s.label} style={{ ...card, padding: '18px 20px' }}>
-            <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{s.label}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Call outcome stats */}
-      <div style={{ ...card, padding: '16px 20px', marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: T.muted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Call Outcomes</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12 }}>
-          {[
-            { label: 'Total Calls', val: callOutcomeStats.total, color: T.accent },
-            { label: 'Connected', val: callOutcomeStats.connected, color: T.green },
-            { label: 'Completed', val: callOutcomeStats.completed, color: '#0891b2' },
-            { label: 'Unanswered', val: callOutcomeStats.unanswered, color: T.amber },
-            { label: 'Busy / Failed', val: callOutcomeStats.busy + callOutcomeStats.failed, color: T.red },
-          ].map(s => (
-            <div key={s.label} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 700, fontFamily: T.mono, color: s.color }}>{s.val}</div>
-              <div style={{ fontSize: 11, color: T.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <CampaignSummary stats={stats} outcomes={callOutcomeStats} />
 
       {/* Voice Settings — hidden for WhatsApp campaigns and AI-hidden users */}
       {selectedCampaign.channel !== 'whatsapp' && !hideAiFeatures && (
