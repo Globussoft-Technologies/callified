@@ -700,10 +700,12 @@ func companyDisplayName(productName, productContext, orgName, language string) s
 
 // sourceContextInline returns the body of the greeting question for every
 // supported language — plugged into patterns like "क्या आपने {X}?" /
-// "তুমি {X} কি?" / "Did you {X}?". Returns "" for empty/unknown/"cold".
+// "তুমি {X} কি?" / "Did you {X}?". Returns "" for
+// empty/unknown/"cold"/"other" because an unspecified "other" source does
+// not prove that the lead responded to an advertisement or made an enquiry.
 func sourceContextInline(source, language string) string {
 	source = canonicalSource(source)
-	if source == "" || source == "cold" {
+	if source == "" || source == "cold" || source == "other" {
 		return ""
 	}
 	var label string
