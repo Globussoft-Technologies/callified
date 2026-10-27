@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import AppIcon from '../common/AppIcon';
+import { useAuth } from '../../contexts/AuthContext';
+import { API_URL } from '../../constants/api';
+import { drainPlaybackQueue } from '../../utils/browserAudioPlayback';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -71,6 +74,7 @@ function base64ToPcmFloat32(b64) {
 
 // ── BrowserCallModal ──────────────────────────────────────────────────────────
 export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, onEnded }) {
+  const { apiFetch } = useAuth();
   const [status, setStatus] = useState('connecting'); // connecting | waiting | connected | ended | error
   const [errorMsg, setErrorMsg] = useState('');
   const [muted, setMuted] = useState(false);
@@ -79,7 +83,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
   const wsRef = useRef(null);
   const audioCtxRef = useRef(null);
   const processorRef = useRef(null);
-  const nextPlayTimeRef = useRef(0);
+  const playbackStateRef = useRef({ started: false, nextPlayTime: 0 });
   const timerRef = useRef(null);
   const streamRef = useRef(null);
   const mutedRef = useRef(false);
@@ -100,16 +104,13 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
     }
     if (wsRef.current) { try { wsRef.current.close(); } catch { /* ignore */ } wsRef.current = null; }
     audioQueueRef.current = [];
-    audioStartedRef.current = false;
+    playbackStateRef.current = { started: false, nextPlayTime: 0 };
   }, []);
 
   // Incoming audio jitter buffer: collect a few Exotel frames before starting
   // playback so a late or missing 20 ms chunk doesn't swallow a short word.
   const audioQueueRef = useRef([]);
-  const audioStartedRef = useRef(false);
   const audioDrainRef = useRef(null);
-  const JITTER_TARGET_S = 0.08; // 80 ms ≈ 4 frames
-  const MAX_BUFFER_S = 0.3;     // drop oldest if we exceed 300 ms
 
   const scheduleChunk = useCallback((f32, startAt) => {
     const ctx = audioCtxRef.current;
@@ -127,38 +128,9 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
   const drainAudioQueue = useCallback(() => {
     const ctx = audioCtxRef.current;
     if (!ctx || ctx.state === 'closed') return;
-    const q = audioQueueRef.current;
-    if (q.length === 0) {
-      audioStartedRef.current = false;
-      return;
-    }
-
-    // Keep buffer from growing without bound during a network burst.
-    let bufferedS = q.reduce((sum, c) => sum + c.length, 0) / 8000;
-    while (bufferedS > MAX_BUFFER_S && q.length > 0) {
-      bufferedS -= q.shift().length / 8000;
-    }
-
-    // Wait until we have enough audio before we start playing.
-    if (!audioStartedRef.current) {
-      if (bufferedS < JITTER_TARGET_S) return;
-      audioStartedRef.current = true;
-      nextPlayTimeRef.current = ctx.currentTime + 0.02;
-    }
-
-    const now = ctx.currentTime;
-    // If the schedule has drifted too far ahead (e.g. tab was backgrounded),
-    // reset it so we don't sit on stale audio.
-    if (nextPlayTimeRef.current > now + 0.3) {
-      nextPlayTimeRef.current = now + 0.05;
-    }
-
-    while (q.length > 0 && nextPlayTimeRef.current < now + 0.3) {
-      const f32 = q.shift();
-      const startAt = Math.max(nextPlayTimeRef.current, now + 0.01);
-      scheduleChunk(f32, startAt);
-      nextPlayTimeRef.current = startAt + f32.length / 8000;
-    }
+    playbackStateRef.current = drainPlaybackQueue(
+      audioQueueRef.current, playbackStateRef.current, ctx.currentTime, scheduleChunk,
+    );
   }, [scheduleChunk]);
 
   const playAudioChunk = useCallback((b64) => {
@@ -188,7 +160,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
       // 2. Create AudioContext for playback + mic processing.
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       audioCtxRef.current = ctx;
-      nextPlayTimeRef.current = ctx.currentTime;
+      playbackStateRef.current = { started: false, nextPlayTime: ctx.currentTime };
 
       // 3. Set up mic processor.
       const source = ctx.createMediaStreamSource(stream);
@@ -213,7 +185,18 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
       processor.connect(ctx.destination);
 
       // 4. Connect WebSocket.
-      const ws = new WebSocket(`${wsBaseUrl}/ws/agent?call_sid=${encodeURIComponent(callSid)}`);
+      let ticket;
+      try {
+        const response = await apiFetch(`${API_URL}/calls/${encodeURIComponent(callSid)}/agent-ticket`);
+        const body = await response.json();
+        if (!response.ok || !body.ticket) throw new Error(body.error || 'Could not authorize browser call');
+        ticket = body.ticket;
+      } catch (error) {
+        if (!cancelled) { setStatus('error'); setErrorMsg(error.message); stopAll(); }
+        return;
+      }
+      if (cancelled) return;
+      const ws = new WebSocket(`${wsBaseUrl}/ws/agent?call_sid=${encodeURIComponent(callSid)}&ticket=${encodeURIComponent(ticket)}`);
       wsRef.current = ws;
 
       ws.onmessage = (ev) => {
@@ -259,14 +242,14 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
     }
   }, [status, onEnded, errorMsg]);
 
-  const handleHangup = () => {
-    // Tell the backend to hang up the carrier leg so the customer's phone
-    // line is actually released. Closing the WebSocket alone only tears down
-    // the agent's browser connection.
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        wsRef.current.send(JSON.stringify({ type: 'hangup' }));
-      } catch { /* ignore */ }
+  const handleHangup = async () => {
+    // The HTTP endpoint can cancel ringing calls before the media socket opens.
+    try {
+      const response = await apiFetch(`${API_URL}/calls/${encodeURIComponent(callSid)}/browser-call`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Could not end the call. Please try again.');
+    } catch (error) {
+      setErrorMsg(error.message);
+      return;
     }
     stopAll();
     setStatus('ended');
@@ -310,7 +293,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
         {/* How it works note */}
         {(status === 'connecting' || status === 'waiting') && (
           <p style={{ color: T.sub, fontSize: '0.8rem', marginBottom: '1rem', lineHeight: 1.5, background: '#f8fafc', padding: '8px 12px', borderRadius: 8 }}>
-            Exotel is dialing the customer's phone. <strong>Please wait for “Connected” before speaking</strong> — your mic is muted until then to prevent audio from buffering during ringing.
+            Calling the customer's phone. <strong>Please wait for “Connected” before speaking.</strong> Your microphone opens when the call connects.
           </p>
         )}
 
@@ -324,7 +307,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
           <AppIcon name={statusIcon} spin={status === 'connecting'} style={{ marginRight: 7 }} />{statusLabel}
         </div>
 
-        {status === 'error' && errorMsg && (
+        {errorMsg && (
           <p style={{ color: T.red, fontSize: '0.8rem', marginBottom: '1rem' }}>{errorMsg}</p>
         )}
 

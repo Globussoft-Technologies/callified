@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"go.uber.org/zap"
@@ -153,9 +154,68 @@ func (s *Server) browserCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ticket, err := dial.AgentTicket(s.cfg.JWTSecret, callSid, ac.OrgID, userIDForDial(ac))
+	if err != nil {
+		// Do not leave a paid carrier call ringing when the browser cannot join.
+		if hangupErr := s.initiator.Hangup(r.Context(), callSid, campaignID); hangupErr != nil {
+			s.logger.Warn("browserCall: authorization cleanup failed", zap.Error(hangupErr))
+		}
+		writeError(w, http.StatusInternalServerError, "could not authorize browser call")
+		return
+	}
 	writeJSON(w, http.StatusOK, BrowserCallResponse{
 		CallSid:  callSid,
-		AgentURL: fmt.Sprintf("/ws/agent?call_sid=%s", callSid),
+		AgentURL: fmt.Sprintf("/ws/agent?call_sid=%s&ticket=%s", url.QueryEscape(callSid), url.QueryEscape(ticket)),
 		Status:   "dialing",
 	})
+}
+
+// agentTicket authorizes the authenticated call owner before the browser opens
+// its audio WebSocket. A call identifier alone is not permission to join it.
+func (s *Server) agentTicket(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.browser_call") {
+		return
+	}
+	ac := getAuth(r)
+	callSID := r.PathValue("call_sid")
+	pending, ok := s.store.GetPendingCall(r.Context(), callSID)
+	if !ok || !pending.IsBridge || pending.OrgID != ac.OrgID || pending.UserID != userIDForDial(ac) || pending.UserEmail != ac.Email {
+		writeError(w, http.StatusNotFound, "browser call not found")
+		return
+	}
+	ticket, err := dial.AgentTicket(s.cfg.JWTSecret, callSID, pending.OrgID, pending.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create browser call ticket")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": ticket, "expires_in": 120})
+}
+
+// hangupBrowserCall also works during ringing, before a carrier media session
+// exists. A WebSocket-only hangup cannot cancel a not-yet-answered Plivo call.
+func (s *Server) hangupBrowserCall(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermission(w, r, "calls.browser_call") {
+		return
+	}
+	ac := getAuth(r)
+	callSID := r.PathValue("call_sid")
+	pending, ok := s.store.GetPendingCall(r.Context(), callSID)
+	if !ok || !pending.IsBridge || pending.OrgID != ac.OrgID || pending.UserID != userIDForDial(ac) || pending.UserEmail != ac.Email {
+		writeError(w, http.StatusNotFound, "browser call not found")
+		return
+	}
+	if s.initiator == nil {
+		writeError(w, http.StatusServiceUnavailable, "dial service unavailable")
+		return
+	}
+	if err := s.initiator.Hangup(r.Context(), callSID, pending.CampaignID); err != nil {
+		s.logger.Warn("browser call hangup failed", zap.String("call_sid", callSID), zap.Error(err))
+		writeError(w, http.StatusBadGateway, "could not hang up browser call")
+		return
+	}
+	if s.wsHandler != nil {
+		s.wsHandler.CloseCall(callSID)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ended"})
 }

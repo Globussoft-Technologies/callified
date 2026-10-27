@@ -185,7 +185,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 			return "", fmt.Errorf("selected provider account is inbound-only; choose an outbound account")
 		}
 		isTataProvider := creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele"
-		if data.IsBridge && !isTataProvider && creds.AppType != "voicebot" {
+		if data.IsBridge && !isTataProvider && creds.Provider != "plivo" && creds.AppType != "voicebot" {
 			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
 		}
 	}
@@ -207,9 +207,6 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	provider := creds.Provider
 	if provider == "" {
 		provider = i.cfg.DefaultProvider
-	}
-	if provider == "plivo" && data.IsBridge {
-		return "", fmt.Errorf("Plivo browser bridging is not supported yet")
 	}
 	// Carry the Exotel app/flow type and account choice through to the webhook
 	// and hangup path so they use the same credentials used to place the call.

@@ -472,6 +472,9 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 	if err != nil && !errors.Is(err, context.Canceled) {
 		sess.Log.Warn("TTS error", zap.String("sentence", sentence), zap.Error(err))
 	}
+	if sess.Provider == "plivo" {
+		sendPlivoPCM(sess, nil, sess.PlaybackEpoch(), true)
+	}
 }
 
 // sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
@@ -495,6 +498,10 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 // sendAudioFrameAtEpoch stops paced Live audio when its playback generation is
 // invalidated by barge-in or by the language guard.
 func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64) {
+	if sess.Provider == "plivo" {
+		sendPlivoPCM(sess, pcm8k, expectedEpoch, false)
+		return
+	}
 	if sess.IsBargeInActive() {
 		return
 	}
@@ -525,9 +532,6 @@ func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64
 				"streamSid": sess.StreamSid,
 				"media":     map[string]string{"payload": payloadB64},
 			})
-			if sess.Provider == "plivo" {
-				frame, _ = json.Marshal(map[string]any{"event": "playAudio", "media": map[string]any{"contentType": "audio/x-mulaw", "sampleRate": 8000, "payload": payloadB64}})
-			}
 			if err := sess.SendText(frame); err != nil {
 				sess.Log.Warn("outbound audio frame write failed", zap.Error(err))
 				return
