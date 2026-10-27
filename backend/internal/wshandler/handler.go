@@ -99,6 +99,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// previously upgrade the WS, fail tts.New() with a buried log warning, and
 	// the sandbox would record audio with no TTS coming back.
 	q := r.URL.Query()
+	plivoCallID, plivoRequestID := "", ""
+	if strings.HasSuffix(r.URL.Path, "/plivo") || q.Get("provider") == "plivo" {
+		var ticketErr error
+		plivoCallID, plivoRequestID, ticketErr = dial.VerifyPlivoStreamTicket(h.cfg.JWTSecret, q.Get("ticket"))
+		if ticketErr != nil {
+			http.Error(w, "Invalid stream ticket", 403)
+			return
+		}
+		info, ok := h.store.TakePendingCall(r.Context(), "plivo-ticket:"+q.Get("nonce"))
+		if !ok || info.ExotelCallSid != plivoCallID {
+			http.Error(w, "Stream ticket unavailable", 403)
+			return
+		}
+		q = make(map[string][]string)
+		q.Set("stream_sid", "plivo_"+plivoCallID)
+	}
 	if msg := validateMediaStreamParams(q); msg != "" {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
@@ -122,6 +138,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	if plivoCallID != "" {
+		sess.Provider = "plivo"
+		sess.IsExotel = false
+		sess.IsWebSim = false
+		sess.UseUlaw = true
+		sess.CallSid = plivoCallID
+		sess.LivePreparationSID = plivoRequestID
+	}
 	if isTataStream {
 		sess.Provider = "tata"
 		sess.IsExotel = false
@@ -203,6 +227,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.sessions.Delete(sess.StreamSid)
 		if sess.CallSid != "" {
 			h.sessionsByCallSid.Delete(sess.CallSid)
+		}
+		if sess.LivePreparationSID != "" {
+			h.sessionsByCallSid.Delete(sess.LivePreparationSID)
 		}
 	}()
 
@@ -809,7 +836,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 					},
 				}
-				prepared := h.takePreparedGeminiCall(sess.CallSid)
+				prepared := h.takePreparedGeminiCall(firstNonEmpty(sess.LivePreparationSID, sess.CallSid))
 				var client *realtime.Client
 				if prepared != nil {
 					client = prepared.client
@@ -1138,6 +1165,16 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	if sess.Provider == "tata" {
 		event = normalizeTataFrame(sess, event)
 	}
+	if sess.Provider == "plivo" {
+		if event["event"] == "start" {
+			start, _ := event["start"].(map[string]interface{})
+			if pickStr(start, "callId") != sess.CallSid {
+				return true
+			}
+			start["callSid"] = sess.CallSid
+			start["streamSid"] = pickStr(start, "streamId")
+		}
+	}
 	switch event["event"] {
 	case "connected":
 		// Exotel handshake ack — ignore
@@ -1268,6 +1305,11 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			// μ-law unless Tata explicitly adds a PCM codec marker above.
 			sess.UseUlaw = true
 		}
+		if sess.Provider == "plivo" {
+			sess.UseUlaw = true
+			sess.IsExotel = false
+			sess.IsWebSim = false
+		}
 		h.log.Info("ws codec detected",
 			zap.String("stream_sid", sess.StreamSid),
 			zap.Bool("is_exotel", sess.IsExotel),
@@ -1328,6 +1370,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
+			if sess.Provider == "plivo" && sess.LivePreparationSID != "" {
+				h.sessionsByCallSid.Store(sess.LivePreparationSID, sess)
+			}
 			if sess.Provider == "tata" {
 				sess.LogLiveStartup("tata_start_received")
 			}
@@ -1961,7 +2006,7 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 
 	req := recording.SaveRequest{
 		StreamSid:   sess.StreamSid,
-		CallSid:     sess.CallSid,
+		CallSid:     recordingCallSID(sess),
 		LeadID:      sess.LeadID,
 		CampaignID:  sess.CampaignID,
 		OrgID:       sess.OrgID,
@@ -1978,6 +2023,13 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		IsInbound:   sess.IsInbound,
 	}
 	go h.recordingSvc.SaveAndAnalyze(ctx, req)
+}
+
+func recordingCallSID(sess *CallSession) string {
+	if sess.Provider == "plivo" {
+		return sess.LivePreparationSID
+	}
+	return sess.CallSid
 }
 
 func (h *Handler) applyInboundReceptionistPrompt(sess *CallSession) {
