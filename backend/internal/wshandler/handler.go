@@ -467,8 +467,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				)
 				defer inactivityWatchdog.Stop()
 				type liveAudioPacket struct {
-					epoch uint64
-					pcm   []byte
+					epoch     uint64
+					pcm       []byte
+					flush     bool
+					closeCall bool
 				}
 				audioOut := make(chan liveAudioPacket, 256)
 				audioCtx, cancelAudio := context.WithCancel(ctx)
@@ -484,7 +486,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							if packet.epoch != sess.PlaybackEpoch() || sess.IsBargeInActive() {
 								continue
 							}
-							sendAudioFrameAtEpoch(sess, packet.pcm, packet.epoch)
+							if packet.flush {
+								sendPlivoPCM(sess, nil, packet.epoch, true)
+								if packet.closeCall && packet.epoch == sess.PlaybackEpoch() {
+									select {
+									case sess.TTSSentences <- "":
+									case <-audioCtx.Done():
+									}
+								}
+							} else {
+								sendAudioFrameAtEpoch(sess, packet.pcm, packet.epoch)
+							}
 						}
 					}
 				}()
@@ -526,6 +538,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				languageRedirectAwaitingInterrupt := false
 				provisionalLanguage := ""
 				newOutputTurn := true
+				var plivoResampler audio.TelephonyResampler
 				queueAudio := func(packet liveAudioPacket) {
 					select {
 					case audioOut <- packet:
@@ -581,6 +594,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.MarkFinalCloseAudioStarted()
 						}
 						if newOutputTurn {
+							plivoResampler = audio.TelephonyResampler{}
 							// A new model turn is the reply to the interruption. Allow
 							// its audio through after the previous turn was cancelled.
 							sess.SetBargeIn(false)
@@ -594,6 +608,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						packet := liveAudioPacket{
 							epoch: sess.PlaybackEpoch(),
 							pcm:   audio.Decimate3x(pcm24k),
+						}
+						if sess.Provider == "plivo" {
+							packet.pcm = plivoResampler.Process(pcm24k)
 						}
 						languageRedirectMu.Lock()
 						holdOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
@@ -791,6 +808,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							flushPendingAudio()
 							validOutput = true
 						}
+						if validOutput && sess.Provider == "plivo" {
+							// Queue hangup behind all audio, rather than starting its
+							// grace period while several seconds remain in audioOut.
+							queueAudio(liveAudioPacket{epoch: sess.PlaybackEpoch(), flush: true,
+								closeCall: sess.IsFinalClosing() && sess.FinalCloseAudioStarted()})
+						}
 						pendingAudio = nil
 						outputApproved = false
 						outputRejected = false
@@ -828,7 +851,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if validOutput && !sess.IsFinalClosing() {
 							inactivityWatchdog.Arm()
 						}
-						if validOutput && sess.IsFinalClosing() && sess.FinalCloseAudioStarted() {
+						if validOutput && sess.Provider != "plivo" && sess.IsFinalClosing() && sess.FinalCloseAudioStarted() {
 							select {
 							case sess.TTSSentences <- "":
 							case <-ctx.Done():
@@ -1530,6 +1553,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 	// Fires on first "start" event so the Live Campaign Activity panel
 	// shows one entry per connected call (web-sim + real Exotel both
 	// send `start`, so both paths contribute to the live feed).
+	if sess.IsBridge {
+		sess.bridgeReadyOnce.Do(func() { close(sess.bridgeReady) })
+	}
 	if sess.CampaignID > 0 {
 		name, phone := h.leadLabel(ctx, sess)
 		h.store.EmitCampaignEvent(ctx, sess.CampaignID, name, phone,

@@ -263,6 +263,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/campaigns/{id}/exotel-account", adminAuth(s.setCampaignExotelAccount))
 	mux.HandleFunc("POST /api/campaigns/{id}/human-call/{lead_id}", adminOrAgent(s.humanCallLead))
 	mux.HandleFunc("POST /api/campaigns/{id}/leads/{lead_id}/browser-call", adminOrAgent(s.browserCall))
+	mux.HandleFunc("GET /api/calls/{call_sid}/agent-ticket", adminOrAgent(s.agentTicket))
+	mux.HandleFunc("DELETE /api/calls/{call_sid}/browser-call", adminOrAgent(s.hangupBrowserCall))
 	mux.HandleFunc("GET /api/campaigns/{id}/twilio-token", adminOrAgent(s.twilioToken))
 	mux.HandleFunc("POST /api/campaigns/{id}/import-csv", adminAuth(s.importCampaignLeadsCSV))
 	mux.HandleFunc("PUT /api/campaigns/{id}/executives", adminAuth(s.setCampaignExecutives))
