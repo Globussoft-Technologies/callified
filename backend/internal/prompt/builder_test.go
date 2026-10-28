@@ -160,3 +160,25 @@ func TestGeminiLiveVoiceUsesNamedPersona(t *testing.T) {
 func TestUnknownOpaqueVoiceStillUsesSafeFallback(t *testing.T) {
 	assert.Equal(t, "Arjun", AgentPersonaName("UnknownMixedCase123", "en"))
 }
+
+func TestAllGeminiVoiceIdentities(t *testing.T) {
+	female := strings.Fields("Kore Aoede Leda Zephyr Callirrhoe Autonoe Despina Erinome Laomedeia Achernar Gacrux Pulcherrima Vindemiatrix Sulafat")
+	male := strings.Fields("Puck Charon Fenrir Orus Enceladus Iapetus Umbriel Algieba Algenib Rasalgethi Alnilam Schedar Achird Zubenelgenubi Sadachbia Sadaltager")
+	for _, group := range []struct {
+		voices   []string
+		speaking string
+	}{
+		{female, "बोल रही हूँ"}, {male, "बोल रहा हूँ"},
+	} {
+		for _, voice := range group.voices {
+			for _, id := range []string{voice, strings.ToLower(voice)} {
+				t.Run(id, func(t *testing.T) {
+					assert.Equal(t, voice, AgentPersonaName(id, "en"))
+					name, speaking := agentIdentity(id, "hi")
+					assert.Equal(t, voice, name)
+					assert.Equal(t, group.speaking, speaking)
+				})
+			}
+		}
+	}
+}
