@@ -282,8 +282,8 @@ func validateProviderAccount(provider, direction, name, apiKey, apiToken, apiSec
 			}
 			return ""
 		}
-		if apiKey == "" || callerID == "" || appID == "" {
-			return "api_key (Tata API token), app_id (agent number) and caller_id (Tata number) are required for Tata Tele"
+		if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiToken) == "" || callerID == "" || appID == "" {
+			return "api_key (Click-to-Call Support key), api_token (Smartflo API token), app_id (agent number) and caller_id are required for Tata Tele"
 		}
 	case "twilio":
 		if accountSID == "" || apiKey == "" || apiToken == "" || apiSecret == "" || callerID == "" {

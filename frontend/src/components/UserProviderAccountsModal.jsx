@@ -163,9 +163,10 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
                 { value: 'tata', label: 'Tata Tele' },
                 { value: 'twilio', label: 'Twilio' },
               ]} />
-              <Field label={form.provider === 'tata' ? 'API Token' : 'API Key / Auth Token'} value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
-              {form.provider !== 'tata' && (
-                <Field label="API Token / API Key SID" value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
+              <Field type="password" label={form.provider === 'tata' ? 'Click-to-Call Support API Key' : 'API Key / Auth Token'} value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
+              <Field type="password" label={form.provider === 'tata' ? 'Smartflo API Token' : 'API Token / API Key SID'} value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
+              {editing && form.provider === 'tata' && form.api_key && form.api_key === form.api_token && (
+                <div role="alert" style={{ color: T.amber, fontSize: 12 }}>These credentials match. Verify the Smartflo token; older accounts may have copied the support key here.</div>
               )}
               {form.provider === 'twilio' && (
                 <Field label="API Secret" value={form.api_secret} onChange={v => setForm({ ...form, api_secret: v })} required />
@@ -229,12 +230,12 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
   );
 }
 
-function Field({ label, value, onChange, required, placeholder }) {
+function Field({ label, value, onChange, required, placeholder, type = 'text' }) {
   return (
     <div>
       <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: T.sub, marginBottom: 6 }}>{label}</label>
       <input
-        type="text"
+        type={type}
         style={inputStyle}
         value={value}
         onChange={e => onChange(e.target.value)}

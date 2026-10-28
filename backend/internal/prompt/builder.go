@@ -89,14 +89,36 @@ var elevenLabsPersona = map[string]string{
 // "Kore"), so the generic lowercase-name path treats them like opaque IDs and
 // otherwise falls back to "Arjun" even though Gemini receives the right voice.
 var geminiLivePersona = map[string]string{
-	"kore":   "Kore",
-	"puck":   "Puck",
-	"charon": "Charon",
-	"fenrir": "Fenrir",
-	"aoede":  "Aoede",
-	"leda":   "Leda",
-	"orus":   "Orus",
-	"zephyr": "Zephyr",
+	"kore":          "Kore",
+	"puck":          "Puck",
+	"charon":        "Charon",
+	"fenrir":        "Fenrir",
+	"aoede":         "Aoede",
+	"leda":          "Leda",
+	"orus":          "Orus",
+	"zephyr":        "Zephyr",
+	"callirrhoe":    "Callirrhoe",
+	"autonoe":       "Autonoe",
+	"enceladus":     "Enceladus",
+	"iapetus":       "Iapetus",
+	"umbriel":       "Umbriel",
+	"algieba":       "Algieba",
+	"despina":       "Despina",
+	"erinome":       "Erinome",
+	"algenib":       "Algenib",
+	"rasalgethi":    "Rasalgethi",
+	"laomedeia":     "Laomedeia",
+	"achernar":      "Achernar",
+	"alnilam":       "Alnilam",
+	"schedar":       "Schedar",
+	"gacrux":        "Gacrux",
+	"pulcherrima":   "Pulcherrima",
+	"achird":        "Achird",
+	"zubenelgenubi": "Zubenelgenubi",
+	"vindemiatrix":  "Vindemiatrix",
+	"sadachbia":     "Sadachbia",
+	"sadaltager":    "Sadaltager",
+	"sulafat":       "Sulafat",
 }
 
 var femaleVoices = map[string]bool{
@@ -109,6 +131,16 @@ var femaleVoices = map[string]bool{
 	"jasmine": true, "emily": true,
 	// Gemini Live female voices
 	"kore": true, "aoede": true, "leda": true, "zephyr": true,
+	"callirrhoe":   true,
+	"autonoe":      true,
+	"despina":      true,
+	"erinome":      true,
+	"laomedeia":    true,
+	"achernar":     true,
+	"gacrux":       true,
+	"pulcherrima":  true,
+	"vindemiatrix": true,
+	"sulafat":      true,
 	// ElevenLabs IDs (match Python _female_voices)
 	"amiAXapsDOAiHJqbsAZj": true, "6JsmTroalVewG1gA6Jmw": true,
 	"9vP6R7VVxNwGIGLnpl17": true, "hO2yZ8lxM3axUxL8OeKX": true,
@@ -700,10 +732,12 @@ func companyDisplayName(productName, productContext, orgName, language string) s
 
 // sourceContextInline returns the body of the greeting question for every
 // supported language — plugged into patterns like "क्या आपने {X}?" /
-// "তুমি {X} কি?" / "Did you {X}?". Returns "" for empty/unknown/"cold".
+// "তুমি {X} কি?" / "Did you {X}?". Returns "" for
+// empty/unknown/"cold"/"other" because an unspecified "other" source does
+// not prove that the lead responded to an advertisement or made an enquiry.
 func sourceContextInline(source, language string) string {
 	source = canonicalSource(source)
-	if source == "" || source == "cold" {
+	if source == "" || source == "cold" || source == "other" {
 		return ""
 	}
 	var label string
