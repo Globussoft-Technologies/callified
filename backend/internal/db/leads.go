@@ -577,17 +577,21 @@ type Transcript struct {
 // InboundReceptionistCall is a CRM-friendly row for leadless inbound web-sim
 // calls after post-call extraction has created or matched a lead.
 type InboundReceptionistCall struct {
-	TranscriptID  int64           `json:"transcript_id"`
-	LeadID        int64           `json:"lead_id"`
-	FirstName     string          `json:"first_name"`
-	LastName      string          `json:"last_name"`
-	Phone         string          `json:"phone"`
-	Interest      string          `json:"interest"`
-	Status        string          `json:"status"`
-	Transcript    json.RawMessage `json:"transcript"`
-	RecordingURL  string          `json:"recording_url"`
-	CallDurationS float64         `json:"call_duration_s"`
-	CreatedAt     string          `json:"created_at"`
+	HandlingMode   string          `json:"handling_mode"`
+	ForwardedName  string          `json:"forwarded_name"`
+	ForwardedPhone string          `json:"forwarded_phone"`
+	CallLogID      int64           `json:"call_log_id"`
+	TranscriptID   int64           `json:"transcript_id"`
+	LeadID         int64           `json:"lead_id"`
+	FirstName      string          `json:"first_name"`
+	LastName       string          `json:"last_name"`
+	Phone          string          `json:"phone"`
+	Interest       string          `json:"interest"`
+	Status         string          `json:"status"`
+	Transcript     json.RawMessage `json:"transcript"`
+	RecordingURL   string          `json:"recording_url"`
+	CallDurationS  float64         `json:"call_duration_s"`
+	CreatedAt      string          `json:"created_at"`
 }
 
 // EnsureCallTranscriptColumns adds metadata needed for newer call surfaces.
@@ -689,9 +693,9 @@ func (d *DB) GetRecentCallTimeline(orgID int64, limit int) ([]Transcript, error)
 // after they have been attached to CRM leads.
 func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]InboundReceptionistCall, error) {
 	rows, err := d.pool.Query(`
-		SELECT ct.id, COALESCE(ct.lead_id,0),
-		       COALESCE(ct.inbound_first_name, l.first_name, ''),
-		       COALESCE(ct.inbound_last_name, l.last_name, ''),
+		SELECT ct.id, COALESCE(l.id,0),
+		       COALESCE(l.first_name, ''),
+		       COALESCE(l.last_name, ''),
 		       COALESCE(ct.inbound_phone, l.phone, ''),
 		       COALESCE(ct.inbound_interest, l.interest, ''),
 		       COALESCE(ct.inbound_status, l.status, 'new'),
@@ -699,7 +703,17 @@ func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]Inboun
 		       COALESCE(ct.call_duration_s,0),
 		       DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts ct
-		LEFT JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN leads l ON l.id=(
+ SELECT matched.id FROM leads matched
+ WHERE matched.org_id=ct.org_id AND (
+ matched.id=ct.lead_id OR (
+ COALESCE(ct.inbound_phone,'')<>'' AND
+ REPLACE(REPLACE(REPLACE(matched.phone,'+',''),' ',''),'-','') IN (
+ REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-',''),
+ CONCAT('91',REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-','')),
+ IF(LEFT(REPLACE(ct.inbound_phone,'+',''),2)='91' AND LENGTH(REPLACE(ct.inbound_phone,'+',''))=12,SUBSTRING(REPLACE(ct.inbound_phone,'+',''),3),'')
+ ))) ORDER BY (matched.id=ct.lead_id) DESC,matched.id LIMIT 1
+ )
 		WHERE ct.org_id=? AND (ct.direction='inbound' OR l.source='Inbound Call')
 		ORDER BY ct.created_at DESC
 		LIMIT ?`, orgID, limit)
@@ -710,6 +724,7 @@ func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]Inboun
 	var list []InboundReceptionistCall
 	for rows.Next() {
 		var c InboundReceptionistCall
+		c.HandlingMode = "ai"
 		if err := rows.Scan(&c.TranscriptID, &c.LeadID, &c.FirstName, &c.LastName, &c.Phone,
 			&c.Interest, &c.Status, &c.Transcript, &c.RecordingURL, &c.CallDurationS, &c.CreatedAt); err != nil {
 			return nil, err
@@ -879,9 +894,9 @@ func (d *DB) UpdateCallTranscriptInboundDetails(transcriptID int64, firstName, l
 // GetReceptionistCallByTranscript fetches one inbound receptionist call row.
 func (d *DB) GetReceptionistCallByTranscript(orgID, transcriptID int64) (*InboundReceptionistCall, error) {
 	row := d.pool.QueryRow(`
-		SELECT ct.id, COALESCE(ct.lead_id,0),
-		       COALESCE(ct.inbound_first_name, l.first_name, ''),
-		       COALESCE(ct.inbound_last_name, l.last_name, ''),
+		SELECT ct.id, COALESCE(l.id,0),
+		       COALESCE(l.first_name, ''),
+		       COALESCE(l.last_name, ''),
 		       COALESCE(ct.inbound_phone, l.phone, ''),
 		       COALESCE(ct.inbound_interest, l.interest, ''),
 		       COALESCE(ct.inbound_status, l.status, 'new'),
@@ -889,10 +904,21 @@ func (d *DB) GetReceptionistCallByTranscript(orgID, transcriptID int64) (*Inboun
 		       COALESCE(ct.call_duration_s,0),
 		       DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_transcripts ct
-		LEFT JOIN leads l ON ct.lead_id=l.id
+		LEFT JOIN leads l ON l.id=(
+ SELECT matched.id FROM leads matched
+ WHERE matched.org_id=ct.org_id AND (
+ matched.id=ct.lead_id OR (
+ COALESCE(ct.inbound_phone,'')<>'' AND
+ REPLACE(REPLACE(REPLACE(matched.phone,'+',''),' ',''),'-','') IN (
+ REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-',''),
+ CONCAT('91',REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-','')),
+ IF(LEFT(REPLACE(ct.inbound_phone,'+',''),2)='91' AND LENGTH(REPLACE(ct.inbound_phone,'+',''))=12,SUBSTRING(REPLACE(ct.inbound_phone,'+',''),3),'')
+ ))) ORDER BY (matched.id=ct.lead_id) DESC,matched.id LIMIT 1
+ )
 		WHERE ct.org_id=? AND ct.id=? AND (ct.direction='inbound' OR l.source='Inbound Call')
 		LIMIT 1`, orgID, transcriptID)
 	var c InboundReceptionistCall
+	c.HandlingMode = "ai"
 	if err := row.Scan(&c.TranscriptID, &c.LeadID, &c.FirstName, &c.LastName, &c.Phone,
 		&c.Interest, &c.Status, &c.Transcript, &c.RecordingURL, &c.CallDurationS, &c.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

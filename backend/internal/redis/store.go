@@ -33,6 +33,7 @@ var displayTZ = func() *time.Location {
 
 // PendingCallInfo mirrors the dict stored by python's set_pending_call().
 type PendingCallInfo struct {
+	IsInbound              bool   `json:"is_inbound,omitempty"`
 	PlivoContextID         string `json:"plivo_context_id,omitempty"`
 	PlivoRequestID         string `json:"plivo_request_id,omitempty"`
 	Name                   string `json:"name"`

@@ -13,8 +13,8 @@ import { useOrg } from '../contexts/OrgContext';
 import { useVoice } from '../contexts/VoiceContext';
 import { API_URL } from '../constants/api';
 import { INDIAN_LANGUAGES, INDIAN_VOICES, VOICE_RECOMMENDATIONS } from '../constants/voices';
-import { formatDateTime } from '../utils/dateFormat';
-import AuthAudio from '../components/AuthAudio';
+import ReceptionistInstructions from '../components/ReceptionistInstructions';
+import IncomingCallRouting from '../components/IncomingCallRouting';
 import AppSelect from '../components/common/AppSelect';
 
 const T = {
@@ -66,9 +66,9 @@ function scheduleMicUnmute(audioContext, timerRef, mutedRef, nextPlayTime, extra
 
 export default function ReceptionistPage() {
   const { currentUser, apiFetch } = useAuth();
-  const { selectedOrg, orgTimezone } = useOrg();
+  const { selectedOrg } = useOrg();
   const {
-    activeVoiceProvider, setActiveVoiceProvider,
+    setActiveVoiceProvider,
     activeVoiceId, setActiveVoiceId,
     activeLanguage, setActiveLanguage,
     setSavedVoiceName,
@@ -76,12 +76,6 @@ export default function ReceptionistPage() {
 
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState('Ready');
-  const [transcripts, setTranscripts] = useState([]);
-  const [savedCalls, setSavedCalls] = useState([]);
-  const [callsLoading, setCallsLoading] = useState(false);
-  const [selectedCall, setSelectedCall] = useState(null);
-  const [editingRows, setEditingRows] = useState({});
-  const [savingRows, setSavingRows] = useState({});
   const [voiceSaveStatus, setVoiceSaveStatus] = useState('');
 
   const wsRef = useRef(null);
@@ -133,17 +127,12 @@ export default function ReceptionistPage() {
     setActive(false);
   };
 
-  const selectedProviderVoices = INDIAN_VOICES[activeVoiceProvider] || [];
-  const selectedVoiceName = selectedProviderVoices.find(v => v.id === activeVoiceId)?.name || activeVoiceId || 'No voice selected';
+  const receptionistProvider = 'gemini_live';
+  const selectedProviderVoices = INDIAN_VOICES[receptionistProvider] || [];
+  const selectedVoiceId = selectedProviderVoices.some(v => v.id === activeVoiceId) ? activeVoiceId : 'Kore';
+  const selectedVoiceName = selectedProviderVoices.find(v => v.id === selectedVoiceId)?.name || selectedVoiceId;
   const selectedLanguageName = INDIAN_LANGUAGES.find(l => l.code === activeLanguage)?.name || activeLanguage || 'Default';
-  const voiceRecommendation = VOICE_RECOMMENDATIONS[activeLanguage]?.[activeVoiceProvider]?.note || '';
-
-  const handleProviderChange = (provider) => {
-    const firstVoice = (INDIAN_VOICES[provider] || [])[0] || null;
-    setActiveVoiceProvider(provider);
-    setActiveVoiceId(firstVoice?.id || '');
-    setSavedVoiceName(firstVoice?.name || '');
-  };
+  const voiceRecommendation = VOICE_RECOMMENDATIONS[activeLanguage]?.[receptionistProvider]?.note || '';
 
   const handleVoiceChange = (voiceId) => {
     setActiveVoiceId(voiceId);
@@ -159,12 +148,15 @@ export default function ReceptionistPage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tts_provider: activeVoiceProvider,
-          tts_voice_id: activeVoiceId,
+          tts_provider: receptionistProvider,
+          tts_voice_id: selectedVoiceId,
           tts_language: activeLanguage,
         }),
       });
       if (!res.ok) throw new Error('save failed');
+      setActiveVoiceProvider(receptionistProvider);
+      setActiveVoiceId(selectedVoiceId);
+      setSavedVoiceName(selectedVoiceName);
       setVoiceSaveStatus('saved');
       setTimeout(() => setVoiceSaveStatus(''), 2000);
     } catch {
@@ -174,76 +166,6 @@ export default function ReceptionistPage() {
   };
 
   useEffect(() => cleanup, []);
-
-  const fetchSavedCalls = async () => {
-    setCallsLoading(true);
-    try {
-      const res = await apiFetch(`${API_URL}/receptionist/calls`);
-      const data = await res.json().catch(() => []);
-      if (res.ok) setSavedCalls(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('[AI Receptionist] saved calls fetch failed', e);
-    } finally {
-      setCallsLoading(false);
-    }
-  };
-
-  const startEditRow = (call) => {
-    setEditingRows(prev => ({
-      ...prev,
-      [call.transcript_id]: {
-        first_name: call.first_name || '',
-        last_name: call.last_name || '',
-        phone: call.phone || '',
-        interest: call.interest || '',
-        status: call.status || 'new',
-      },
-    }));
-  };
-
-  const updateEditRow = (id, field, value) => {
-    setEditingRows(prev => ({
-      ...prev,
-      [id]: { ...(prev[id] || {}), [field]: value },
-    }));
-  };
-
-  const cancelEditRow = (id) => {
-    setEditingRows(prev => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  };
-
-  const saveEditRow = async (call) => {
-    const id = call.transcript_id;
-    const draft = editingRows[id];
-    if (!draft) return;
-    setSavingRows(prev => ({ ...prev, [id]: true }));
-    try {
-      const res = await apiFetch(`${API_URL}/receptionist/calls/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || `Save failed (${res.status})`);
-      cancelEditRow(id);
-      await fetchSavedCalls();
-    } catch (e) {
-      alert(e?.message || 'Could not save row');
-    } finally {
-      setSavingRows(prev => ({ ...prev, [id]: false }));
-    }
-  };
-
-  useEffect(() => {
-    fetchSavedCalls();
-    const id = setInterval(fetchSavedCalls, 10000);
-    return () => clearInterval(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const startCall = async () => {
     if (active) {
@@ -265,7 +187,6 @@ export default function ReceptionistPage() {
       await audioContext.resume();
 
       const sid = `web_sim_inbound_${selectedOrg?.id || 0}_${Date.now()}`;
-      setTranscripts([]);
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const qp = new URLSearchParams({
@@ -274,8 +195,8 @@ export default function ReceptionistPage() {
         org_id: String(selectedOrg?.id || currentUser?.org_id || 0),
         phone: '',
         interest: 'inbound enquiry',
-        tts_provider: activeVoiceProvider || '',
-        voice: activeVoiceId || '',
+        tts_provider: receptionistProvider,
+        voice: selectedVoiceId,
         tts_language: activeLanguage || 'en',
       });
       const wsUrl = `${protocol}//${window.location.host}/media-stream?${qp.toString()}`;
@@ -365,20 +286,13 @@ export default function ReceptionistPage() {
           );
           return;
         }
-        if (data.type === 'transcript' && data.text) {
-          setTranscripts(prev => [...prev, {
-            role: data.role === 'agent' ? 'AI' : 'Customer',
-            text: data.text,
-          }]);
-        }
+
       };
 
       ws.onerror = () => setStatus('WebSocket error');
       ws.onclose = () => {
         cleanup();
         setStatus('Call ended. Lead extraction runs after the transcript is saved.');
-        setTimeout(fetchSavedCalls, 2500);
-        setTimeout(fetchSavedCalls, 7000);
       };
     } catch (e) {
       console.error(e);
@@ -412,19 +326,16 @@ export default function ReceptionistPage() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Voice Settings</div>
           <AppSelect
-            value={activeVoiceProvider}
-            onChange={handleProviderChange}
-            disabled={active}
+            value={receptionistProvider}
+            disabled
             size="small"
             width={150}
             options={[
-              { value: 'elevenlabs', label: 'ElevenLabs' },
-              { value: 'sarvam', label: 'Sarvam AI' },
-              { value: 'smallest', label: 'Smallest AI' },
+              { value: 'gemini_live', label: 'Gemini Live' },
             ]}
           />
           <AppSelect
-            value={activeVoiceId}
+            value={selectedVoiceId}
             onChange={handleVoiceChange}
             disabled={active}
             searchable
@@ -432,7 +343,7 @@ export default function ReceptionistPage() {
             width={260}
             placeholder="Select voice"
             options={(() => {
-              const recs = VOICE_RECOMMENDATIONS[activeLanguage]?.[activeVoiceProvider]?.top || [];
+              const recs = VOICE_RECOMMENDATIONS[activeLanguage]?.[receptionistProvider]?.top || [];
               const recommended = selectedProviderVoices.filter(v => recs.includes(v.id));
               const others = selectedProviderVoices.filter(v => !recs.includes(v.id));
               const toOptions = voices => voices.map(v => ({ value: v.id, label: v.name }));
@@ -467,191 +378,17 @@ export default function ReceptionistPage() {
           </button>
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: T.sub }}>
-          Current: {activeVoiceProvider || 'default'} - {selectedVoiceName} ({selectedLanguageName})
+          Current: Gemini Live - {selectedVoiceName} ({selectedLanguageName})
         </div>
         {voiceRecommendation && (
           <div style={{ marginTop: 4, fontSize: 12, color: '#0891b2' }}>{voiceRecommendation}</div>
         )}
       </section>
 
-      <div>
-        <section style={{ background: T.panel, border: `1px solid ${T.border}`, borderRadius: 8, minHeight: 'calc(100vh - 190px)', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>Live Transcript</div>
-            <div style={{ fontSize: 12, color: active ? T.green : T.sub, fontWeight: 700 }}>{status}</div>
-          </div>
-          <div style={{ flex: 1, padding: 16, overflowY: 'auto' }}>
-            {transcripts.length === 0 ? (
-              <div style={{ color: T.muted, fontSize: 13 }}>Transcript will appear here once the receptionist starts speaking.</div>
-            ) : transcripts.map((turn, idx) => (
-              <div key={`${turn.role}-${idx}`} style={{ marginBottom: 12, maxWidth: '760px' }}>
-                <div style={{ fontSize: 11, color: turn.role === 'AI' ? T.accent : T.amber, fontWeight: 800, marginBottom: 4 }}>
-                  {turn.role}
-                </div>
-                <div style={{ fontSize: 14, color: T.text, lineHeight: 1.55, background: turn.role === 'AI' ? '#eff6ff' : '#fffbeb', border: `1px solid ${turn.role === 'AI' ? '#bfdbfe' : '#fde68a'}`, borderRadius: 8, padding: '10px 12px' }}>
-                  {turn.text}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
+      <IncomingCallRouting key={`routing-${selectedOrg?.id}`} orgId={selectedOrg?.id} />
+      <ReceptionistInstructions key={selectedOrg?.id} orgId={selectedOrg?.id} active={active} />
+      <div role="status" style={{ marginTop: 8, fontSize: 12, color: T.sub }}>{status}</div>
 
-      <section style={{ marginTop: 16, background: T.panel, border: `1px solid ${T.border}`, borderRadius: 8, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: T.text }}>Captured Inbound Customers</div>
-            <div style={{ fontSize: 12, color: T.sub, marginTop: 2 }}>Each ended inbound call is stored as its own row. Blank fields can be edited.</div>
-          </div>
-          <button
-            onClick={fetchSavedCalls}
-            disabled={callsLoading}
-            style={{ height: 32, padding: '0 12px', borderRadius: 6, border: `1px solid ${T.border}`, background: '#fff', color: T.sub, cursor: callsLoading ? 'wait' : 'pointer', fontWeight: 700, fontFamily: T.font }}
-          >
-            {callsLoading ? 'Refreshing...' : 'Refresh'}
-          </button>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#f9fafb', color: T.sub, textAlign: 'left' }}>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>Name</th>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>Phone</th>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>Interest</th>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>When</th>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>Transcript</th>
-                <th style={{ padding: '10px 16px', borderBottom: `1px solid ${T.border}` }}>Edit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {savedCalls.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: 18, color: T.muted, textAlign: 'center' }}>
-                    No inbound receptionist rows yet.
-                  </td>
-                </tr>
-              ) : savedCalls.map(call => {
-                const fullName = `${call.first_name || ''} ${call.last_name || ''}`.trim();
-                const draft = editingRows[call.transcript_id];
-                const input = {
-                  width: '100%', height: 32, boxSizing: 'border-box',
-                  border: `1px solid ${T.border}`, borderRadius: 6,
-                  padding: '0 8px', fontFamily: T.font, fontSize: 13,
-                };
-                return (
-                  <tr key={call.transcript_id} style={{ borderBottom: `1px solid ${T.border}` }}>
-                    <td style={{ padding: '12px 16px', color: T.text, fontWeight: 700, minWidth: 180 }}>
-                      {draft ? (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                          <input value={draft.first_name} onChange={e => updateEditRow(call.transcript_id, 'first_name', e.target.value)} placeholder="First" style={input} />
-                          <input value={draft.last_name} onChange={e => updateEditRow(call.transcript_id, 'last_name', e.target.value)} placeholder="Last" style={input} />
-                        </div>
-                      ) : (fullName || '')}
-                    </td>
-                    <td style={{ padding: '12px 16px', color: T.text, fontFamily: T.mono, minWidth: 150 }}>
-                      {draft ? (
-                        <input value={draft.phone} onChange={e => updateEditRow(call.transcript_id, 'phone', e.target.value)} placeholder="Phone" style={{ ...input, fontFamily: T.mono }} />
-                      ) : (call.phone || '')}
-                    </td>
-                    <td style={{ padding: '12px 16px', color: T.sub, minWidth: 220 }}>
-                      {draft ? (
-                        <input value={draft.interest} onChange={e => updateEditRow(call.transcript_id, 'interest', e.target.value)} placeholder="Interest" style={input} />
-                      ) : (call.interest || '')}
-                    </td>
-                    <td style={{ padding: '12px 16px', color: T.sub }}>{formatDateTime(call.created_at, orgTimezone)}</td>
-                    <td style={{ padding: '12px 16px' }}>
-                      <button
-                        onClick={() => setSelectedCall(call)}
-                        style={{ border: 'none', background: '#eff6ff', color: T.accent, borderRadius: 6, padding: '6px 10px', fontWeight: 800, cursor: 'pointer', fontFamily: T.font }}
-                      >
-                        Open
-                      </button>
-                    </td>
-                    <td style={{ padding: '12px 16px', minWidth: 140 }}>
-                      {draft ? (
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button
-                            onClick={() => saveEditRow(call)}
-                            disabled={savingRows[call.transcript_id]}
-                            style={{ border: 'none', background: T.green, color: '#fff', borderRadius: 6, padding: '6px 10px', fontWeight: 800, cursor: savingRows[call.transcript_id] ? 'wait' : 'pointer', fontFamily: T.font }}
-                          >
-                            {savingRows[call.transcript_id] ? 'Saving' : 'Save'}
-                          </button>
-                          <button
-                            onClick={() => cancelEditRow(call.transcript_id)}
-                            style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.sub, borderRadius: 6, padding: '6px 10px', fontWeight: 800, cursor: 'pointer', fontFamily: T.font }}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => startEditRow(call)}
-                          style={{ border: `1px solid ${T.border}`, background: '#fff', color: T.sub, borderRadius: 6, padding: '6px 10px', fontWeight: 800, cursor: 'pointer', fontFamily: T.font }}
-                        >
-                          Edit
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {selectedCall && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget) setSelectedCall(null); }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Escape') setSelectedCall(null); }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 10000 }}
-        >
-          <div style={{ width: 'min(760px, 96vw)', maxHeight: '88vh', overflow: 'hidden', background: '#fff', borderRadius: 8, border: `1px solid ${T.border}`, boxShadow: '0 24px 60px rgba(0,0,0,0.25)', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ padding: '16px 18px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 900, color: T.text }}>
-                  {`${selectedCall.first_name || ''} ${selectedCall.last_name || ''}`.trim() || 'Inbound Customer'}
-                </div>
-                <div style={{ marginTop: 3, fontSize: 12, color: T.sub }}>
-                  {selectedCall.phone || 'No phone'} · {formatDateTime(selectedCall.created_at, orgTimezone)}
-                </div>
-              </div>
-              <button onClick={() => setSelectedCall(null)} style={{ border: 'none', background: 'transparent', fontSize: 20, color: T.muted, cursor: 'pointer' }}>x</button>
-            </div>
-            <div style={{ padding: 18, overflowY: 'auto' }}>
-              {selectedCall.recording_url ? (
-                <div style={{ marginBottom: 14, padding: 12, border: `1px solid ${T.border}`, borderRadius: 8, background: '#f9fafb' }}>
-                  <div style={{ fontSize: 12, color: T.sub, fontWeight: 800, marginBottom: 8 }}>Recording</div>
-                  <AuthAudio src={selectedCall.recording_url} style={{ width: '100%', height: 36 }} />
-                </div>
-              ) : (
-                <div style={{ marginBottom: 14, padding: 12, border: `1px solid ${T.border}`, borderRadius: 8, background: '#fffbeb', color: T.amber, fontSize: 13, fontWeight: 700 }}>
-                  Recording is still processing.
-                </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {(Array.isArray(selectedCall.transcript) ? selectedCall.transcript : []).filter(turn => turn.role !== 'system').map((turn, idx) => {
-                  const isAI = turn.role === 'AI';
-                  return (
-                    <div key={idx} style={{ alignSelf: isAI ? 'flex-start' : 'flex-end', maxWidth: '78%' }}>
-                      <div style={{ fontSize: 11, fontWeight: 900, color: isAI ? T.accent : T.amber, marginBottom: 4 }}>
-                        {isAI ? 'AI' : 'Customer'}
-                      </div>
-                      <div style={{ padding: '10px 12px', borderRadius: 8, border: `1px solid ${isAI ? '#bfdbfe' : '#fde68a'}`, background: isAI ? '#eff6ff' : '#fffbeb', color: T.text, lineHeight: 1.5 }}>
-                        {turn.text}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

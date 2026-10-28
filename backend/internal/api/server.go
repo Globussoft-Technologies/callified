@@ -277,6 +277,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/exotel-accounts", s.requireAdminPermission("provider_accounts.global")(s.createExotelAccount))
 	mux.HandleFunc("PUT /api/exotel-accounts/{id}", s.requireAdminPermission("provider_accounts.global")(s.updateExotelAccount))
 	mux.HandleFunc("DELETE /api/exotel-accounts/{id}", s.requireAdminPermission("provider_accounts.global")(s.deleteExotelAccount))
+	mux.HandleFunc("GET /api/exotel-accounts/{id}/plivo-inbound-setup", s.requireAdminPermission("provider_accounts.global")(s.plivoInboundSetup))
 
 	// ── Organizations ─────────────────────────────────────────────────────────
 	// Org-level config (voice, timezone, system prompt) is Admin-only; reads
@@ -309,6 +310,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// 8kHz server-side WAV survived. That was the "recording not clear"
 	// symptom reported after Quick-Add + Sim Web Call.
 	mux.HandleFunc("POST /api/upload-recording", auth(s.uploadRecording))
+	mux.HandleFunc("GET /api/organizations/{id}/receptionist-settings", auth(s.receptionistSettings))
+	mux.HandleFunc("PUT /api/organizations/{id}/receptionist-settings", s.requireAdminPermission("settings.manage")(s.receptionistSettings))
+	mux.HandleFunc("GET /api/forwarding-numbers", auth(s.forwardingNumbers))
+	mux.HandleFunc("POST /api/forwarding-numbers", s.requireAdminPermission("provider_accounts.global")(s.forwardingNumbers))
+	mux.HandleFunc("PUT /api/forwarding-numbers/{id}", s.requireAdminPermission("provider_accounts.global")(s.forwardingNumbers))
+	mux.HandleFunc("DELETE /api/forwarding-numbers/{id}", s.requireAdminPermission("provider_accounts.global")(s.forwardingNumbers))
+	mux.HandleFunc("GET /api/exotel-accounts/{id}/incoming-route", auth(s.incomingRoute))
+	mux.HandleFunc("PUT /api/exotel-accounts/{id}/incoming-route", s.requireAdminPermission("provider_accounts.global")(s.incomingRoute))
 	mux.HandleFunc("GET /api/receptionist/calls", auth(s.listReceptionistCalls))
 	mux.HandleFunc("PATCH /api/receptionist/calls/{id}", auth(s.updateReceptionistCall))
 
@@ -491,6 +500,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhook/tata/status", s.tataStatus)
 	mux.HandleFunc("POST /webhook/plivo/answer", s.plivoAnswer)
 	mux.HandleFunc("POST /webhook/plivo/status", s.plivoStatus)
+	mux.HandleFunc("POST /webhook/plivo/inbound", s.plivoInbound)
+	mux.HandleFunc("POST /webhook/plivo/inbound/status", s.plivoInboundStatus)
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("GET /crm-webhook", s.crmWebhook)
