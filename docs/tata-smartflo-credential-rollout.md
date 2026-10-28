@@ -5,6 +5,12 @@ Smartflo account token. Existing account records may contain an empty token or
 a copy of the former single credential; a database migration cannot recover a
 separate token. Do not copy one credential to the other or print secrets.
 
+The GitHub Go deployment workflow is manual-only. Before using Actions, verify
+the configured `DEPLOY_HOST` and `DEPLOY_USER` point to the intended target.
+The workflow deploys `~/callified-ai` with Docker Compose; it does not deploy
+the systemd-based testgo2 installation. Do not use it for a different target.
+Its confirmation checkbox is an operator attestation, not an automated check.
+
 Before deploying the backend:
 
 1. Arrange a maintenance window and verify that no calls are in progress.
@@ -27,9 +33,14 @@ Before deploying the backend:
    through an authorized secure process. Matching values indicate a possible
    legacy copy, not proof that credentials are invalid; verify with Tata.
 5. If environment fallback is used, configure both `TATA_API_KEY` and
-   `TATA_API_TOKEN` without logging their values. Deploy the backend and
-   frontend, then run a controlled outbound call and verify answer, audio,
-   hangup and outcome. Repeat for relevant accounts.
+   `TATA_API_TOKEN` without logging their values.
+
+Only after these preparations, dispatch **Deploy Go Audio Service** with the
+intended ref and the rollout confirmation checked. For a separate deployment
+path, apply the same checks manually before restarting its backend. A false or
+missing confirmation stops the GitHub workflow before it connects to a host.
+After deploying the backend and frontend, run a controlled outbound call and
+verify answer, audio, hangup and outcome. Repeat for relevant accounts.
 
 Outbound calls will fail until each account has the required credentials.
 Keep the previous application artifact for rollback, but retain the widened
