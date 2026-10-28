@@ -385,6 +385,9 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                       placeholder="Account authorization token"
                       value={form.api_token || ''} onChange={e => setField('api_token', e.target.value)} />
                     <div style={{ fontSize: 11, color: T.sub, marginTop: 4 }}>Use the account API token, separate from the Click-to-Call Support key.</div>
+                    {editingId && form.api_key && form.api_key === form.api_token && (
+                      <div role="alert" style={{ fontSize: 12, color: '#d97706', marginTop: 4 }}>These credentials match. Verify the Smartflo token; older accounts may have copied the support key here.</div>
+                    )}
                   </div>
                 )}
                 <div>
@@ -525,6 +528,9 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                       border: `1px solid ${(a.direction || 'outbound') === 'inbound' ? 'rgba(16,185,129,0.25)' : 'rgba(99,102,241,0.25)'}`,
                     }}>{(a.direction || 'outbound') === 'inbound' ? 'Inbound' : 'Outbound'}</span>
                   </div>
+                  {a.provider === 'tata' && (a.direction || 'outbound') !== 'inbound' && (!a.api_token || a.api_token === a.api_key) && (
+                    <div role="status" style={{ color: '#d97706', fontSize: 12, marginTop: 6 }}>Review Smartflo credentials before outbound calling.</div>
+                  )}
                   <div style={{ color: T.muted, fontSize: '0.78rem', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                     {a.provider !== 'tata' && <span>Account: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.account_sid}</span></span>}
                     <span>{a.provider === 'tata' ? ((a.direction || 'outbound') === 'inbound' ? 'Inbound DID' : 'DID') : 'Caller'}: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>

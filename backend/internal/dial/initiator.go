@@ -176,6 +176,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if lookupErr != nil {
 			return "", fmt.Errorf("lookup provider account: %w", lookupErr)
 		}
+		if err := validateTataAccountReadiness(creds); err != nil {
+			return "", err
+		}
 		if !creds.IsSet() {
 			return "", fmt.Errorf("provider account not found or inaccessible")
 		}
@@ -188,8 +191,13 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		}
 	}
 	if !creds.IsSet() && data.UserID > 0 {
-		if c, cerr := i.db.GetUserExotelAccountCreds(data.UserID, data.OrgID); cerr == nil && c.IsSet() {
-			creds = c
+		if c, cerr := i.db.GetUserExotelAccountCreds(data.UserID, data.OrgID); cerr == nil {
+			if err := validateTataAccountReadiness(c); err != nil {
+				return "", err
+			}
+			if c.IsSet() {
+				creds = c
+			}
 		} else if cerr != nil {
 			return "", fmt.Errorf("lookup user provider account: %w", cerr)
 		}
@@ -198,6 +206,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if c, cerr := i.db.GetCampaignExotelCreds(data.CampaignID); cerr == nil {
 			creds = c
 		}
+	}
+	if err := validateTataAccountReadiness(creds); err != nil {
+		return "", err
 	}
 	if creds.Direction == "inbound" {
 		return "", fmt.Errorf("campaign provider account is inbound-only; choose an outbound account")
@@ -302,6 +313,13 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	})
 
 	return callSid, nil
+}
+
+func validateTataAccountReadiness(creds db.ExotelCreds) error {
+	if (creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele") && creds.Direction != "inbound" && strings.TrimSpace(creds.APIToken) == "" {
+		return fmt.Errorf("Tata provider account needs a Smartflo API token; update the account with its Smartflo token and Click-to-Call Support key")
+	}
+	return nil
 }
 
 func tataStreamURL(publicURL string, leadID, campaignID, orgID int64) string {
