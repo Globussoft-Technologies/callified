@@ -17,7 +17,7 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 			provider VARCHAR(50) DEFAULT 'exotel',
 			name VARCHAR(255) NOT NULL,
 			api_key VARCHAR(512) NOT NULL,
-			api_token VARCHAR(512) NOT NULL,
+			api_token TEXT NOT NULL,
 			api_secret VARCHAR(512) DEFAULT '',
 			account_sid VARCHAR(255) NOT NULL,
 			caller_id VARCHAR(50) NOT NULL,

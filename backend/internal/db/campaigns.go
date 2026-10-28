@@ -1427,7 +1427,7 @@ func (e ExotelCreds) IsSet() bool {
 		if e.Direction == "inbound" {
 			return e.APIKey != "" && e.CallerID != ""
 		}
-		return e.APIKey != "" && e.CallerID != "" && e.AppID != ""
+		return strings.TrimSpace(e.APIKey) != "" && strings.TrimSpace(e.APIToken) != "" && e.CallerID != "" && e.AppID != ""
 	}
 	// exotel: AppID is required for voice app routing
 	return e.APIKey != "" && e.APIToken != "" && e.AccountSID != "" && e.CallerID != "" && e.AppID != ""

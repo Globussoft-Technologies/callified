@@ -21,6 +21,7 @@ const defaultTataHangupEndpoint = "https://api-smartflo.tatateleservices.com/v1/
 // need Tata VOICE Streaming or SIP enabled for the account; once Tata provides
 // the exact stream payloads, the media handler can be mapped separately.
 type TataClient struct {
+	apiKey      string
 	apiToken    string
 	callerID    string
 	agentNumber string
@@ -28,11 +29,12 @@ type TataClient struct {
 	client      *http.Client
 }
 
-func NewTataClient(apiToken, callerID, agentNumber, endpoint string) *TataClient {
+func NewTataClient(apiKey, apiToken, callerID, agentNumber, endpoint string) *TataClient {
 	if endpoint == "" {
 		endpoint = defaultTataClickToCallEndpoint
 	}
 	return &TataClient{
+		apiKey:      strings.TrimSpace(apiKey),
 		apiToken:    strings.TrimSpace(apiToken),
 		callerID:    strings.TrimSpace(callerID),
 		agentNumber: strings.TrimSpace(agentNumber),
@@ -42,17 +44,17 @@ func NewTataClient(apiToken, callerID, agentNumber, endpoint string) *TataClient
 }
 
 func (t *TataClient) IsSet() bool {
-	return t.apiToken != "" && t.callerID != "" && t.agentNumber != ""
+	return t.apiKey != "" && t.apiToken != "" && t.callerID != "" && t.agentNumber != ""
 }
 
 func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL, streamURL string) (string, error) {
 	if !t.IsSet() {
-		return "", fmt.Errorf("tata: api token, caller id and agent number are required")
+		return "", fmt.Errorf("tata: Click-to-Call Support API key, Smartflo API token, caller id and agent number are required")
 	}
 	payload := map[string]any{
 		"customer_number":       TataSupportPhone(toPhone),
 		"customer_ring_timeout": 30,
-		"api_key":               t.apiToken,
+		"api_key":               t.apiKey,
 		"caller_id":             strings.TrimPrefix(NormalizePhone(t.callerID), "+"),
 		"agent_number":          TataAgentNumber(t.agentNumber),
 		"async":                 1,
@@ -76,9 +78,13 @@ func (t *TataClient) InitiateCall(ctx context.Context, toPhone, callbackURL, str
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if strings.Contains(t.endpoint, "/click_to_call") && !strings.Contains(t.endpoint, "/click_to_call_support") {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimPrefix(t.apiToken, "Bearer "))
+	// Smartflo requires the account token in the header in addition to the
+	// distinct Click-to-Call Support key in the body (since September 2026).
+	token := t.apiToken
+	if len(token) >= 7 && strings.EqualFold(token[:7], "Bearer ") {
+		token = strings.TrimSpace(token[7:])
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := t.client.Do(req)
 	if err != nil {

@@ -147,8 +147,8 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
           setError('API Token and DID are required for inbound Tata Tele.');
           return;
         }
-      } else if (!api_key || !caller_id || !form.app_id) {
-        setError('API Token, Caller ID and Agent Number are required for Tata Tele.');
+      } else if (!api_key || !api_token || !caller_id || !form.app_id) {
+        setError('Click-to-Call Support API Key, Smartflo API Token, Caller ID and Agent Number are required for Tata Tele.');
         return;
       }
     } else {
@@ -161,7 +161,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
     setError('');
     try {
       const payload = form.provider === 'tata'
-        ? { ...form, api_token: form.api_token || form.api_key, account_sid: form.account_sid || form.app_id }
+        ? { ...form, api_token: form.api_token, account_sid: form.account_sid || form.app_id }
         : form.provider === 'plivo'
           ? { ...form, api_key: '', api_secret: '', app_id: '', app_type: 'exoml', region: '', subdomain: '' }
           : form;
@@ -377,18 +377,30 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
             {isTata && (
               <div data-tour="provider-account-tata-fields" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                 <div>
-                  <label style={labelStyle}>API Token <span style={{ color: T.red }}>*</span></label>
+                  <label style={labelStyle}>{isInbound ? 'API Token' : 'Click-to-Call Support API Key'} <span style={{ color: T.red }}>*</span></label>
                   <div style={{ position: 'relative' }}>
-                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder="Tata API token" type={showApiKey ? 'text' : 'password'}
+                    <input style={{ ...inputStyle, paddingRight: '2.5rem' }} placeholder={isInbound ? "Tata API token" : "Click-to-Call Support API key"} type={showApiKey ? 'text' : 'password'}
                       autoComplete="new-password"
                       value={form.api_key} onChange={e => setField('api_key', e.target.value)} />
                     <button type="button" onClick={() => setShowApiKey(v => !v)}
-                      aria-label={showApiKey ? 'Hide API Token' : 'Show API Token'}
+                      aria-label={showApiKey ? 'Hide credential' : 'Show credential'}
                       style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: T.accent, fontSize: 12, fontWeight: 600, padding: 2 }}>
                       {showApiKey ? 'Hide' : 'Show'}
                     </button>
                   </div>
                 </div>
+                {!isInbound && (
+                  <div>
+                    <label style={labelStyle}>Smartflo API Token <span style={{ color: T.red }}>*</span></label>
+                    <input style={inputStyle} type="password" autoComplete="new-password"
+                      placeholder="Account authorization token"
+                      value={form.api_token || ''} onChange={e => setField('api_token', e.target.value)} />
+                    <div style={{ fontSize: 11, color: T.sub, marginTop: 4 }}>Use the account API token, separate from the Click-to-Call Support key.</div>
+                    {editingId && form.api_key && form.api_key === form.api_token && (
+                      <div role="alert" style={{ fontSize: 12, color: '#d97706', marginTop: 4 }}>These credentials match. Verify the Smartflo token; older accounts may have copied the support key here.</div>
+                    )}
+                  </div>
+                )}
                 <div>
                   <label style={labelStyle}>{isInbound ? 'Inbound DID' : 'Caller ID'} <span style={{ color: T.red }}>*</span></label>
                   <input style={inputStyle} placeholder="e.g. 919240232665"
@@ -527,6 +539,9 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                       border: `1px solid ${(a.direction || 'outbound') === 'inbound' ? 'rgba(16,185,129,0.25)' : 'rgba(99,102,241,0.25)'}`,
                     }}>{(a.direction || 'outbound') === 'inbound' ? 'Inbound' : 'Outbound'}</span>
                   </div>
+                  {a.provider === 'tata' && (a.direction || 'outbound') !== 'inbound' && (!a.api_token || a.api_token === a.api_key) && (
+                    <div role="status" style={{ color: '#d97706', fontSize: 12, marginTop: 6 }}>Review Smartflo credentials before outbound calling.</div>
+                  )}
                   <div style={{ color: T.muted, fontSize: '0.78rem', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
                     {a.provider !== 'tata' && <span>Account: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.account_sid}</span></span>}
                     <span>{a.provider === 'tata' ? ((a.direction || 'outbound') === 'inbound' ? 'Inbound DID' : 'DID') : 'Caller'}: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.caller_id}</span></span>

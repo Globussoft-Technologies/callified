@@ -81,7 +81,7 @@ func TestDefaultPromptHandlesSemanticRepeatsInMainStreamingTurn(t *testing.T) {
 	assert.Contains(t, out, "fourth total ask")
 }
 
-func TestOtherLeadSourceUsesGenericAdEnquiryInEveryLanguage(t *testing.T) {
+func TestOtherLeadSourceDoesNotClaimAdEnquiryInAnyLanguage(t *testing.T) {
 	tests := map[string]string{
 		"en": "see our ad and enquire",
 		"hi": "हमारा ad देखकर enquiry की थी",
@@ -95,12 +95,15 @@ func TestOtherLeadSourceUsesGenericAdEnquiryInEveryLanguage(t *testing.T) {
 		"ml": "ഞങ്ങളുടെ ad കണ്ട് enquiry ചെയ്തിരുന്നു",
 	}
 
-	for language, expected := range tests {
+	for language := range tests {
 		t.Run(language, func(t *testing.T) {
-			assert.Equal(t, expected, sourceContextInline("other", language))
-			assert.NotContains(t, strings.ToLower(buildGreeting("Sri", "GlobusCRM", "Aditya", "calling", "other", language)), "other")
+			assert.Empty(t, sourceContextInline("other", language))
+			greeting := strings.ToLower(buildGreeting("Sri", "GlobusCRM", "Aditya", "calling", "other", language))
+			assert.NotContains(t, greeting, "enquir")
 		})
 	}
+	assert.Equal(t, "Hi Sri. I'm Kore calling from dmitknowyourtalent.",
+		buildGreeting("Sri", "dmitknowyourtalent", "Kore", "calling", "other", "en"))
 	assert.Equal(t, "other", canonicalSource("Others"))
 	assert.Equal(t, "other", canonicalSource("other source"))
 }
@@ -156,4 +159,26 @@ func TestGeminiLiveVoiceUsesNamedPersona(t *testing.T) {
 
 func TestUnknownOpaqueVoiceStillUsesSafeFallback(t *testing.T) {
 	assert.Equal(t, "Arjun", AgentPersonaName("UnknownMixedCase123", "en"))
+}
+
+func TestAllGeminiVoiceIdentities(t *testing.T) {
+	female := strings.Fields("Kore Aoede Leda Zephyr Callirrhoe Autonoe Despina Erinome Laomedeia Achernar Gacrux Pulcherrima Vindemiatrix Sulafat")
+	male := strings.Fields("Puck Charon Fenrir Orus Enceladus Iapetus Umbriel Algieba Algenib Rasalgethi Alnilam Schedar Achird Zubenelgenubi Sadachbia Sadaltager")
+	for _, group := range []struct {
+		voices   []string
+		speaking string
+	}{
+		{female, "बोल रही हूँ"}, {male, "बोल रहा हूँ"},
+	} {
+		for _, voice := range group.voices {
+			for _, id := range []string{voice, strings.ToLower(voice)} {
+				t.Run(id, func(t *testing.T) {
+					assert.Equal(t, voice, AgentPersonaName(id, "en"))
+					name, speaking := agentIdentity(id, "hi")
+					assert.Equal(t, voice, name)
+					assert.Equal(t, group.speaking, speaking)
+				})
+			}
+		}
+	}
 }

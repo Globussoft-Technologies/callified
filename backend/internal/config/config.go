@@ -102,6 +102,7 @@ type Config struct {
 	ExotelRegion             string `env:"EXOTEL_REGION"`
 	ExotelSubdomain          string `env:"EXOTEL_SUBDOMAIN"`
 	TataAPIEndpoint          string `env:"TATA_API_ENDPOINT" envDefault:"https://api-smartflo.tatateleservices.com/v1/click_to_call_support"`
+	TataAPIKey               string `env:"TATA_API_KEY"`
 	TataAPIToken             string `env:"TATA_API_TOKEN"`
 	TataCallerID             string `env:"TATA_CALLER_ID"`
 	TataAgentNumber          string `env:"TATA_AGENT_NUMBER"`

@@ -372,7 +372,10 @@ export default function UserManagementPage({ apiFetch, API_URL, currentUser }) {
                     { value: 'tata', label: 'Tata Tele' },
                     { value: 'twilio', label: 'Twilio' },
                   ]} />
-                  <Field label={form.provider_account?.provider === 'tata' ? 'API Token' : 'API Key / Auth Token'} value={form.provider_account?.api_key || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_key: v } })} required />
+                  <Field type="password" label={form.provider_account?.provider === 'tata' ? 'Click-to-Call Support API Key' : 'API Key / Auth Token'} value={form.provider_account?.api_key || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_key: v } })} required />
+                  {form.provider_account?.provider === 'tata' && (
+                    <Field type="password" label="Smartflo API Token" value={form.provider_account?.api_token || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_token: v } })} required />
+                  )}
                   {form.provider_account?.provider !== 'tata' && (
                     <Field label="API Token / API Key SID" value={form.provider_account?.api_token || ''} onChange={v => setForm({ ...form, provider_account: { ...form.provider_account, api_token: v } })} required />
                   )}
