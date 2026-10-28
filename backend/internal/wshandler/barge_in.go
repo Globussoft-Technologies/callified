@@ -6,6 +6,11 @@ import "encoding/json"
 // This clears Exotel's audio playback buffer when the user starts speaking
 // mid-TTS (barge-in). Must be called after CancelActiveTTS.
 func sendClearEvent(sess *CallSession) {
+	if sess.Provider == "plivo" {
+		frame, _ := json.Marshal(map[string]string{"event": "clearAudio", "streamId": sess.StreamSid})
+		_ = sess.SendText(frame)
+		return
+	}
 	frame, _ := json.Marshal(map[string]string{
 		"event":     "clear",
 		"streamSid": sess.StreamSid,

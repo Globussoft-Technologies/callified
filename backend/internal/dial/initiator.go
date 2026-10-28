@@ -2,6 +2,8 @@ package dial
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -186,7 +188,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 			return "", fmt.Errorf("selected provider account is inbound-only; choose an outbound account")
 		}
 		isTataProvider := creds.Provider == "tata" || creds.Provider == "smartflo" || creds.Provider == "tata_tele"
-		if data.IsBridge && !isTataProvider && creds.AppType != "voicebot" {
+		if data.IsBridge && !isTataProvider && creds.Provider != "plivo" && creds.AppType != "voicebot" {
 			return "", fmt.Errorf("selected provider account is not a voicebot account; browser calls require app_type=voicebot")
 		}
 	}
@@ -237,6 +239,38 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	}
 
 	switch provider {
+	case "plivo":
+		if !creds.IsSet() || creds.AccountID == 0 {
+			return "", fmt.Errorf("select a saved Plivo provider account")
+		}
+		if !strings.HasPrefix(i.cfg.PublicServerURL, "https://") {
+			return "", fmt.Errorf("Plivo requires an HTTPS PUBLIC_SERVER_URL for callbacks and audio streaming")
+		}
+		base := fmt.Sprintf("%s/webhook/plivo/", strings.TrimRight(i.cfg.PublicServerURL, "/"))
+		var nonce [16]byte
+		if _, err = rand.Read(nonce[:]); err != nil {
+			return "", fmt.Errorf("create Plivo call identity: %w", err)
+		}
+		callSid = "plivo_" + hex.EncodeToString(nonce[:])
+		pending.PlivoContextID = callSid
+		if _, err = i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID, data.UserID, callSid, provider, data.LeadPhone, "initiated"); err != nil {
+			return "", fmt.Errorf("save Plivo call log: %w", err)
+		}
+		if err = i.store.SetPendingCall(ctx, callSid, pending); err != nil {
+			_ = i.db.UpdateCallLogStatus(callSid, "failed")
+			return "", fmt.Errorf("save Plivo call context: %w", err)
+		}
+		query := fmt.Sprintf("?org_id=%d&account_id=%d&context_id=%s", data.OrgID, creds.AccountID, callSid)
+		var requestID string
+		requestID, err = NewPlivoClient(creds.AccountSID, creds.APIToken).InitiateCall(ctx, creds.CallerID, data.LeadPhone, base+"answer"+query, base+"status"+query)
+		if err == nil {
+			// Separate alias avoids overwriting context updated by a fast callback.
+			if saveErr := i.store.SetPendingCall(ctx, "plivo-request:"+callSid, rstore.PendingCallInfo{PlivoRequestID: requestID}); saveErr != nil {
+				i.log.Warn("save Plivo request alias", zap.Error(saveErr))
+			}
+		} else {
+			_ = i.db.UpdateCallLogStatus(callSid, "failed")
+		}
 	case "twilio":
 		return "", fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
 	case "tata", "smartflo", "tata_tele":
@@ -273,17 +307,19 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	}
 
 	// 5. Persist pending call under the call SID for webhook lookup
-	pending.ExotelCallSid = callSid
-	if storeErr := i.store.SetPendingCall(ctx, callSid, pending); storeErr != nil {
-		i.log.Warn("dial: SetPendingCall failed", zap.Error(storeErr))
-	}
-	// Also store under "latest" for fallback in wshandler
-	_ = i.store.SetPendingCall(ctx, "latest", pending)
+	if provider != "plivo" {
+		pending.ExotelCallSid = callSid
+		if storeErr := i.store.SetPendingCall(ctx, callSid, pending); storeErr != nil {
+			i.log.Warn("dial: SetPendingCall failed", zap.Error(storeErr))
+		}
+		// Also store under "latest" for fallback in wshandler
+		_ = i.store.SetPendingCall(ctx, "latest", pending)
 
-	// 6. Log dial attempt in DB
-	if _, dbErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID, data.UserID,
-		callSid, provider, data.LeadPhone, "initiated"); dbErr != nil {
-		i.log.Warn("dial: SaveCallLog failed", zap.Error(dbErr))
+		// 6. Log dial attempt in DB
+		if _, dbErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID, data.UserID,
+			callSid, provider, data.LeadPhone, "initiated"); dbErr != nil {
+			i.log.Warn("dial: SaveCallLog failed", zap.Error(dbErr))
+		}
 	}
 	_ = i.db.IncrLeadDialAttempts(data.LeadID)
 	_ = i.db.UpdateLeadStatus(data.LeadID, "Calling")
@@ -376,6 +412,27 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 	}
 
 	switch provider {
+	case "plivo":
+		if !creds.IsSet() {
+			return fmt.Errorf("Plivo credentials unavailable")
+		}
+		if pending, ok := i.store.GetPendingCall(ctx, callSid); ok {
+			if pending.PlivoContextID != "" {
+				if canonical, found := i.store.GetPendingCall(ctx, pending.PlivoContextID); found {
+					pending = canonical
+				}
+			}
+			if pending.ExotelCallSid == "" {
+				request := pending.PlivoRequestID
+				if request == "" {
+					alias, _ := i.store.GetPendingCall(ctx, "plivo-request:"+pending.PlivoContextID)
+					request = alias.PlivoRequestID
+				}
+				return NewPlivoClient(creds.AccountSID, creds.APIToken).CancelRequest(ctx, request)
+			}
+			callSid = pending.ExotelCallSid
+		}
+		return NewPlivoClient(creds.AccountSID, creds.APIToken).Hangup(ctx, callSid)
 	case "twilio":
 		return fmt.Errorf("Twilio provider is disabled; choose Exotel or Tata Tele")
 	case "tata", "smartflo", "tata_tele":

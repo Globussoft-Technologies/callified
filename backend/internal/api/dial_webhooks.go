@@ -344,6 +344,10 @@ func (s *Server) completeRetryIfAnswered(leadID, campaignID, orgID int64, status
 // @Success     200  "OK"
 // @Router      /webhook/exotel/status [post]
 func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
+	s.providerStatus(w, r, "Exotel")
+}
+
+func (s *Server) providerStatus(w http.ResponseWriter, r *http.Request, provider string) {
 	// Exotel sends status callbacks as either application/x-www-form-urlencoded
 	// or multipart/form-data. ParseMultipartForm handles both.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
@@ -408,7 +412,7 @@ func (s *Server) exotelStatus(w http.ResponseWriter, r *http.Request) {
 				leadName = strings.TrimSpace(lead.FirstName + " " + lead.LastName)
 			}
 			s.store.EmitCampaignEvent(r.Context(), cl.CampaignID, leadName, cl.Phone, status,
-				fmt.Sprintf("Exotel: %s", callStatus))
+				fmt.Sprintf("%s: %s", provider, callStatus))
 			s.dispatcher.Dispatch(r.Context(), cl.OrgID, "call.completed", map[string]any{
 				"call_sid":    callSid,
 				"status":      status,

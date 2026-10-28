@@ -1417,6 +1417,9 @@ type ExotelCreds struct {
 
 // IsSet returns true when the minimum required fields for the provider are set.
 func (e ExotelCreds) IsSet() bool {
+	if e.Provider == "plivo" {
+		return e.AccountSID != "" && e.APIToken != "" && e.CallerID != ""
+	}
 	if e.Provider == "twilio" {
 		return e.AccountSID != "" && e.APIKey != "" && e.CallerID != ""
 	}

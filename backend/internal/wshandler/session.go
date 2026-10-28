@@ -21,6 +21,8 @@ import (
 // CallSession holds all per-call state for one WebSocket connection.
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
+	plivoOutput        plivoPlayback
+	LivePreparationSID string
 	// Identity (set on connect / start event)
 	StreamSid  string
 	CallSid    string
@@ -58,7 +60,9 @@ type CallSession struct {
 	OrgID      int64
 	// BridgeCh carries decoded PCM chunks from the Exotel phone to the agent
 	// browser WebSocket when IsBridge=true. Closed when the Exotel call ends.
-	BridgeCh chan []byte
+	BridgeCh        chan []byte
+	bridgeReady     chan struct{}
+	bridgeReadyOnce sync.Once
 	// agentConnected is true while exactly one /ws/agent WebSocket is relaying
 	// audio for this bridge session. A second connection is rejected to prevent
 	// two goroutines writing to the same Exotel WS (cross-voice contamination).
@@ -291,6 +295,7 @@ func NewCallSession(streamSid string, ws *websocket.Conn, log *zap.Logger) *Call
 		TTSSentences:      make(chan string, 64),
 		carrierMediaReady: make(chan struct{}),
 		BridgeCh:          make(chan []byte, 10), // 10 frames × 20 ms = 200 ms max latency
+		bridgeReady:       make(chan struct{}),
 		CallStart:         time.Now(),
 		PlaybackTracker:   audio.NewPlaybackTracker(isExotel),
 		EchoCanceller:     audio.NewEchoCanceller(),
@@ -493,6 +498,8 @@ func (s *CallSession) interruptActiveTTS() {
 		frame, _ = json.Marshal(map[string]string{"type": "clear"})
 	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	} else if s.Provider == "plivo" {
+		frame, _ = json.Marshal(map[string]string{"event": "clearAudio", "streamId": s.StreamSid})
 	}
 	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
@@ -512,6 +519,8 @@ func (s *CallSession) DiscardLivePlayback() {
 		frame, _ = json.Marshal(map[string]string{"type": "clear"})
 	} else if s.IsExotel || strings.EqualFold(s.Provider, "tata") {
 		frame, _ = json.Marshal(map[string]string{"event": "clear", "streamSid": s.StreamSid})
+	} else if s.Provider == "plivo" {
+		frame, _ = json.Marshal(map[string]string{"event": "clearAudio", "streamId": s.StreamSid})
 	}
 	if frame != nil && s.WS != nil {
 		_ = s.SendText(frame)
