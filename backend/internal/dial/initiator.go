@@ -75,7 +75,7 @@ func New(cfg *config.Config, store *rstore.Store, database *db.DB, disp *webhook
 		db:     database,
 		disp:   disp,
 		exotel: NewExotelClient(cfg.ExotelAPIKey, cfg.ExotelAPIToken, cfg.ExotelAccountSID, cfg.ExotelCallerID, cfg.ExotelAppID, "", cfg.ExotelRegion, cfg.ExotelSubdomain),
-		tata:   NewTataClient(cfg.TataAPIToken, cfg.TataCallerID, cfg.TataAgentNumber, cfg.TataAPIEndpoint),
+		tata:   NewTataClient(cfg.TataAPIKey, cfg.TataAPIToken, cfg.TataCallerID, cfg.TataAgentNumber, cfg.TataAPIEndpoint),
 		twilio: NewTwilioClient(cfg.TwilioAccountSID, cfg.TwilioAuthToken, cfg.TwilioPhone),
 		log:    log,
 	}
@@ -231,7 +231,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	case "tata", "smartflo", "tata_tele":
 		var tataClient *TataClient
 		if creds.IsSet() {
-			tataClient = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
+			tataClient = NewTataClient(creds.APIKey, creds.APIToken, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
 			tataClient = i.tata
 		}
@@ -363,7 +363,7 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 	case "tata", "smartflo", "tata_tele":
 		var client *TataClient
 		if creds.IsSet() {
-			client = NewTataClient(creds.APIKey, creds.CallerID, creds.AppID, creds.Subdomain)
+			client = NewTataClient(creds.APIKey, creds.APIToken, creds.CallerID, creds.AppID, creds.Subdomain)
 		} else {
 			client = i.tata
 		}

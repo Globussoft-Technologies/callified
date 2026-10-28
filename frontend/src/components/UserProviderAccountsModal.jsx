@@ -163,10 +163,8 @@ export default function UserProviderAccountsModal({ user, apiFetch, API_URL, onC
                 { value: 'tata', label: 'Tata Tele' },
                 { value: 'twilio', label: 'Twilio' },
               ]} />
-              <Field label={form.provider === 'tata' ? 'API Token' : 'API Key / Auth Token'} value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
-              {form.provider !== 'tata' && (
-                <Field label="API Token / API Key SID" value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
-              )}
+              <Field label={form.provider === 'tata' ? 'Click-to-Call Support API Key' : 'API Key / Auth Token'} value={form.api_key} onChange={v => setForm({ ...form, api_key: v })} required />
+              <Field label={form.provider === 'tata' ? 'Smartflo API Token' : 'API Token / API Key SID'} value={form.api_token} onChange={v => setForm({ ...form, api_token: v })} required />
               {form.provider === 'twilio' && (
                 <Field label="API Secret" value={form.api_secret} onChange={v => setForm({ ...form, api_secret: v })} required />
               )}
