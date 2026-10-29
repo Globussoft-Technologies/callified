@@ -33,6 +33,8 @@ var displayTZ = func() *time.Location {
 
 // PendingCallInfo mirrors the dict stored by python's set_pending_call().
 type PendingCallInfo struct {
+	TataReservationID      string `json:"tata_reservation_id,omitempty"`
+	TataStreamCallID       string `json:"tata_stream_call_id,omitempty"`
 	Name                   string `json:"name"`
 	Phone                  string `json:"phone"`
 	LeadID                 int64  `json:"lead_id"`
