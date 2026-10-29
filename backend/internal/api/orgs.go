@@ -603,7 +603,8 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if _, ok := s.authorizeProduct(w, r, id); !ok {
+	product, ok := s.authorizeProduct(w, r, id)
+	if !ok {
 		return
 	}
 	persona, callFlow, err := s.db.GetProductPrompt(id)
@@ -613,6 +614,8 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
+		"opening_greeting":       product.OpeningGreeting,
+		"agent_name":             product.AgentName,
 		"agent_persona":          persona,
 		"call_flow_instructions": callFlow,
 	})
@@ -647,14 +650,20 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AgentPersona         string `json:"agent_persona"`
-		CallFlowInstructions string `json:"call_flow_instructions"`
+		OpeningGreeting      *string `json:"opening_greeting"`
+		AgentName            *string `json:"agent_name"`
+		AgentPersona         string  `json:"agent_persona"`
+		CallFlowInstructions string  `json:"call_flow_instructions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	if err := s.db.UpdateProductPrompt(id, body.AgentPersona, body.CallFlowInstructions); err != nil {
+	if body.AgentName != nil && (len([]rune(strings.TrimSpace(*body.AgentName))) > 100 || strings.ContainsAny(*body.AgentName, "\r\n")) {
+		writeError(w, http.StatusBadRequest, "agent name must be a single line of at most 100 characters")
+		return
+	}
+	if err := s.db.UpdateProductPrompt(id, body.AgentPersona, body.CallFlowInstructions, body.OpeningGreeting, body.AgentName); err != nil {
 		s.logger.Sugar().Errorw("updateProductPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

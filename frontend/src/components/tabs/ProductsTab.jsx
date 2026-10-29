@@ -132,6 +132,10 @@ export default function ProductsTab({
             ...prev,
             [p.id]: {
               ...(prev[p.id] || {}),
+              opening_greeting: data.opening_greeting || '',
+              savedGreeting: data.opening_greeting || '',
+              agent_name: data.agent_name || '',
+              savedAgentName: data.agent_name || '',
               agent_persona: data.agent_persona || '',
               call_flow_instructions: data.call_flow_instructions || '',
               savedPersona: data.agent_persona || '',
@@ -165,7 +169,7 @@ export default function ProductsTab({
   }, [orgProducts, tourExample]);
 
   const updateProductPrompt = (productId, field, value) => {
-    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value, ...(['agent_persona', 'call_flow_instructions', 'manualNotes'].includes(field) ? { dirty: true } : {}) } }));
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value, ...(['agent_persona', 'call_flow_instructions', 'opening_greeting', 'agent_name', 'manualNotes'].includes(field) ? { dirty: true } : {}) } }));
   };
 
   const handleGenerateProductPrompt = async (productId) => {
@@ -216,7 +220,7 @@ export default function ProductsTab({
       const pp = productPrompts[productId];
       const res = await apiFetch(`${API_URL}/products/${productId}/prompt`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '' })
+        body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '', opening_greeting: pp?.opening_greeting || '', agent_name: pp?.agent_name || '' })
       });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const product = orgProducts.find(p => p.id === productId);
@@ -225,7 +229,7 @@ export default function ProductsTab({
         body: JSON.stringify({ manual_notes: pp.manualNotes ?? product?.manual_notes ?? '', website_url: pp.websiteUrl ?? product?.website_url ?? '' }),
       });
       if (!details.ok) throw new Error('Persona saved, but product notes or website could not be saved. Please retry.');
-      setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], dirty: false, savedPersona: pp.agent_persona, savedFlow: pp.call_flow_instructions } }));
+      setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], dirty: false, savedGreeting: pp.opening_greeting, savedAgentName: pp.agent_name, savedPersona: pp.agent_persona, savedFlow: pp.call_flow_instructions } }));
       onProductsRefresh?.();
       toast('Product details saved!');
     } catch(e) { toast('Failed to save: ' + (e.message || e)); }
@@ -570,6 +574,12 @@ export default function ProductsTab({
                               </div>
                             )}
 
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={labelStyle} htmlFor={`agent-name-${p.id}`}>Agent Name (optional)</label>
+                              <input id={`agent-name-${p.id}`} disabled={!pp.promptLoaded} maxLength={100}
+                                value={pp.agent_name || ''} onChange={e => updateProductPrompt(p.id, 'agent_name', e.target.value)}
+                                placeholder="e.g. Meera" style={inputStyle} />
+                            </div>
                             <div data-product-tour="persona" style={{ marginBottom: 12 }}>
                               <label style={{ ...labelStyle, color: '#7c3aed' }}><AppIcon name="user" /> Agent Persona</label>
                               <textarea data-product-tour="persona" aria-label={`Agent persona for ${p.name}`} disabled={!pp.promptLoaded} rows={4} value={pp.agent_persona}
@@ -584,6 +594,16 @@ export default function ProductsTab({
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
                                 placeholder="e.g. Step 1: Greet. Step 2: Qualify..."
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 100, lineHeight: 1.6 }} />
+                            </div>
+
+                            <div style={{ marginBottom: 16, gridColumn: '1 / -1' }}>
+                              <label style={labelStyle}>Custom Greeting (optional)</label>
+                              <textarea aria-label={`Custom greeting for ${p.name}`} disabled={!pp.promptLoaded} rows={5}
+                                value={pp.opening_greeting || ''}
+                                onChange={e => updateProductPrompt(p.id, 'opening_greeting', e.target.value)}
+                                placeholder="Enter the full greeting in your preferred language. Use {{customer_name}}, {{agent_name}}, and {{company_name}} for personalized introductions."
+                                style={{ ...inputStyle, resize: 'vertical', minHeight: 100, lineHeight: 1.6 }} />
+                              <p style={{ fontSize: 12, color: T.sub, lineHeight: 1.5 }}>Used by campaigns linked to this product. Supports {'{{customer_name}}'}, {'{{agent_name}}'}, and {'{{company_name}}'}. Enter the full opening in its spoken language; leave blank for the automatic greeting.</p>
                             </div>
 
                             <div style={{ display: 'flex', gap: 10 }}>
@@ -601,7 +621,7 @@ export default function ProductsTab({
                       )}
                     </div>}
 
-                    {!hideAiFeatures && <footer className="product-editor-footer"><span>{pp.dirty ? 'Unsaved changes' : 'No pending changes'}</span><div><button disabled={pp.saving || !pp.dirty} onClick={() => setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], manualNotes: p.manual_notes || '', websiteUrl: p.website_url || '', agent_persona: pp.savedPersona || '', call_flow_instructions: pp.savedFlow || '', dirty: false } }))}>Discard changes</button><button data-product-tour="save" className="product-save-button" disabled={pp.saving || !pp.promptLoaded} onClick={() => handleSaveProductPrompt(p.id)}><AppIcon name={pp.saving ? 'loading' : 'save'} spin={pp.saving} /> {pp.saving ? 'Saving...' : 'Save product details'}</button></div></footer>}
+                    {!hideAiFeatures && <footer className="product-editor-footer"><span>{pp.dirty ? 'Unsaved changes' : 'No pending changes'}</span><div><button disabled={pp.saving || !pp.dirty} onClick={() => setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], manualNotes: p.manual_notes || '', websiteUrl: p.website_url || '', opening_greeting: pp.savedGreeting || '', agent_name: pp.savedAgentName || '', agent_persona: pp.savedPersona || '', call_flow_instructions: pp.savedFlow || '', dirty: false } }))}>Discard changes</button><button data-product-tour="save" className="product-save-button" disabled={pp.saving || !pp.promptLoaded} onClick={() => handleSaveProductPrompt(p.id)}><AppIcon name={pp.saving ? 'loading' : 'save'} spin={pp.saving} /> {pp.saving ? 'Saving...' : 'Save product details'}</button></div></footer>}
                     </div>
                   </div>
                 );

@@ -20,7 +20,9 @@ const liveCallControl = `
 ## LIVE OPENING — HIGHEST PRIORITY
 There is no separate TTS greeting in a Gemini Live call. The first clientContent
 message supplies the exact customer-facing greeting. Speak that greeting
-verbatim as your first customer-facing words. Do not replace it with a
+verbatim as your first customer-facing words. Deliver the greeting in full, every sentence
+before waiting for an answer; questions within the supplied greeting do not end
+the opening turn. Respect genuine customer interruptions. Do not replace it with a
 previous-call confirmation, a call-flow question, or an acknowledgement.
 Only continue to the next call-flow step after that greeting has been spoken.
 Never emit or speak textual call-control markers.
