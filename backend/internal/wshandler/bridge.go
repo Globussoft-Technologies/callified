@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/dial"
 )
 
 // pcmRMS returns the root-mean-square of a PCM-16 LE buffer (range 0–32767).
@@ -127,6 +128,11 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
+	claims, ticketErr := dial.VerifyAgentTicket(h.cfg.JWTSecret, r.URL.Query().Get("ticket"), callSid)
+	if ticketErr != nil {
+		http.Error(w, "Invalid browser call ticket", http.StatusForbidden)
+		return
+	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -150,18 +156,18 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// FIX (Bug 1 — race): lookupSession returns as soon as sessionsByCallSid is
-	// populated, which happens BEFORE the Redis lookup that sets IsBridge=true.
-	// The window is typically 1–10 ms (one Redis round-trip), but without this
-	// retry we can fail spuriously on a fast browser reconnect.
-	bridgeDeadline := time.Now().Add(3 * time.Second)
-	for !sess.IsBridge {
-		if time.Now().After(bridgeDeadline) {
-			h.log.Warn("agent: session found but IsBridge never set", zap.String("call_sid", callSid))
-			send(map[string]string{"type": "error", "msg": "not a browser-call session"})
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	// The call index is published before Redis hydration finishes. Waiting on
+	// a channel also makes the final identity/codec visible without polling a
+	// concurrently written bool.
+	readyTimer := time.NewTimer(3 * time.Second)
+	defer readyTimer.Stop()
+	select {
+	case <-sess.bridgeReady:
+	case <-readyTimer.C:
+		send(map[string]string{"type": "error", "msg": "not a browser-call session"})
+		return
+	case <-r.Context().Done():
+		return
 	}
 
 	// FIX (Bug 2 — cross-voice): reject a second connection to the same session.
@@ -174,6 +180,10 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sess.agentConnected.Store(false)
+	if sess.OrgID != claims.OrgID || sess.UserID != claims.UserID {
+		send(map[string]string{"type": "error", "msg": "browser call not found"})
+		return
+	}
 
 	// FIX (Bug 3 — data race): capture StreamSid and UseUlaw once, right here,
 	// after IsBridge is confirmed true. Both fields were set earlier in the same
@@ -317,6 +327,9 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 						frameData["stream_sid"] = streamSid
 						frameData["sequenceNumber"] = sess.outboundSeq.Add(1)
 					}
+					if sess.Provider == "plivo" {
+						frameData = plivoAudioFrame(audioBytes)
+					}
 					frame, _ := json.Marshal(frameData)
 					sess.SendText(frame) //nolint:errcheck
 				}
@@ -370,7 +383,7 @@ func (h *Handler) ServeAgent(w http.ResponseWriter, r *http.Request) {
 				send(map[string]string{"type": "hangup"})
 				return
 			}
-			if (sess.Provider == "tata" || (sess.Provider == "exotel" && !useUlaw)) && !connectedSent {
+			if (sess.Provider == "plivo" || sess.Provider == "tata" || (sess.Provider == "exotel" && !useUlaw)) && !connectedSent {
 				connectedSent = true
 				customerAudioReady.Store(true)
 				fallback.Stop()

@@ -35,6 +35,8 @@ var displayTZ = func() *time.Location {
 type PendingCallInfo struct {
 	TataReservationID      string `json:"tata_reservation_id,omitempty"`
 	TataStreamCallID       string `json:"tata_stream_call_id,omitempty"`
+	PlivoContextID         string `json:"plivo_context_id,omitempty"`
+	PlivoRequestID         string `json:"plivo_request_id,omitempty"`
 	Name                   string `json:"name"`
 	Phone                  string `json:"phone"`
 	LeadID                 int64  `json:"lead_id"`
@@ -141,6 +143,24 @@ func (s *Store) DeletePendingCall(ctx context.Context, k string) {
 	s.mu.Lock()
 	delete(s.memPending, k)
 	s.mu.Unlock()
+}
+
+// TakePendingCall atomically consumes a one-use media ticket.
+func (s *Store) TakePendingCall(ctx context.Context, k string) (PendingCallInfo, bool) {
+	if s.rdb != nil {
+		data, err := s.rdb.GetDel(ctx, key("pending", k)).Bytes()
+		if err != nil {
+			return PendingCallInfo{}, false
+		}
+		var info PendingCallInfo
+		err = json.Unmarshal(data, &info)
+		return info, err == nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, ok := s.memPending[k]
+	delete(s.memPending, k)
+	return info, ok
 }
 
 // ─── Takeover ─────────────────────────────────────────────────────────────────

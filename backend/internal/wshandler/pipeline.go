@@ -472,6 +472,9 @@ func synthesizeAndSend(ctx context.Context, sess *CallSession, provider tts.Prov
 	if err != nil && !errors.Is(err, context.Canceled) {
 		sess.Log.Warn("TTS error", zap.String("sentence", sentence), zap.Error(err))
 	}
+	if sess.Provider == "plivo" {
+		sendPlivoPCM(sess, nil, sess.PlaybackEpoch(), true)
+	}
 }
 
 // sendAudioFrame encodes PCM audio and sends it to the phone via the WebSocket.
@@ -495,6 +498,10 @@ func sendAudioFrame(sess *CallSession, pcm8k []byte) {
 // sendAudioFrameAtEpoch stops paced Live audio when its playback generation is
 // invalidated by barge-in or by the language guard.
 func sendAudioFrameAtEpoch(sess *CallSession, pcm8k []byte, expectedEpoch uint64) {
+	if sess.Provider == "plivo" {
+		sendPlivoPCM(sess, pcm8k, expectedEpoch, false)
+		return
+	}
 	if sess.IsBargeInActive() {
 		return
 	}

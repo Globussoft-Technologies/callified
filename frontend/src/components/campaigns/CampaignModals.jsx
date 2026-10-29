@@ -111,6 +111,7 @@ export default function CampaignModals({
     .filter(a => (a.direction || 'outbound') !== 'inbound');
   const providerAccountLabel = (provider) => {
     switch ((provider || 'exotel').toLowerCase()) {
+      case 'plivo': return 'Plivo';
       case 'tata':
       case 'smartflo':
       case 'tata_tele':

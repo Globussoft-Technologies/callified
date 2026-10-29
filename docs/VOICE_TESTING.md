@@ -129,3 +129,21 @@ print(r.status_code, len(r.json().get("audios", [[]])[0]))
 ## Adding Recommendations to the UI
 
 Voice recommendations are defined in `frontend/src/constants/voices.js` in the `VOICE_RECOMMENDATIONS` object. When a language + provider combo has recommendations, the campaign voice dropdown shows them in a "Recommended" group with a star.
+
+## Plivo AI and manual browser calls
+
+Use a saved outbound Plivo account with an Auth ID, Auth Token, and caller number in international format. Select it in the campaign's Calling Account selector. The backend needs a public HTTPS `PUBLIC_SERVER_URL` for Plivo answer/status webhooks and the authenticated media stream.
+
+- **AI call:** check the greeting and a longer response for crackle, gaps, and speed changes. Interrupt once, then let the final goodbye finish. Plivo's Gemini audio uses a stateful low-pass converter from 24 kHz to 8 kHz and continuous 20 ms G.711 packets; an interrupted response must not resume later.
+- **Browser call:** allow microphone access, answer the customer phone, and speak in both directions. The browser should show Connected as soon as Plivo sends customer audio, with no AI greeting. Check mute/unmute and hangup.
+- **Cancel while ringing:** hang up before the customer answers. The authenticated HTTP hangup endpoint cancels the carrier request even though no media WebSocket exists yet.
+- **Authorization:** `/ws/agent` requires the short-lived call-specific ticket returned in `agent_url`. The dashboard can refresh it using `GET /api/calls/{call_sid}/agent-ticket`; only the initiating user in the same organization can obtain one. Long-lived login tokens and monitor tickets cannot join the bridge.
+
+Run local regression tests without placing real calls:
+
+```bash
+cd backend
+go test -race ./internal/audio ./internal/dial ./internal/wshandler ./internal/api -timeout 90s
+```
+
+These tests simulate the carrier and browser sockets. A real call is still required to validate carrier/network audio quality after deployment.
