@@ -182,3 +182,17 @@ func TestAllGeminiVoiceIdentities(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectOpeningGreeting(t *testing.T) {
+	opening := "Namaste! NEET ya JEE? Kya aapke bachche ko apni right career direction pata hai?\nAajkal dasvi ke baad bahut se students NEET JEE ki coaching toh start kar dete hain, lekin kya unhe apni actual interests, strengths aur aptitude ke baare mein pata hota hai?"
+	assert.Equal(t, opening, selectOpeningGreeting("  "+opening+"  ", "automatic introduction"))
+	assert.Equal(t, "automatic introduction", selectOpeningGreeting(" \n ", "automatic introduction"))
+}
+
+func TestRenderProductOpeningGreeting(t *testing.T) {
+	template := "नमस्ते {{customer_name}} जी। मैं {{agent_name}}, {{company_name}} से बोल रही हूँ।\nNEET ya JEE? Aajkal dasvi ke baad..."
+	want := "नमस्ते sri जी। मैं Kore, KNOW YOUR TALENT से बोल रही हूँ।\nNEET ya JEE? Aajkal dasvi ke baad..."
+	assert.Equal(t, want, RenderOpeningGreeting(template, "sri", "Kore", "KNOW YOUR TALENT"))
+	assert.Equal(t, "{{agent_name}} Kore", RenderOpeningGreeting("{{customer_name}} {{agent_name}}", "{{agent_name}}", "Kore", "Company"))
+	assert.Equal(t, "Exact literal paragraph", RenderOpeningGreeting("Exact literal paragraph", "sri", "Kore", "Company"))
+}

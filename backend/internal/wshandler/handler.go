@@ -1712,7 +1712,10 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	//      the greeting with the empty-voice fallback ("Arjun"). The Sandbox
 	//      almost always hits this path, so without the swap every voice
 	//      ends up greeted as "Arjun".
-	if sess.TTSVoiceID != "" && sess.TTSVoiceID != callCtx.TTSVoiceID {
+	if callCtx.CustomOpeningGreeting {
+		sess.GreetingText = strings.TrimSpace(prompt.RenderOpeningGreeting(callCtx.OpeningGreetingTemplate, callCtx.GreetingCustomerName, prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language), callCtx.GreetingCompanyName))
+	}
+	if !callCtx.CustomOpeningGreeting && sess.TTSVoiceID != "" && sess.TTSVoiceID != callCtx.TTSVoiceID {
 		oldName := prompt.AgentPersonaName(callCtx.TTSVoiceID, sess.Language)
 		newName := prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language)
 		if oldName != "" && newName != "" && oldName != newName {

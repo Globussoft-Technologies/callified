@@ -12,8 +12,12 @@ import (
 
 // CallContext holds all variables needed to build a call system prompt.
 type CallContext struct {
-	SystemPrompt string
-	GreetingText string
+	SystemPrompt            string
+	GreetingText            string
+	CustomOpeningGreeting   bool
+	OpeningGreetingTemplate string
+	GreetingCustomerName    string
+	GreetingCompanyName     string
 	// Voice config — populated from campaign/org voice settings
 	TTSProvider            string
 	TTSVoiceID             string
@@ -179,7 +183,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	customPrompt, promptMode, _ := b.db.GetOrgSystemPromptConfig(orgID)
 
 	// Fetch campaign (name + product link + lead source)
-	var campaignName, campaignSource string
+	var campaignName, campaignSource, openingGreeting string
 	var campaignProductID int64
 	if campaignID > 0 {
 		if campaign, err := b.db.GetCampaignByID(campaignID); err == nil && campaign != nil {
@@ -206,6 +210,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	if campaignProductID > 0 {
 		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil {
 			productName = p.Name
+			openingGreeting = p.OpeningGreeting
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
@@ -214,6 +219,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		if products, err := b.db.GetProductsByOrg(orgID); err == nil && len(products) > 0 {
 			p := products[0]
 			productName = p.Name
+			openingGreeting = p.OpeningGreeting
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
@@ -290,18 +296,25 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		systemPrompt += pb.String()
 	}
 
-	greeting := buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang)
+	greeting := selectOpeningGreeting(RenderOpeningGreeting(openingGreeting, firstWord(leadName), personaName, companyName), buildGreeting(leadName, companyName, personaName, bol, effectiveSource, effectiveLang))
+	if strings.TrimSpace(openingGreeting) != "" {
+		systemPrompt += "\n\n## PRODUCT OPENING\nThe supplied opening greeting is the complete first call-flow step. Speak every sentence verbatim in one opening turn. Questions inside it are rhetorical until the opening is complete. Do not prepend an introduction, shorten, translate, or repeat it. If the customer interrupts, address their response naturally. After finishing, listen, then continue the next applicable call-flow step without repeating Step 1."
+	}
 
 	return &CallContext{
-		SystemPrompt:           systemPrompt,
-		GreetingText:           greeting,
-		TTSProvider:            vs.TTSProvider,
-		TTSVoiceID:             vs.TTSVoiceID,
-		TTSLanguage:            vs.TTSLanguage,
-		MaxCallDurationSeconds: vs.MaxCallDurationSeconds,
-		AgentName:              coalesce(orgName, "Callified AI"),
-		PersonaName:            personaName,
-		CallMemoryCount:        memoryCount,
+		SystemPrompt:            systemPrompt,
+		GreetingText:            greeting,
+		CustomOpeningGreeting:   strings.TrimSpace(openingGreeting) != "",
+		OpeningGreetingTemplate: openingGreeting,
+		GreetingCustomerName:    firstWord(leadName),
+		GreetingCompanyName:     companyName,
+		TTSProvider:             vs.TTSProvider,
+		TTSVoiceID:              vs.TTSVoiceID,
+		TTSLanguage:             vs.TTSLanguage,
+		MaxCallDurationSeconds:  vs.MaxCallDurationSeconds,
+		AgentName:               coalesce(orgName, "Callified AI"),
+		PersonaName:             personaName,
+		CallMemoryCount:         memoryCount,
 	}, nil
 }
 
@@ -1077,4 +1090,21 @@ func coalesce(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// selectOpeningGreeting preserves the entire configured opening, including line breaks.
+func selectOpeningGreeting(custom, fallback string) string {
+	if opening := strings.TrimSpace(custom); opening != "" {
+		return opening
+	}
+	return fallback
+}
+
+// renderOpeningGreeting substitutes once so customer-provided names cannot expand tokens.
+func RenderOpeningGreeting(template, customer, agent, company string) string {
+	return strings.NewReplacer(
+		"{{customer_name}}", customer,
+		"{{agent_name}}", agent,
+		"{{company_name}}", company,
+	).Replace(template)
 }

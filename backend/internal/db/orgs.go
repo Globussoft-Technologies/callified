@@ -310,6 +310,7 @@ func (d *DB) EnsureProductsTable() error {
 			manual_notes LONGTEXT,
 			agent_persona LONGTEXT,
 			call_flow_instructions LONGTEXT,
+ opening_greeting TEXT NULL,
 			image_urls LONGTEXT,
 			manual_images LONGTEXT,
 			created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
@@ -326,6 +327,7 @@ func (d *DB) EnsureProductsTable() error {
 	columns := []struct{ name, def string }{
 		{"agent_persona", "LONGTEXT"},
 		{"call_flow_instructions", "LONGTEXT"},
+		{"opening_greeting", "TEXT NULL"},
 		{"image_urls", "LONGTEXT"},
 		{"manual_images", "LONGTEXT"},
 	}
@@ -353,6 +355,7 @@ type Product struct {
 	ScrapedInfo          string         `json:"scraped_info"`
 	ManualNotes          string         `json:"manual_notes"`
 	AgentPersona         string         `json:"agent_persona"`
+	OpeningGreeting      string         `json:"opening_greeting"`
 	CallFlowInstructions string         `json:"call_flow_instructions"`
 	CreatedAt            string         `json:"created_at"`
 	ImageURLs            []string       `json:"image_urls"`    // scraped from website
@@ -361,7 +364,7 @@ type Product struct {
 
 const productCols = `id, org_id, name,
 	COALESCE(website_url,''), COALESCE(scraped_info,''), COALESCE(manual_notes,''),
-	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''),
+	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''), COALESCE(opening_greeting,''),
 	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),
 	COALESCE(image_urls,'[]'), COALESCE(manual_images,'[]')`
 
@@ -370,7 +373,7 @@ func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	var imageURLsJSON, manualImagesJSON string
 	err := row.Scan(&p.ID, &p.OrgID, &p.Name,
 		&p.WebsiteURL, &p.ScrapedInfo, &p.ManualNotes,
-		&p.AgentPersona, &p.CallFlowInstructions, &p.CreatedAt,
+		&p.AgentPersona, &p.CallFlowInstructions, &p.OpeningGreeting, &p.CreatedAt,
 		&imageURLsJSON, &manualImagesJSON)
 	if err != nil {
 		return p, err
@@ -540,7 +543,11 @@ func (d *DB) GetProductPrompt(id int64) (agentPersona, callFlow string, err erro
 }
 
 // UpdateProductPrompt saves agent_persona and call_flow_instructions.
-func (d *DB) UpdateProductPrompt(id int64, agentPersona, callFlow string) error {
+func (d *DB) UpdateProductPrompt(id int64, agentPersona, callFlow string, opening ...*string) error {
+	if len(opening) > 0 && opening[0] != nil {
+		_, err := d.pool.Exec(`UPDATE products SET agent_persona=?, call_flow_instructions=?, opening_greeting=? WHERE id=?`, nullString(agentPersona), nullString(callFlow), nullString(strings.TrimSpace(*opening[0])), id)
+		return err
+	}
 	_, err := d.pool.Exec(
 		`UPDATE products SET agent_persona=?, call_flow_instructions=? WHERE id=?`,
 		nullString(agentPersona), nullString(callFlow), id)
