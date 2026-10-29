@@ -196,3 +196,21 @@ func TestRenderProductOpeningGreeting(t *testing.T) {
 	assert.Equal(t, "{{agent_name}} Kore", RenderOpeningGreeting("{{customer_name}} {{agent_name}}", "{{agent_name}}", "Kore", "Company"))
 	assert.Equal(t, "Exact literal paragraph", RenderOpeningGreeting("Exact literal paragraph", "sri", "Kore", "Company"))
 }
+
+func TestLinkedProductIdentity(t *testing.T) {
+	product := &db.Product{ID: 12, OrgID: 7, OpeningGreeting: "Hello {{agent_name}}", AgentName: "  Meera  "}
+	opening, name := linkedProductIdentity(product, 12, 7)
+	assert.Equal(t, "Hello {{agent_name}}", opening)
+	assert.Equal(t, "Meera", name)
+	assert.Equal(t, "Hello Meera", RenderOpeningGreeting(opening, "", name, "Product"))
+	for _, tc := range []struct {
+		product          *db.Product
+		productID, orgID int64
+	}{
+		{nil, 12, 7}, {product, 0, 7}, {product, 13, 7}, {product, 12, 8},
+	} {
+		opening, name = linkedProductIdentity(tc.product, tc.productID, tc.orgID)
+		assert.Empty(t, opening)
+		assert.Empty(t, name)
+	}
+}

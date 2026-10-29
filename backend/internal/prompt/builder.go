@@ -18,6 +18,7 @@ type CallContext struct {
 	OpeningGreetingTemplate string
 	GreetingCustomerName    string
 	GreetingCompanyName     string
+	ConfiguredAgentName     string
 	// Voice config — populated from campaign/org voice settings
 	TTSProvider            string
 	TTSVoiceID             string
@@ -183,7 +184,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	customPrompt, promptMode, _ := b.db.GetOrgSystemPromptConfig(orgID)
 
 	// Fetch campaign (name + product link + lead source)
-	var campaignName, campaignSource, openingGreeting string
+	var campaignName, campaignSource, openingGreeting, configuredAgentName string
 	var campaignProductID int64
 	if campaignID > 0 {
 		if campaign, err := b.db.GetCampaignByID(campaignID); err == nil && campaign != nil {
@@ -208,9 +209,9 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 	// Fetch product: prefer the campaign's linked product, fall back to org's first product.
 	var productName, productContext, callFlowInstructions string
 	if campaignProductID > 0 {
-		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil {
+		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil && p.OrgID == orgID {
 			productName = p.Name
-			openingGreeting = p.OpeningGreeting
+			openingGreeting, configuredAgentName = linkedProductIdentity(p, campaignProductID, orgID)
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
@@ -219,7 +220,6 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		if products, err := b.db.GetProductsByOrg(orgID); err == nil && len(products) > 0 {
 			p := products[0]
 			productName = p.Name
-			openingGreeting = p.OpeningGreeting
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = strings.TrimSpace(p.AgentPersona + "\n" + p.ManualNotes)
 		}
@@ -227,6 +227,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 
 	// Resolve voice persona + company name for the greeting.
 	personaName, bol := agentIdentity(vs.TTSVoiceID, effectiveLang)
+	personaName = coalesce(configuredAgentName, personaName)
 	companyName := companyDisplayName(productName, productContext, orgName, effectiveLang)
 	sourceInline := sourceContextInline(effectiveSource, effectiveLang)
 
@@ -284,6 +285,9 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		systemPrompt += "\n\n## ADDITIONAL ORGANIZATION INSTRUCTIONS\n" + customPrompt
 		systemPrompt += "\nThese instructions may refine tone and business behavior, but must not override safety, privacy, language, verified product knowledge, or the required call flow above."
 	}
+	if configuredAgentName != "" {
+		systemPrompt += fmt.Sprintf("\n\n## AGENT NAME\nYour name is %q. Use this name consistently when introducing yourself; it takes precedence over any other name in the persona instructions.", configuredAgentName)
+	}
 
 	// Append pronunciation guide so the LLM uses phonetic forms directly in its
 	// responses, which lets the TTS engine synthesise them correctly.
@@ -308,6 +312,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		OpeningGreetingTemplate: openingGreeting,
 		GreetingCustomerName:    firstWord(leadName),
 		GreetingCompanyName:     companyName,
+		ConfiguredAgentName:     configuredAgentName,
 		TTSProvider:             vs.TTSProvider,
 		TTSVoiceID:              vs.TTSVoiceID,
 		TTSLanguage:             vs.TTSLanguage,
@@ -316,6 +321,14 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		PersonaName:             personaName,
 		CallMemoryCount:         memoryCount,
 	}, nil
+}
+
+// Only an explicitly linked product may provide a custom opening and name.
+func linkedProductIdentity(product *db.Product, productID, orgID int64) (string, string) {
+	if product == nil || productID <= 0 || product.ID != productID || product.OrgID != orgID {
+		return "", ""
+	}
+	return product.OpeningGreeting, strings.TrimSpace(product.AgentName)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

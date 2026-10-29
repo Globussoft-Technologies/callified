@@ -1713,9 +1713,13 @@ func (h *Handler) initializeCall(ctx context.Context, sess *CallSession) error {
 	//      almost always hits this path, so without the swap every voice
 	//      ends up greeted as "Arjun".
 	if callCtx.CustomOpeningGreeting {
-		sess.GreetingText = strings.TrimSpace(prompt.RenderOpeningGreeting(callCtx.OpeningGreetingTemplate, callCtx.GreetingCustomerName, prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language), callCtx.GreetingCompanyName))
+		agentName := callCtx.ConfiguredAgentName
+		if agentName == "" {
+			agentName = prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language)
+		}
+		sess.GreetingText = strings.TrimSpace(prompt.RenderOpeningGreeting(callCtx.OpeningGreetingTemplate, callCtx.GreetingCustomerName, agentName, callCtx.GreetingCompanyName))
 	}
-	if !callCtx.CustomOpeningGreeting && sess.TTSVoiceID != "" && sess.TTSVoiceID != callCtx.TTSVoiceID {
+	if !callCtx.CustomOpeningGreeting && callCtx.ConfiguredAgentName == "" && sess.TTSVoiceID != "" && sess.TTSVoiceID != callCtx.TTSVoiceID {
 		oldName := prompt.AgentPersonaName(callCtx.TTSVoiceID, sess.Language)
 		newName := prompt.AgentPersonaName(sess.TTSVoiceID, sess.Language)
 		if oldName != "" && newName != "" && oldName != newName {
