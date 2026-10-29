@@ -133,3 +133,9 @@ func (d *DB) SnapshotIncomingRoute(ctx context.Context, orgID int64, callSID str
 	err = d.pool.QueryRowContext(ctx, "SELECT mode,phone,destination_name FROM incoming_route_snapshots WHERE org_id=? AND call_sid=?", orgID, callSID).Scan(&route.Mode, &route.Phone, &route.Name)
 	return route, err
 }
+
+func (d *DB) GetIncomingRouteSnapshot(ctx context.Context, orgID int64, callSID string) (IncomingRoute, error) {
+	var route IncomingRoute
+	err := d.pool.QueryRowContext(ctx, "SELECT mode,phone,destination_name FROM incoming_route_snapshots WHERE org_id=? AND call_sid=?", orgID, callSID).Scan(&route.Mode, &route.Phone, &route.Name)
+	return route, err
+}

@@ -100,6 +100,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// previously upgrade the WS, fail tts.New() with a buried log warning, and
 	// the sandbox would record audio with no TTS coming back.
 	q := r.URL.Query()
+	if q.Get("direction") == "inbound" && !strings.HasSuffix(r.URL.Path, "/tata") && q.Get("mode") != "inbound-sim" {
+		http.Error(w, "Invalid inbound stream", http.StatusForbidden)
+		return
+	}
+	var simClaims *dial.ReceptionistTicketClaims
+	if q.Get("mode") == "inbound-sim" {
+		var err error
+		simClaims, err = dial.VerifyReceptionistTicket(h.cfg.JWTSecret, q.Get("ticket"), q.Get("stream_sid"))
+		if err != nil || q.Get("org_id") != fmt.Sprint(simClaims.OrgID) {
+			http.Error(w, "Invalid simulator ticket", http.StatusForbidden)
+			return
+		}
+	}
 	plivoCallID, plivoRequestID := "", ""
 	var plivoPending rstore.PendingCallInfo
 	if strings.HasSuffix(r.URL.Path, "/plivo") || q.Get("provider") == "plivo" {
@@ -146,6 +159,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	if simClaims != nil {
+		sess.IsReceptionistSim = true
+		sess.UserID = simClaims.UserID
+	}
 	if plivoCallID != "" {
 		sess.Provider = "plivo"
 		sess.IsExotel = false
@@ -1355,7 +1372,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		)
 		// Browser web-sim passes the authenticated user's email in the start
 		// event because WebSocket connections cannot send Authorization headers.
-		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
+		if email := pickStr(startData, "user_email", "userEmail"); email != "" && !sess.IsReceptionistSim {
 			sess.UserEmail = email
 			if u, err := h.db.GetUserByEmail(email); err == nil && u != nil {
 				sess.UserID = u.ID
@@ -1403,7 +1420,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		if sess.Provider == "tata" {
 			callSidKeys = []string{"ref_id", "refId", "call_sid", "callSid", "CallSid"}
 		}
-		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
+		if callSid := pickStr(startData, callSidKeys...); callSid != "" && !sess.IsReceptionistSim {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
 			if sess.Provider == "plivo" && sess.LivePreparationSID != "" {

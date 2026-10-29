@@ -24,13 +24,14 @@ type CallSession struct {
 	plivoOutput        plivoPlayback
 	LivePreparationSID string
 	// Identity (set on connect / start event)
-	StreamSid  string
-	CallSid    string
-	Provider   string
-	IsExotel   bool
-	IsWebSim   bool
-	IsInbound  bool
-	GeminiLive bool
+	StreamSid         string
+	CallSid           string
+	Provider          string
+	IsExotel          bool
+	IsWebSim          bool
+	IsInbound         bool
+	IsReceptionistSim bool
+	GeminiLive        bool
 	// IsBridge=true: browser-to-phone mode. AI pipeline is skipped; audio is
 	// relayed between Exotel and the agent's browser WebSocket via BridgeCh.
 	IsBridge bool

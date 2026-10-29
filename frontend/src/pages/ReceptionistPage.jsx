@@ -186,13 +186,17 @@ export default function ReceptionistPage() {
       audioCtxRef.current = audioContext;
       await audioContext.resume();
 
-      const sid = `web_sim_inbound_${selectedOrg?.id || 0}_${Date.now()}`;
+      const orgId = selectedOrg?.id || currentUser?.org_id;
+      const ticketResponse = await apiFetch(`${API_URL}/organizations/${orgId}/receptionist-ticket`, { method: 'POST' });
+      if (!ticketResponse.ok) throw new Error('Could not authorize the receptionist test');
+      const { stream_sid: sid, ticket } = await ticketResponse.json();
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const qp = new URLSearchParams({
         mode: 'inbound-sim',
         stream_sid: sid,
-        org_id: String(selectedOrg?.id || currentUser?.org_id || 0),
+        org_id: String(orgId),
+        ticket,
         phone: '',
         interest: 'inbound enquiry',
         tts_provider: receptionistProvider,

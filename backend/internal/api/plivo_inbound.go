@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -101,6 +102,11 @@ func (s *Server) plivoInbound(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Routing unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	credit, err := s.db.GetOrgCredit(account.OrgID)
+	if err != nil || credit == nil || credit.BalancePaise <= 0 {
+		http.Error(w, "Incoming service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if route.Mode == "phone" {
 		accounts, lookupErr := s.db.GetOrgExotelAccounts(account.OrgID)
 		if lookupErr != nil {
@@ -124,11 +130,6 @@ func (s *Server) plivoInbound(w http.ResponseWriter, r *http.Request) {
 	}
 	if route.Mode != "ai" {
 		http.Error(w, "Invalid incoming route", http.StatusServiceUnavailable)
-		return
-	}
-	credit, err := s.db.GetOrgCredit(account.OrgID)
-	if err != nil || credit == nil || credit.BalancePaise <= 0 {
-		http.Error(w, "Incoming service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	voice, err := s.db.GetOrganizationVoiceSettings(account.OrgID)
@@ -171,6 +172,26 @@ func (s *Server) plivoInboundStatus(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusOK)
 		return
+	}
+	route, err := s.db.GetIncomingRouteSnapshot(r.Context(), account.OrgID, contextID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "Call routing unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if route.Mode == "phone" {
+		rawDuration := r.PostForm.Get("BillDuration")
+		if rawDuration == "" && status != "completed" {
+			rawDuration = "0"
+		}
+		duration, parseErr := strconv.ParseInt(rawDuration, 10, 64)
+		if parseErr != nil || duration < 0 {
+			http.Error(w, "Call duration unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if _, _, err := s.db.DeductCallCredits(account.OrgID, contextID, float64(duration)); err != nil {
+			http.Error(w, "Call billing unavailable", http.StatusServiceUnavailable)
+			return
+		}
 	}
 	// This path deliberately does not schedule an outbound retry or change an
 	// unrelated lead's disposition. Late callbacks work after Redis cleanup.

@@ -696,9 +696,9 @@ func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]Inboun
 		SELECT ct.id, COALESCE(l.id,0),
 		       COALESCE(l.first_name, ''),
 		       COALESCE(l.last_name, ''),
-		       COALESCE(ct.inbound_phone, l.phone, ''),
-		       COALESCE(ct.inbound_interest, l.interest, ''),
-		       COALESCE(ct.inbound_status, l.status, 'new'),
+		       COALESCE(CONVERT(ct.inbound_phone USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(l.phone USING utf8mb4) COLLATE utf8mb4_unicode_ci, ''),
+		       COALESCE(CONVERT(ct.inbound_interest USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(l.interest USING utf8mb4) COLLATE utf8mb4_unicode_ci, ''),
+		       COALESCE(CONVERT(ct.inbound_status USING utf8mb4) COLLATE utf8mb4_unicode_ci, CONVERT(l.status USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'new'),
 		       COALESCE(ct.transcript,'[]'), COALESCE(ct.recording_url,''),
 		       COALESCE(ct.call_duration_s,0),
 		       DATE_FORMAT(ct.created_at,'%Y-%m-%d %H:%i:%s')
@@ -708,10 +708,10 @@ func (d *DB) GetRecentInboundReceptionistCalls(orgID int64, limit int) ([]Inboun
  WHERE matched.org_id=ct.org_id AND (
  matched.id=ct.lead_id OR (
  COALESCE(ct.inbound_phone,'')<>'' AND
- REPLACE(REPLACE(REPLACE(matched.phone,'+',''),' ',''),'-','') IN (
- REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-',''),
- CONCAT('91',REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-','')),
- IF(LEFT(REPLACE(ct.inbound_phone,'+',''),2)='91' AND LENGTH(REPLACE(ct.inbound_phone,'+',''))=12,SUBSTRING(REPLACE(ct.inbound_phone,'+',''),3),'')
+ BINARY REPLACE(REPLACE(REPLACE(matched.phone,'+',''),' ',''),'-','') IN (
+ BINARY REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-',''),
+ BINARY CONCAT('91',REPLACE(REPLACE(REPLACE(ct.inbound_phone,'+',''),' ',''),'-','')),
+ BINARY IF(LEFT(REPLACE(ct.inbound_phone,'+',''),2)='91' AND LENGTH(REPLACE(ct.inbound_phone,'+',''))=12,SUBSTRING(REPLACE(ct.inbound_phone,'+',''),3),'')
  ))) ORDER BY (matched.id=ct.lead_id) DESC,matched.id LIMIT 1
  )
 		WHERE ct.org_id=? AND (ct.direction='inbound' OR l.source='Inbound Call')

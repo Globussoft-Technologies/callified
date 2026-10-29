@@ -311,6 +311,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	// symptom reported after Quick-Add + Sim Web Call.
 	mux.HandleFunc("POST /api/upload-recording", auth(s.uploadRecording))
 	mux.HandleFunc("GET /api/organizations/{id}/receptionist-settings", auth(s.receptionistSettings))
+	mux.HandleFunc("POST /api/organizations/{id}/receptionist-ticket", auth(s.receptionistTicket))
 	mux.HandleFunc("PUT /api/organizations/{id}/receptionist-settings", s.requireAdminPermission("settings.manage")(s.receptionistSettings))
 	mux.HandleFunc("GET /api/forwarding-numbers", auth(s.forwardingNumbers))
 	mux.HandleFunc("POST /api/forwarding-numbers", s.requireAdminPermission("provider_accounts.global")(s.forwardingNumbers))
