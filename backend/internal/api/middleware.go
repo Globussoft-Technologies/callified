@@ -60,7 +60,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// SSE tickets are short-lived query-string tokens; they must never be
 		// accepted as session Bearer tokens. Rejecting them here prevents a
 		// leaked ?ticket=... from being replayed against the REST API.
-		if claims.Kind == "sse" {
+		if claims.Kind == "sse" || claims.Kind == "receptionist_sim" {
 			writeError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}

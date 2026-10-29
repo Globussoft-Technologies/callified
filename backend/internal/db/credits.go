@@ -189,25 +189,6 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Idempotency: if we've already deducted for this call_sid, return the
-	// existing entry's after-balance and skip the second hit. Important
-	// because recording.Service.SaveAndAnalyze can race with manual webhook
-	// retries when Exotel sends "completed" twice.
-	var existing int64
-	err = tx.QueryRow(
-		`SELECT id FROM credit_transactions WHERE reference=? AND type='call_deduction' LIMIT 1`,
-		callSid).Scan(&existing)
-	if err == nil {
-		// already deducted — short-circuit
-		var balance int64
-		_ = tx.QueryRow(`SELECT balance_paise FROM org_credits WHERE org_id=?`, orgID).Scan(&balance)
-		_ = tx.Commit()
-		return 0, balance, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, err
-	}
-
 	// Lazy-init the org_credits row.
 	if _, err := tx.Exec(
 		`INSERT IGNORE INTO org_credits (org_id, balance_paise, rate_per_min_paise) VALUES (?, 0, ?)`,
@@ -218,9 +199,21 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 	var balance int64
 	var ratePerMin int
 	if err := tx.QueryRow(
-		`SELECT balance_paise, COALESCE(rate_per_min_paise, ?) FROM org_credits WHERE org_id=?`,
+		`SELECT balance_paise, COALESCE(rate_per_min_paise, ?) FROM org_credits WHERE org_id=? FOR UPDATE`,
 		DefaultRatePerMinPaise, orgID,
 	).Scan(&balance, &ratePerMin); err != nil {
+		return 0, 0, err
+	}
+	// Serialize callback retries on the org's balance row before checking the ledger.
+	var existing int64
+	err = tx.QueryRow(`SELECT id FROM credit_transactions WHERE reference=? AND type='call_deduction' LIMIT 1`, callSid).Scan(&existing)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return 0, 0, err
+		}
+		return 0, balance, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, 0, err
 	}
 

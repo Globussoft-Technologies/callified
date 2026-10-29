@@ -49,6 +49,7 @@ type Handler struct {
 	log               *zap.Logger
 	sessions          sync.Map // stream_sid → *CallSession (for monitor WebSocket)
 	sessionsByCallSid sync.Map // call_sid → *CallSession (for monitor lookup during dial flow before stream_sid arrives)
+	plivoStreams      sync.Map // carrier UUID → claim preventing duplicate media sessions
 	preparedLive      sync.Map // Tata call_sid → *preparedGeminiCall while ringing
 }
 
@@ -99,7 +100,21 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// previously upgrade the WS, fail tts.New() with a buried log warning, and
 	// the sandbox would record audio with no TTS coming back.
 	q := r.URL.Query()
+	if q.Get("direction") == "inbound" && !strings.HasSuffix(r.URL.Path, "/tata") && q.Get("mode") != "inbound-sim" {
+		http.Error(w, "Invalid inbound stream", http.StatusForbidden)
+		return
+	}
+	var simClaims *dial.ReceptionistTicketClaims
+	if q.Get("mode") == "inbound-sim" {
+		var err error
+		simClaims, err = dial.VerifyReceptionistTicket(h.cfg.JWTSecret, q.Get("ticket"), q.Get("stream_sid"))
+		if err != nil || q.Get("org_id") != fmt.Sprint(simClaims.OrgID) {
+			http.Error(w, "Invalid simulator ticket", http.StatusForbidden)
+			return
+		}
+	}
 	plivoCallID, plivoRequestID := "", ""
+	var plivoPending rstore.PendingCallInfo
 	if strings.HasSuffix(r.URL.Path, "/plivo") || q.Get("provider") == "plivo" {
 		var ticketErr error
 		plivoCallID, plivoRequestID, ticketErr = dial.VerifyPlivoStreamTicket(h.cfg.JWTSecret, q.Get("ticket"))
@@ -108,10 +123,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		info, ok := h.store.TakePendingCall(r.Context(), "plivo-ticket:"+q.Get("nonce"))
-		if !ok || info.ExotelCallSid != plivoCallID {
+		if !ok || info.ExotelCallSid != plivoCallID || info.PlivoContextID != plivoRequestID {
 			http.Error(w, "Stream ticket unavailable", 403)
 			return
 		}
+		plivoPending = info
+		if _, loaded := h.plivoStreams.LoadOrStore(plivoCallID, struct{}{}); loaded {
+			http.Error(w, "Call stream already connected", http.StatusConflict)
+			return
+		}
+		defer h.plivoStreams.Delete(plivoCallID)
 		q = make(map[string][]string)
 		q.Set("stream_sid", "plivo_"+plivoCallID)
 	}
@@ -138,6 +159,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	if simClaims != nil {
+		sess.IsReceptionistSim = true
+		sess.UserID = simClaims.UserID
+	}
 	if plivoCallID != "" {
 		sess.Provider = "plivo"
 		sess.IsExotel = false
@@ -145,13 +170,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sess.UseUlaw = true
 		sess.CallSid = plivoCallID
 		sess.LivePreparationSID = plivoRequestID
+		sess.OrgID = plivoPending.OrgID
 	}
 	if isTataStream {
 		sess.Provider = "tata"
 		sess.IsExotel = false
 		sess.UseUlaw = strings.EqualFold(q.Get("codec"), "ulaw") || strings.EqualFold(q.Get("codec"), "mulaw")
 	}
-	sess.IsInbound = q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
+	sess.IsInbound = plivoPending.IsInbound || q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
 	// the lead label instead of the empty "()" we used to show.
@@ -1194,6 +1220,10 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 			if pickStr(start, "callId") != sess.CallSid {
 				return true
 			}
+			pending, found := h.store.GetPendingCall(ctx, sess.CallSid)
+			if !found || pending.OrgID != sess.OrgID || pending.PlivoContextID != sess.LivePreparationSID {
+				return true
+			}
 			start["callSid"] = sess.CallSid
 			start["streamSid"] = pickStr(start, "streamId")
 		}
@@ -1342,7 +1372,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		)
 		// Browser web-sim passes the authenticated user's email in the start
 		// event because WebSocket connections cannot send Authorization headers.
-		if email := pickStr(startData, "user_email", "userEmail"); email != "" {
+		if email := pickStr(startData, "user_email", "userEmail"); email != "" && !sess.IsReceptionistSim {
 			sess.UserEmail = email
 			if u, err := h.db.GetUserByEmail(email); err == nil && u != nil {
 				sess.UserID = u.ID
@@ -1390,7 +1420,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		if sess.Provider == "tata" {
 			callSidKeys = []string{"ref_id", "refId", "call_sid", "callSid", "CallSid"}
 		}
-		if callSid := pickStr(startData, callSidKeys...); callSid != "" {
+		if callSid := pickStr(startData, callSidKeys...); callSid != "" && !sess.IsReceptionistSim {
 			sess.CallSid = callSid
 			h.sessionsByCallSid.Store(callSid, sess)
 			if sess.Provider == "plivo" && sess.LivePreparationSID != "" {
@@ -1408,7 +1438,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 			if ok {
 				hitKey = "call_sid"
 			}
-			if !ok {
+			if !ok && sess.Provider != "plivo" {
 				if phone := pickStr(startData, "from", "From", "to", "To"); phone != "" {
 					info, ok = h.store.GetPendingCall(ctx, "phone:"+phone)
 					if ok {
@@ -1416,7 +1446,7 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 					}
 				}
 			}
-			if !ok {
+			if !ok && sess.Provider != "plivo" {
 				info, ok = h.store.GetPendingCall(ctx, "latest")
 				if ok {
 					hitKey = "latest"
@@ -1431,6 +1461,9 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 				sess.LogLiveStartup("redis_lookup_complete", zap.Bool("found_pending_call", ok))
 			}
 			if ok {
+				if sess.Provider == "plivo" {
+					sess.IsInbound = info.IsInbound
+				}
 				// Only overwrite when Redis has something — otherwise we wipe
 				// good values (e.g. set from query params on web-sim) with
 				// empty strings from a stale "latest" key.
@@ -2060,9 +2093,6 @@ func recordingCallSID(sess *CallSession) string {
 
 func (h *Handler) applyInboundReceptionistPrompt(sess *CallSession) {
 	baseKnowledge := h.inboundProductKnowledge(sess.OrgID)
-	if baseKnowledge == "" {
-		baseKnowledge = strings.TrimSpace(sess.SystemPrompt)
-	}
 	lang := sess.Language
 	if lang == "" {
 		lang = sess.TTSLanguage
@@ -2078,34 +2108,21 @@ func (h *Handler) applyInboundReceptionistPrompt(sess *CallSession) {
 	if sess.Interest == "" {
 		sess.Interest = "inbound enquiry"
 	}
-	sess.SystemPrompt = fmt.Sprintf(`You are a warm inbound AI receptionist for %s.
+	var greeting, instructions string
+	if h.db != nil && sess.OrgID > 0 {
+		settings, err := h.db.GetReceptionistSettings(sess.OrgID)
+		if err != nil {
+			h.log.Error("load incoming instructions", zap.Error(err))
+		} else {
+			greeting, instructions = settings.Greeting, settings.Instructions
+		}
+	}
+	sess.SystemPrompt = buildInboundInstructions(label, instructions, baseKnowledge)
+	sess.GreetingText = strings.TrimSpace(greeting)
+	if sess.GreetingText == "" {
+		sess.GreetingText = inboundGreeting(lang, company)
+	}
 
-The customer called us first. Do not behave like an outbound sales caller and do not say you are calling them.
-
-Goal:
-Greet the caller, identify which product/service they are asking about, collect the caller's name, help with their requirement, then collect phone number before ending.
-
-Rules:
-1. Respond only in %s unless the customer explicitly asks for another language.
-2. Do not switch languages just because the caller speaks, mixes, or is transcribed in another language. Do not mirror the caller's language automatically.
-3. If the caller explicitly asks to continue in another language, switch to that language and stay there until they ask to switch again.
-4. Ask one question at a time.
-5. Keep every reply short and natural for voice. Use one complete sentence when possible, two at most, and always end with punctuation.
-6. If the caller asks about a known product and their name is not known yet, acknowledge the product briefly and ask for their name before answering details. Example: "Sure, I can help with EmpMonitor. May I know who I am speaking with?"
-7. If the caller gives their name, remember it and use it naturally.
-8. After name is known, answer product/service questions from the matching product's knowledge only.
-9. If the product is unclear, ask which product they mean instead of assuming.
-10. Phone number is compulsory before ending. Ask for it near the end if it is missing, even if the caller only wanted basic information.
-11. Do not ask for email address, mail ID, or any written-contact detail. If the caller wants details sent, say the team can call them and ask for their phone number.
-12. When the enquiry is complete and phone number is collected, summarize the next step and end with [HANGUP].
-13. Never reveal you are an AI.
-
-Call context: %s
-
-Available company/product knowledge:
-%s`, company, label, sess.Interest, baseKnowledge)
-
-	sess.GreetingText = inboundGreeting(lang, company)
 }
 
 func (h *Handler) inboundProductKnowledge(orgID int64) string {
@@ -2117,7 +2134,7 @@ func (h *Handler) inboundProductKnowledge(orgID int64) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Use this catalog for inbound callers. The company has multiple products, so do not assume the first product. Match by product name or ask a clarifying question.\n")
+	b.WriteString("Organization product reference information:\n")
 	for i, p := range products {
 		if i > 0 {
 			b.WriteString("\n")
@@ -2171,4 +2188,21 @@ func inboundGreeting(lang, company string) string {
 	default:
 		return fmt.Sprintf("Hi, thanks for calling %s. How can I help you today?", company)
 	}
+}
+
+// Business behavior comes from saved organization settings, never product examples.
+func buildInboundInstructions(language, instructions, knowledge string) string {
+	if strings.TrimSpace(instructions) == "" {
+		instructions = "Help the caller with their enquiry using the available information."
+	}
+	return fmt.Sprintf(`This is an incoming voice call. Speak in %s unless the caller requests another language.
+Follow the saved incoming-call instructions below. Product reference material supplies facts, not conversation rules.
+Do not invent facts or claim actions were completed without confirmation. Keep replies suitable for a spoken conversation.
+When the conversation is finished, append [HANGUP].
+
+Incoming-call instructions:
+%s
+
+Product reference information:
+%s`, language, instructions, knowledge)
 }
