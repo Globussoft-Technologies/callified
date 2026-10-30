@@ -233,7 +233,7 @@ func (h *Handler) buildPreparedGeminiCall(initCtx context.Context, data dial.Cal
 	client := realtime.New(realtime.Config{
 		URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 		AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-		Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
+		Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
 		Language: sess.Language, Greeting: sess.GreetingText,
 	}, sink.callbacks(h.log, data.LeadID))
 	// The connection survives the ringing-to-answer handoff. Only the separate

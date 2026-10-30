@@ -2,9 +2,11 @@ package realtime
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,6 +17,9 @@ import (
 )
 
 const liveCallControl = `
+
+## VOICE CONSISTENCY
+Keep the same speaker identity, vocal timbre, and speaking style throughout the entire call, including after interruptions, tool calls, recovery responses, and language changes. Never imitate the caller or another speaker. Language changes must preserve your speaker identity.
 
 ## LIVE CALL CONTROL
 ## LIVE OPENING — HIGHEST PRIORITY
@@ -62,14 +67,15 @@ type CompleteCallRequest struct {
 }
 
 type Client struct {
-	cfg     Config
-	cb      Callbacks
-	mu      sync.Mutex
-	control chan string
+	sessionID string
+	cfg       Config
+	cb        Callbacks
+	mu        sync.Mutex
+	control   chan string
 }
 
 func New(cfg Config, cb Callbacks) *Client {
-	return &Client{cfg: cfg, cb: cb, control: make(chan string, 8)}
+	return &Client{sessionID: rand.Text(), cfg: cfg, cb: cb, control: make(chan string, 8)}
 }
 
 // RequestResponse injects an internal event into the active Live conversation.
@@ -90,10 +96,14 @@ func (c *Client) RequestResponse(instruction string) bool {
 
 func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 	startupAt := time.Now()
+	slog.Info("gemini live session starting", "session_id", c.sessionID, "model", c.cfg.Model, "voice", c.cfg.Voice)
 	startupStage := func(stage string) {
 		if c.cb.OnStartupStage != nil {
 			c.cb.OnStartupStage(stage, time.Since(startupAt))
 		}
+	}
+	if strings.TrimSpace(c.cfg.Voice) == "" {
+		return fmt.Errorf("gemini live: missing voice; configure GEMINI_LIVE_VOICE")
 	}
 	if strings.TrimSpace(c.cfg.Model) == "" {
 		return fmt.Errorf("gemini live: missing model")
@@ -354,11 +364,11 @@ func liveLanguageGuidance(language string) string {
 	}
 	return fmt.Sprintf(`## LIVE AUDIO LANGUAGE — HIGHEST PRIORITY
 Maintain one CURRENT_REPLY_LANGUAGE, initially the campaign language %s (%s).
+Use a stable conversational register in CURRENT_REPLY_LANGUAGE throughout the call. Common English business words such as doors, windows, appointment, and product names are allowed inside otherwise natural Hindi or other Indian-language replies; this is not a language switch. Do not alternate between a formal opening and a different persona or theatrical delivery in later turns. Do not use a full English reply unless CURRENT_REPLY_LANGUAGE is English.
 CURRENT_REPLY_LANGUAGE is locked. Change it only when the customer explicitly requests another supported language, for example "speak in Hindi", "Kannada dalli mathadi", or "switch to English".
 When an explicit request occurs, call switch_language with the requested language code before speaking in that language. Wait for the tool result. Change CURRENT_REPLY_LANGUAGE only when the tool result is accepted.
 Never switch merely because the customer speaks, mixes, or is transcribed in another language. Native script, Romanized speech, accent, pronunciation, noise, partial transcription, and model language detection are not permission to switch.
 If the customer uses another language without requesting a switch, continue in CURRENT_REPLY_LANGUAGE. If necessary, ask in CURRENT_REPLY_LANGUAGE whether they want you to change languages, and switch only after an explicit confirmation.
-ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY: Whenever CURRENT_REPLY_LANGUAGE is English, use ONLY a clear, natural Indian English accent, pronunciation, rhythm, intonation, and prosody for the entire utterance from its first word to its last. Keep the same Indian English accent on every English turn, including after interruptions, language switches, tool calls, and recovery responses. Never drift into or imitate an American, British, Australian, or any other non-Indian English accent. Use simple conversational phrasing familiar to Indian customers. This rule overrides the delivery style of all English examples, persona text, and call-flow text.
 A short acknowledgement such as yes, no, okay, haan, or its translated equivalent inherits CURRENT_REPLY_LANGUAGE and must not cause a switch or a reversion.
 After an explicit language request is confirmed, update CURRENT_REPLY_LANGUAGE and keep using it until the customer explicitly requests another language.
 The language used in persona text, call-flow steps, examples, product knowledge, customer speech, or earlier agent messages must never override CURRENT_REPLY_LANGUAGE without an explicit customer request.
@@ -376,6 +386,8 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 	readyOnce := sync.Once{}
 	firstAudioLogged := false
 	setupReceived := false
+	var output livePCMNormalizer
+	lastRate := 0
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -417,8 +429,11 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 		if content == nil {
 			continue
 		}
-		if v, _ := content["interrupted"].(bool); v && c.cb.OnInterrupted != nil {
-			c.cb.OnInterrupted()
+		if v, _ := content["interrupted"].(bool); v {
+			output = livePCMNormalizer{}
+			if c.cb.OnInterrupted != nil {
+				c.cb.OnInterrupted()
+			}
 		}
 		if tr, _ := content["interimInputTranscription"].(map[string]any); tr != nil && c.cb.OnInterimInputTranscript != nil {
 			if text, _ := tr["text"].(string); text != "" {
@@ -443,6 +458,22 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				data, _ := inline["data"].(string)
 				if data != "" && c.cb.OnAudio != nil {
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
+						mimeType, _ := inline["mimeType"].(string)
+						rate, err := livePCMRate(mimeType)
+						if err != nil {
+							return err
+						}
+						if rate != lastRate {
+							slog.Info("gemini live output format", "session_id", c.sessionID, "model", c.cfg.Model, "voice", c.cfg.Voice, "sample_rate", rate, "previous_sample_rate", lastRate)
+							lastRate = rate
+						}
+						b, err = output.process(b, rate)
+						if err != nil {
+							return err
+						}
+						if len(b) == 0 {
+							continue
+						}
 						if !firstAudioLogged {
 							firstAudioLogged = true
 							_ = conn.SetReadDeadline(time.Time{})
@@ -455,8 +486,11 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				}
 			}
 		}
-		if done, _ := content["turnComplete"].(bool); done && c.cb.OnTurnComplete != nil {
-			c.cb.OnTurnComplete()
+		if done, _ := content["turnComplete"].(bool); done {
+			output = livePCMNormalizer{}
+			if c.cb.OnTurnComplete != nil {
+				c.cb.OnTurnComplete()
+			}
 		}
 		select {
 		case <-ctx.Done():
