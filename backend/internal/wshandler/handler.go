@@ -589,7 +589,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				languageRedirectAwaitingInterrupt := false
 				provisionalLanguage := ""
 				newOutputTurn := true
-				var plivoResampler audio.TelephonyResampler
+				var liveResampler audio.TelephonyResampler
+				diagnostic := newLiveAudioDiagnostic(h.cfg.GeminiLiveAudioDiagnosticsDir, sess.Log)
+				defer diagnostic.close()
 				queueAudio := func(packet liveAudioPacket) {
 					select {
 					case audioOut <- packet:
@@ -645,7 +647,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.MarkFinalCloseAudioStarted()
 						}
 						if newOutputTurn {
-							plivoResampler = audio.TelephonyResampler{}
+							liveResampler = audio.TelephonyResampler{}
 							// A new model turn is the reply to the interruption. Allow
 							// its audio through after the previous turn was cancelled.
 							sess.SetBargeIn(false)
@@ -658,11 +660,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						packet := liveAudioPacket{
 							epoch: sess.PlaybackEpoch(),
-							pcm:   audio.Decimate3x(pcm24k),
+							pcm:   liveResampler.Process(pcm24k),
 						}
-						if sess.Provider == "plivo" {
-							packet.pcm = plivoResampler.Process(pcm24k)
-						}
+						diagnostic.write(pcm24k, packet.pcm)
 						languageRedirectMu.Lock()
 						holdOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -919,7 +919,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					client = realtime.New(realtime.Config{
 						URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 						AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-						Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
+						Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
 						Language: sess.Language, Greeting: sess.GreetingText,
 					}, liveCallbacks)
 				}
