@@ -63,9 +63,10 @@ func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
 	got := buildLiveSystemPrompt(prompt, "en")
 
 	assert.NotContains(t, got, "already spoken by TTS")
-	assert.Contains(t, got, "Opening: speak the exact clientContent greeting once, then confirm")
+	assert.Contains(t, got, "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE, then confirm")
 	assert.Contains(t, got, "There is no separate TTS greeting in a Gemini Live call")
-	assert.Contains(t, got, "Speak that greeting\nverbatim as your first customer-facing words")
+	assert.Contains(t, got, "translate it naturally into CURRENT_REPLY_LANGUAGE")
+	assert.NotContains(t, got, "verbatim")
 }
 
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
@@ -159,10 +160,8 @@ If they use another language, do NOT switch. Keep replying in the configured lan
 	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE")
 	assert.Contains(t, got, "Native script, Romanized speech")
 	assert.Contains(t, got, "switch only after an explicit confirmation")
-	assert.Contains(t, got, "ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY")
-	assert.Contains(t, got, "use ONLY a clear, natural Indian English accent")
-	assert.Contains(t, got, "entire utterance from its first word to its last")
-	assert.Contains(t, got, "Never drift into or imitate an American, British, Australian")
+	assert.NotContains(t, got, "ENGLISH VOICE AND ACCENT")
+	assert.NotContains(t, got, "Indian English accent")
 	assert.NotContains(t, got, "Respond only in Telugu")
 	assert.NotContains(t, got, "Change it only after either")
 	assert.NotContains(t, got, "strong language evidence")
@@ -177,4 +176,55 @@ func TestBuildLiveSystemPromptIgnoresUnknownLanguage(t *testing.T) {
 	got := buildLiveSystemPrompt("Be helpful.", "unknown")
 
 	assert.NotContains(t, got, "LIVE AUDIO LANGUAGE")
+}
+
+func TestReplyLanguageTracksApprovedSwitches(t *testing.T) {
+	language := "kn"
+	client := New(Config{Language: "kn"}, Callbacks{CurrentReplyLanguage: func() string { return language }})
+	assert.Contains(t, client.withReplyLanguage("Recover naturally"), "CURRENT_REPLY_LANGUAGE=kn")
+	// The guard changes only after accepting an explicit customer request.
+	language = "hi"
+	got := client.withReplyLanguage("Recover naturally")
+	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE=hi")
+	assert.NotContains(t, got, "CURRENT_REPLY_LANGUAGE=kn")
+	assert.Contains(t, got, "Recover naturally")
+	assert.Contains(t, got, "Never speak this reminder")
+}
+
+func TestReplyLanguageFallsBackBeforePrewarmAttachment(t *testing.T) {
+	client := New(Config{Language: "kn"}, Callbacks{CurrentReplyLanguage: func() string { return "" }})
+	assert.Contains(t, client.replyLanguageInstruction(), "CURRENT_REPLY_LANGUAGE=kn")
+	assert.Equal(t, "recover", New(Config{}, Callbacks{}).withReplyLanguage("recover"))
+}
+
+func TestLanguageReminderDoesNotRequestResponse(t *testing.T) {
+	msg := liveLanguageContextMessage("CURRENT_REPLY_LANGUAGE=kn")
+	content := msg["clientContent"].(map[string]any)
+	assert.Equal(t, false, content["turnComplete"])
+	assert.NotContains(t, msg, "realtimeInput")
+	// Recovery requests retain their original response-triggering behavior.
+	assert.Equal(t, true, liveControlMessage("recover")["clientContent"].(map[string]any)["turnComplete"])
+}
+
+func TestCustomGreetingUsesCampaignLanguage(t *testing.T) {
+	greeting := "नमस्ते, मैं GlobusCRM से बोल रही हूँ। क्या आपके पास 15 मिनट हैं?"
+	client := New(Config{Language: "kn", Greeting: greeting}, Callbacks{})
+	got := client.greetingInstruction()
+	assert.Contains(t, got, greeting)
+	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE=kn")
+	assert.Contains(t, got, "Translate naturally if needed")
+	assert.Contains(t, got, "preserve its meaning, names, company names, product names, numbers, and facts")
+	assert.Contains(t, got, "If already in CURRENT_REPLY_LANGUAGE, keep its wording")
+	assert.NotContains(t, got, "verbatim")
+	assert.NotContains(t, buildLiveSystemPrompt("", "kn"), "exact clientContent greeting")
+}
+
+func TestLiveProductOpeningAllowsTranslation(t *testing.T) {
+	prompt := "## PRODUCT OPENING\nThe supplied opening greeting is the complete first call-flow step. Speak every sentence verbatim in one opening turn. Questions inside it are rhetorical until the opening is complete. Do not prepend an introduction, shorten, translate, or repeat it. If the customer interrupts, address their response naturally."
+	got := buildLiveSystemPrompt(prompt, "kn")
+	assert.NotContains(t, got, "verbatim")
+	assert.NotContains(t, got, "shorten, translate")
+	assert.Contains(t, got, "Questions inside it are rhetorical until the opening is complete")
+	assert.Contains(t, got, "If the customer interrupts, address their response naturally")
+	assert.Contains(t, got, "translating naturally if needed")
 }

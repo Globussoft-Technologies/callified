@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrTataStreamNotReady = errors.New("update and verify the stream secret in Tata before placing calls")
 
 const defaultTataClickToCallEndpoint = "https://api-smartflo.tatateleservices.com/v1/click_to_call_support"
 const defaultTataHangupEndpoint = "https://api-smartflo.tatateleservices.com/v1/call/hangup"

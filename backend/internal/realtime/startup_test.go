@@ -3,6 +3,7 @@ package realtime
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,4 +64,34 @@ func TestLiveAudioArrivesWithoutOutputTranscript(t *testing.T) {
 	}
 	conn.Close()
 	<-finished
+}
+
+func TestLiveLanguageReminderAfterInterruptionAndTurn(t *testing.T) {
+	for _, event := range []string{"interrupted", "turnComplete"} {
+		t.Run(event, func(t *testing.T) {
+			messages := make(chan map[string]any, 1)
+			conn := liveTestConnection(t, func(peer *websocket.Conn) {
+				_ = peer.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+				_ = peer.WriteJSON(map[string]any{"serverContent": map[string]any{event: true}})
+				_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+				var msg map[string]any
+				_ = peer.ReadJSON(&msg)
+				messages <- msg
+			})
+			client := New(Config{Language: "kn"}, Callbacks{CurrentReplyLanguage: func() string { return "hi" }})
+			finished := make(chan error, 1)
+			go func() { finished <- client.receive(context.Background(), conn, make(chan struct{}), time.Now()) }()
+			select {
+			case msg := <-messages:
+				raw, _ := json.Marshal(msg)
+				if !strings.Contains(string(raw), "CURRENT_REPLY_LANGUAGE=hi") || !strings.Contains(string(raw), `"turnComplete":false`) {
+					t.Errorf("expected non-generating reminder for approved language, got %s", raw)
+				}
+			case <-time.After(2 * time.Second):
+				t.Error("no language reminder received")
+			}
+			conn.Close()
+			<-finished
+		})
+	}
 }

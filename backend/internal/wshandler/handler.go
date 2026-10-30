@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,24 +121,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var verifiedTata *rstore.TataStreamContext
+	tataRoute := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	if tataRoute {
+		var ticketErr error
+		verifiedTata, ticketErr = h.store.ConsumeTataStreamTicket(r.Context(), q.Get("ticket"))
+		if ticketErr != nil {
+			http.Error(w, "invalid stream ticket", http.StatusUnauthorized)
+			return
+		}
+		// All session settings must come from authenticated state, never query parameters.
+		q = url.Values{}
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.log.Warn("ws upgrade failed", zap.Error(err))
 		return
 	}
 	defer conn.Close()
+	if verifiedTata != nil {
+		conn.SetReadLimit(64 << 10)
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	}
 
 	// Extract initial identity from query params (may be overridden by "start" event)
 	streamSid := q.Get("stream_sid")
 	if streamSid == "" {
 		streamSid = fmt.Sprintf("web_sim_%s_%d", q.Get("lead_id"), time.Now().UnixMilli())
 	}
-	isTataStream := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	isTataStream := tataRoute
 	if isTataStream && strings.HasPrefix(streamSid, "web_sim_") {
 		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	sess.VerifiedTata = verifiedTata
+	if verifiedTata != nil {
+		applyVerifiedTataContext(sess, verifiedTata)
+	}
 	if plivoCallID != "" {
 		sess.Provider = "plivo"
 		sess.IsExotel = false
@@ -151,7 +172,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sess.IsExotel = false
 		sess.UseUlaw = strings.EqualFold(q.Get("codec"), "ulaw") || strings.EqualFold(q.Get("codec"), "mulaw")
 	}
-	sess.IsInbound = q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
+	sess.IsInbound = (verifiedTata != nil && verifiedTata.Inbound) || q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
 	// the lead label instead of the empty "()" we used to show.
@@ -249,6 +270,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Initialize call via gRPC (get system prompt + voice config) ---
+	if verifiedTata != nil {
+		applyVerifiedTataContext(sess, verifiedTata)
+	}
 	if err := h.initializeCall(ctx, sess); err != nil {
 		h.log.Error("InitializeCall failed", zap.Error(err))
 		// Continue with defaults — don't abort the call
@@ -538,7 +562,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				languageRedirectAwaitingInterrupt := false
 				provisionalLanguage := ""
 				newOutputTurn := true
-				var plivoResampler audio.TelephonyResampler
+				var liveResampler audio.TelephonyResampler
+				diagnostic := newLiveAudioDiagnostic(h.cfg.GeminiLiveAudioDiagnosticsDir, sess.Log)
+				defer diagnostic.close()
 				queueAudio := func(packet liveAudioPacket) {
 					select {
 					case audioOut <- packet:
@@ -565,6 +591,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				liveCallbacks := realtime.Callbacks{
+					CurrentReplyLanguage: languageGuard.Confirmed,
 					OnStartupStage: func(stage string, elapsed time.Duration) {
 						sess.LogLiveStartup(stage, zap.Int64("since_gemini_run_ms", elapsed.Milliseconds()))
 					},
@@ -594,7 +621,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							sess.MarkFinalCloseAudioStarted()
 						}
 						if newOutputTurn {
-							plivoResampler = audio.TelephonyResampler{}
+							liveResampler = audio.TelephonyResampler{}
 							// A new model turn is the reply to the interruption. Allow
 							// its audio through after the previous turn was cancelled.
 							sess.SetBargeIn(false)
@@ -607,11 +634,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						}
 						packet := liveAudioPacket{
 							epoch: sess.PlaybackEpoch(),
-							pcm:   audio.Decimate3x(pcm24k),
+							pcm:   liveResampler.Process(pcm24k),
 						}
-						if sess.Provider == "plivo" {
-							packet.pcm = plivoResampler.Process(pcm24k)
-						}
+						diagnostic.write(pcm24k, packet.pcm)
 						languageRedirectMu.Lock()
 						holdOutput := languageRedirectActive && languageRedirectAwaitingInterrupt
 						languageRedirectMu.Unlock()
@@ -868,7 +893,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					client = realtime.New(realtime.Config{
 						URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 						AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-						Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
+						Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
 						Language: sess.Language, Greeting: sess.GreetingText,
 					}, liveCallbacks)
 				}
@@ -1133,6 +1158,9 @@ func topKeys(m map[string]interface{}) []string {
 }
 
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
+	if sess.VerifiedTata != nil && !sess.TataStartVerified {
+		return
+	}
 	// Keep processing audio even if a hangup has been requested. A customer
 	// interruption during the AI's goodbye should still trigger barge-in and
 	// cancel the hangup.
@@ -1204,6 +1232,9 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	case "start":
 		h.handleStartEvent(ctx, sess, event)
 	case "media":
+		if sess.VerifiedTata != nil && !sess.TataStartVerified {
+			return true
+		}
 		h.handleMediaEvent(sess, event)
 	case "stop":
 		return true
@@ -1219,6 +1250,9 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 	))
 
 	callSid := pickStr(event, "ref_id", "refId", "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "uuid")
+	if sess.VerifiedTata != nil {
+		callSid = pickStr(event, "callId", "call_id", "callSid", "call_sid", "CallSid")
+	}
 	streamSid := pickStr(event, "stream_sid", "streamSid", "stream_id", "streamId", "StreamID", "streamSid")
 	if streamSid == "" {
 		streamSid = sess.StreamSid
@@ -1292,6 +1326,11 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {
+	if sess.VerifiedTata != nil {
+		h.handleVerifiedTataStart(ctx, sess, event)
+		return
+	}
+
 	if sess.Provider == "tata" {
 		// The call context is not final until Redis/DB hydration below. Keep
 		// the start timestamp so every subsequent stage uses one clock.

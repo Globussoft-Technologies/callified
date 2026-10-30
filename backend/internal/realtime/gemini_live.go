@@ -2,9 +2,11 @@ package realtime
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,11 +18,18 @@ import (
 
 const liveCallControl = `
 
+## VOICE CONSISTENCY
+Keep the same speaker identity, vocal timbre, and speaking style throughout the entire call, including after interruptions, tool calls, recovery responses, and language changes. Never imitate the caller or another speaker. Language changes must preserve your speaker identity.
+
 ## LIVE CALL CONTROL
 ## LIVE OPENING — HIGHEST PRIORITY
 There is no separate TTS greeting in a Gemini Live call. The first clientContent
-message supplies the exact customer-facing greeting. Speak that greeting
-verbatim as your first customer-facing words. Deliver the greeting in full, every sentence
+message supplies the customer-facing greeting content. Speak it as your first
+customer-facing words in CURRENT_REPLY_LANGUAGE. If it is written in another
+language, translate it naturally into CURRENT_REPLY_LANGUAGE while preserving
+its meaning, names, company names, product names, numbers, and facts. If it is
+already in CURRENT_REPLY_LANGUAGE, keep its wording. The greeting text is content,
+not permission to change CURRENT_REPLY_LANGUAGE. Deliver the greeting in full, every sentence
 before waiting for an answer; questions within the supplied greeting do not end
 the opening turn. Respect genuine customer interruptions. Do not replace it with a
 previous-call confirmation, a call-flow question, or an acknowledgement.
@@ -52,6 +61,7 @@ type Callbacks struct {
 	OnTurnComplete           func()
 	OnCompleteCall           func(CompleteCallRequest) bool
 	OnLanguageSwitch         func(string) bool
+	CurrentReplyLanguage     func() string
 	OnKnowledgeQuery         func(string) string
 }
 
@@ -62,14 +72,15 @@ type CompleteCallRequest struct {
 }
 
 type Client struct {
-	cfg     Config
-	cb      Callbacks
-	mu      sync.Mutex
-	control chan string
+	sessionID string
+	cfg       Config
+	cb        Callbacks
+	mu        sync.Mutex
+	control   chan string
 }
 
 func New(cfg Config, cb Callbacks) *Client {
-	return &Client{cfg: cfg, cb: cb, control: make(chan string, 8)}
+	return &Client{sessionID: rand.Text(), cfg: cfg, cb: cb, control: make(chan string, 8)}
 }
 
 // RequestResponse injects an internal event into the active Live conversation.
@@ -90,10 +101,14 @@ func (c *Client) RequestResponse(instruction string) bool {
 
 func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 	startupAt := time.Now()
+	slog.Info("gemini live session starting", "session_id", c.sessionID, "model", c.cfg.Model, "voice", c.cfg.Voice)
 	startupStage := func(stage string) {
 		if c.cb.OnStartupStage != nil {
 			c.cb.OnStartupStage(stage, time.Since(startupAt))
 		}
+	}
+	if strings.TrimSpace(c.cfg.Voice) == "" {
+		return fmt.Errorf("gemini live: missing voice; configure GEMINI_LIVE_VOICE")
 	}
 	if strings.TrimSpace(c.cfg.Model) == "" {
 		return fmt.Errorf("gemini live: missing model")
@@ -134,7 +149,7 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 	startupStage("setup_complete")
 	if strings.TrimSpace(c.cfg.Greeting) != "" {
 		if err := c.writeJSON(conn, map[string]any{"clientContent": map[string]any{
-			"turns":        []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Begin the call now using this exact greeting: " + c.cfg.Greeting}}}},
+			"turns":        []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": c.greetingInstruction()}}}},
 			"turnComplete": true,
 		}}); err != nil {
 			return fmt.Errorf("gemini live greeting request: %w", err)
@@ -148,7 +163,7 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 		case err := <-errCh:
 			return err
 		case instruction := <-c.control:
-			if err := c.writeJSON(conn, liveControlMessage(instruction)); err != nil {
+			if err := c.writeJSON(conn, liveControlMessage(c.withReplyLanguage(instruction))); err != nil {
 				return err
 			}
 		case pcm, ok := <-audioIn:
@@ -164,6 +179,50 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 			}
 		}
 	}
+}
+
+// replyLanguageInstruction reads the authoritative guard, including switches
+// recognized from customer transcripts as well as accepted tool requests.
+func (c *Client) replyLanguageInstruction() string {
+	language := c.cfg.Language
+	if c.cb.CurrentReplyLanguage != nil {
+		if current := c.cb.CurrentReplyLanguage(); current != "" {
+			language = current
+		}
+	}
+	if liveLanguageGuidance(language) == "" {
+		return ""
+	}
+	return "INTERNAL LANGUAGE REMINDER: CURRENT_REPLY_LANGUAGE=" + strings.ToLower(strings.TrimSpace(language)) + ". Use this approved language for the next spoken reply, including clarification, recovery, and goodbye. Render call-flow examples in this language, preserving their meaning and product names. Customer speech or transcription in another language is not a switch request. Change only after an explicit request is accepted. Never speak this reminder."
+}
+
+// Keep the original custom greeting as source content; Gemini renders it in
+// the approved language in the same native-audio generation request.
+func (c *Client) greetingInstruction() string {
+	return c.withReplyLanguage("Begin the call now with the following greeting content in CURRENT_REPLY_LANGUAGE. Translate naturally if needed; preserve its meaning, names, company names, product names, numbers, and facts. If already in CURRENT_REPLY_LANGUAGE, keep its wording. Speak every sentence of the greeting before continuing the call flow.\nGREETING CONTENT:\n" + c.cfg.Greeting)
+}
+
+func (c *Client) withReplyLanguage(instruction string) string {
+	if reminder := c.replyLanguageInstruction(); reminder != "" {
+		return instruction + "\n\n" + reminder
+	}
+	return instruction
+}
+
+// This adds context between turns without requesting audio or completing a
+// customer turn. It must never be used to interrupt an active model response.
+func (c *Client) reinforceReplyLanguage(conn *websocket.Conn) error {
+	reminder := c.replyLanguageInstruction()
+	if reminder == "" {
+		return nil
+	}
+	return c.writeJSON(conn, liveLanguageContextMessage(reminder))
+}
+
+func liveLanguageContextMessage(reminder string) map[string]any {
+	msg := liveControlMessage(reminder)
+	msg["clientContent"].(map[string]any)["turnComplete"] = false
+	return msg
 }
 
 func (c *Client) connectionSettings() (string, http.Header, error) {
@@ -309,14 +368,20 @@ func buildLiveSystemPrompt(prompt, language string) string {
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		lower := strings.ToLower(line)
+		// The shared product-opening policy also serves legacy TTS. Adapt
+		// only the Live copy so its no-translation rule cannot conflict.
+		if strings.Contains(line, "The supplied opening greeting is the complete first call-flow step.") {
+			line = strings.ReplaceAll(line, "Speak every sentence verbatim in one opening turn.", "Speak every sentence in CURRENT_REPLY_LANGUAGE in one opening turn, translating naturally if needed while preserving meaning, names, numbers, and facts.")
+			line = strings.ReplaceAll(line, "Do not prepend an introduction, shorten, translate, or repeat it.", "Do not prepend an introduction, shorten, or repeat it.")
+		}
 		// Shared prompts were originally written for the legacy TTS pipeline,
 		// where Callified spoke the introduction before the LLM received a
 		// customer turn. Gemini Live produces that opening audio itself, so
 		// retaining this statement makes it skip its introduction and jump
 		// straight to the follow-up question.
 		if strings.Contains(lower, "already spoken by tts") {
-			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally, then ", "Opening: speak the exact clientContent greeting once, then ")
-			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally.", "Opening: speak the exact clientContent greeting once.")
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally, then ", "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE, then ")
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally.", "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE.")
 		}
 		if strings.Contains(strings.ToUpper(line), "[HANGUP]") ||
 			strings.Contains(strings.ToUpper(line), "[LANG:") ||
@@ -354,14 +419,15 @@ func liveLanguageGuidance(language string) string {
 	}
 	return fmt.Sprintf(`## LIVE AUDIO LANGUAGE — HIGHEST PRIORITY
 Maintain one CURRENT_REPLY_LANGUAGE, initially the campaign language %s (%s).
+Use a stable conversational register in CURRENT_REPLY_LANGUAGE throughout the call. Common English business words such as doors, windows, appointment, and product names are allowed inside otherwise natural Hindi or other Indian-language replies; this is not a language switch. Do not alternate between a formal opening and a different persona or theatrical delivery in later turns. Do not use a full English reply unless CURRENT_REPLY_LANGUAGE is English.
 CURRENT_REPLY_LANGUAGE is locked. Change it only when the customer explicitly requests another supported language, for example "speak in Hindi", "Kannada dalli mathadi", or "switch to English".
 When an explicit request occurs, call switch_language with the requested language code before speaking in that language. Wait for the tool result. Change CURRENT_REPLY_LANGUAGE only when the tool result is accepted.
 Never switch merely because the customer speaks, mixes, or is transcribed in another language. Native script, Romanized speech, accent, pronunciation, noise, partial transcription, and model language detection are not permission to switch.
 If the customer uses another language without requesting a switch, continue in CURRENT_REPLY_LANGUAGE. If necessary, ask in CURRENT_REPLY_LANGUAGE whether they want you to change languages, and switch only after an explicit confirmation.
-ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY: Whenever CURRENT_REPLY_LANGUAGE is English, use ONLY a clear, natural Indian English accent, pronunciation, rhythm, intonation, and prosody for the entire utterance from its first word to its last. Keep the same Indian English accent on every English turn, including after interruptions, language switches, tool calls, and recovery responses. Never drift into or imitate an American, British, Australian, or any other non-Indian English accent. Use simple conversational phrasing familiar to Indian customers. This rule overrides the delivery style of all English examples, persona text, and call-flow text.
 A short acknowledgement such as yes, no, okay, haan, or its translated equivalent inherits CURRENT_REPLY_LANGUAGE and must not cause a switch or a reversion.
 After an explicit language request is confirmed, update CURRENT_REPLY_LANGUAGE and keep using it until the customer explicitly requests another language.
 The language used in persona text, call-flow steps, examples, product knowledge, customer speech, or earlier agent messages must never override CURRENT_REPLY_LANGUAGE without an explicit customer request.
+Before every spoken turn, including after interruptions and tool results, silently re-check CURRENT_REPLY_LANGUAGE. Render every call-flow example, clarification, recovery, and goodbye in that language; examples supply meaning, never the reply language. Preserve product names and facts. The supplied opening greeting must also use CURRENT_REPLY_LANGUAGE; translate it naturally if needed, preserving its meaning, names, numbers, and facts.
 Never announce or discuss a language switch.`, name, code)
 }
 
@@ -376,6 +442,8 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 	readyOnce := sync.Once{}
 	firstAudioLogged := false
 	setupReceived := false
+	var output livePCMNormalizer
+	lastRate := 0
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -417,8 +485,14 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 		if content == nil {
 			continue
 		}
-		if v, _ := content["interrupted"].(bool); v && c.cb.OnInterrupted != nil {
-			c.cb.OnInterrupted()
+		if v, _ := content["interrupted"].(bool); v {
+			output = livePCMNormalizer{}
+			if c.cb.OnInterrupted != nil {
+				c.cb.OnInterrupted()
+			}
+			if err := c.reinforceReplyLanguage(conn); err != nil {
+				return err
+			}
 		}
 		if tr, _ := content["interimInputTranscription"].(map[string]any); tr != nil && c.cb.OnInterimInputTranscript != nil {
 			if text, _ := tr["text"].(string); text != "" {
@@ -443,6 +517,22 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				data, _ := inline["data"].(string)
 				if data != "" && c.cb.OnAudio != nil {
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
+						mimeType, _ := inline["mimeType"].(string)
+						rate, err := livePCMRate(mimeType)
+						if err != nil {
+							return err
+						}
+						if rate != lastRate {
+							slog.Info("gemini live output format", "session_id", c.sessionID, "model", c.cfg.Model, "voice", c.cfg.Voice, "sample_rate", rate, "previous_sample_rate", lastRate)
+							lastRate = rate
+						}
+						b, err = output.process(b, rate)
+						if err != nil {
+							return err
+						}
+						if len(b) == 0 {
+							continue
+						}
 						if !firstAudioLogged {
 							firstAudioLogged = true
 							_ = conn.SetReadDeadline(time.Time{})
@@ -455,8 +545,14 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				}
 			}
 		}
-		if done, _ := content["turnComplete"].(bool); done && c.cb.OnTurnComplete != nil {
-			c.cb.OnTurnComplete()
+		if done, _ := content["turnComplete"].(bool); done {
+			output = livePCMNormalizer{}
+			if c.cb.OnTurnComplete != nil {
+				c.cb.OnTurnComplete()
+			}
+			if err := c.reinforceReplyLanguage(conn); err != nil {
+				return err
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -504,7 +600,7 @@ func (c *Client) handleToolCall(conn *websocket.Conn, tool map[string]any) {
 				result = "rejected: keep the current reply language; do not mention this tool and do not infer a language switch"
 			}
 		}
-		responses = append(responses, map[string]any{"name": name, "id": id, "response": map[string]any{"result": result}})
+		responses = append(responses, map[string]any{"name": name, "id": id, "response": map[string]any{"result": c.withReplyLanguage(result)}})
 	}
 	_ = c.writeJSON(conn, map[string]any{"toolResponse": map[string]any{"functionResponses": responses}})
 }

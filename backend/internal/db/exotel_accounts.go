@@ -35,6 +35,12 @@ func (d *DB) EnsureOrgExotelAccountsTable() error {
 	if err != nil {
 		return err
 	}
+	if _, err := d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN tata_stream_secret_hash CHAR(64) NULL UNIQUE`); err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
+		return err
+	}
+	if _, err := d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN tata_stream_verified_hash CHAR(64) NULL`); err != nil && !strings.Contains(err.Error(), "Duplicate column name") {
+		return err
+	}
 	// Backward-compat: existing rows created before these columns were added
 	// default to the legacy ExoML XML behaviour and the global Exotel cluster.
 	_, _ = d.pool.Exec(`ALTER TABLE org_exotel_accounts ADD COLUMN app_type VARCHAR(20) DEFAULT 'exoml'`)

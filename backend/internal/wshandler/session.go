@@ -15,12 +15,15 @@ import (
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
 // CallSession holds all per-call state for one WebSocket connection.
 // Hot-path fields (audio path) use atomics or channels — no locks.
 type CallSession struct {
+	VerifiedTata       *rstore.TataStreamContext
+	TataStartVerified  bool
 	plivoOutput        plivoPlayback
 	LivePreparationSID string
 	// Identity (set on connect / start event)

@@ -95,6 +95,14 @@ func (s *preparedGeminiCallbacks) attach(cb realtime.Callbacks) {
 
 func (s *preparedGeminiCallbacks) callbacks(log *zap.Logger, leadID int64) realtime.Callbacks {
 	return realtime.Callbacks{
+		CurrentReplyLanguage: func() string {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.attached != nil && s.attached.CurrentReplyLanguage != nil {
+				return s.attached.CurrentReplyLanguage()
+			}
+			return ""
+		},
 		OnAudio: func(pcm []byte) {
 			copyPCM := append([]byte(nil), pcm...)
 			s.mu.Lock()
@@ -233,7 +241,7 @@ func (h *Handler) buildPreparedGeminiCall(initCtx context.Context, data dial.Cal
 	client := realtime.New(realtime.Config{
 		URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 		AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
-		Voice: firstNonEmpty(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
+		Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
 		Language: sess.Language, Greeting: sess.GreetingText,
 	}, sink.callbacks(h.log, data.LeadID))
 	// The connection survives the ringing-to-answer handoff. Only the separate

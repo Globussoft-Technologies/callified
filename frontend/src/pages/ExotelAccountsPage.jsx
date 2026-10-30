@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useConfirm } from '../contexts/UIContext';
 import AppIcon from '../components/common/AppIcon';
 import AppSelect from '../components/common/AppSelect';
 
@@ -65,6 +66,52 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
   const [showApiToken, setShowApiToken] = useState(false);
   const tourOwnedForm = useRef(false);
 
+  const confirmDialog = useConfirm();
+  const [streamVerified, setStreamVerified] = useState(null);
+  const [secretAccount, setSecretAccount] = useState(null);
+  const [streamSetup, setStreamSetup] = useState(null);
+  const [rotatingSecret, setRotatingSecret] = useState(false);
+  const [streamSetupError, setStreamSetupError] = useState('');
+  const rotateStreamSecret = async account => {
+    const confirmed = await confirmDialog({
+      title: 'Generate stream secret?',
+      message: 'The previous secret will stop working. Update the matching Tata endpoint before placing calls.',
+      okText: 'Generate secret',
+      cancelText: 'Cancel',
+    });
+    if (!confirmed) return;
+    setStreamSetupError('');
+    setRotatingSecret(true);
+    try {
+      const response = await apiFetch(`${API_URL}/exotel-accounts/${account.id}/stream-secret`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not generate stream secret');
+      setStreamSetup({ ...data, name: account.name });
+      setStreamVerified(false);
+    } catch (err) { setStreamSetupError(err.message); }
+    finally { setRotatingSecret(false); }
+  };
+  const checkStreamVerification = async () => {
+    try {
+      const response = await apiFetch(`${API_URL}/exotel-accounts/${secretAccount.id}/stream-readiness`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not check verification');
+      setStreamVerified(data.verified);
+    } catch (err) { setStreamSetupError(err.message); }
+  };
+  const hideStreamSecret = () => {
+    setStreamSetup(previous => previous ? { ...previous, secret: null } : previous);
+  };
+  const copyStreamSecret = async () => {
+    if (!streamSetup?.secret) return;
+    try {
+      await navigator.clipboard.writeText(streamSetup.secret);
+      hideStreamSecret();
+      setStreamSetupError('');
+    } catch {
+      setStreamSetupError('Could not copy. Copy the secret manually, then click Hide.');
+    }
+  };
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     try {
@@ -508,6 +555,30 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
         </div>
       )}
 
+      {secretAccount && <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="tata-secret-title" style={{ ...card, background: 'var(--surface-raised)', color: 'var(--text-primary)', border: '1px solid var(--border)', boxShadow: '0 24px 64px rgba(15,23,42,0.24)', fontFamily: T.font, fontSize: 14, lineHeight: 1.6, padding: 24, width: '100%', maxWidth: 640, maxHeight: '85vh', overflowY: 'auto' }}>
+          <h3 id="tata-secret-title" style={{ marginTop: 0 }}>Stream secret — {secretAccount.name}</h3>
+          <p>Generating a new secret replaces the previous one and blocks outbound calls until the new secret is verified.</p>
+          <p>Save the new header in Tata, then run Tata’s endpoint test. An authenticated request verifies the secret; sample-number errors can still fail the routing test. Verification confirms the header, not the entire call routing.</p>
+          <button type="button" onClick={checkStreamVerification}>Check verification</button>
+          {streamVerified !== null && <p role="status">{streamVerified ? 'Current secret verified. Outbound dialing is enabled.' : 'Current secret not verified. Outbound dialing is blocked.'}</p>}
+          {streamSetupError && <p role="alert" style={{ color: T.red }}>{streamSetupError}</p>}
+          {streamSetup && <>
+            <p>Copy this secret now; it is shown only once. In Tata Voice Bot, select Dynamic and POST.</p>
+            <label style={{ ...labelStyle, color: 'var(--text-secondary)' }}>Dynamic URL</label><input style={{ ...inputStyle, background: 'var(--surface-muted)', color: 'var(--text-primary)', borderColor: 'var(--border)', fontFamily: T.mono }} readOnly value={streamSetup.url} />
+            <label style={{ ...labelStyle, color: 'var(--text-secondary)', marginTop: 12 }}>Header: {streamSetup.header}</label><input aria-label="Stream secret" type={streamSetup.secret ? 'text' : 'password'} autoComplete="off" spellCheck={false} style={{ ...inputStyle, background: 'var(--surface-muted)', color: 'var(--text-primary)', borderColor: 'var(--border)', fontFamily: T.mono }} readOnly value={streamSetup.secret || '••••••••••••••••'} />
+            {streamSetup.secret ? <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button type="button" onClick={copyStreamSecret} className="uip-btn uip-btn-primary">Copy and hide</button>
+              <button type="button" onClick={hideStreamSecret} className="uip-btn uip-btn-secondary">Hide</button>
+            </div> : <p role="status">Secret hidden. Generate a new secret if you need another copy.</p>}
+            <p>Body: callId = $callId, fromNumber = $fromNumber, toNumber = $toNumber, status = $status.</p>
+          </>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+            <button type="button" disabled={rotatingSecret} onClick={() => { setSecretAccount(null); setStreamSetup(null); setStreamSetupError(''); }} style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--surface-muted)', color: 'var(--text-primary)', fontFamily: T.font, cursor: 'pointer' }}>Close</button>
+            <button type="button" disabled={rotatingSecret} onClick={() => rotateStreamSecret(secretAccount)} style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: T.accent, color: '#fff', fontFamily: T.font, cursor: 'pointer', fontWeight: 600 }}>{rotatingSecret ? 'Generating…' : streamSetup ? 'Regenerate secret' : 'Generate stream secret'}</button>
+          </div>
+        </section>
+      </div>}
       {/* Accounts list */}
       <div data-tour="provider-account-list">
       {loading ? (
@@ -554,6 +625,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                  {a.provider === 'tata' && <button type="button" onClick={() => { setSecretAccount(a); setStreamVerified(null); setStreamSetup(null); setStreamSetupError(''); }} style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)', borderRadius: 6, color: T.accent, padding: '5px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600, fontFamily: T.font }}>Secret</button>}
                   <button data-tour={index === 0 ? 'provider-account-edit' : undefined} onClick={() => openEdit(a)}
                     style={{
                       background: 'rgba(99,102,241,0.08)', border: `1px solid rgba(99,102,241,0.25)`,
