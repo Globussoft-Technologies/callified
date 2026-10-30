@@ -95,6 +95,14 @@ func (s *preparedGeminiCallbacks) attach(cb realtime.Callbacks) {
 
 func (s *preparedGeminiCallbacks) callbacks(log *zap.Logger, leadID int64) realtime.Callbacks {
 	return realtime.Callbacks{
+		CurrentReplyLanguage: func() string {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.attached != nil && s.attached.CurrentReplyLanguage != nil {
+				return s.attached.CurrentReplyLanguage()
+			}
+			return ""
+		},
 		OnAudio: func(pcm []byte) {
 			copyPCM := append([]byte(nil), pcm...)
 			s.mu.Lock()

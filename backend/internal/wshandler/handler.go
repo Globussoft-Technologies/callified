@@ -591,6 +591,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				liveCallbacks := realtime.Callbacks{
+					CurrentReplyLanguage: languageGuard.Confirmed,
 					OnStartupStage: func(stage string, elapsed time.Duration) {
 						sess.LogLiveStartup(stage, zap.Int64("since_gemini_run_ms", elapsed.Milliseconds()))
 					},
