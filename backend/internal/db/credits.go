@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"math"
 )
 
 // DefaultRatePerMinPaise is ₹5/min — 500 paise. Per-org rate is stored on the
@@ -17,6 +19,9 @@ type OrgCredit struct {
 	MinutesAvailable int    `json:"minutes_available"` // derived: balance / rate
 	UpdatedAt        string `json:"updated_at"`
 }
+
+// CanStartCall applies only to new billed calls, not calls already connected.
+func (c *OrgCredit) CanStartCall() bool { return c != nil && c.BalancePaise > 0 }
 
 // CreditTransaction mirrors a single ledger entry (topup, deduction, refund).
 type CreditTransaction struct {
@@ -36,25 +41,22 @@ type CreditTransaction struct {
 // default rate when none exists yet (lazy init avoids a separate signup-time
 // migration). Always returns a non-nil pointer for found-or-created.
 func (d *DB) GetOrgCredit(orgID int64) (*OrgCredit, error) {
-	row := d.pool.QueryRow(`
+	const query = `
 		SELECT org_id, balance_paise, COALESCE(rate_per_min_paise, ?),
 		       DATE_FORMAT(updated_at,'%Y-%m-%d %H:%i:%s')
-		FROM org_credits WHERE org_id=?`, DefaultRatePerMinPaise, orgID)
+		FROM org_credits WHERE org_id=?`
+	row := d.pool.QueryRow(query, DefaultRatePerMinPaise, orgID)
 	var oc OrgCredit
 	err := row.Scan(&oc.OrgID, &oc.BalancePaise, &oc.RatePerMinPaise, &oc.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// First call ever for this org — create at default rate.
 		if _, err := d.pool.Exec(
-			`INSERT INTO org_credits (org_id, balance_paise, rate_per_min_paise) VALUES (?, 0, ?)`,
+			`INSERT IGNORE INTO org_credits (org_id, balance_paise, rate_per_min_paise) VALUES (?, 0, ?)`,
 			orgID, DefaultRatePerMinPaise); err != nil {
 			return nil, err
 		}
-		return &OrgCredit{
-			OrgID:            orgID,
-			BalancePaise:     0,
-			RatePerMinPaise:  DefaultRatePerMinPaise,
-			MinutesAvailable: 0,
-		}, nil
+		// Another request may have initialized or recharged the row meanwhile.
+		err = d.pool.QueryRow(query, DefaultRatePerMinPaise, orgID).Scan(&oc.OrgID, &oc.BalancePaise, &oc.RatePerMinPaise, &oc.UpdatedAt)
 	}
 	if err != nil {
 		return nil, err
@@ -63,6 +65,9 @@ func (d *DB) GetOrgCredit(orgID int64) (*OrgCredit, error) {
 		oc.RatePerMinPaise = DefaultRatePerMinPaise
 	}
 	oc.MinutesAvailable = int(oc.BalancePaise / int64(oc.RatePerMinPaise))
+	if oc.MinutesAvailable < 0 {
+		oc.MinutesAvailable = 0
+	}
 	return &oc, nil
 }
 
@@ -139,7 +144,7 @@ func (d *DB) SetOrgCreditMinutes(orgID int64, minutes int, reference, notes stri
 	var currentBalance int64
 	var ratePerMin int
 	if err := tx.QueryRow(
-		`SELECT balance_paise, COALESCE(rate_per_min_paise, ?) FROM org_credits WHERE org_id=?`,
+		`SELECT balance_paise, COALESCE(rate_per_min_paise, ?) FROM org_credits WHERE org_id=? FOR UPDATE`,
 		DefaultRatePerMinPaise, orgID,
 	).Scan(&currentBalance, &ratePerMin); err != nil {
 		return 0, err
@@ -170,15 +175,15 @@ func (d *DB) SetOrgCreditMinutes(orgID int64, minutes int, reference, notes stri
 	return newBalance, nil
 }
 
-// DeductCallCredits charges the lesser of (duration*rate, current balance) so
-// a call already in progress isn't billed for amounts the org doesn't have.
-// The dialer enforces "must have balance" at dial time; this function deals
-// with the leftover seconds at the very end of a long call where the balance
-// might dip to zero mid-call.
+// DeductCallCredits charges the full completed-call duration, allowing debt.
+// New calls require a positive balance; already-started calls are not capped.
 //
 // Returns (deducted_paise, balance_after_paise, error). Idempotent on the
 // reference (call_sid) — calling twice for the same call is a no-op.
 func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (int64, int64, error) {
+	if math.IsNaN(durationS) || math.IsInf(durationS, 0) {
+		return 0, 0, fmt.Errorf("invalid call duration")
+	}
 	if durationS <= 0 || callSid == "" {
 		return 0, 0, nil
 	}
@@ -206,7 +211,7 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 	}
 	// Serialize callback retries on the org's balance row before checking the ledger.
 	var existing int64
-	err = tx.QueryRow(`SELECT id FROM credit_transactions WHERE reference=? AND type='call_deduction' LIMIT 1`, callSid).Scan(&existing)
+	err = tx.QueryRow(`SELECT id FROM credit_transactions WHERE org_id=? AND reference=? AND type='call_deduction' LIMIT 1`, orgID, callSid).Scan(&existing)
 	if err == nil {
 		if err := tx.Commit(); err != nil {
 			return 0, 0, err
@@ -217,16 +222,23 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 		return 0, 0, err
 	}
 
-	// Round up to the nearest second × rate/60 — the dialer industry charges
-	// per-second once a call connects. Cap at current balance so we never
-	// produce a negative ledger row from an in-flight call.
-	chargePaise := int64(durationS*float64(ratePerMin)/60.0 + 0.999999)
+	if ratePerMin <= 0 {
+		ratePerMin = DefaultRatePerMinPaise
+	}
+	// Keep the existing per-second rate, rounded up to the nearest paise.
+	charge := math.Ceil(durationS * float64(ratePerMin) / 60.0)
+	if math.IsInf(charge, 0) || charge >= float64(math.MaxInt64) {
+		return 0, 0, fmt.Errorf("call charge exceeds supported range")
+	}
+	chargePaise := int64(charge)
 	if chargePaise <= 0 {
-		_ = tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return 0, 0, err
+		}
 		return 0, balance, nil
 	}
-	if chargePaise > balance {
-		chargePaise = balance
+	if balance < math.MinInt64+chargePaise {
+		return 0, 0, fmt.Errorf("call balance exceeds supported range")
 	}
 
 	if _, err := tx.Exec(

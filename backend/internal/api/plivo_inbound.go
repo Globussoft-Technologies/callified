@@ -103,7 +103,7 @@ func (s *Server) plivoInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credit, err := s.db.GetOrgCredit(account.OrgID)
-	if err != nil || credit == nil || credit.BalancePaise <= 0 {
+	if err != nil || !credit.CanStartCall() {
 		http.Error(w, "Incoming service unavailable", http.StatusServiceUnavailable)
 		return
 	}

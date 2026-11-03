@@ -133,8 +133,8 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	if data.OrgID > 0 {
 		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
 		if ocErr != nil {
-			i.log.Warn("dial: GetOrgCredit failed; allowing call", zap.Error(ocErr))
-		} else if oc != nil && oc.BalancePaise <= 0 {
+			return "", fmt.Errorf("check calling credits: %w", ocErr)
+		} else if !oc.CanStartCall() {
 			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
 				"failed", ErrInsufficientCredits.Error())
