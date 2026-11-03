@@ -173,10 +173,11 @@ func TestPlivoBridgeHydrationDoesNotStartAI(t *testing.T) {
 	h := newTestHandler(t)
 	ctx := context.Background()
 	require.NoError(t, h.store.SetPendingCall(ctx, "carrier-call", rstore.PendingCallInfo{
-		IsBridge: true, OrgID: 7, TTSLanguage: "en", TTSProvider: "gemini_live",
+		IsBridge: true, OrgID: 7, PlivoContextID: "app-call", TTSLanguage: "en", TTSProvider: "gemini_live",
 	}))
 	sess := NewCallSession("plivo-carrier-call", nil, zap.NewNop())
 	sess.Provider, sess.CallSid, sess.LivePreparationSID = "plivo", "carrier-call", "app-call"
+	sess.OrgID = 7
 	startedAI := false
 	sess.StartSTT = func() { startedAI = true }
 	sess.SendGreeting = func() { startedAI = true }

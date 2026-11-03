@@ -3,6 +3,7 @@ import { API_URL } from '../constants/api';
 import { useAuth } from '../contexts/AuthContext';
 import AppIcon from '../components/common/AppIcon';
 import AppSelect from '../components/common/AppSelect';
+import PlivoInboundSetup from '../components/PlivoInboundSetup';
 
 const T = {
   bg: '#f4f5f9', card: '#ffffff', border: '#e5e7eb',
@@ -246,7 +247,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                   { id: 'inbound', label: 'Inbound' },
                 ].map(d => (
                   <button key={d.id} type="button"
-                    onClick={() => setForm(f => ({ ...f, direction: d.id, provider: d.id === 'inbound' ? 'tata' : f.provider }))}
+                    onClick={() => setForm(f => ({ ...f, direction: d.id, provider: d.id === 'inbound' && f.provider !== 'plivo' ? 'tata' : f.provider }))}
                     style={{
                       padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
                       fontFamily: T.font, cursor: 'pointer',
@@ -260,7 +261,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
               </div>
               <label style={labelStyle}>Provider <span style={{ color: T.red }}>*</span></label>
               <div style={{ display: 'flex', gap: 8 }}>
-                {(isInbound ? ['tata'] : ['exotel', 'tata', 'plivo' /* , 'twilio' */]).map(p => (
+                {(isInbound ? ['tata', 'plivo'] : ['exotel', 'tata', 'plivo' /* , 'twilio' */]).map(p => (
                   <button key={p} type="button"
                     onClick={() => setField('provider', p)}
                     style={{
@@ -279,7 +280,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
             {/* Account Name */}
             <div data-tour="provider-account-name" style={{ marginBottom: '1rem' }}>
               <label style={labelStyle}>Account Name <span style={{ color: T.red }}>*</span></label>
-              <input style={inputStyle} placeholder={isInbound ? 'e.g. Tata Inbound Receptionist' : 'e.g. Main Caller, Sales India'}
+              <input style={inputStyle} placeholder={isInbound ? 'e.g. Incoming Receptionist' : 'e.g. Main Caller, Sales India'}
                 value={form.name} onChange={e => setField('name', e.target.value)} />
             </div>
 
@@ -552,6 +553,7 @@ export default function ExotelAccountsPage({ tourFormMode = null, tourActive = f
                     {a.provider === 'exotel' && (a.region || a.subdomain) && <span>Cluster: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.subdomain ? a.subdomain + '.exotel.com' : (a.region ? 'api.' + a.region + '.exotel.com' : 'api.exotel.com')}</span></span>}
                     <span>Key: <span style={{ color: T.sub, fontFamily: T.mono }}>{a.api_key.slice(0, 8)}…</span></span>
                   </div>
+                  {a.provider === 'plivo' && <PlivoInboundSetup accountId={a.id} />}
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                   <button data-tour={index === 0 ? 'provider-account-edit' : undefined} onClick={() => openEdit(a)}
