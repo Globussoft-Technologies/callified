@@ -99,8 +99,10 @@ type geminiTextRequest struct {
 }
 
 type geminiTextGenConfig struct {
-	MaxOutputTokens int                   `json:"maxOutputTokens"`
-	ThinkingConfig  *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
+	ResponseMIMEType string                `json:"responseMimeType,omitempty"`
+	ResponseSchema   map[string]any        `json:"responseSchema,omitempty"`
+	MaxOutputTokens  int                   `json:"maxOutputTokens"`
+	ThinkingConfig   *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type geminiThinkingConfig struct {
@@ -109,7 +111,8 @@ type geminiThinkingConfig struct {
 
 type geminiTextResponse struct {
 	Candidates []struct {
-		Content struct {
+		FinishReason string `json:"finishReason"`
+		Content      struct {
 			Parts []struct {
 				Text    string `json:"text"`
 				Thought bool   `json:"thought,omitempty"`
@@ -194,7 +197,24 @@ func (g *GeminiClient) GenerateAudioText(ctx context.Context, instruction string
 			{Text: instruction},
 			{InlineData: &geminiInlineData{MIMEType: "audio/wav", Data: base64.StdEncoding.EncodeToString(wav)}},
 		}}},
-		GenerationConfig: geminiTextGenConfig{MaxOutputTokens: maxOutputTokens},
+		GenerationConfig: geminiTextGenConfig{
+			MaxOutputTokens:  maxOutputTokens,
+			ThinkingConfig:   voiceThinkingConfig(g.model),
+			ResponseMIMEType: "application/json",
+			ResponseSchema: map[string]any{
+				"type": "OBJECT", "required": []string{"corrections"},
+				"properties": map[string]any{"corrections": map[string]any{
+					"type": "ARRAY", "items": map[string]any{
+						"type": "OBJECT", "required": []string{"index", "corrected", "confidence"},
+						"properties": map[string]any{
+							"index":      map[string]any{"type": "INTEGER"},
+							"corrected":  map[string]any{"type": "STRING"},
+							"confidence": map[string]any{"type": "STRING", "enum": []string{"high"}},
+						},
+					},
+				}},
+			},
+		},
 	})
 	if err != nil {
 		return "", fmt.Errorf("gemini: marshal audio request: %w", err)
@@ -221,15 +241,27 @@ func (g *GeminiClient) GenerateAudioText(ctx context.Context, instruction string
 	if result.Error != nil {
 		return "", fmt.Errorf("gemini: audio API error %d: %s", result.Error.Code, result.Error.Message)
 	}
+	if len(result.Candidates) == 0 {
+		return "", fmt.Errorf("gemini: audio review returned no candidate")
+	}
+	candidate := result.Candidates[0]
+	if candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
+		return "", fmt.Errorf("gemini: audio review incomplete (finish reason %s)", candidate.FinishReason)
+	}
 	var out strings.Builder
-	for _, cand := range result.Candidates {
-		for _, part := range cand.Content.Parts {
-			if !part.Thought {
-				out.WriteString(part.Text)
-			}
+	for _, part := range candidate.Content.Parts {
+		if !part.Thought {
+			out.WriteString(part.Text)
 		}
 	}
-	return strings.TrimSpace(out.String()), nil
+	text := strings.TrimSpace(out.String())
+	if text == "" {
+		return "", fmt.Errorf("gemini: audio review returned empty text")
+	}
+	if !json.Valid([]byte(text)) {
+		return "", fmt.Errorf("gemini: audio review returned invalid or truncated JSON")
+	}
+	return text, nil
 }
 
 // StreamTokens streams tokens from Gemini, calling onToken for each text chunk.

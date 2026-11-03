@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/globussoft/callified-backend/internal/db"
 	"go.uber.org/zap"
 )
 
@@ -121,7 +122,7 @@ func (s *Server) getExternalTranscripts(w http.ResponseWriter, r *http.Request) 
 				}
 				var turns []map[string]any
 				if len(t.Transcript) > 0 {
-					if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+					if err := json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &turns); err != nil {
 						turns = []map[string]any{}
 					}
 				}

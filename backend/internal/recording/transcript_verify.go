@@ -68,7 +68,7 @@ Index is zero-based into that array. Return only segments for which the audio CL
 	verifyCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	client := llm.NewGeminiClient(apiKey, s.cfg.GeminiModel, s.cfg.GeminiBaseURL)
-	result, err := client.GenerateAudioText(verifyCtx, instruction, mono, 2048)
+	result, err := client.GenerateAudioText(verifyCtx, instruction, mono, transcriptReviewTokenBudget(len(userTexts)))
 	if err != nil {
 		return history, nil, err
 	}
@@ -80,6 +80,14 @@ func applyTranscriptCorrections(history []llm.ChatMessage, userHistoryIndices []
 	result = strings.TrimPrefix(result, "```json")
 	result = strings.TrimPrefix(result, "```")
 	result = strings.TrimSuffix(result, "```")
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &envelope); err != nil {
+		return history, nil, fmt.Errorf("invalid transcript verification JSON: %w", err)
+	}
+	corrections, exists := envelope["corrections"]
+	if !exists || len(corrections) == 0 || strings.TrimSpace(string(corrections)) == "null" || strings.TrimSpace(string(corrections))[0] != '[' {
+		return history, nil, fmt.Errorf("invalid transcript verification JSON: corrections must be an array")
+	}
 	var response transcriptCorrectionResponse
 	if err := json.Unmarshal([]byte(strings.TrimSpace(result)), &response); err != nil {
 		return history, nil, fmt.Errorf("invalid transcript verification JSON: %w", err)
@@ -121,4 +129,16 @@ func safeTranscriptCorrection(original, corrected string) bool {
 		}
 	}
 	return true
+}
+
+// Longer conversations need room for multiple correction records. This changes
+// the response ceiling, not the number of billable audio-review requests.
+func transcriptReviewTokenBudget(segments int) int {
+	if segments <= 8 {
+		return 2048
+	}
+	if segments >= 32 {
+		return 8192
+	}
+	return segments * 256
 }

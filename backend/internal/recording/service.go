@@ -190,7 +190,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if req.GeminiLive {
 		_, suggestions, err := s.verifyCustomerTranscript(ctx, req.ChatHistory, req.StereoWav)
 		if err != nil {
-			s.log.Warn("recording: customer audio verification failed; keeping live transcript", zap.Error(err))
+			s.log.Warn("recording: customer audio verification failed; keeping live transcript", zap.Int64("transcript_id", transcriptID), zap.Error(err))
 		} else if len(suggestions) > 0 {
 			correctedJSON, _ := historyToTranscriptWithSuggestions(req.ChatHistory, suggestions)
 			if err := s.database.UpdateCallTranscriptText(transcriptID, correctedJSON); err != nil {

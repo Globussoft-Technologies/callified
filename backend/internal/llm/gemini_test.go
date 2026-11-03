@@ -1,8 +1,10 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
@@ -99,4 +101,39 @@ func TestVoiceActionToolRequiresSpokenTextAndOutcome(t *testing.T) {
 	assert.Contains(t, string(raw), `"complete_call"`)
 	assert.Contains(t, string(raw), `"spoken_text"`)
 	assert.Contains(t, string(raw), `"appointment_booked"`)
+}
+
+func TestAudioReviewStructuredJSONAndFailureHandling(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		fail       bool
+	}{
+		{"complete", `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"thought":true,"text":"reasoning"},{"text":"{\"corrections\":[]}"}]}}]}`, false},
+		{"token limit", `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"parts":[{"text":"{\"corrections\":[]}"}]}}]}`, true},
+		{"empty response", `{"candidates":[{"finishReason":"STOP","content":{"parts":[]}}]}`, true},
+		{"truncated JSON", `{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"{\"corrections\":["}]}}]}`, true},
+		{"blocked", `{"candidates":[]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				cfg := body["generationConfig"].(map[string]any)
+				require.Equal(t, "application/json", cfg["responseMimeType"])
+				require.NotNil(t, cfg["responseSchema"])
+				require.Equal(t, float64(0), cfg["thinkingConfig"].(map[string]any)["thinkingBudget"])
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client := NewGeminiClient("test-key", "gemini-2.5-flash", server.URL)
+			text, err := client.GenerateAudioText(context.Background(), "Review audio", []byte("test audio"), 2048)
+			if tc.fail {
+				require.Error(t, err)
+				require.Empty(t, text)
+			} else {
+				require.NoError(t, err)
+				require.JSONEq(t, `{"corrections":[]}`, text)
+			}
+		})
+	}
 }

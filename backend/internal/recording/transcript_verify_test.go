@@ -61,3 +61,25 @@ func TestCustomerMonoWAVExcludesAgentChannel(t *testing.T) {
 		t.Fatal("malformed WAV accepted")
 	}
 }
+
+func TestAudioReviewMalformedResponseRetainsOriginal(t *testing.T) {
+	history := []llm.ChatMessage{{Role: "user", Text: "Original customer words"}}
+	for _, raw := range []string{"", `{"corrections":[`, `{}`, `{"corrections":null}`, `{"corrections":{}}`} {
+		original, suggestions, err := applyTranscriptCorrections(history, []int{0}, raw)
+		if err == nil || len(suggestions) != 0 || original[0].Text != history[0].Text {
+			t.Fatalf("unsafe response handling for %q: %v %v", raw, suggestions, err)
+		}
+	}
+	original, suggestions, err := applyTranscriptCorrections(history, []int{0}, `{"corrections":[]}`)
+	if err != nil || len(suggestions) != 0 || original[0].Text != history[0].Text {
+		t.Fatal("valid empty review rejected")
+	}
+}
+
+func TestTranscriptReviewBudgetScalesAndIsBounded(t *testing.T) {
+	for _, tc := range []struct{ segments, want int }{{0, 2048}, {8, 2048}, {9, 2304}, {20, 5120}, {32, 8192}, {1000, 8192}} {
+		if got := transcriptReviewTokenBudget(tc.segments); got != tc.want {
+			t.Fatalf("segments=%d: got %d, want %d", tc.segments, got, tc.want)
+		}
+	}
+}

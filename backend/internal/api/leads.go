@@ -1331,7 +1331,7 @@ func (s *Server) getLeadCallsByPhone(w http.ResponseWriter, r *http.Request) {
 		// transcript can't blank out the whole response.
 		var turns []map[string]any
 		if len(t.Transcript) > 0 {
-			if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+			if err := json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &turns); err != nil {
 				turns = []map[string]any{}
 			}
 		}
@@ -1410,7 +1410,7 @@ func (s *Server) getLeadCallsByName(w http.ResponseWriter, r *http.Request) {
 		for _, t := range transcripts {
 			var turns []map[string]any
 			if len(t.Transcript) > 0 {
-				if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+				if err := json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &turns); err != nil {
 					turns = []map[string]any{}
 				}
 			}
@@ -1524,7 +1524,7 @@ func (s *Server) generateFollowupNote(w http.ResponseWriter, r *http.Request) {
 			Role string `json:"role"`
 			Text string `json:"text"`
 		}
-		if json.Unmarshal(t.Transcript, &turns) == nil {
+		if json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &turns) == nil {
 			var sb strings.Builder
 			for _, turn := range turns {
 				if turn.Role == "system" {
@@ -1637,13 +1637,13 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		Role string `json:"role"`
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(t.Transcript, &turns); err != nil {
+	if err := json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &turns); err != nil {
 		// Handle legacy capitalised keys: {Role, Text}
 		var alt []struct {
 			Role string `json:"Role"`
 			Text string `json:"Text"`
 		}
-		if err2 := json.Unmarshal(t.Transcript, &alt); err2 != nil {
+		if err2 := json.Unmarshal(db.PreferredTranscriptText(t.Transcript), &alt); err2 != nil {
 			writeError(w, http.StatusUnprocessableEntity, "transcript is not valid JSON turns")
 			return
 		}
