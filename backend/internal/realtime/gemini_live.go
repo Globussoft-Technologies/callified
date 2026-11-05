@@ -48,6 +48,9 @@ If rejected, continue naturally without saying goodbye.
 Never speak another sentence after the final goodbye.`
 
 type Config struct {
+	HushEnabled bool
+	HushURL     string
+
 	URL, APIKey, AuthMode, Model, Voice, Language, SystemPrompt, Greeting string
 }
 
@@ -156,6 +159,17 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 		}
 		startupStage("greeting_requested")
 	}
+	var hush *hushInput
+	if c.cfg.HushEnabled {
+		var err error
+		hush, err = newHushInput(ctx, c.cfg.HushURL)
+		if err != nil {
+			slog.Warn("Hush unavailable; preserving original customer audio", "error", err)
+		} else {
+			defer hush.close()
+			slog.Info("Hush noise suppression connected", "session_id", c.sessionID)
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -168,11 +182,21 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 			}
 		case pcm, ok := <-audioIn:
 			if !ok {
+				// Preserve a final partial PCM frame when input ends normally.
+				if hush != nil && len(hush.pending) >= 2 {
+					return c.writeJSON(conn, realtimeAudioMessage(hush.pending[:len(hush.pending)/2*2]))
+				}
 				return nil
 			}
 			if len(pcm) == 0 {
 				continue
 			}
+			if hush != nil {
+				pcm = hush.process(pcm)
+			}
+			if len(pcm) == 0 {
+				continue
+			} // buffered partial frame, never a speech gate
 			msg := realtimeAudioMessage(pcm)
 			if err := c.writeJSON(conn, msg); err != nil {
 				return err

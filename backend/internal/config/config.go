@@ -47,6 +47,10 @@ type Config struct {
 	GeminiLiveVoice               string `env:"GEMINI_LIVE_VOICE" envDefault:"en-in-csagent-12"`
 	RAGServiceURL                 string `env:"RAG_SERVICE_URL"   envDefault:"http://rag-service:8002"`
 
+	// Hush is opt-in until tested with the deployment's actual call recordings.
+	HushEnabled bool   `env:"HUSH_ENABLED" envDefault:"false"`
+	HushURL     string `env:"HUSH_URL" envDefault:"ws://hush:8003/process"`
+
 	// Deepgram
 	DeepgramAPIKey string `env:"DEEPGRAM_API_KEY"`
 

@@ -39,6 +39,14 @@ jobs:
         working-directory: backend
         run: docker build -t callified-go-audio:ci .
 
+  hush-model-tests:
+    name: Hush Streaming and Voice Preservation Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Hush and run real model tests
+        run: docker build --platform linux/amd64 -t callified-hush:ci hush_service
+
   api-tests:
     name: API E2E Tests
     runs-on: ubuntu-latest

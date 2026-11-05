@@ -891,6 +891,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					sess.LogLiveStartup("pre_answer_session_attached")
 				} else {
 					client = realtime.New(realtime.Config{
+						HushEnabled: h.cfg.HushEnabled, HushURL: h.cfg.HushURL,
 						URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 						AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
 						Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
