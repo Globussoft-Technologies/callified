@@ -12,8 +12,10 @@ import (
 // voices can still be explicitly configured through GEMINI_LIVE_VOICE.
 func ResolveVoice(campaign, configured string) string {
 	campaign = strings.TrimSpace(campaign)
-	if strings.Contains(" Kore Puck Charon Fenrir Aoede Leda Orus Zephyr Callirrhoe Autonoe Enceladus Iapetus Umbriel Algieba Despina Erinome Algenib Rasalgethi Laomedeia Achernar Alnilam Schedar Gacrux Pulcherrima Achird Zubenelgenubi Vindemiatrix Sadachbia Sadaltager Sulafat en-in-csagent-12 en-in-csagent-1 en-in-csagent-5 ", " "+campaign+" ") && campaign != "" {
-		return campaign
+	for _, voice := range strings.Fields("Kore Puck Charon Fenrir Aoede Leda Orus Zephyr Callirrhoe Autonoe Enceladus Iapetus Umbriel Algieba Despina Erinome Algenib Rasalgethi Laomedeia Achernar Alnilam Schedar Gacrux Pulcherrima Achird Zubenelgenubi Vindemiatrix Sadachbia Sadaltager Sulafat en-in-csagent-12 en-in-csagent-1 en-in-csagent-5") {
+		if campaign == voice {
+			return campaign
+		}
 	}
 	return strings.TrimSpace(configured)
 }

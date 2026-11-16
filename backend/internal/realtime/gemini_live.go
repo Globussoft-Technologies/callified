@@ -209,22 +209,6 @@ func (c *Client) withReplyLanguage(instruction string) string {
 	return instruction
 }
 
-// This adds context between turns without requesting audio or completing a
-// customer turn. It must never be used to interrupt an active model response.
-func (c *Client) reinforceReplyLanguage(conn *websocket.Conn) error {
-	reminder := c.replyLanguageInstruction()
-	if reminder == "" {
-		return nil
-	}
-	return c.writeJSON(conn, liveLanguageContextMessage(reminder))
-}
-
-func liveLanguageContextMessage(reminder string) map[string]any {
-	msg := liveControlMessage(reminder)
-	msg["clientContent"].(map[string]any)["turnComplete"] = false
-	return msg
-}
-
 func (c *Client) connectionSettings() (string, http.Header, error) {
 	endpoint := strings.TrimSpace(c.cfg.URL)
 	if endpoint == "" {
@@ -490,9 +474,6 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 			if c.cb.OnInterrupted != nil {
 				c.cb.OnInterrupted()
 			}
-			if err := c.reinforceReplyLanguage(conn); err != nil {
-				return err
-			}
 		}
 		if tr, _ := content["interimInputTranscription"].(map[string]any); tr != nil && c.cb.OnInterimInputTranscript != nil {
 			if text, _ := tr["text"].(string); text != "" {
@@ -549,9 +530,6 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 			output = livePCMNormalizer{}
 			if c.cb.OnTurnComplete != nil {
 				c.cb.OnTurnComplete()
-			}
-			if err := c.reinforceReplyLanguage(conn); err != nil {
-				return err
 			}
 		}
 		select {

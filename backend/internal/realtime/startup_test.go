@@ -3,7 +3,6 @@ package realtime
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,6 +31,36 @@ func liveTestConnection(t *testing.T, send func(*websocket.Conn)) *websocket.Con
 	}
 	t.Cleanup(func() { conn.Close(); close(done); server.Close() })
 	return conn
+}
+
+func TestLiveTurnEventsDoNotInjectClientContent(t *testing.T) {
+	for _, event := range []string{"interrupted", "turnComplete"} {
+		t.Run(event, func(t *testing.T) {
+			outbound := make(chan error, 1)
+			conn := liveTestConnection(t, func(peer *websocket.Conn) {
+				_ = peer.WriteJSON(map[string]any{"serverContent": map[string]any{event: true}})
+				_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+				_, _, err := peer.ReadMessage()
+				outbound <- err
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			callback := false
+			client := New(Config{Language: "kn"}, Callbacks{
+				OnInterrupted:  func() { callback = true; cancel() },
+				OnTurnComplete: func() { callback = true; cancel() },
+			})
+			_ = client.receive(ctx, conn, make(chan struct{}), time.Now())
+			if !callback {
+				t.Fatal("turn callback was not delivered")
+			}
+			if err := <-outbound; err == nil {
+				t.Fatal("turn event injected unsolicited client content")
+			} else if timeout, ok := err.(interface{ Timeout() bool }); !ok || !timeout.Timeout() {
+				t.Fatalf("expected read timeout, got %v", err)
+			}
+		})
+	}
 }
 
 func TestLiveSetupTimeoutIsDiagnosable(t *testing.T) {
@@ -64,34 +93,4 @@ func TestLiveAudioArrivesWithoutOutputTranscript(t *testing.T) {
 	}
 	conn.Close()
 	<-finished
-}
-
-func TestLiveLanguageReminderAfterInterruptionAndTurn(t *testing.T) {
-	for _, event := range []string{"interrupted", "turnComplete"} {
-		t.Run(event, func(t *testing.T) {
-			messages := make(chan map[string]any, 1)
-			conn := liveTestConnection(t, func(peer *websocket.Conn) {
-				_ = peer.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
-				_ = peer.WriteJSON(map[string]any{"serverContent": map[string]any{event: true}})
-				_ = peer.SetReadDeadline(time.Now().Add(time.Second))
-				var msg map[string]any
-				_ = peer.ReadJSON(&msg)
-				messages <- msg
-			})
-			client := New(Config{Language: "kn"}, Callbacks{CurrentReplyLanguage: func() string { return "hi" }})
-			finished := make(chan error, 1)
-			go func() { finished <- client.receive(context.Background(), conn, make(chan struct{}), time.Now()) }()
-			select {
-			case msg := <-messages:
-				raw, _ := json.Marshal(msg)
-				if !strings.Contains(string(raw), "CURRENT_REPLY_LANGUAGE=hi") || !strings.Contains(string(raw), `"turnComplete":false`) {
-					t.Errorf("expected non-generating reminder for approved language, got %s", raw)
-				}
-			case <-time.After(2 * time.Second):
-				t.Error("no language reminder received")
-			}
-			conn.Close()
-			<-finished
-		})
-	}
 }

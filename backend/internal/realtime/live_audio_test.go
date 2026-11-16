@@ -47,6 +47,14 @@ func TestLivePCMNormalizationAcrossChunks(t *testing.T) {
 }
 
 func TestLiveVoiceSelection(t *testing.T) {
+	for _, invalid := range []string{"Kore Puck", "en-in-csagent-1 en-in-csagent-5", "Kor", "kore"} {
+		if got := ResolveVoice(invalid, "Fenrir"); got != "Fenrir" {
+			t.Errorf("invalid voice %q resolved to %q instead of fallback", invalid, got)
+		}
+	}
+	if got := ResolveVoice("  Puck  ", "Kore"); got != "Puck" {
+		t.Errorf("trimmed valid voice resolved to %q", got)
+	}
 	if ResolveVoice("sarvam-voice", "Kore") != "Kore" {
 		t.Fatal("legacy voice leaked")
 	}

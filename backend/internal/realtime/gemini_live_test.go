@@ -197,15 +197,6 @@ func TestReplyLanguageFallsBackBeforePrewarmAttachment(t *testing.T) {
 	assert.Equal(t, "recover", New(Config{}, Callbacks{}).withReplyLanguage("recover"))
 }
 
-func TestLanguageReminderDoesNotRequestResponse(t *testing.T) {
-	msg := liveLanguageContextMessage("CURRENT_REPLY_LANGUAGE=kn")
-	content := msg["clientContent"].(map[string]any)
-	assert.Equal(t, false, content["turnComplete"])
-	assert.NotContains(t, msg, "realtimeInput")
-	// Recovery requests retain their original response-triggering behavior.
-	assert.Equal(t, true, liveControlMessage("recover")["clientContent"].(map[string]any)["turnComplete"])
-}
-
 func TestCustomGreetingUsesCampaignLanguage(t *testing.T) {
 	greeting := "नमस्ते, मैं GlobusCRM से बोल रही हूँ। क्या आपके पास 15 मिनट हैं?"
 	client := New(Config{Language: "kn", Greeting: greeting}, Callbacks{})

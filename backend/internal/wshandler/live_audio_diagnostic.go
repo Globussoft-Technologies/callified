@@ -3,9 +3,12 @@ package wshandler
 import (
 	"os"
 	"path/filepath"
+	"sync"
 
 	"go.uber.org/zap"
 )
+
+var liveAudioDiagnosticAllocationMu sync.Mutex
 
 // Optional private, bounded PCM pairs for comparing Gemini output with conversion.
 // Each capture contains at most 60 seconds of generated audio, not wall time.
@@ -21,6 +24,9 @@ func newLiveAudioDiagnostic(dir string, log *zap.Logger) *liveAudioDiagnostic {
 	if dir == "" {
 		return d
 	}
+	// Serialize the capacity check and directory reservation across calls.
+	liveAudioDiagnosticAllocationMu.Lock()
+	defer liveAudioDiagnosticAllocationMu.Unlock()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		log.Warn("live audio diagnostic unavailable", zap.Error(err))
 		return d
