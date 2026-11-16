@@ -20,6 +20,14 @@ import (
 func (s *Server) verifyPlivo(w http.ResponseWriter, r *http.Request) (*db.OrgExotelAccount, bool) {
 	org, _ := strconv.ParseInt(r.URL.Query().Get("org_id"), 10, 64)
 	id, _ := strconv.ParseInt(r.URL.Query().Get("account_id"), 10, 64)
+	if org <= 0 || id <= 0 || len(r.URL.Query()["org_id"]) != 1 || len(r.URL.Query()["account_id"]) != 1 {
+		http.Error(w, "Invalid provider account", http.StatusForbidden)
+		return nil, false
+	}
+	if s.db == nil {
+		http.Error(w, "Provider service unavailable", http.StatusServiceUnavailable)
+		return nil, false
+	}
 	account, err := s.db.GetExotelAccountByIDInOrg(id, org)
 	if err != nil || account == nil || account.Provider != "plivo" {
 		http.Error(w, "Invalid provider account", 403)
@@ -68,6 +76,14 @@ func (s *Server) plivoAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.db.UpdateCallLogStatus(contextID, "in-progress"); err != nil {
 		http.Error(w, "Call status unavailable", 503)
+		return
+	}
+	s.writePlivoStream(w, r, call, contextID, pending)
+}
+
+func (s *Server) writePlivoStream(w http.ResponseWriter, r *http.Request, call, contextID string, pending rstore.PendingCallInfo) {
+	if !validPlivoPublicURL(s.cfg.PublicServerURL) {
+		http.Error(w, "HTTPS callback URL required", http.StatusServiceUnavailable)
 		return
 	}
 	ticket, err := dial.PlivoStreamTicket(s.cfg.JWTSecret, call, contextID)

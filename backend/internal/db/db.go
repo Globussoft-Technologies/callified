@@ -29,6 +29,12 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("db.New: ping: %w", err)
 	}
 	d := &DB{pool: pool}
+	if err := d.EnsureIncomingRoutingTables(); err != nil {
+		return nil, fmt.Errorf("ensure incoming routing: %w", err)
+	}
+	if err := d.EnsureReceptionistSettingsTable(); err != nil {
+		return nil, fmt.Errorf("db.New: ensure receptionist settings: %w", err)
+	}
 	if err := d.EnsureOrganizationsTable(); err != nil {
 		return nil, fmt.Errorf("db.New: ensure organizations table: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -737,6 +738,17 @@ func (s *Server) listReceptionistCalls(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 	}
+	forwarded, err := s.db.GetRecentForwardedIncomingCalls(ac.OrgID, 50)
+	if err != nil {
+		s.logger.Sugar().Errorw("list forwarded incoming calls", "err", err)
+		writeError(w, 500, "Could not load incoming calls")
+		return
+	}
+	calls = append(calls, forwarded...)
+	sort.SliceStable(calls, func(i, j int) bool { return calls[i].CreatedAt > calls[j].CreatedAt })
+	if len(calls) > 50 {
+		calls = calls[:50]
+	}
 	writeJSON(w, http.StatusOK, emptyJSON(calls))
 }
 
@@ -767,10 +779,6 @@ func fillReceptionistCallFromTranscript(call *db.InboundReceptionistCall) bool {
 			if phone := extractReceptionistPhone(text); phone != "" {
 				call.Phone = phone
 			}
-		}
-		if name := extractReceptionistName(text); name != "" {
-			call.FirstName = name
-			call.LastName = ""
 		}
 	}
 	return originalName != strings.TrimSpace(call.FirstName+" "+call.LastName) || originalPhone != call.Phone
@@ -871,57 +879,13 @@ func (s *Server) updateReceptionistCall(w http.ResponseWriter, r *http.Request) 
 	if status == "" {
 		status = "new"
 	}
-	if err := s.db.UpdateCallTranscriptInboundDetails(transcriptID, first, last, phone, interest, status); err != nil {
-		s.logger.Sugar().Errorw("updateReceptionistCall: update transcript fields", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	leadID := call.LeadID
-	if leadID == 0 {
-		if first == "" && last == "" && phone == "" && interest == "" {
-			writeJSON(w, http.StatusOK, map[string]bool{"updated": true})
-			return
-		}
-		id, err := s.db.CreateLead(first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
-		if err != nil {
-			if isDuplicateEntryError(err) && phone != "" {
-				existing, findErr := s.db.GetLeadByPhoneOrg(phone, ac.OrgID, nil, false)
-				if findErr != nil || existing == nil {
-					writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists"})
-					return
-				}
-				leadID = existing.ID
-			} else {
-				s.logger.Sugar().Errorw("updateReceptionistCall: create lead", "err", err)
-				writeError(w, http.StatusInternalServerError, "internal error")
-				return
-			}
-		} else {
-			leadID = id
-		}
-		if err := s.db.UpdateCallTranscriptLead(transcriptID, leadID); err != nil {
-			s.logger.Sugar().Errorw("updateReceptionistCall: attach lead", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-
-	updated, err := s.db.UpdateLead(leadID, first, last, phone, "Inbound Call", interest, "", 0, ac.OrgID)
+	leadID, err := s.db.SaveReceptionistCallDetails(r.Context(), ac.OrgID, transcriptID, first, last, phone, interest, status)
 	if err != nil {
-		if isDuplicateEntryError(err) {
-			writeFieldError(w, http.StatusConflict, "phone number already exists", map[string]string{"phone": "Phone number already exists for another lead"})
-			return
-		}
-		s.logger.Sugar().Errorw("updateReceptionistCall: update lead", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		s.logger.Sugar().Errorw("updateReceptionistCall: save", "err", err)
+		writeError(w, http.StatusInternalServerError, "Could not save customer details. Please try again.")
 		return
 	}
-	if !updated {
-		writeError(w, http.StatusNotFound, "lead not found")
-		return
-	}
-	_ = s.db.UpdateLeadDisposition(leadID, status, "", "")
+
 	writeJSON(w, http.StatusOK, map[string]any{"updated": true, "lead_id": leadID})
 }
 

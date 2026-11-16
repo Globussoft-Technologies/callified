@@ -22,7 +22,7 @@ func dialErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, dial.ErrInsufficientCredits):
 		return http.StatusPaymentRequired // 402 — Razorpay top-up flow
-	case errors.Is(err, dial.ErrDND), errors.Is(err, dial.ErrCallHours):
+	case errors.Is(err, dial.ErrDND), errors.Is(err, dial.ErrCallHours), errors.Is(err, dial.ErrTataStreamNotReady):
 		return http.StatusConflict // 409 — request can't be served as-is
 	default:
 		return http.StatusBadGateway // 502 — upstream provider error

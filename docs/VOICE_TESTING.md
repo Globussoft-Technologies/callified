@@ -147,3 +147,76 @@ go test -race ./internal/audio ./internal/dial ./internal/wshandler ./internal/a
 ```
 
 These tests simulate the carrier and browser sockets. A real call is still required to validate carrier/network audio quality after deployment.
+
+## Plivo incoming AI calls
+
+1. Save a Plivo account with the Auth ID, Auth Token and the voice-enabled Plivo number. An existing Outbound Plivo account can receive calls too; keep it Outbound to continue using it for campaigns. An Inbound-only account is also supported.
+2. In Provider Accounts, expand **Incoming call setup** on that account. Copy the Answer URL and Hangup URL generated for the saved account and organization. `PUBLIC_SERVER_URL` must be public HTTPS.
+3. In the Plivo console, create an XML application with those URLs and set both methods to **POST**. Assign that application to the matching number. See [Plivo application configuration](https://www.plivo.com/docs/account/api/application).
+4. Configure the organization's voice, language and maximum call duration, and ensure it has available calling credits. Incoming calls use these settings and the existing AI receptionist prompt, without requiring a campaign or an existing lead.
+5. Call the Plivo number from another phone. Verify the incoming greeting, conversation in the configured language, hangup, recording, and inbound transcript/receptionist entry. Test an anonymous caller as well; their phone number should be requested rather than invented.
+
+The backend accepts `POST /webhook/plivo/inbound` and `POST /webhook/plivo/inbound/status`. Both require Plivo V3 signatures and a called number matching the saved account. Answer retries reuse one log; completed calls cannot be reopened. Media uses single-use signed tickets, rejects duplicate connections and cannot fall back to another call's pending context. Incoming status callbacks do not trigger outbound retries.
+
+This implementation answers incoming calls with the **AI receptionist**. It does not add a ringing/accept screen for a human browser agent. Showing setup URLs does not create a Plivo application or change live number routing.
+
+### Editable incoming instructions
+
+In AI Receptionist, enter **Opening greeting** and **AI instructions**, then click
+**Save Instructions**. These organization-specific settings apply to subsequent
+provider incoming calls and inbound browser tests. Include the desired questions,
+required contact fields, offers and closing behavior in the instructions.
+Voice and language continue to use Voice Settings. Existing organizations without
+saved instructions use a minimal generic greeting/help prompt. Outgoing campaign
+prompts are unchanged. Product knowledge is included as reference information.
+
+The `org_receptionist_settings` table is ensured at backend startup; the equivalent
+manual migration is `backend/scripts/migrations/20261028_receptionist_settings.sql`.
+GET/PUT `/api/organizations/{id}/receptionist-settings` are authenticated and
+organization-scoped; saving requires `settings.manage` permission.
+
+Verify by saving distinctive instructions, starting a new incoming phone call and
+a browser test, and confirming both follow the saved greeting and rules. Verify
+another organization cannot read or edit these settings.
+
+### Incoming call forwarding (Plivo)
+
+Open **AI Receptionist → Call Forwarding**. Add a contact name and destination
+phone number, then select **AI Receptionist** or that contact for the Plivo account
+and click **Save Destination**. Choose the account whose Answer URL is assigned
+to the number in Plivo; multiple saved accounts may represent the same number.
+No webhook URL changes are required. Browser simulations always exercise AI.
+
+Routing defaults to AI. Forwarding returns Plivo Dial/Number XML, rings for 30
+seconds, limits the connected call to one hour, then hangs up. Busy/unanswered
+calls end without automatically switching to AI. Plivo charges apply to the
+forwarding leg; no AI session or AI transcript is created. Incoming call logs and
+the existing signed hangup callback still track the original call. Routing is
+snapshotted by organization and call SID, so retries keep the initial destination.
+
+Numbers and routes are organization-scoped. Saving requires provider-account
+management permission. A selected number cannot be deleted until its routes
+are switched to AI. Own provider numbers and calls back to the original caller
+are blocked to avoid direct loops.
+
+Schema is ensured at startup; equivalent SQL:
+`backend/scripts/migrations/20261028_incoming_routing.sql`.
+Plivo XML reference: https://www.plivo.com/docs/voice/xml/routing
+
+Manual checks: route a real incoming call to a saved contact; answer and confirm
+both sides hear each other; test busy/unanswered behavior; switch to AI and
+confirm the saved greeting; verify another organization cannot select/delete the
+contact; verify deleting a selected contact is rejected. Real carrier forwarding
+requires a live-call test after deployment.
+
+### Incoming call handling history
+
+Captured Inbound Customers includes a **Handled by** column: AI Receptionist or
+Forwarded to the saved contact name. Ended forwarded calls are read from call
+logs and have no AI transcript; they are not editable through the transcript
+editor. New routing snapshots retain the contact name at call start. Older
+snapshots fall back to a currently saved contact with the same destination phone,
+or the destination phone when no name is available.
+
+Startup adds `incoming_route_snapshots.destination_name`; equivalent manual SQL
+is in `backend/scripts/migrations/20261028_incoming_route_names.sql`.
