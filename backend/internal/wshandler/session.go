@@ -15,6 +15,7 @@ import (
 	"github.com/globussoft/callified-backend/internal/audio"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
+	rstore "github.com/globussoft/callified-backend/internal/redis"
 	"github.com/globussoft/callified-backend/internal/tts"
 )
 
@@ -23,6 +24,8 @@ import (
 type CallSession struct {
 	plivoOutput        plivoPlayback
 	LivePreparationSID string
+	VerifiedTata       *rstore.TataStreamContext
+	TataStartVerified  bool
 	// Identity (set on connect / start event)
 	StreamSid         string
 	CallSid           string

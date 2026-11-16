@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -141,19 +142,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var verifiedTata *rstore.TataStreamContext
+	tataRoute := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	if tataRoute {
+		var ticketErr error
+		verifiedTata, ticketErr = h.store.ConsumeTataStreamTicket(r.Context(), q.Get("ticket"))
+		if ticketErr != nil {
+			http.Error(w, "invalid stream ticket", http.StatusUnauthorized)
+			return
+		}
+		// All session settings must come from authenticated state, never query parameters.
+		q = url.Values{}
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.log.Warn("ws upgrade failed", zap.Error(err))
 		return
 	}
 	defer conn.Close()
+	if verifiedTata != nil {
+		conn.SetReadLimit(64 << 10)
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	}
 
 	// Extract initial identity from query params (may be overridden by "start" event)
 	streamSid := q.Get("stream_sid")
 	if streamSid == "" {
 		streamSid = fmt.Sprintf("web_sim_%s_%d", q.Get("lead_id"), time.Now().UnixMilli())
 	}
-	isTataStream := strings.Contains(r.URL.Path, "/tata") || strings.EqualFold(q.Get("provider"), "tata")
+	isTataStream := tataRoute
 	if isTataStream && strings.HasPrefix(streamSid, "web_sim_") {
 		streamSid = fmt.Sprintf("tata_%s_%d", firstNonEmpty(q.Get("lead_id"), "call"), time.Now().UnixMilli())
 	}
@@ -172,12 +189,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sess.LivePreparationSID = plivoRequestID
 		sess.OrgID = plivoPending.OrgID
 	}
+	sess.VerifiedTata = verifiedTata
+	if verifiedTata != nil {
+		applyVerifiedTataContext(sess, verifiedTata)
+	}
 	if isTataStream {
 		sess.Provider = "tata"
 		sess.IsExotel = false
 		sess.UseUlaw = strings.EqualFold(q.Get("codec"), "ulaw") || strings.EqualFold(q.Get("codec"), "mulaw")
 	}
-	sess.IsInbound = plivoPending.IsInbound || q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
+	sess.IsInbound = plivoPending.IsInbound || (verifiedTata != nil && verifiedTata.Inbound) || q.Get("mode") == "inbound-sim" || q.Get("direction") == "inbound"
 	// The browser-side web-sim sends `name` / `phone`; legacy callers may send
 	// `lead_name` / `lead_phone`. Accept either so live-feed events render with
 	// the lead label instead of the empty "()" we used to show.
@@ -250,6 +271,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		h.sessions.Delete(streamSid)
 		h.sessions.Delete(sess.StreamSid)
 		if sess.CallSid != "" {
 			h.sessionsByCallSid.Delete(sess.CallSid)
@@ -275,6 +297,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Initialize call via gRPC (get system prompt + voice config) ---
+	if verifiedTata != nil {
+		applyVerifiedTataContext(sess, verifiedTata)
+	}
 	if err := h.initializeCall(ctx, sess); err != nil {
 		h.log.Error("InitializeCall failed", zap.Error(err))
 		// Continue with defaults — don't abort the call
@@ -1159,6 +1184,9 @@ func topKeys(m map[string]interface{}) []string {
 }
 
 func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
+	if sess.VerifiedTata != nil && !sess.TataStartVerified {
+		return
+	}
 	// Keep processing audio even if a hangup has been requested. A customer
 	// interruption during the AI's goodbye should still trigger barge-in and
 	// cancel the hangup.
@@ -1234,6 +1262,9 @@ func (h *Handler) handleTextFrame(ctx context.Context, sess *CallSession, data [
 	case "start":
 		h.handleStartEvent(ctx, sess, event)
 	case "media":
+		if sess.VerifiedTata != nil && !sess.TataStartVerified {
+			return true
+		}
 		h.handleMediaEvent(sess, event)
 	case "stop":
 		return true
@@ -1249,6 +1280,9 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 	))
 
 	callSid := pickStr(event, "ref_id", "refId", "call_sid", "callSid", "CallSid", "call_id", "callId", "CallID", "uuid")
+	if sess.VerifiedTata != nil {
+		callSid = pickStr(event, "callId", "call_id", "callSid", "call_sid", "CallSid")
+	}
 	streamSid := pickStr(event, "stream_sid", "streamSid", "stream_id", "streamId", "StreamID", "streamSid")
 	if streamSid == "" {
 		streamSid = sess.StreamSid
@@ -1322,10 +1356,17 @@ func normalizeTataFrame(sess *CallSession, event map[string]interface{}) map[str
 }
 
 func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event map[string]interface{}) {
+	if sess.VerifiedTata != nil {
+		h.handleVerifiedTataStart(ctx, sess, event)
+		return
+	}
+
 	if sess.Provider == "tata" {
-		// The call context is not final until Redis/DB hydration below. Keep
-		// the start timestamp so every subsequent stage uses one clock.
-		sess.liveStartAtNano.CompareAndSwap(0, time.Now().UnixNano())
+		// Tata is never allowed to enter the legacy, unverified hydration path.
+		if sess.WS != nil {
+			_ = sess.WS.Close()
+		}
+		return
 	}
 	// Extract stream_sid and call_sid from the "start" event. Exotel sometimes
 	// sends snake_case (call_sid / stream_sid) and sometimes Twilio-style
@@ -1386,25 +1427,6 @@ func (h *Handler) handleStartEvent(ctx context.Context, sess *CallSession, event
 		}
 		if name := pickStr(startData, "caller_name", "callerName", "customer_name", "customerName", "name", "Name"); name != "" && sess.LeadName == "" {
 			sess.LeadName = name
-		}
-		if sess.Provider == "tata" && sess.IsInbound && sess.OrgID == 0 && h.db != nil {
-			if did := pickStr(startData,
-				"to", "To", "call_to_number", "callToNumber", "called_number", "calledNumber",
-				"did", "DID", "destination", "destination_number", "destinationNumber",
-			); did != "" {
-				if account, err := h.db.GetInboundTataAccountByDID(did); err == nil && account != nil {
-					sess.OrgID = account.OrgID
-					if sess.Interest == "" {
-						sess.Interest = "inbound enquiry"
-					}
-					h.log.Info("tata inbound account matched",
-						zap.String("did", did),
-						zap.Int64("org_id", account.OrgID),
-						zap.Int64("account_id", account.ID))
-				} else if err != nil {
-					h.log.Warn("tata inbound account lookup failed", zap.String("did", did), zap.Error(err))
-				}
-			}
 		}
 		if sess.IsInbound && sess.LeadName == "" && sess.LeadPhone != "" && sess.OrgID > 0 && h.db != nil {
 			if lead, err := h.db.GetLeadByPhoneOrg(sess.LeadPhone, sess.OrgID, nil, false); err == nil && lead != nil {

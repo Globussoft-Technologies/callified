@@ -225,6 +225,15 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	if creds.AccountID > 0 {
 		pending.ExotelAccountID = creds.AccountID
 	}
+	if provider == "tata" || provider == "smartflo" || provider == "tata_tele" {
+		ready, readyErr := i.db.TataStreamReady(ctx, creds.AccountID, data.OrgID)
+		if readyErr != nil || !ready {
+			return "", ErrTataStreamNotReady
+		}
+		if err := i.store.ReserveTataDial(ctx, &pending); err != nil {
+			return "", err
+		}
+	}
 	var callSid string
 	var bindPrepared func(string)
 	preparedBound := false
@@ -282,8 +291,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		}
 		statusURL := fmt.Sprintf("%s/webhook/tata/status?lead_id=%d&campaign_id=%d",
 			i.cfg.PublicServerURL, data.LeadID, data.CampaignID)
-		streamURL := tataStreamURL(i.cfg.PublicServerURL, data.LeadID, data.CampaignID, data.OrgID)
-		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, streamURL)
+		// Smartflo must resolve its configured authenticated Dynamic endpoint.
+		// A per-dial static URL cannot supply the single-use stream ticket.
+		callSid, err = tataClient.InitiateCall(ctx, data.LeadPhone, statusURL, "")
 	default: // exotel
 		if !creds.IsSet() {
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", "no campaign Exotel credentials set")
@@ -299,6 +309,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		preparedBound = true
 	}
 	if err != nil {
+		if provider == "tata" || provider == "smartflo" || provider == "tata_tele" {
+			i.store.ReleaseTataDial(ctx, pending)
+		}
 		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
 		// Live-feed: surface the dial-time failure (bad params, provider
 		// rejected, etc.) on the campaign detail page.
@@ -309,6 +322,9 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 	// 5. Persist pending call under the call SID for webhook lookup
 	if provider != "plivo" {
 		pending.ExotelCallSid = callSid
+		if provider == "tata" || provider == "smartflo" || provider == "tata_tele" {
+			i.store.UpdateTataDial(ctx, pending)
+		}
 		if storeErr := i.store.SetPendingCall(ctx, callSid, pending); storeErr != nil {
 			i.log.Warn("dial: SetPendingCall failed", zap.Error(storeErr))
 		}

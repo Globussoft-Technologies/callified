@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -41,22 +42,26 @@ type CreditTransaction struct {
 // default rate when none exists yet (lazy init avoids a separate signup-time
 // migration). Always returns a non-nil pointer for found-or-created.
 func (d *DB) GetOrgCredit(orgID int64) (*OrgCredit, error) {
+	return d.GetOrgCreditContext(context.Background(), orgID)
+}
+
+func (d *DB) GetOrgCreditContext(ctx context.Context, orgID int64) (*OrgCredit, error) {
 	const query = `
 		SELECT org_id, balance_paise, COALESCE(rate_per_min_paise, ?),
 		       DATE_FORMAT(updated_at,'%Y-%m-%d %H:%i:%s')
 		FROM org_credits WHERE org_id=?`
-	row := d.pool.QueryRow(query, DefaultRatePerMinPaise, orgID)
+	row := d.pool.QueryRowContext(ctx, query, DefaultRatePerMinPaise, orgID)
 	var oc OrgCredit
 	err := row.Scan(&oc.OrgID, &oc.BalancePaise, &oc.RatePerMinPaise, &oc.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		// First call ever for this org — create at default rate.
-		if _, err := d.pool.Exec(
+		if _, err := d.pool.ExecContext(ctx,
 			`INSERT IGNORE INTO org_credits (org_id, balance_paise, rate_per_min_paise) VALUES (?, 0, ?)`,
 			orgID, DefaultRatePerMinPaise); err != nil {
 			return nil, err
 		}
 		// Another request may have initialized or recharged the row meanwhile.
-		err = d.pool.QueryRow(query, DefaultRatePerMinPaise, orgID).Scan(&oc.OrgID, &oc.BalancePaise, &oc.RatePerMinPaise, &oc.UpdatedAt)
+		err = d.pool.QueryRowContext(ctx, query, DefaultRatePerMinPaise, orgID).Scan(&oc.OrgID, &oc.BalancePaise, &oc.RatePerMinPaise, &oc.UpdatedAt)
 	}
 	if err != nil {
 		return nil, err

@@ -511,6 +511,11 @@ func (s *Server) tataStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if status == "completed" || status == "failed" || status == "no-answer" || status == "busy" {
+		if pending, ok := s.store.GetPendingCall(r.Context(), callSid); ok {
+			if err := s.store.ReleaseTataDialForCall(r.Context(), pending, callSid); err != nil {
+				s.logger.Warn("tataStatus: release pending dial failed", zap.Error(err))
+			}
+		}
 		cl, _ := s.db.GetCallLogByCallSid(callSid)
 		if cl != nil {
 			var leadName string

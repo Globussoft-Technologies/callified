@@ -123,7 +123,11 @@ func (s *Server) plivoInbound(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Forwarding loop rejected", http.StatusConflict)
 			return
 		}
-		if err := writePlivoForward(w, account.CallerID, route.Phone); err != nil {
+		query := url.Values{"org_id": {strconv.FormatInt(account.OrgID, 10)}, "account_id": {strconv.FormatInt(account.ID, 10)}, "context_id": {contextID}}
+		base := strings.TrimRight(s.cfg.PublicServerURL, "/")
+		action := base + "/webhook/plivo/inbound/dial-action?" + query.Encode()
+		callback := base + "/webhook/plivo/inbound/dial-event?" + query.Encode()
+		if err := writePlivoForward(w, account.CallerID, route.Phone, action, callback); err != nil {
 			http.Error(w, "Invalid forwarding destination", http.StatusServiceUnavailable)
 		}
 		return

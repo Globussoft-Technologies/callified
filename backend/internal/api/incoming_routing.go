@@ -130,7 +130,7 @@ func (s *Server) incomingRoute(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, route)
 }
 
-func writePlivoForward(w http.ResponseWriter, callerID, target string) error {
+func writePlivoForward(w http.ResponseWriter, callerID, target, actionURL, callbackURL string) error {
 	from, to := plivoNumber(callerID), plivoNumber(target)
 	if from == "" || to == "" || from == to {
 		return fmt.Errorf("invalid forwarding destination")
@@ -138,15 +138,23 @@ func writePlivoForward(w http.ResponseWriter, callerID, target string) error {
 	response := struct {
 		XMLName xml.Name `xml:"Response"`
 		Dial    struct {
-			CallerID  string `xml:"callerId,attr"`
-			Timeout   int    `xml:"timeout,attr"`
-			TimeLimit int    `xml:"timeLimit,attr"`
-			Number    string `xml:"Number"`
+			CallerID       string `xml:"callerId,attr"`
+			Action         string `xml:"action,attr"`
+			Method         string `xml:"method,attr"`
+			CallbackURL    string `xml:"callbackUrl,attr"`
+			CallbackMethod string `xml:"callbackMethod,attr"`
+			Timeout        int    `xml:"timeout,attr"`
+			TimeLimit      int    `xml:"timeLimit,attr"`
+			Number         string `xml:"Number"`
 		} `xml:"Dial"`
 		Hangup string `xml:"Hangup"`
 	}{}
 	response.Dial.CallerID = "+" + from
 	response.Dial.Number = "+" + to
+	response.Dial.Action = actionURL
+	response.Dial.Method = "POST"
+	response.Dial.CallbackURL = callbackURL
+	response.Dial.CallbackMethod = "POST"
 	response.Dial.Timeout = 30
 	response.Dial.TimeLimit = 3600
 	body, err := xml.Marshal(response)

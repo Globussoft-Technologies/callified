@@ -36,6 +36,8 @@ type PendingCallInfo struct {
 	IsInbound              bool   `json:"is_inbound,omitempty"`
 	PlivoContextID         string `json:"plivo_context_id,omitempty"`
 	PlivoRequestID         string `json:"plivo_request_id,omitempty"`
+	TataReservationID      string `json:"tata_reservation_id,omitempty"`
+	TataStreamCallID       string `json:"tata_stream_call_id,omitempty"`
 	Name                   string `json:"name"`
 	Phone                  string `json:"phone"`
 	LeadID                 int64  `json:"lead_id"`

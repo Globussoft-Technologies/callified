@@ -577,21 +577,22 @@ type Transcript struct {
 // InboundReceptionistCall is a CRM-friendly row for leadless inbound web-sim
 // calls after post-call extraction has created or matched a lead.
 type InboundReceptionistCall struct {
-	HandlingMode   string          `json:"handling_mode"`
-	ForwardedName  string          `json:"forwarded_name"`
-	ForwardedPhone string          `json:"forwarded_phone"`
-	CallLogID      int64           `json:"call_log_id"`
-	TranscriptID   int64           `json:"transcript_id"`
-	LeadID         int64           `json:"lead_id"`
-	FirstName      string          `json:"first_name"`
-	LastName       string          `json:"last_name"`
-	Phone          string          `json:"phone"`
-	Interest       string          `json:"interest"`
-	Status         string          `json:"status"`
-	Transcript     json.RawMessage `json:"transcript"`
-	RecordingURL   string          `json:"recording_url"`
-	CallDurationS  float64         `json:"call_duration_s"`
-	CreatedAt      string          `json:"created_at"`
+	HandlingMode     string          `json:"handling_mode"`
+	ForwardedName    string          `json:"forwarded_name"`
+	ForwardedPhone   string          `json:"forwarded_phone"`
+	ForwardedOutcome string          `json:"forwarded_outcome,omitempty"`
+	CallLogID        int64           `json:"call_log_id"`
+	TranscriptID     int64           `json:"transcript_id"`
+	LeadID           int64           `json:"lead_id"`
+	FirstName        string          `json:"first_name"`
+	LastName         string          `json:"last_name"`
+	Phone            string          `json:"phone"`
+	Interest         string          `json:"interest"`
+	Status           string          `json:"status"`
+	Transcript       json.RawMessage `json:"transcript"`
+	RecordingURL     string          `json:"recording_url"`
+	CallDurationS    float64         `json:"call_duration_s"`
+	CreatedAt        string          `json:"created_at"`
 }
 
 // EnsureCallTranscriptColumns adds metadata needed for newer call surfaces.

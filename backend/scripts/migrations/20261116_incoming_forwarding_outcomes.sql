@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS incoming_forwarding_outcomes (
+  org_id BIGINT NOT NULL,
+  call_sid VARCHAR(160) NOT NULL,
+  outcome VARCHAR(20) NOT NULL,
+  bleg_uuid VARCHAR(80) NOT NULL DEFAULT '',
+  action_received BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (org_id, call_sid)
+) ENGINE=InnoDB;

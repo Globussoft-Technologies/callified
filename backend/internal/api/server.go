@@ -28,27 +28,28 @@ import (
 
 // Server holds shared dependencies for all REST handlers.
 type Server struct {
-	db            *db.DB
-	cfg           *config.Config
-	logger        *zap.Logger
-	dispatcher    *webhook.Dispatcher
-	store         *rstore.Store
-	initiator     *dial.Initiator
-	billingSvc    *billing.Service
-	emailSvc      *email.Service
-	ragClient     *rag.Client
-	waAgent       *wa.Agent
-	waSender      waSenderIface
-	llmProvider   *llm.Provider      // Phase 4: Gemini-powered generation endpoints
-	wsHandler     activeCallLister   // wired in main.go via SetWSHandler — used by /api/active-calls
-	recordingSvc  callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
-	s3            *storage.S3Client  // nil when S3 is not configured
-	oci           *storage.OCIClient // nil when OCI is not configured
-	nas           *storage.NASClient // nil outside test* deployments
-	loginLimiter  *loginRateLimiter
-	researchOnce  sync.Once
-	researchSlots chan struct{}
-	researchMu    sync.Mutex
+	db                *db.DB
+	cfg               *config.Config
+	logger            *zap.Logger
+	dispatcher        *webhook.Dispatcher
+	store             *rstore.Store
+	initiator         *dial.Initiator
+	billingSvc        *billing.Service
+	emailSvc          *email.Service
+	ragClient         *rag.Client
+	waAgent           *wa.Agent
+	waSender          waSenderIface
+	llmProvider       *llm.Provider      // Phase 4: Gemini-powered generation endpoints
+	wsHandler         activeCallLister   // wired in main.go via SetWSHandler — used by /api/active-calls
+	recordingSvc      callAnalyzer       // wired in main.go via SetRecordingService — used by /api/transcripts/{id}/conclusion
+	s3                *storage.S3Client  // nil when S3 is not configured
+	oci               *storage.OCIClient // nil when OCI is not configured
+	nas               *storage.NASClient // nil outside test* deployments
+	loginLimiter      *loginRateLimiter
+	tataStreamLimiter *loginRateLimiter
+	researchOnce      sync.Once
+	researchSlots     chan struct{}
+	researchMu        sync.Mutex
 }
 
 // callAnalyzer is the slice of recording.Service the API needs for on-demand
@@ -79,18 +80,19 @@ func New(d *db.DB, cfg *config.Config, store *rstore.Store, initiator *dial.Init
 	ragCli := rag.New(cfg.RAGServiceURL, logger)
 
 	srv := &Server{
-		db:           d,
-		cfg:          cfg,
-		logger:       logger,
-		dispatcher:   webhook.New(d, logger),
-		store:        store,
-		initiator:    initiator,
-		billingSvc:   billingSvc,
-		emailSvc:     emailSvc,
-		ragClient:    ragCli,
-		waSender:     waSend{},
-		llmProvider:  llmProvider,
-		loginLimiter: newLoginRateLimiter(),
+		db:                d,
+		cfg:               cfg,
+		logger:            logger,
+		dispatcher:        webhook.New(d, logger),
+		store:             store,
+		initiator:         initiator,
+		billingSvc:        billingSvc,
+		emailSvc:          emailSvc,
+		ragClient:         ragCli,
+		waSender:          waSend{},
+		llmProvider:       llmProvider,
+		loginLimiter:      newLoginRateLimiter(),
+		tataStreamLimiter: newLoginRateLimiter(),
 		// waAgent is wired in main.go after LLM provider is created (Phase 3C)
 	}
 	if cfg.IsTestDeployment() {
@@ -503,6 +505,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /webhook/plivo/status", s.plivoStatus)
 	mux.HandleFunc("POST /webhook/plivo/inbound", s.plivoInbound)
 	mux.HandleFunc("POST /webhook/plivo/inbound/status", s.plivoInboundStatus)
+	mux.HandleFunc("POST /webhook/plivo/inbound/dial-action", s.plivoInboundDialAction)
+	mux.HandleFunc("POST /webhook/plivo/inbound/dial-event", s.plivoInboundDialEvent)
+	mux.HandleFunc("POST /webhook/tata/stream-url", s.tataStreamURL)
+	mux.HandleFunc("GET /api/exotel-accounts/{id}/stream-readiness", s.requireAdminPermission("provider_accounts.global")(s.tataStreamReadiness))
+	mux.HandleFunc("POST /api/exotel-accounts/{id}/stream-secret", s.requireAdminPermission("provider_accounts.global")(s.rotateTataStreamSecret))
 	mux.HandleFunc("GET /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("POST /exotel/recording-ready", s.exotelRecordingReady)
 	mux.HandleFunc("GET /crm-webhook", s.crmWebhook)
