@@ -29,6 +29,7 @@ func TestSetupEnablesNativeLiveAudioFeatures(t *testing.T) {
 	assert.Contains(t, setup, `"contextWindowCompression":{"slidingWindow":{}}`)
 	assert.Contains(t, setup, `"sessionResumption":{}`)
 	assert.Contains(t, setup, `"complete_call"`)
+	assert.Contains(t, setup, `"conversation_completed"`)
 	assert.Contains(t, setup, `"search_product_knowledge"`)
 	assert.Contains(t, setup, `"switch_language"`)
 	assert.Contains(t, setup, `"language_code"`)
@@ -49,11 +50,13 @@ Example: Thank you. [hangup]`
 	assert.Contains(t, got, "You are a helpful sales agent.")
 	assert.Contains(t, got, "Keep answers short.")
 	assert.Contains(t, got, "call complete_call")
-	assert.Contains(t, got, "same unanswered CALL FLOW step")
+	assert.Contains(t, got, "do not automatically repeat the previous question")
+	assert.Contains(t, got, "## ADAPTIVE CONVERSATION POLICY")
 	assert.Contains(t, got, "Never reveal or discuss Gemini")
 	assert.Contains(t, got, "Collect both a customer-provided day/date and an exact clock time")
 	assert.Contains(t, got, "ask only for the missing detail")
-	assert.Contains(t, got, "Do not ask for an additional yes/okay confirmation")
+	assert.Contains(t, got, "Do not force an extra confirmation")
+	assert.Contains(t, got, "Having a date and time does not by itself mean the conversation is finished")
 }
 
 func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
@@ -67,6 +70,21 @@ func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
 	assert.Contains(t, got, "There is no separate TTS greeting in a Gemini Live call")
 	assert.Contains(t, got, "translate it naturally into CURRENT_REPLY_LANGUAGE")
 	assert.NotContains(t, got, "verbatim")
+}
+
+func TestLiveConversationPolicyRetainsLongInterviewMaterial(t *testing.T) {
+	// This checks prompt transport and conflicting controls, not model quality.
+	reference := strings.Repeat("Reference: Go payment retries and idempotency.\n", 1500) + "FINAL_PAGE_REQUIREMENT"
+	base := "Interview the candidate's backend experience.\n" + reference
+	first := buildLiveSystemPrompt(base, "en")
+	second := buildLiveSystemPrompt(first, "en")
+	for _, got := range []string{first, second} {
+		assert.Contains(t, got, reference)
+		assert.Equal(t, 1, strings.Count(got, "## ADAPTIVE CONVERSATION POLICY"))
+		assert.NotContains(t, got, "Do not advance until the customer clearly answers the current step")
+		assert.NotContains(t, got, "same unanswered CALL FLOW step")
+		assert.Contains(t, got, "ask a relevant follow-up such as how they handled retries")
+	}
 }
 
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {

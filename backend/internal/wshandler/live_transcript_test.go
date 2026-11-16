@@ -3,11 +3,15 @@ package wshandler
 import (
 	"encoding/base64"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/audiodiag"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLiveCustomerFinalTranscriptsDoNotWaitForModelTurn(t *testing.T) {
@@ -29,6 +33,7 @@ func TestLiveCustomerFinalTranscriptsDoNotWaitForModelTurn(t *testing.T) {
 
 func TestSuppressedEchoRemainsInCustomerRecording(t *testing.T) {
 	sess := NewCallSession("test", nil, zap.NewNop())
+	sess.InputDiagnostic = audiodiag.New(t.TempDir())
 	sess.UseUlaw = true
 	carrierAudio := make([]byte, 4000)
 	_, _ = rand.New(rand.NewSource(17)).Read(carrierAudio)
@@ -38,6 +43,12 @@ func TestSuppressedEchoRemainsInCustomerRecording(t *testing.T) {
 		t.Fatal("test frame must be classified as echo")
 	}
 	(&Handler{}).handleBinaryFrame(sess, frame)
+	sess.InputDiagnostic.Close()
+	for _, stage := range []string{"carrier", "echo_removed"} {
+		data, err := os.ReadFile(filepath.Join(sess.InputDiagnostic.Dir, stage+".pcm"))
+		require.NoError(t, err)
+		require.Equal(t, audio.UlawToPCM(frame), data)
+	}
 	if got := sess.echoSuppressedFrames.Load(); got != 1 {
 		t.Fatalf("suppressed frames = %d, want 1", got)
 	}

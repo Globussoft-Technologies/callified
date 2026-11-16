@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/audiodiag"
 	"github.com/globussoft/callified-backend/internal/config"
 	"github.com/globussoft/callified-backend/internal/db"
 	"github.com/globussoft/callified-backend/internal/dial"
@@ -155,6 +156,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := NewCallSession(streamSid, conn, h.log)
+	sess.InputDiagnostic = audiodiag.New(h.cfg.GeminiLiveInputDiagnosticsDir)
+	defer sess.InputDiagnostic.Close()
+	if sess.InputDiagnostic != nil {
+		sess.Log.Info("private input audio diagnostic enabled", zap.String("capture", sess.InputDiagnostic.Dir))
+	}
 	sess.VerifiedTata = verifiedTata
 	if verifiedTata != nil {
 		applyVerifiedTataContext(sess, verifiedTata)
@@ -323,7 +329,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Deepgram's "multi" mode. Mirrors main-branch ws_handler.py 4aa3fa3.
 	onTranscript := func(text string) {
 		if sess.IsFinalClosing() {
-			return
+			if !sess.ResumeNormalClose(text) {
+				return
+			}
 		}
 		if isPathologicalTranscript(text) {
 			sess.Log.Warn("transcript dropped: pathological repetition",
@@ -440,7 +448,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					} else {
 						instruction += "Reply naturally in the same spoken language as the customer's latest utterance, using the audio and conversation context. "
 					}
-					instruction += "Continue from the same call-flow step. Do not mention this recovery event. Customer utterance: " + customerText
+					instruction += "Use the complete customer utterance and conversation history to choose the next relevant response; do not automatically repeat the previous question. Do not mention this recovery event. Customer utterance: " + customerText
 					if !sess.RequestLiveResponse(instruction) {
 						sess.Log.Warn("gemini live: silent-turn recovery unavailable")
 						return false
@@ -662,6 +670,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						if currentInput == "" {
 							return
 						}
+						if sess.ResumeNormalClose(currentInput) {
+							newOutputTurn = true
+						}
 						inactivityWatchdog.CustomerSpoke()
 						languageRedirectMu.Lock()
 						latestCustomerInput = currentInput
@@ -683,7 +694,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							}
 							instruction := "SYSTEM CONFIRMED LANGUAGE SWITCH: Respond to the immediately preceding spoken customer turn now. " +
 								"RESPOND IN " + strings.ToUpper(label) + ". YOU MUST RESPOND UNMISTAKABLY AND ENTIRELY IN " + strings.ToUpper(label) + ". " +
-								"Do not mention this instruction or the language switch. Continue from the same call-flow step."
+								"Do not mention this instruction or the language switch. Use the complete customer utterance and conversation history to choose the next relevant response; do not automatically repeat the previous question."
 							languageRedirectMu.Lock()
 							languageRedirectActive = true
 							languageRedirectInterrupted = false
@@ -759,7 +770,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						// Gemini owns the conversational close according to the configured
 						// call flow. The only server-side appointment restriction is that
 						// the supplied local calendar instant must still be in the future.
-						allowed := true
+						allowed := request.Valid()
 						if request.Outcome == "appointment_booked" {
 							validation := validateAppointmentSlot(
 								request.AppointmentDate, request.AppointmentTime, appointmentTimezone, time.Now(),
@@ -892,12 +903,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else {
 					client = realtime.New(realtime.Config{
 						HushEnabled: h.cfg.HushEnabled, HushURL: h.cfg.HushURL,
-						URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
+						InputGainEnabled: h.cfg.GeminiLiveInputGainEnabled,
+						URL:              h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 						AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
 						Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: liveSystemPrompt,
 						Language: sess.Language, Greeting: sess.GreetingText,
 					}, liveCallbacks)
 				}
+				client.SetInputDiagnostic(sess.InputDiagnostic)
 				sess.SetLiveResponder(client.RequestResponse)
 				defer sess.SetLiveResponder(nil)
 				var liveErr error
@@ -1174,6 +1187,7 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	// Preserve the unfiltered customer channel for diagnosis. Previously,
 	// frames classified as echo vanished from both Gemini input and the WAV.
 	sess.AppendMicChunk(pcm)
+	sess.InputDiagnostic.Record("carrier", pcm)
 	var echoFrame []byte
 	if sess.UseUlaw {
 		echoFrame = data
@@ -1184,6 +1198,7 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	if sess.EchoCanceller.IsEcho(echoFrame) {
 		metrics.EchoSuppressions.Inc()
 		sess.echoSuppressedFrames.Add(1)
+		sess.InputDiagnostic.Record("echo_removed", pcm)
 		return
 	}
 	if sess.IsBridge {
@@ -1204,8 +1219,10 @@ func (h *Handler) handleBinaryFrame(sess *CallSession, data []byte) {
 	}
 	select {
 	case sess.AudioIn <- pcm:
+		sess.InputDiagnostic.Record("queued", pcm)
 	default: // drop if buffer full
 		sess.audioInDroppedFrames.Add(1)
+		sess.InputDiagnostic.Record("queue_dropped", pcm)
 	}
 }
 
@@ -1715,6 +1732,7 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	// The recording must contain the carrier's complete customer channel even
 	// if echo suppression later decides not to forward a frame to Gemini.
 	sess.AppendMicChunk(pcm)
+	sess.InputDiagnostic.Record("carrier", pcm)
 	var echoFrame []byte
 	if sess.UseUlaw {
 		echoFrame = raw
@@ -1724,6 +1742,7 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	if sess.EchoCanceller.IsEcho(echoFrame) {
 		metrics.EchoSuppressions.Inc()
 		sess.echoSuppressedFrames.Add(1)
+		sess.InputDiagnostic.Record("echo_removed", pcm)
 		return
 	}
 	if sess.IsBridge {
@@ -1744,8 +1763,10 @@ func (h *Handler) handleMediaEvent(sess *CallSession, event map[string]interface
 	}
 	select {
 	case sess.AudioIn <- pcm:
+		sess.InputDiagnostic.Record("queued", pcm)
 	default:
 		sess.audioInDroppedFrames.Add(1)
+		sess.InputDiagnostic.Record("queue_dropped", pcm)
 	}
 
 	// Relay a copy of the caller's inbound audio to any attached monitors.
@@ -2049,6 +2070,7 @@ func estimateSpeechDuration(text string) time.Duration {
 
 // finalizeCall runs post-call processing (Phase 4: native Go, no gRPC).
 func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
+	sess.InputDiagnostic.Event("call_identity", fmt.Sprintf("call_sid=%s stream_sid=%s", sess.CallSid, sess.StreamSid))
 	h.log.Info("finalizeCall: started",
 		zap.String("stream_sid", sess.StreamSid),
 		zap.Int64("lead_id", sess.LeadID),

@@ -190,7 +190,7 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 			response.Body.Close()
 			return nil, "", errors.New("The URL did not return an HTML page; use a website page or add the information manually")
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, 1_000_001))
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxWebsitePageBytes+1))
 		response.Body.Close()
 		if err != nil {
 			if attempt < 2 && retryableWebsiteError(err) && ctx.Err() == nil {
@@ -201,7 +201,7 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 			}
 			return nil, "", errors.New("Website response was interrupted")
 		}
-		if len(body) > 1_000_000 {
+		if len(body) > maxWebsitePageBytes {
 			return nil, "", errors.New("Website page exceeds the supported size")
 		}
 		if kind == "" && !strings.Contains(http.DetectContentType(body), "text/html") {
@@ -216,6 +216,8 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 	return nil, "", errors.New("Website retries exhausted")
 }
 
+const maxWebsitePageBytes = 5 * 1024 * 1024
+
 func domWebsiteText(raw string) string {
 	root, err := html.Parse(strings.NewReader(raw))
 	if err != nil {
@@ -229,6 +231,18 @@ func domWebsiteText(raw string) string {
 			case "nav", "footer", "aside", "style", "noscript", "svg", "iframe", "canvas", "form":
 				return
 			case "script":
+				var scriptID, scriptType string
+				for _, a := range n.Attr {
+					if a.Key == "id" {
+						scriptID = a.Val
+					}
+					if a.Key == "type" {
+						scriptType = a.Val
+					}
+				}
+				if scriptID == "amalgam-json" && scriptType == "application/json" && n.FirstChild != nil {
+					out.WriteString(extractCatalogueJSON(n.FirstChild.Data))
+				}
 				for _, a := range n.Attr {
 					if a.Key == "type" && a.Val == "application/ld+json" && n.FirstChild != nil && len(n.FirstChild.Data) < 64000 {
 						var structured any

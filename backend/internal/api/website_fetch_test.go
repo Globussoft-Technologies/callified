@@ -66,7 +66,7 @@ func TestWebsiteHTTPValidation(t *testing.T) {
 		{"access denied", 403, "text/html", "<p>Not authorized</p>"},
 		{"non html", 200, "application/json", "{}"},
 		{"challenge", 200, "text/html", "<title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x'></script>"},
-		{"oversize", 200, "text/html", strings.Repeat("x", 1_000_001)},
+		{"oversize", 200, "text/html", strings.Repeat("x", maxWebsitePageBytes+1)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

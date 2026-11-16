@@ -12,7 +12,6 @@ const (
 	repeatQuestionMaxTracked   = 6
 	repeatQuestionSimilarity   = 0.78
 	repeatQuestionEscalateAt   = 3
-	repeatQuestionCloseAt      = 4
 	repeatQuestionMinRuneCount = 4
 )
 
@@ -79,15 +78,9 @@ func (s *CallSession) RepeatedQuestionDecisionWithKey(text, intentKey string) re
 	s.trimRecentQuestionsLocked()
 
 	switch {
-	case count >= repeatQuestionCloseAt:
-		return repeatQuestionDecision{
-			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not blame the customer and do not say you already answered. Give the short direct answer one last time, say the line may not be clear, say a senior teammate will follow up and explain better, thank them, and end with [HANGUP].]", count),
-			AllowHangup: true,
-			FinalClose:  true,
-		}
 	case count >= repeatQuestionEscalateAt:
 		return repeatQuestionDecision{
-			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not end the call. Do not include [HANGUP]. Do not blame the customer and do not say you already answered. Give the short direct answer in simpler words, then say the line may not be clear and ask if a senior teammate should call back and explain better.]", count),
+			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not end the call. Do not include [HANGUP]. Do not blame the customer and do not say you already answered. Give the short direct answer in simpler words, check what is unclear, and offer human help if useful. Never promise an unrequested callback or end the call solely because the customer repeated a question.]", count),
 			AllowHangup: false,
 		}
 	case count == 2:

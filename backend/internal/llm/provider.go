@@ -28,7 +28,7 @@ Only text inside <SAY> is delivered to the customer.`
 
 const voiceActionProtocol = `
 
-Only when the customer explicitly confirms BOTH the appointment day/date AND an exact clock time, declines, or asks to end the call, call the complete_call function. A day such as "today" or "tomorrow" without a clock time is incomplete: ask for the exact time and do not call complete_call. A request to repeat, clarify, or say something again is never a reason to complete the call. Put the short confirmation and goodbye in spoken_text. Do not write a final reply as normal text in that case.`
+Call complete_call when the configured objective is complete (conversation_completed), the customer is ready to finish after agreeing an appointment, or they explicitly decline or ask to stop. Do not close merely because a date and time were collected. Restate the agreed slot naturally and address outstanding questions first. Do not force another confirmation if the customer already agreed and is clearly ready to finish. A day without an exact clock time is incomplete for a booking; ask only for the missing detail. A request to repeat or clarify is never a reason to complete the call. Postponement is not permanent rejection: respect a request to talk later without insisting on a callback time. Put the short goodbye in spoken_text and do not generate a separate farewell.`
 
 // Provider routes LLM calls to Gemini or Groq and handles streaming sentence splitting.
 // Language "mr" (Marathi) always uses Gemini for better Devanagari support.

@@ -202,9 +202,9 @@ func (h *Handler) livePromptAndTimezone(sess *CallSession) (string, string) {
 	}
 	callNow := time.Now().In(location)
 	prompt := sess.SystemPrompt + fmt.Sprintf(
-		"\n\nCURRENT LOCAL DATE AND TIME: %s (%s). Follow the configured call flow for scheduling. "+
+		"\n\nCURRENT LOCAL DATE AND TIME: %s (%s). Scheduling is optional and applies only when relevant to the configured objective and requested by the customer. "+
 			"Collect both a customer-provided day/date and exact time, asking only for whichever detail is missing. "+
-			"After both are available, complete and confirm the appointment without requesting an extra acknowledgement unless the call flow explicitly requires one. "+
+			"After a slot is mutually agreed, restate the date and time naturally and address outstanding questions before closing. Do not finish merely because date and time were collected, and do not force another confirmation if the customer is already ready to finish. "+
 			"When completing an appointment, pass appointment_date as YYYY-MM-DD and appointment_time as HH:MM in this timezone.",
 		callNow.Format("2006-01-02 15:04"), timezone,
 	)
@@ -240,7 +240,8 @@ func (h *Handler) buildPreparedGeminiCall(initCtx context.Context, data dial.Cal
 	sink := newPreparedGeminiCallbacks()
 	client := realtime.New(realtime.Config{
 		HushEnabled: h.cfg.HushEnabled, HushURL: h.cfg.HushURL,
-		URL: h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
+		InputGainEnabled: h.cfg.GeminiLiveInputGainEnabled,
+		URL:              h.cfg.GeminiLiveURL, APIKey: firstNonEmpty(h.cfg.GeminiLiveAPIKey, h.cfg.GeminiAPIKey),
 		AuthMode: h.cfg.GeminiLiveAuthMode, Model: h.cfg.GeminiLiveModel,
 		Voice: realtime.ResolveVoice(sess.TTSVoiceID, h.cfg.GeminiLiveVoice), SystemPrompt: livePrompt,
 		Language: sess.Language, Greeting: sess.GreetingText,

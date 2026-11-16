@@ -34,8 +34,8 @@ func TestRenderCallMemoryIncludesFields(t *testing.T) {
 
 // The memory block must precede the CALL FLOW questionnaire: confirmed
 // facts established before the script beats an afterthought at the end.
-// With memory + a product questionnaire, the questionnaire must be replaced
-// by the confirm-and-book flow — not rendered alongside it.
+// Returning callers still need the configured topics, with already-known
+// answers supplied by memory rather than a replacement sales questionnaire.
 func TestDefaultPromptPlacesMemoryBeforeCallFlow(t *testing.T) {
 	out := buildDefaultPrompt(promptContext{
 		Language:             "en",
@@ -49,7 +49,7 @@ func TestDefaultPromptPlacesMemoryBeforeCallFlow(t *testing.T) {
 	assert.True(t, memIdx > 0, "memory block missing")
 	assert.True(t, flowIdx > memIdx, "memory block must come before CALL FLOW")
 	assert.Contains(t, out, "CONTINUATION CALL")
-	assert.NotContains(t, out, "QUESTIONNAIRE", "questionnaire must be replaced when memory exists")
+	assert.Contains(t, out, "QUESTIONNAIRE: ask how many users, which sector, how many locations.")
 }
 
 // Without memory the product questionnaire stays untouched.
@@ -77,8 +77,7 @@ func TestDefaultPromptHandlesSemanticRepeatsInMainStreamingTurn(t *testing.T) {
 	assert.Contains(t, out, "REPEATED CUSTOMER QUESTIONS")
 	assert.Contains(t, out, "same question repeatedly")
 	assert.Contains(t, out, "simpler words")
-	assert.Contains(t, out, "third total ask")
-	assert.Contains(t, out, "fourth total ask")
+	assert.Contains(t, out, "do not blame the customer or end the call solely because they asked again")
 }
 
 func TestOtherLeadSourceDoesNotClaimAdEnquiryInAnyLanguage(t *testing.T) {

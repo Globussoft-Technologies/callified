@@ -114,7 +114,7 @@ func processTranscript(ctx context.Context, sess *CallSession, transcript string
 	// paraphrases them aloud to the customer; system-level notes stay silent.
 	var turnNotes []string
 	if sess.ConsumeRecentConfirmedBargeIn(5 * time.Second) {
-		turnNotes = append(turnNotes, "[Customer interrupted while the agent was speaking. If this directly answers the current question, accept it and continue. If not, address it briefly and return to the same unanswered question.]")
+		turnNotes = append(turnNotes, "[Customer interrupted while the agent was speaking. Listen to the full utterance, address their question or concern, and accept any answers or corrections, including answers to later topics. Choose a relevant follow-up or the next needed topic; do not automatically repeat the interrupted question.]")
 	}
 	// Keep repeat protection on the live path deterministic and local. The
 	// previous implementation made a separate, non-streaming LLM request here
@@ -302,6 +302,7 @@ type callHangupper interface {
 // default. Without this, a call whose campaign is configured for SmallestAI
 // but whose default was Sarvam would always synthesise via Sarvam.
 func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHangupper) {
+ttsLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -311,6 +312,10 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 				return
 			}
 			if sentence == "" {
+				if !sess.HangupRequested() && !sess.IsMaxDurationClosing() {
+					continue
+				}
+				epoch := sess.PlaybackEpoch()
 				// HANGUP sentinel: wait for remaining audio then close. Abort if a
 				// barge-in cancels a normal hangup before playback finishes. A
 				// max-duration close is final and cannot be cancelled by late speech.
@@ -319,18 +324,27 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 					zap.Duration("remaining", remaining))
 				waitStart := time.Now()
 				grace := 7 * time.Second
-				if sess.IsFinalClosing() {
+				if sess.IsMaxDurationClosing() {
 					grace = time.Second
+				} else if sess.IsFinalClosing() {
+					grace = 3 * time.Second
 				}
-				deadline := time.After(remaining + grace)
+				deadline := time.NewTimer(remaining + grace)
 				ticker := time.NewTicker(100 * time.Millisecond)
-				defer ticker.Stop()
 				for {
 					select {
 					case <-ctx.Done():
+						ticker.Stop()
+						deadline.Stop()
 						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 						return
-					case <-deadline:
+					case <-deadline.C:
+						if !sess.CommitHangup(epoch) {
+							ticker.Stop()
+							deadline.Stop()
+							continue ttsLoop
+						}
+						ticker.Stop()
 						metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 						if initiator != nil && sess.CallSid != "" {
 							hangupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -347,7 +361,9 @@ func runTTSWorker(ctx context.Context, sess *CallSession, initiator callHanguppe
 						if !sess.HangupRequested() && !sess.IsFinalClosing() {
 							metrics.HangupWait.Observe(time.Since(waitStart).Seconds())
 							sess.Log.Info("hangup: aborted by barge-in")
-							return
+							ticker.Stop()
+							deadline.Stop()
+							continue ttsLoop
 						}
 					}
 				}

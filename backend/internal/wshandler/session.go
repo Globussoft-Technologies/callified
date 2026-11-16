@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/globussoft/callified-backend/internal/audio"
+	"github.com/globussoft/callified-backend/internal/audiodiag"
 	"github.com/globussoft/callified-backend/internal/llm"
 	"github.com/globussoft/callified-backend/internal/metrics"
 	rstore "github.com/globussoft/callified-backend/internal/redis"
@@ -81,7 +82,9 @@ type CallSession struct {
 	maxDurationWaitReply   atomic.Bool
 	maxDurationClosing     atomic.Bool
 	finalCloseReq          atomic.Bool
-	finalCloseAudio        atomic.Bool  // native Live closing audio has started
+	finalCloseAudio        atomic.Bool // native Live closing audio has started
+	closeMu                sync.Mutex
+	closeCommitted         bool
 	bargeInActive          atomic.Bool  // set by VAD-detected speech during TTS; cleared when new LLM response starts
 	bargeInPending         atomic.Bool  // true while waiting for STT confirmation of a barge-in
 	bargeInDeadline        atomic.Int64 // UnixNano; STT must confirm by this time
@@ -155,6 +158,7 @@ type CallSession struct {
 
 	// Voice config — populated after InitializeCall gRPC returns
 	SystemPrompt           string
+	InputDiagnostic        *audiodiag.Capture
 	GreetingText           string
 	TTSProvider            string
 	TTSVoiceID             string
@@ -444,6 +448,8 @@ func (s *CallSession) ConsumeMaxDurationWaitReply() bool {
 	return s.maxDurationWaitReply.CompareAndSwap(true, false)
 }
 func (s *CallSession) RequestMaxDurationClose() {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	s.maxDurationSoftClose.Store(true)
 	s.maxDurationWaitReply.Store(false)
 	s.maxDurationClosing.Store(true)
@@ -452,6 +458,11 @@ func (s *CallSession) RequestMaxDurationClose() {
 }
 func (s *CallSession) IsMaxDurationClosing() bool { return s.maxDurationClosing.Load() }
 func (s *CallSession) RequestFinalClose() {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closeCommitted {
+		return
+	}
 	s.finalCloseReq.Store(true)
 	s.finalCloseAudio.Store(false)
 	s.maxDurationWaitReply.Store(false)

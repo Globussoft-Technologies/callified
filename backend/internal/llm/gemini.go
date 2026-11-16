@@ -395,7 +395,7 @@ func voiceActionTools() []geminiTool {
 	return []geminiTool{{
 		FunctionDeclarations: []geminiFunctionDeclaration{{
 			Name: "complete_call",
-			Description: "Finish the phone call after the customer has explicitly confirmed a demo/appointment time, declined, or asked to end. " +
+			Description: "Finish when the configured objective is complete and the customer is ready to finish, or the customer declines or asks to stop. Do not close merely because scheduling details were collected; address outstanding questions first. " +
 				"Do not call this while another question is needed.",
 			Parameters: map[string]any{
 				"type": "OBJECT",
@@ -406,7 +406,7 @@ func voiceActionTools() []geminiTool {
 					},
 					"outcome": map[string]any{
 						"type": "STRING",
-						"enum": []string{"appointment_booked", "customer_declined", "customer_requested_end"},
+						"enum": []string{"appointment_booked", "conversation_completed", "customer_declined", "customer_requested_end"},
 					},
 				},
 				"required": []string{"spoken_text", "outcome"},

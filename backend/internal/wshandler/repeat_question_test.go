@@ -8,7 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestRepeatedQuestionInstructionEscalatesThenCloses(t *testing.T) {
+func TestRepeatedQuestionInstructionOffersHelpWithoutForcedClose(t *testing.T) {
 	sess := NewCallSession("web_sim_repeat", nil, zap.NewNop())
 
 	first := sess.RepeatedQuestionDecision("What company is this?")
@@ -21,7 +21,7 @@ func TestRepeatedQuestionInstructionEscalatesThenCloses(t *testing.T) {
 
 	third := sess.RepeatedQuestionDecision("What company is this?")
 	assert.Contains(t, third.Instruction, "3 total time")
-	assert.Contains(t, third.Instruction, "senior teammate should call back")
+	assert.Contains(t, third.Instruction, "offer human help")
 	assert.Contains(t, third.Instruction, "Do not include [HANGUP]")
 	assert.Contains(t, third.Instruction, "do not say you already answered")
 	assert.False(t, third.AllowHangup)
@@ -29,11 +29,11 @@ func TestRepeatedQuestionInstructionEscalatesThenCloses(t *testing.T) {
 
 	fourth := sess.RepeatedQuestionDecision("What company is this?")
 	assert.Contains(t, fourth.Instruction, "4 total time")
-	assert.Contains(t, fourth.Instruction, "senior teammate will follow up")
+	assert.Contains(t, fourth.Instruction, "offer human help")
 	assert.Contains(t, fourth.Instruction, "do not say you already answered")
-	assert.Contains(t, fourth.Instruction, "end with [HANGUP]")
-	assert.True(t, fourth.AllowHangup)
-	assert.True(t, fourth.FinalClose)
+	assert.NotContains(t, fourth.Instruction, "end with [HANGUP]")
+	assert.False(t, fourth.AllowHangup)
+	assert.False(t, fourth.FinalClose)
 }
 
 func TestRepeatedQuestionInstructionIgnoresDifferentQuestions(t *testing.T) {
@@ -66,8 +66,8 @@ func TestRepeatedQuestionInstructionGroupsTeluguBiometricsMeaning(t *testing.T) 
 
 	fourth := sess.RepeatedQuestionDecisionWithKey("చెప్పండి, బయోమెట్రిక్స్ అంటే ఏంటి?", intentKey)
 	assert.Contains(t, fourth.Instruction, "4 total time")
-	assert.True(t, fourth.AllowHangup)
-	assert.True(t, fourth.FinalClose)
+	assert.False(t, fourth.AllowHangup)
+	assert.False(t, fourth.FinalClose)
 }
 
 func TestRepeatedQuestionInstructionUsesSemanticIntentAcrossLanguages(t *testing.T) {

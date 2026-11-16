@@ -40,6 +40,8 @@ type Config struct {
 	GroqModel                     string `env:"GROQ_MODEL"        envDefault:"llama-3.3-70b-versatile"`
 	LLMProvider                   string `env:"LLM_PROVIDER"      envDefault:"gemini"`
 	GeminiLiveAudioDiagnosticsDir string `env:"GEMINI_LIVE_AUDIO_DIAGNOSTICS_DIR" envDefault:""`
+	GeminiLiveInputDiagnosticsDir string `env:"GEMINI_LIVE_INPUT_DIAGNOSTICS_DIR" envDefault:""`
+	GeminiLiveInputGainEnabled    bool   `env:"GEMINI_LIVE_INPUT_GAIN_ENABLED" envDefault:"false"`
 	GeminiLiveURL                 string `env:"GEMINI_LIVE_URL"`
 	GeminiLiveAPIKey              string `env:"GEMINI_LIVE_API_KEY" envDefault:""`
 	GeminiLiveAuthMode            string `env:"GEMINI_LIVE_AUTH_MODE" envDefault:"google_api_key"`
