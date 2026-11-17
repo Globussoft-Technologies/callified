@@ -48,14 +48,14 @@ import { useVoice } from './contexts/VoiceContext';
 import { useCall } from './contexts/CallContext';
 import { useHideAiFeatures } from './hooks/useHideAiFeatures';
 import { isCustomerProductionDomain } from './utils/domainFeatures';
-import { dashboardTourKey } from './utils/dashboardTour';
+import { dashboardTourKey, claimFirstLoginTour } from './utils/dashboardTour';
 
 function AdminOnly({ children, userRole }) {
   return (userRole === 'Admin' || userRole === 'SuperAdmin') ? children : <Navigate to="/crm" replace />;
 }
 
 export default function App() {
-  const { authToken, currentUser, apiFetch, logout, loading, permissions, hasPermission } = useAuth();
+  const { authToken, currentUser, apiFetch, logout, loading, permissions, hasPermission, firstLoginTourUserId, consumeFirstLoginTour } = useAuth();
   const { selectedOrg, orgTimezone, orgProducts, orgs, fetchOrgProducts } = useOrg();
   const { activeVoiceProvider, setActiveVoiceProvider, activeVoiceId, setActiveVoiceId, activeLanguage, setActiveLanguage, savedVoiceName, setSavedVoiceName } = useVoice();
   const { dialingId, setDialingId, webCallActive, handleDial, handleWebCall, handleCampaignDial, handleCampaignWebCall } = useCall();
@@ -106,11 +106,12 @@ export default function App() {
   }, [currentUser, userRole]);
 
   useEffect(() => {
-    if (!tourKey || permissions === null || !campaignsReady) return;
-    try {
-      if (localStorage.getItem(tourKey) !== 'done') setTourMode(mode => mode || 'product');
-    } catch { /* tour remains available from the user menu */ }
-  }, [tourKey, permissions, campaignsReady]);
+    if (!tourKey || permissions === null || !campaignsReady || firstLoginTourUserId !== currentUser?.id) return;
+    consumeFirstLoginTour();
+    let storage;
+    try { storage = localStorage; } catch { /* private browsing */ }
+    if (claimFirstLoginTour(storage, tourKey, true)) setTourMode(mode => mode || 'product');
+  }, [tourKey, permissions, campaignsReady, firstLoginTourUserId, currentUser?.id, consumeFirstLoginTour]);
 
   const closeProductTour = useCallback(() => {
     if (tourKey) {

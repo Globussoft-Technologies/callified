@@ -706,6 +706,14 @@ func (s *Server) agentReportXLSX(w http.ResponseWriter, r *http.Request) {
 	// Remove default Sheet1
 	_ = f.DeleteSheet("Sheet1")
 
+	if r.URL.Query().Get("format") == "pdf" {
+		if err := writeReportPDF(w, r, f, fmt.Sprintf("agent_report_%s_to_%s", fromStr, toStr)); err != nil {
+			s.logger.Sugar().Errorw("agentReportPDF", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not generate PDF report")
+		}
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=agent_report_%s_to_%s.xlsx", fromStr, toStr))
 	if _, err := f.WriteTo(w); err != nil {

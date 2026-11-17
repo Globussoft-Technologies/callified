@@ -60,19 +60,21 @@ type CallDisposition struct {
 }
 
 type AICallDisposition struct {
-	OrgID        int64
-	CampaignID   int64
-	LeadID       int64
-	CallLogID    int64
-	TranscriptID int64
-	CallSid      string
-	AgentUserID  int64
-	Code         string
-	Summary      string
-	Sentiment    string
-	Confidence   float64
-	Objections   string
-	NextAction   string
+	// Carrier-only failures are history entries, not changes to lead progress.
+	PreserveLeadStatus bool
+	OrgID              int64
+	CampaignID         int64
+	LeadID             int64
+	CallLogID          int64
+	TranscriptID       int64
+	CallSid            string
+	AgentUserID        int64
+	Code               string
+	Summary            string
+	Sentiment          string
+	Confidence         float64
+	Objections         string
+	NextAction         string
 }
 
 func (d *DB) EnsureDispositionTables() error {
@@ -245,7 +247,16 @@ func (d *DB) SaveAICallDisposition(value AICallDisposition) error {
 	if err != nil {
 		return err
 	}
-	return d.CompleteCallingLead(value.OrgID, value.LeadID, value.CallSid, leadStatusForCallDisposition(value.Code))
+	if value.PreserveLeadStatus || value.OrgID <= 0 || value.LeadID <= 0 || value.CallSid == "" {
+		return nil
+	}
+	var effectiveCode string
+	if err := d.pool.QueryRow(`SELECT COALESCE(NULLIF(final_disposition_code,''), ai_disposition_code)
+		FROM call_dispositions WHERE org_id=? AND lead_id=? AND call_sid=? ORDER BY id DESC LIMIT 1`,
+		value.OrgID, value.LeadID, value.CallSid).Scan(&effectiveCode); err != nil {
+		return err
+	}
+	return d.CompleteCallingLead(value.OrgID, value.LeadID, value.CallSid, leadStatusForCallDisposition(effectiveCode))
 }
 
 func scanCallDisposition(row interface{ Scan(...any) error }) (*CallDisposition, error) {
@@ -322,6 +333,10 @@ func (d *DB) OverrideCallDisposition(orgID, transcriptID, userID int64, code, su
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	current.EffectiveCode = code
+	if err := d.SyncCallDispositionLeadStatus(current); err != nil {
+		return nil, err
+	}
 	return d.GetCallDispositionByTranscript(orgID, transcriptID)
 }
 
@@ -347,7 +362,7 @@ func (d *DB) SaveSystemDispositionByCallSid(callSid, code, summary string) error
 		}
 		return err
 	}
-	return d.SaveAICallDisposition(AICallDisposition{OrgID: orgID, CampaignID: campaignID, LeadID: leadID,
+	return d.SaveAICallDisposition(AICallDisposition{PreserveLeadStatus: true, OrgID: orgID, CampaignID: campaignID, LeadID: leadID,
 		CallLogID: callLogID, CallSid: callSid, AgentUserID: agentUserID, Code: code, Summary: summary,
 		Sentiment: "neutral", Confidence: 1, NextAction: "Review the call outcome and retry when appropriate."})
 }

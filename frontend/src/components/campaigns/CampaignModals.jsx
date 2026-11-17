@@ -652,7 +652,7 @@ export default function CampaignModals({
               <div className="form-group">
                 <label>Phone</label>
                 <input className="form-input" value={editForm.phone}
-                  inputMode="tel"
+                  inputMode="tel" type="tel" maxLength={20} title={PHONE_VALIDATION_MESSAGE}
                   onChange={e => { setEditForm({...editForm, phone: e.target.value}); setEditErrors(prev => ({...prev, phone: ''})); }}
                   style={editErrors.phone ? {borderColor: '#ef4444'} : {}} />
                 {editErrors.phone && <span style={{color: '#ef4444', fontSize: '0.75rem', marginTop: 4}}>{editErrors.phone}</span>}

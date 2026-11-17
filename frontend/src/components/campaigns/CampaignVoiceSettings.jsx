@@ -1,4 +1,5 @@
 import React from 'react';
+import { geminiCampaignVoice } from '../../utils/campaignVoice';
 import { InfoCircleOutlined, SoundOutlined } from '@ant-design/icons';
 import AppSelect from '../common/AppSelect';
 import { INDIAN_LANGUAGES, INDIAN_VOICES, VOICE_RECOMMENDATIONS } from '../../constants/voices';
@@ -18,9 +19,11 @@ function voiceOptions(provider, language) {
 }
 
 export default function CampaignVoiceSettings({ voice, onChange, canSave = false, saveStatus, onSave, onReset, tourExample = false }) {
+  const needsSave = Boolean(voice.tts_provider && voice.tts_provider !== 'gemini_live');
+  voice = geminiCampaignVoice(voice);
   const provider = voice.tts_provider;
   const maxMinutes = Number(voice.max_call_duration_seconds || 0) / 60;
-  const providerLabel = provider === 'elevenlabs' ? 'ElevenLabs' : provider === 'sarvam' ? 'Sarvam AI' : provider === 'gemini_live' ? 'Gemini Live' : 'Smallest AI';
+  const providerLabel = 'Gemini Live';
   const voiceLabel = (INDIAN_VOICES[provider] || []).find(v => v.id === voice.tts_voice_id)?.name || voice.tts_voice_id || 'none';
   const langLabel = INDIAN_LANGUAGES.find(l => l.code === voice.tts_language)?.name || voice.tts_language;
   return <div data-tour={tourExample ? undefined : 'campaign-voice-settings'} className="campaign-voice-settings-panel" style={{ background: 'var(--surface-raised)', border: `1px solid ${T.border}`, borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', marginBottom: 16, padding: '14px 18px' }}>
@@ -42,7 +45,8 @@ export default function CampaignVoiceSettings({ voice, onChange, canSave = false
       {(canSave || tourExample) && <button type="button" style={{ background: saveStatus === 'saved' ? T.green : saveStatus === 'error' ? T.red : T.accent, border: 'none', color: '#fff', fontSize: 12, padding: '6px 14px', borderRadius: 8, cursor: saveStatus === 'saving' ? 'wait' : 'pointer', whiteSpace: 'nowrap', opacity: saveStatus === 'saving' ? 0.7 : 1, fontWeight: 600, fontFamily: T.font }} disabled={saveStatus === 'saving'} onClick={onSave}>{saveStatus === 'saving' ? 'Saving…' : saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'error' ? '✗ Failed' : 'Save'}</button>}
       {(canSave || tourExample) && <button type="button" style={{ background: 'var(--surface-raised)', border: `1px solid ${T.border}`, color: 'var(--text-secondary)', borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 600, fontFamily: T.font }} onClick={onReset}>Reset to Org Default</button>}
     </div>
-    <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>{provider ? `Current: ${providerLabel} - ${voiceLabel}${langLabel ? ` (${langLabel})` : ''}${maxMinutes > 0 ? ` · Max call time ${Math.round(maxMinutes)} min` : ' · No max limit'}` : 'Using org default'}</div>
+    <div style={{ fontSize: '0.7rem', color: T.accent, marginTop: 6 }}>{provider ? `Selected: ${providerLabel} - ${voiceLabel}${langLabel ? ` (${langLabel})` : ''}${maxMinutes > 0 ? ` · Max call time ${Math.round(maxMinutes)} min` : ' · No max limit'}` : 'Using org default'}</div>
+    {needsSave && <div style={{ fontSize: '0.7rem', color: T.muted, marginTop: 4 }}>Save to apply Gemini Live to this campaign.</div>}
     {VOICE_RECOMMENDATIONS[voice.tts_language]?.[provider]?.note && <div style={{ fontSize: '0.65rem', color: '#0891b2', marginTop: 4 }}><InfoCircleOutlined /> {VOICE_RECOMMENDATIONS[voice.tts_language][provider].note}</div>}
   </div>;
 }

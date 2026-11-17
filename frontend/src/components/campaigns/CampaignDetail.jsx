@@ -13,6 +13,7 @@ import CampaignVoiceSettings from './CampaignVoiceSettings';
 import CampaignDetailTabs from './CampaignDetailTabs';
 import DispositionSettingsModal from './DispositionSettingsModal';
 import CampaignSummary from './CampaignSummary';
+import CallDateRangeFilter from './CallDateRangeFilter';
 import { Checkbox } from 'antd';
 import {
   BarChartOutlined,
@@ -117,7 +118,7 @@ function toUTCActivityDate(value) {
 function currentLocalDateTime() {
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  return now.toISOString().slice(0, 16);
+  return now.toISOString().slice(0, 19);
 }
 
 function mergeProviderAccount(accounts, account) {
@@ -541,7 +542,6 @@ export default function CampaignDetail({
   const [execFilter, setExecFilter] = useState([]);
   const [scheduleFrom, setScheduleFrom] = useState('');
   const [scheduleTo, setScheduleTo] = useState('');
-  const activityDateMax = detailTab === 'leads' ? undefined : currentLocalDateTime();
   const handleDetailTabChange = (tabId) => {
     if (tabId !== 'leads') {
       const max = currentLocalDateTime();
@@ -648,8 +648,8 @@ export default function CampaignDetail({
       limit: PAGE_SIZE,
       search: leadSearch.trim(),
       executiveIds: execFilter,
-      scheduledFrom: scheduleFrom,
-      scheduledTo: scheduleTo,
+      calledFrom: toUTCActivityDate(scheduleFrom),
+      calledTo: toUTCActivityDate(scheduleTo),
     });
   }, [selectedCampaign?.id, currentPage, leadSearch, execFilter, scheduleFrom, scheduleTo, fetchCampaignLeads]);
 
@@ -746,8 +746,8 @@ export default function CampaignDetail({
         params.set('limit', String(Math.min(batchSize, targetTotal - selected.length)));
         if (leadSearch.trim()) params.set('search', leadSearch.trim());
         if (execFilter?.length) params.set('executive_ids', execFilter.join(','));
-        if (scheduleFrom) params.set('scheduled_from', scheduleFrom);
-        if (scheduleTo) params.set('scheduled_to', scheduleTo);
+        if (scheduleFrom) params.set('from', toUTCActivityDate(scheduleFrom));
+        if (scheduleTo) params.set('to', toUTCActivityDate(scheduleTo));
         const res = await apiFetch(`${API_URL}/campaigns/${currentCampaignId}/leads?${params.toString()}`);
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Failed to select leads (${res.status})`);
@@ -793,7 +793,7 @@ export default function CampaignDetail({
     setBulkAssigning(true);
     try {
       const payload = bulkSelectAll
-        ? { all: true, executive_id: execId, search: leadSearch.trim(), scheduled_from: scheduleFrom, scheduled_to: scheduleTo }
+        ? { all: true, executive_id: execId, search: leadSearch.trim(), from: toUTCActivityDate(scheduleFrom), to: toUTCActivityDate(scheduleTo) }
         : { lead_ids: Array.from(bulkSelectedIds), executive_id: execId };
       const res = await apiFetch(`${API_URL}/campaigns/${currentCampaignId}/leads/executive`, {
         method: 'PUT',
@@ -2106,46 +2106,12 @@ export default function CampaignDetail({
             notFoundContent="No executives found"
           />
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            type="datetime-local"
-            value={scheduleFrom}
-            max={activityDateMax}
-            onChange={e => {
-              const value = e.target.value;
-              if (!activityDateMax || !value || value <= activityDateMax) setScheduleFrom(value);
-            }}
-            style={{
-              padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
-              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
-            }}
-          />
-          <span style={{ color: T.muted, fontSize: 12, fontWeight: 600 }}>to</span>
-          <input
-            type="datetime-local"
-            value={scheduleTo}
-            max={activityDateMax}
-            onChange={e => {
-              const value = e.target.value;
-              if (!activityDateMax || !value || value <= activityDateMax) setScheduleTo(value);
-            }}
-            style={{
-              padding: '7px 10px', border: `1px solid ${T.border}`, borderRadius: 8,
-              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff', outline: 'none'
-            }}
-          />
-          <button
-            onClick={() => { setScheduleFrom(''); setScheduleTo(''); }}
-            disabled={!scheduleFrom && !scheduleTo}
-            style={{
-              padding: '7px 12px', border: `1px solid ${T.border}`, borderRadius: 8,
-              fontSize: 12, fontFamily: T.font, color: T.text, background: '#fff',
-              cursor: (!scheduleFrom && !scheduleTo) ? 'not-allowed' : 'pointer',
-              opacity: (!scheduleFrom && !scheduleTo) ? 0.5 : 1,
-            }}>
-            Clear
-          </button>
-        </div>
+        <CallDateRangeFilter
+          key={selectedCampaign.id}
+          from={scheduleFrom}
+          to={scheduleTo}
+          onChange={(from, to) => { setScheduleFrom(from); setScheduleTo(to); }}
+        />
       </div>
 
       {/* Call Log Tab — WhatsApp notice */}

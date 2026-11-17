@@ -19,7 +19,9 @@ export function stripPhoneDigits(phone) {
  * Returns '' if the input is not a valid Indian phone number.
  */
 export function normalizePhone(phone) {
-  let digits = stripPhoneDigits(phone);
+  const input = (phone || '').trim();
+  if (!/^\+?[0-9 ()-]+$/.test(input) || (input.startsWith('+') && !input.startsWith('+91'))) return '';
+  let digits = stripPhoneDigits(input);
 
   if (digits.startsWith('0')) {
     digits = digits.slice(1);

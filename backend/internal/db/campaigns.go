@@ -473,6 +473,32 @@ type CampaignLeadsFilter struct {
 	Search        string
 	ScheduledFrom string // ISO datetime or empty
 	ScheduledTo   string // ISO datetime or empty
+	CalledFrom    string // UTC MySQL datetime or empty
+	CalledTo      string // UTC MySQL datetime or empty
+}
+
+// EXISTS keeps each lead unique even when it has multiple calls in the range.
+// Include both call logs and transcripts to cover failed and simulated calls.
+func campaignLeadCallDateClause(filter CampaignLeadsFilter) (string, []any) {
+	if filter.CalledFrom == "" && filter.CalledTo == "" {
+		return "", nil
+	}
+	var clauses []string
+	var args []any
+	for _, table := range []string{"call_logs", "call_transcripts"} {
+		clause := "EXISTS (SELECT 1 FROM " + table + " call_date WHERE call_date.org_id=l.org_id AND call_date.lead_id=l.id AND call_date.campaign_id=?"
+		args = append(args, filter.CampaignID)
+		if filter.CalledFrom != "" {
+			clause += " AND call_date.created_at>=?"
+			args = append(args, filter.CalledFrom)
+		}
+		if filter.CalledTo != "" {
+			clause += " AND call_date.created_at<=?"
+			args = append(args, filter.CalledTo)
+		}
+		clauses = append(clauses, clause+")")
+	}
+	return " AND (" + strings.Join(clauses, " OR ") + ")", args
 }
 
 // GetCampaignLeadsPaginated returns one page of campaign leads with call stats.
@@ -529,6 +555,9 @@ func (d *DB) GetCampaignLeadsPaginated(filter CampaignLeadsFilter, limit, offset
 	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
 		q += ` AND pc.scheduled_at IS NOT NULL`
 	}
+	callClause, callArgs := campaignLeadCallDateClause(filter)
+	q += callClause
+	args = append(args, callArgs...)
 	q += ` ORDER BY l.created_at DESC, l.id DESC`
 	if limit > 0 {
 		q += ` LIMIT ? OFFSET ?`
@@ -577,6 +606,9 @@ func (d *DB) CountCampaignLeads(filter CampaignLeadsFilter) (int64, error) {
 	if filter.ScheduledFrom != "" || filter.ScheduledTo != "" {
 		q += ` AND pc.scheduled_at IS NOT NULL`
 	}
+	callClause, callArgs := campaignLeadCallDateClause(filter)
+	q += callClause
+	args = append(args, callArgs...)
 	var n int64
 	err := d.pool.QueryRow(q, args...).Scan(&n)
 	return n, err

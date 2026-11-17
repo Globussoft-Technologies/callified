@@ -170,6 +170,9 @@ func writeUserDetailExport(w http.ResponseWriter, r *http.Request, data db.UserD
 	}
 
 	_ = f.DeleteSheet("Sheet1")
+	if r.URL.Query().Get("format") == "pdf" {
+		return writeReportPDF(w, r, f, fmt.Sprintf("user_%d_details", data.Profile.ID))
+	}
 	buffer, err := f.WriteToBuffer()
 	if err != nil {
 		return err

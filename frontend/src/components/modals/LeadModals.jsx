@@ -1,5 +1,7 @@
 import React from 'react';
 import AppSelect from '../common/AppSelect';
+import { isValidPhone, PHONE_VALIDATION_MESSAGE } from '../../utils/phone';
+const validatePhoneInput = event => { const input = event.currentTarget; input.setCustomValidity(!input.value || isValidPhone(input.value) ? '' : PHONE_VALIDATION_MESSAGE); };
 
 const sourceOptions = ['manual', 'facebook', 'google', 'instagram', 'linkedin', 'website', 'referral', 'cold', 'other']
   .map(source => ({
@@ -37,7 +39,7 @@ export default function LeadModals({
               </div>
               <div className="form-group">
                 <label>Phone Number</label>
-                <input data-testid="lead-phone" name="phone" className="form-input" required type="tel" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="+917406317771" />
+                <input data-testid="lead-phone" name="phone" className="form-input" required type="tel" inputMode="tel" maxLength={20} title={PHONE_VALIDATION_MESSAGE} onInput={validatePhoneInput} value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} placeholder="+917406317771" />
               </div>
               <div className="form-group">
                 <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>
@@ -82,7 +84,7 @@ export default function LeadModals({
               </div>
               <div className="form-group">
                 <label>Phone Number</label>
-                <input name="phone" className="form-input" required type="tel" value={editFormData.phone} onChange={e => setEditFormData({...editFormData, phone: e.target.value})} />
+                <input name="phone" className="form-input" required type="tel" inputMode="tel" maxLength={20} title={PHONE_VALIDATION_MESSAGE} onInput={validatePhoneInput} value={editFormData.phone} onChange={e => setEditFormData({...editFormData, phone: e.target.value})} />
               </div>
               <div className="form-group">
                 <label>Company <span style={{color: '#64748b', fontSize: '0.8rem'}}>(Optional)</span></label>

@@ -7,9 +7,11 @@ import CampaignOverview from '../campaigns/CampaignOverview';
 import { CAMPAIGN_TEMPLATES } from '../../constants/campaignTemplates';
 import AppIcon from '../common/AppIcon';
 import { useAuth } from '../../contexts/AuthContext';
+import { geminiCampaignVoice } from '../../utils/campaignVoice';
 import { normalizePhone } from '../../utils/phone';
 import { isAdmin } from '../../utils/roles';
 import { useTheme } from '../../contexts/ThemeContext';
+import useLeadStatusRefresh from '../../hooks/useLeadStatusRefresh';
 
 export default function CampaignsTab({
   campaigns, fetchCampaigns, orgProducts,
@@ -30,6 +32,7 @@ export default function CampaignsTab({
   const [autoOpened, setAutoOpened] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState(null);
   const [campaignLeads, setCampaignLeads] = useState([]);
+  useLeadStatusRefresh(setCampaignLeads, apiFetch, API_URL, selectedCampaign?.id);
   const [campaignLeadsTotal, setCampaignLeadsTotal] = useState(0);
   const [callLog, setCallLog] = useState([]);
   const [detailTab, setDetailTab] = useState('leads'); // 'leads' or 'calllog'
@@ -194,8 +197,8 @@ export default function CampaignsTab({
       params.set('limit', String(opts.limit || 100));
       if (opts.search) params.set('search', opts.search);
       if (opts.executiveIds?.length) params.set('executive_ids', opts.executiveIds.join(','));
-      if (opts.scheduledFrom) params.set('scheduled_from', opts.scheduledFrom);
-      if (opts.scheduledTo) params.set('scheduled_to', opts.scheduledTo);
+      if (opts.calledFrom) params.set('from', opts.calledFrom);
+      if (opts.calledTo) params.set('to', opts.calledTo);
       const res = await apiFetch(`${API_URL}/campaigns/${campaignId}/leads?${params.toString()}`);
       if (!res.ok) { setCampaignLeads([]); setCampaignLeadsTotal(0); return; }
       const data = await res.json();
@@ -248,12 +251,13 @@ export default function CampaignsTab({
     if (!selectedCampaign) return;
     setCampVoiceSaveStatus('saving');
     try {
+      const settings = geminiCampaignVoice(campVoice);
       const res = await apiFetch(`${API_URL}/campaigns/${selectedCampaign.id}/voice-settings`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          tts_provider: campVoice.tts_provider,
-          tts_voice_id: campVoice.tts_voice_id,
-          tts_language: campVoice.tts_language,
+          tts_provider: settings.tts_provider,
+          tts_voice_id: settings.tts_voice_id,
+          tts_language: settings.tts_language,
           max_call_duration_seconds: Number(campVoice.max_call_duration_seconds || 0),
         })
       });
@@ -262,6 +266,7 @@ export default function CampaignsTab({
         setTimeout(() => setCampVoiceSaveStatus(''), 3000);
         return;
       }
+      setCampVoice(settings);
       setCampVoiceSaveStatus('saved');
       setTimeout(() => setCampVoiceSaveStatus(''), 2000);
     } catch { setCampVoiceSaveStatus('error');
@@ -646,7 +651,7 @@ export default function CampaignsTab({
         return;
       }
       const data = await res.json().catch(() => ({}));
-      const errMsg = data.error || data.message || '';
+      const errMsg = res.status === 403 ? 'You do not have permission to edit this lead. Please ask your admin.' : data.error || data.message || '';
       if (data.fields) {
         setEditErrors(data.fields);
         toast(errMsg || 'validation failed');

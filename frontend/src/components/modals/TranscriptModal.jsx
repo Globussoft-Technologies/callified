@@ -4,6 +4,7 @@ import AuthAudio from '../AuthAudio';
 import { useAuth } from '../../contexts/AuthContext';
 import { API_URL } from '../../constants/api';
 import AppIcon from '../common/AppIcon';
+import { LEAD_STATUS_CHANGED } from '../../hooks/useLeadStatusRefresh';
 
 const T = {
   bg: 'var(--page-bg)', card: 'var(--surface-raised)', border: 'var(--border)',
@@ -49,7 +50,7 @@ function extractAgentName(turns) {
 
 // ConclusionCard — fetches AI conclusion lazily per transcript.
 // POST /api/transcripts/{id}/conclusion (cached; ?force=1 to regenerate).
-function ConclusionCard({ transcriptId, turns, recordingUrl }) {
+function ConclusionCard({ transcriptId, leadId, turns, recordingUrl }) {
   const { apiFetch } = useAuth();
   const [state, setState] = useState({ status: 'idle', review: null, error: '' });
   const [disposition, setDisposition] = useState(null);
@@ -71,8 +72,9 @@ function ConclusionCard({ transcriptId, turns, recordingUrl }) {
         const body = await res.json();
         setDisposition(body.disposition || null);
         setOptions(Array.isArray(body.options) ? body.options : []);
+        if (leadId) window.dispatchEvent(new CustomEvent(LEAD_STATUS_CHANGED, { detail: { leadId } }));
       });
-  }, [apiFetch, transcriptId]);
+  }, [apiFetch, transcriptId, leadId]);
 
   const fetchConclusion = useCallback((force = false) => {
     if (!transcriptId) return;
@@ -174,6 +176,7 @@ function ConclusionCard({ transcriptId, turns, recordingUrl }) {
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
       setDisposition(body);
       setEditing(false);
+      if (leadId) window.dispatchEvent(new CustomEvent(LEAD_STATUS_CHANGED, { detail: { leadId } }));
     } catch (error) {
       setState((current) => ({ ...current, error: error.message || 'Could not save disposition' }));
     } finally {
@@ -281,7 +284,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
   const close = () => setTranscriptLead(null);
 
   return (
-    <div className="modal-overlay transcript-modal" onClick={e => { if (e.target === e.currentTarget) close(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+    <div className="modal-overlay transcript-modal" onClick={e => { if (e.target === e.currentTarget) close(); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); close(); } }}>
       <div style={{
         position: 'relative',
         background: T.card,
@@ -405,6 +408,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                   {t.id && (
                     <ConclusionCard
                       transcriptId={t.id}
+                      leadId={transcriptLead.id}
                       turns={(Array.isArray(t.transcript) ? t.transcript : []).filter(turn => turn.role !== 'system')}
                       recordingUrl={t.recording_url}
                     />

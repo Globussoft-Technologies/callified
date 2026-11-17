@@ -1,4 +1,6 @@
+import { Dropdown } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
+import { reportFilename } from '../../utils/reportFilename';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
 import AppIcon from '../common/AppIcon';
@@ -166,10 +168,10 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
     setActiveTab('leads');
   };
 
-  const downloadDetails = async () => {
+  const downloadDetails = async (format = 'xlsx') => {
     setDownloading(true); setDownloadError('');
     try {
-      const params = new URLSearchParams({ download: '1' });
+      const params = new URLSearchParams({ download: '1', format });
       if (range?.from) params.set('from', range.from);
       if (range?.to) params.set('to', range.to);
       if (leadsCampaignId) params.set('campaign_id', leadsCampaignId);
@@ -177,7 +179,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
       if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `HTTP ${res.status}`); }
       const url = URL.createObjectURL(await res.blob());
       const link = document.createElement('a');
-      link.href = url; link.download = `user_${userId}_details.xlsx`;
+      link.href = url; link.download = reportFilename({ name: profile.full_name || profile.email || `User_${userId}`, role: profile.role, from: range?.from, to: range?.to, campaign: leadsCampaignId ? `Campaign_${leadsCampaignId}` : '', format });
       document.body.appendChild(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) { setDownloadError(err.message || 'Download failed'); }
@@ -485,9 +487,9 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
             <div style={{ marginTop: 8 }}><Badge>{profile.role || '-'}</Badge>{organizationScope && <span style={{ marginLeft: 8, fontSize: 12, color: T.muted }}>Organization-wide records</span>}</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {hasPermission('reports.download') && <button type="button" onClick={downloadDetails} disabled={loading || !data || downloading} style={btnGhost}>
-              {downloading ? 'Downloading…' : 'Download Excel'}
-            </button>}
+            {hasPermission('reports.download') && <Dropdown trigger={['click']} menu={{ items: [{ key: 'xlsx', label: 'Excel' }, { key: 'pdf', label: 'PDF' }], onClick: ({ key }) => downloadDetails(key) }} disabled={loading || !data || downloading}><button type="button" disabled={loading || !data || downloading} style={btnGhost}>
+              {downloading ? 'Downloading…' : 'Download ▾'}
+            </button></Dropdown>}
             <button onClick={onClose} aria-label="Close" title="Close" style={{ ...btnGhost, padding: '6px 10px' }}><AppIcon name="close" /></button>
           </div>
         </div>

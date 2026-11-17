@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CloseOutlined, DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons';
 
 const fallbackColor = '#64748b';
+const draftOptions = options => options.map(option => ({ ...option, _rowKey: crypto.randomUUID() }));
 
 export default function DispositionSettingsModal({ open, onClose, campaignId, apiFetch, apiUrl, toast }) {
   const [options, setOptions] = useState([]);
@@ -17,7 +18,7 @@ export default function DispositionSettingsModal({ open, onClose, campaignId, ap
       const response = await apiFetch(`${apiUrl}/campaigns/${campaignId}/dispositions`);
       const body = await response.json().catch(() => []);
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-      setOptions(Array.isArray(body) ? body : []);
+      setOptions(draftOptions(Array.isArray(body) ? body : []));
     } catch (requestError) {
       setError(requestError.message || 'Could not load disposition options');
     } finally {
@@ -31,20 +32,25 @@ export default function DispositionSettingsModal({ open, onClose, campaignId, ap
   const change = (index, key, value) => setOptions((current) => current.map((option, optionIndex) => (
     optionIndex === index ? { ...option, [key]: value } : option
   )));
-  const add = () => setOptions((current) => [...current, {
-    code: `custom_${current.length + 1}`, label: 'New disposition', color: fallbackColor,
-    sort_order: (current.length + 1) * 10, is_active: true,
-  }]);
+  const add = () => setOptions(current => {
+    const key = crypto.randomUUID();
+    return [...current, {
+      _rowKey: key, code: `custom_${key.replaceAll('-', '')}`, label: 'New disposition', color: fallbackColor,
+      sort_order: (current.length + 1) * 10, is_active: true,
+    }];
+  });
   const save = async () => {
     setSaving(true);
     setError('');
     try {
+      const codes = options.map(option => option.code.trim());
+      if (codes.some(code => !code) || new Set(codes).size !== codes.length) throw new Error('Each outcome needs a unique, non-empty code.');
       const response = await apiFetch(`${apiUrl}/campaigns/${campaignId}/dispositions`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ options }),
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ options: options.map(option => { const payload = { ...option }; delete payload._rowKey; return payload; }) }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
-      setOptions(Array.isArray(body) ? body : options);
+      setOptions(Array.isArray(body) ? draftOptions(body) : options);
       toast('Disposition options saved');
       onClose();
     } catch (requestError) {
@@ -66,7 +72,7 @@ export default function DispositionSettingsModal({ open, onClose, campaignId, ap
         </header>
         <div className="disposition-settings-body">
           {loading ? <div className="disposition-settings-empty">Loading options…</div> : options.map((option, index) => (
-            <div className="disposition-option-row" key={option.code || index}>
+            <div className="disposition-option-row" key={option._rowKey}>
               <input type="color" value={option.color || fallbackColor} onChange={(event) => change(index, 'color', event.target.value)} aria-label={`${option.label} color`} />
               <label><span>Label</span><input className="form-input" value={option.label} maxLength={100} onChange={(event) => change(index, 'label', event.target.value)} /></label>
               <label><span>Code</span><input className="form-input" value={option.code} maxLength={64} onChange={(event) => change(index, 'code', event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))} /></label>

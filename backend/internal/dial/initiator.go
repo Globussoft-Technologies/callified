@@ -134,7 +134,6 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if ocErr != nil {
 			return "", fmt.Errorf("check calling credits: %w", ocErr)
 		} else if !oc.CanStartCall() {
-			_ = i.db.UpdateLeadStatus(data.LeadID, "Insufficient Credits")
 			i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone,
 				"failed", ErrInsufficientCredits.Error())
 			return "", ErrInsufficientCredits
@@ -312,7 +311,12 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		if provider == "tata" || provider == "smartflo" || provider == "tata_tele" {
 			i.store.ReleaseTataDial(ctx, pending)
 		}
-		_ = i.db.UpdateLeadStatus(data.LeadID, fmt.Sprintf("Call Failed (%s)", provider))
+		if provider != "plivo" {
+			if _, logErr := i.db.SaveCallLog(data.LeadID, data.CampaignID, data.OrgID, data.UserID, "", provider, data.LeadPhone, "failed"); logErr != nil {
+				i.log.Warn("dial: save failed attempt", zap.Error(logErr))
+			}
+		}
+		_ = i.db.IncrLeadDialAttempts(data.LeadID)
 		// Live-feed: surface the dial-time failure (bad params, provider
 		// rejected, etc.) on the campaign detail page.
 		i.store.EmitCampaignEvent(ctx, data.CampaignID, data.LeadName, data.LeadPhone, "failed", fmt.Sprintf("%s: %v", provider, err))
@@ -338,7 +342,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		}
 	}
 	_ = i.db.IncrLeadDialAttempts(data.LeadID)
-	_ = i.db.UpdateLeadStatus(data.LeadID, "Calling")
+	// Dial progress belongs to call_logs; preserve the lead's business status.
 
 	i.log.Info("call initiated",
 		zap.String("provider", provider),

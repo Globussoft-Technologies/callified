@@ -1,6 +1,8 @@
+import { Dropdown } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
 import { DatePicker } from 'antd';
 import dayjs from 'dayjs';
+import { reportFilename } from '../utils/reportFilename';
 import { useToast } from '../contexts/UIContext';
 import UserDetailModal from '../components/modals/UserDetailModal';
 import AppSelect from '../components/common/AppSelect';
@@ -191,10 +193,10 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
     return () => { cancelled = true; };
   }, [apiFetch, API_URL, range.from, range.to, campaignId]);
 
-  const handleDownload = async () => {
+  const handleDownload = async (format = 'xlsx') => {
     setDownloading(true);
     try {
-      const params = new URLSearchParams({ from: range.from, to: range.to });
+      const params = new URLSearchParams({ from: range.from, to: range.to, format });
       if (campaignId) params.set('campaign_id', campaignId);
       const res = await apiFetch(`${API_URL}/analytics/agent-report?${params.toString()}`);
       if (!res.ok) {
@@ -205,7 +207,7 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objectUrl;
-      a.download = `agent_report_${range.from}_to_${range.to}.xlsx`;
+      a.download = reportFilename({ name: 'Agent_Performance', from: range.from, to: range.to, campaign: campaignId ? campaigns.find(campaign => String(campaign.id) === String(campaignId))?.name || `Campaign_${campaignId}` : 'All_Campaigns', format });
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -226,9 +228,11 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
             Review calls, recordings, outcomes, and appointments by agent and campaign.
           </p>
         </div>
-        <button onClick={handleDownload} disabled={downloading} style={{ ...btnPrimary, opacity: downloading ? 0.65 : 1 }}>
-          {downloading ? 'Downloading...' : 'Download Excel'}
+        <Dropdown trigger={['click']} menu={{ items: [{ key: 'xlsx', label: 'Excel' }, { key: 'pdf', label: 'PDF' }], onClick: ({ key }) => handleDownload(key) }} disabled={downloading}>
+        <button disabled={downloading} style={{ ...btnPrimary, opacity: downloading ? 0.65 : 1 }}>
+          {downloading ? 'Downloading...' : 'Download ▾'}
         </button>
+        </Dropdown>
       </div>
 
       <div style={{ ...card, padding: 18, marginBottom: 18 }}>
