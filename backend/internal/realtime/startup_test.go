@@ -33,6 +33,36 @@ func liveTestConnection(t *testing.T, send func(*websocket.Conn)) *websocket.Con
 	return conn
 }
 
+func TestLiveTurnEventsDoNotInjectClientContent(t *testing.T) {
+	for _, event := range []string{"interrupted", "turnComplete"} {
+		t.Run(event, func(t *testing.T) {
+			outbound := make(chan error, 1)
+			conn := liveTestConnection(t, func(peer *websocket.Conn) {
+				_ = peer.WriteJSON(map[string]any{"serverContent": map[string]any{event: true}})
+				_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+				_, _, err := peer.ReadMessage()
+				outbound <- err
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			callback := false
+			client := New(Config{Language: "kn"}, Callbacks{
+				OnInterrupted:  func() { callback = true; cancel() },
+				OnTurnComplete: func() { callback = true; cancel() },
+			})
+			_ = client.receive(ctx, conn, make(chan struct{}), time.Now())
+			if !callback {
+				t.Fatal("turn callback was not delivered")
+			}
+			if err := <-outbound; err == nil {
+				t.Fatal("turn event injected unsolicited client content")
+			} else if timeout, ok := err.(interface{ Timeout() bool }); !ok || !timeout.Timeout() {
+				t.Fatalf("expected read timeout, got %v", err)
+			}
+		})
+	}
+}
+
 func TestLiveSetupTimeoutIsDiagnosable(t *testing.T) {
 	conn := liveTestConnection(t, func(*websocket.Conn) {})
 	_ = conn.SetReadDeadline(time.Now().Add(25 * time.Millisecond))
