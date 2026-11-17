@@ -63,9 +63,10 @@ func TestBuildLiveSystemPromptMakesGeminiSpeakLegacyTTSGreeting(t *testing.T) {
 	got := buildLiveSystemPrompt(prompt, "en")
 
 	assert.NotContains(t, got, "already spoken by TTS")
-	assert.Contains(t, got, "Opening: speak the exact clientContent greeting once, then confirm")
+	assert.Contains(t, got, "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE, then confirm")
 	assert.Contains(t, got, "There is no separate TTS greeting in a Gemini Live call")
-	assert.Contains(t, got, "Speak that greeting\nverbatim as your first customer-facing words")
+	assert.Contains(t, got, "customer-facing words in CURRENT_REPLY_LANGUAGE, translating naturally if needed")
+	assert.NotContains(t, got, "verbatim")
 }
 
 func TestRequestResponseUsesBoundedLiveControlQueue(t *testing.T) {
@@ -177,4 +178,40 @@ func TestBuildLiveSystemPromptIgnoresUnknownLanguage(t *testing.T) {
 	got := buildLiveSystemPrompt("Be helpful.", "unknown")
 
 	assert.NotContains(t, got, "LIVE AUDIO LANGUAGE")
+}
+
+func TestCustomGreetingUsesCampaignLanguage(t *testing.T) {
+	greeting := "नमस्ते, मैं GlobusCRM से बोल रही हूँ। क्या आपके पास 15 मिनट हैं?"
+	client := New(Config{Language: "kn", Greeting: greeting}, Callbacks{})
+	got := client.greetingInstruction()
+	assert.Contains(t, got, greeting)
+	assert.Contains(t, got, "CURRENT_REPLY_LANGUAGE=kn")
+	assert.Contains(t, got, "Translate naturally if needed")
+	assert.Contains(t, got, "preserve its meaning, names, company names, product names, numbers, and facts")
+	assert.Contains(t, got, "If already in CURRENT_REPLY_LANGUAGE, keep its wording")
+	assert.NotContains(t, got, "verbatim")
+	assert.NotContains(t, buildLiveSystemPrompt("", "kn"), "exact clientContent greeting")
+}
+
+func TestEnglishCustomGreetingUsesHindiCampaignLanguage(t *testing.T) {
+	const greeting = "Hello, this is Priya from Callified. May I take 15 minutes?"
+	client := New(Config{Language: "hi", Greeting: greeting}, Callbacks{})
+	instruction := client.greetingInstruction()
+	assert.Contains(t, instruction, greeting, "keep the customer's configured content")
+	assert.Contains(t, instruction, "CURRENT_REPLY_LANGUAGE=hi")
+	assert.Contains(t, instruction, "Translate naturally if needed")
+	assert.Contains(t, instruction, "preserve its meaning, names, company names, product names, numbers, and facts")
+	assert.NotContains(t, instruction, "exact greeting")
+	assert.NotContains(t, instruction, "verbatim")
+	assert.Contains(t, buildLiveSystemPrompt("", "hi"), "opening greeting must also use CURRENT_REPLY_LANGUAGE")
+}
+
+func TestLiveProductOpeningAllowsTranslation(t *testing.T) {
+	prompt := "## PRODUCT OPENING\nThe supplied opening greeting is the complete first call-flow step. Speak every sentence verbatim in one opening turn. Questions inside it are rhetorical until the opening is complete. Do not prepend an introduction, shorten, translate, or repeat it. If the customer interrupts, address their response naturally."
+	got := buildLiveSystemPrompt(prompt, "kn")
+	assert.NotContains(t, got, "verbatim")
+	assert.NotContains(t, got, "shorten, translate")
+	assert.Contains(t, got, "Questions inside it are rhetorical until the opening is complete")
+	assert.Contains(t, got, "If the customer interrupts, address their response naturally")
+	assert.Contains(t, got, "translating naturally if needed")
 }

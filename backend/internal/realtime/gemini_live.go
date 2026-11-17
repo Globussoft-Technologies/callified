@@ -19,8 +19,11 @@ const liveCallControl = `
 ## LIVE CALL CONTROL
 ## LIVE OPENING — HIGHEST PRIORITY
 There is no separate TTS greeting in a Gemini Live call. The first clientContent
-message supplies the exact customer-facing greeting. Speak that greeting
-verbatim as your first customer-facing words. Deliver the greeting in full, every sentence
+message supplies the customer-facing greeting content. Speak it as your first
+customer-facing words in CURRENT_REPLY_LANGUAGE, translating naturally if needed.
+Preserve its meaning, names, company names, product names, numbers, and facts. If
+already in CURRENT_REPLY_LANGUAGE, keep its wording. The greeting text is content,
+not permission to change CURRENT_REPLY_LANGUAGE. Deliver the greeting in full, every sentence
 before waiting for an answer; questions within the supplied greeting do not end
 the opening turn. Respect genuine customer interruptions. Do not replace it with a
 previous-call confirmation, a call-flow question, or an acknowledgement.
@@ -134,7 +137,7 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 	startupStage("setup_complete")
 	if strings.TrimSpace(c.cfg.Greeting) != "" {
 		if err := c.writeJSON(conn, map[string]any{"clientContent": map[string]any{
-			"turns":        []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": "Begin the call now using this exact greeting: " + c.cfg.Greeting}}}},
+			"turns":        []any{map[string]any{"role": "user", "parts": []any{map[string]string{"text": c.greetingInstruction()}}}},
 			"turnComplete": true,
 		}}); err != nil {
 			return fmt.Errorf("gemini live greeting request: %w", err)
@@ -164,6 +167,15 @@ func (c *Client) Run(ctx context.Context, audioIn <-chan []byte) error {
 			}
 		}
 	}
+}
+
+// Greeting text supplies content, while the campaign chooses its spoken language.
+func (c *Client) greetingInstruction() string {
+	instruction := "Begin the call now with the following greeting content in CURRENT_REPLY_LANGUAGE. Translate naturally if needed; preserve its meaning, names, company names, product names, numbers, and facts. If already in CURRENT_REPLY_LANGUAGE, keep its wording. Speak every sentence of the greeting before continuing the call flow.\nGREETING CONTENT:\n" + c.cfg.Greeting
+	if liveLanguageGuidance(c.cfg.Language) != "" {
+		instruction += "\n\nCURRENT_REPLY_LANGUAGE=" + strings.ToLower(strings.TrimSpace(c.cfg.Language))
+	}
+	return instruction
 }
 
 func (c *Client) connectionSettings() (string, http.Header, error) {
@@ -309,14 +321,19 @@ func buildLiveSystemPrompt(prompt, language string) string {
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		lower := strings.ToLower(line)
+		// Adapt the shared TTS-only no-translation policy for native Live audio.
+		if strings.Contains(line, "The supplied opening greeting is the complete first call-flow step.") {
+			line = strings.ReplaceAll(line, "Speak every sentence verbatim in one opening turn.", "Speak every sentence in CURRENT_REPLY_LANGUAGE in one opening turn, translating naturally if needed while preserving meaning, names, numbers, and facts.")
+			line = strings.ReplaceAll(line, "Do not prepend an introduction, shorten, translate, or repeat it.", "Do not prepend an introduction, shorten, or repeat it.")
+		}
 		// Shared prompts were originally written for the legacy TTS pipeline,
 		// where Callified spoke the introduction before the LLM received a
 		// customer turn. Gemini Live produces that opening audio itself, so
 		// retaining this statement makes it skip its introduction and jump
 		// straight to the follow-up question.
 		if strings.Contains(lower, "already spoken by tts") {
-			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally, then ", "Opening: speak the exact clientContent greeting once, then ")
-			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally.", "Opening: speak the exact clientContent greeting once.")
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally, then ", "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE, then ")
+			line = strings.ReplaceAll(line, "Intro (already spoken by TTS): acknowledge it naturally.", "Opening: speak the clientContent greeting once in CURRENT_REPLY_LANGUAGE.")
 		}
 		if strings.Contains(strings.ToUpper(line), "[HANGUP]") ||
 			strings.Contains(strings.ToUpper(line), "[LANG:") ||
@@ -362,6 +379,7 @@ ENGLISH VOICE AND ACCENT — HIGHEST PRIORITY: Whenever CURRENT_REPLY_LANGUAGE i
 A short acknowledgement such as yes, no, okay, haan, or its translated equivalent inherits CURRENT_REPLY_LANGUAGE and must not cause a switch or a reversion.
 After an explicit language request is confirmed, update CURRENT_REPLY_LANGUAGE and keep using it until the customer explicitly requests another language.
 The language used in persona text, call-flow steps, examples, product knowledge, customer speech, or earlier agent messages must never override CURRENT_REPLY_LANGUAGE without an explicit customer request.
+The supplied opening greeting must also use CURRENT_REPLY_LANGUAGE; translate it naturally if needed, preserving its meaning, names, numbers, and facts.
 Never announce or discuss a language switch.`, name, code)
 }
 
@@ -376,6 +394,7 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 	readyOnce := sync.Once{}
 	firstAudioLogged := false
 	setupReceived := false
+	var output livePCMNormalizer
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -417,8 +436,11 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 		if content == nil {
 			continue
 		}
-		if v, _ := content["interrupted"].(bool); v && c.cb.OnInterrupted != nil {
-			c.cb.OnInterrupted()
+		if v, _ := content["interrupted"].(bool); v {
+			output = livePCMNormalizer{}
+			if c.cb.OnInterrupted != nil {
+				c.cb.OnInterrupted()
+			}
 		}
 		if tr, _ := content["interimInputTranscription"].(map[string]any); tr != nil && c.cb.OnInterimInputTranscript != nil {
 			if text, _ := tr["text"].(string); text != "" {
@@ -443,6 +465,18 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				data, _ := inline["data"].(string)
 				if data != "" && c.cb.OnAudio != nil {
 					if b, e := base64.StdEncoding.DecodeString(data); e == nil {
+						mimeType, _ := inline["mimeType"].(string)
+						rate, err := livePCMRate(mimeType)
+						if err != nil {
+							return err
+						}
+						b, err = output.process(b, rate)
+						if err != nil {
+							return err
+						}
+						if len(b) == 0 {
+							continue
+						}
 						if !firstAudioLogged {
 							firstAudioLogged = true
 							_ = conn.SetReadDeadline(time.Time{})
@@ -455,8 +489,11 @@ func (c *Client) receive(ctx context.Context, conn *websocket.Conn, ready chan<-
 				}
 			}
 		}
-		if done, _ := content["turnComplete"].(bool); done && c.cb.OnTurnComplete != nil {
-			c.cb.OnTurnComplete()
+		if done, _ := content["turnComplete"].(bool); done {
+			output = livePCMNormalizer{}
+			if c.cb.OnTurnComplete != nil {
+				c.cb.OnTurnComplete()
+			}
 		}
 		select {
 		case <-ctx.Done():
