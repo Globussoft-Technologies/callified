@@ -33,6 +33,7 @@ import ManualDialPage from './pages/ManualDialPage';
 import InteractionHistoryPage from './pages/InteractionHistoryPage';
 import AgentPresencePage from './pages/AgentPresencePage';
 import AgentReportPage from './pages/AgentReportPage';
+import CallRecordingPage from './pages/CallRecordingPage';
 import CampaignProgressPage from './pages/CampaignProgressPage';
 import LeadCallStatusReportPage from './pages/LeadCallStatusReportPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
@@ -140,7 +141,7 @@ export default function App() {
   }
 
   if (!currentUser) {
-    return <AuthPage redirectTo={location.pathname !== '/reset-password' ? location.pathname : '/crm'} />;
+    return <AuthPage redirectTo={location.pathname !== '/reset-password' ? location.pathname + location.search : '/crm'} />;
   }
 
   return (
@@ -272,6 +273,7 @@ export default function App() {
             <AgentPresencePage apiFetch={apiFetch} API_URL={API_URL} />
           </AdminOnly>
         } />
+        <Route path="/call-recording" element={<CallRecordingPage />} />
         <Route path="/agent-report" element={
           <AdminOnly userRole={userRole}>
             <AgentReportPage apiFetch={apiFetch} API_URL={API_URL} campaigns={campaigns} />

@@ -91,6 +91,11 @@ func bridgeSendRealtime(ch chan []byte, pcm []byte) {
 // hang-up and closes the Exotel/Twilio media stream so the remote party's
 // line is released even if the agent WebSocket disconnects first.
 func (h *Handler) hangupBridgeCall(ctx context.Context, callSid string, sess *CallSession) {
+	// Agent WebSocket commands use the same immediate Exotel media teardown
+	// as the HTTP handler, without waiting for optional REST authorization.
+	if h.CloseExotelBridge(callSid) {
+		return
+	}
 	sess.RequestHangup()
 
 	if h.initiator != nil && sess.CampaignID > 0 {

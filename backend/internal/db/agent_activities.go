@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -253,7 +254,7 @@ func (d *DB) GetAgentLeadSummary(orgID int64, from, to time.Time, campaignID, us
 			GROUP BY aa.user_id
 		) outcomes ON outcomes.user_id=u.id
 		WHERE u.org_id=?
-			AND u.role IN ('Agent','Executive','TeamLeader')
+			AND u.role IN ('Admin','Agent','Executive','TeamLeader')
 			%s
 		ORDER BY u.full_name, u.email`, callCampaignFilter, providerCampaignFilter, outcomeCampaignFilter, userFilter)
 
@@ -386,12 +387,16 @@ func (d *DB) GetAgentActivitySummary(orgID int64, from, to time.Time, campaignID
 	var list []AgentActivitySummary
 	for rows.Next() {
 		var s AgentActivitySummary
+		var talk, idle, breakTime float64
 		err := rows.Scan(&s.UserID, &s.Email, &s.FullName, &s.Role,
 			&s.TotalCalls, &s.Connected, &s.Completed, &s.Unanswered, &s.Busy, &s.Failed,
-			&s.TotalTalkTime, &s.IdleTime, &s.BreakTime, &s.StatusUpdates, &s.NotesAdded, &s.Appointments, &s.Conversions)
+			&talk, &idle, &breakTime, &s.StatusUpdates, &s.NotesAdded, &s.Appointments, &s.Conversions)
 		if err != nil {
 			return nil, err
 		}
+		s.TotalTalkTime = int64(math.Round(talk))
+		s.IdleTime = int64(math.Round(idle))
+		s.BreakTime = int64(math.Round(breakTime))
 		list = append(list, s)
 	}
 	return list, rows.Err()
@@ -462,7 +467,6 @@ func (d *DB) GetUserAssignedCampaigns(orgID, userID int64) ([]UserAssignedCampai
 			COALESCE(cs.appointments, 0),
 			COALESCE(cs.notes, 0)
 		FROM campaigns c
-		JOIN campaign_user_assignments cua ON cua.campaign_id = c.id AND cua.user_id = ?
 		LEFT JOIN (
 			SELECT campaign_id, COUNT(*) AS lead_count
 			FROM campaign_leads
@@ -491,12 +495,15 @@ func (d *DB) GetUserAssignedCampaigns(orgID, userID int64) ([]UserAssignedCampai
 			FROM agent_activities aa
 			LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
 				AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
-			WHERE aa.org_id = ? AND aa.user_id = ?
+			WHERE aa.org_id = ? AND (aa.user_id = ? OR EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=aa.org_id AND owner.role='Admin'))
 				AND aa.activity_type IN ('call', 'status_update', 'note')
 			GROUP BY aa.campaign_id
 		) cs ON cs.campaign_id = c.id
-		WHERE c.org_id = ?
-		ORDER BY c.name`, userID, orgID, userID, orgID)
+		WHERE c.org_id = ? AND (
+ EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=c.org_id AND owner.role='Admin')
+ OR EXISTS (SELECT 1 FROM campaign_user_assignments cua WHERE cua.campaign_id=c.id AND cua.user_id=?)
+ )
+		ORDER BY c.name`, orgID, userID, userID, orgID, userID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -533,33 +540,41 @@ func (d *DB) executiveIDForUser(orgID, userID int64) (int64, error) {
 // CountUserAssignedLeads counts leads that are considered assigned to the user:
 // either leads in campaigns directly assigned to the user, or leads whose
 // campaign_leads.executive_id matches the user's Executive record.
+// userRelatedLeadsQuery returns each eligible lead once, using a representative
+// campaign for display. Admin scope includes unattached organization leads.
+func userRelatedLeadsQuery(orgID, userID, execID, campaignID int64) (string, []any) {
+	args := []any{orgID, userID, userID}
+	executiveScope := ""
+	if execID > 0 {
+		executiveScope = "OR assignment.executive_id=? OR l.executive_id=?"
+		args = append(args, execID, execID)
+	}
+	campaignScope := ""
+	if campaignID > 0 {
+		campaignScope = "AND candidate.id=?"
+		args = append(args, campaignID)
+	}
+	query := fmt.Sprintf(`SELECT l.id, MIN(candidate.id) AS campaign_id
+ FROM leads l
+ LEFT JOIN campaign_leads assignment ON assignment.lead_id=l.id
+ LEFT JOIN campaigns candidate ON candidate.id=assignment.campaign_id AND candidate.org_id=l.org_id
+ WHERE l.org_id=? AND (
+ EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=l.org_id AND owner.role='Admin')
+ OR EXISTS (SELECT 1 FROM campaign_user_assignments cua WHERE cua.campaign_id=candidate.id AND cua.user_id=?)
+ %s
+ ) %s GROUP BY l.id`, executiveScope, campaignScope)
+	return query, args
+}
+
 func (d *DB) CountUserAssignedLeads(orgID, userID, campaignID int64) (int64, error) {
 	execID, err := d.executiveIDForUser(orgID, userID)
 	if err != nil {
 		return 0, err
 	}
-	args := []any{orgID, userID}
-	execFilter := ""
-	if execID > 0 {
-		execFilter = "OR cl.executive_id = ?"
-		args = append(args, execID)
-	}
-	campaignFilter := ""
-	if campaignID > 0 {
-		campaignFilter = "AND cl.campaign_id = ?"
-		args = append(args, campaignID)
-	}
-	var n int64
-	err = d.pool.QueryRow(fmt.Sprintf(`
-		SELECT COUNT(DISTINCT l.id)
-		FROM leads l
-		JOIN campaign_leads cl ON cl.lead_id = l.id
-		WHERE l.org_id = ? AND (
-			cl.campaign_id IN (SELECT campaign_id FROM campaign_user_assignments WHERE user_id = ?)
-			%s
-		)
-		%s`, execFilter, campaignFilter), args...).Scan(&n)
-	return n, err
+	query, args := userRelatedLeadsQuery(orgID, userID, execID, campaignID)
+	var count int64
+	err = d.pool.QueryRow("SELECT COUNT(*) FROM ("+query+") related", args...).Scan(&count)
+	return count, err
 }
 
 // UserAssignedLead is a lead assigned to a user, including the campaign it was
@@ -577,17 +592,7 @@ func (d *DB) GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64
 	if err != nil {
 		return nil, err
 	}
-	args := []any{orgID, userID}
-	execFilter := ""
-	if execID > 0 {
-		execFilter = "OR cl.executive_id = ?"
-		args = append(args, execID)
-	}
-	campaignFilter := ""
-	if campaignID > 0 {
-		campaignFilter = "AND cl.campaign_id = ?"
-		args = append(args, campaignID)
-	}
+	query, args := userRelatedLeadsQuery(orgID, userID, execID, campaignID)
 	args = append(args, limit, offset)
 	rows, err := d.pool.Query(fmt.Sprintf(`
 		SELECT
@@ -620,17 +625,12 @@ func (d *DB) GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64
 			COALESCE(l.interest, ''), COALESCE(l.company, ''), COALESCE(l.external_id, ''),
 			COALESCE(l.crm_provider, ''), COALESCE(l.executive_id, 0),
 			DATE_FORMAT(l.created_at, '%%Y-%%m-%%d %%H:%%i:%%s'),
-			c.id, c.name
+			COALESCE(c.id,0), COALESCE(c.name,'No campaign')
 		FROM leads l
-		JOIN campaign_leads cl ON cl.lead_id = l.id
-		JOIN campaigns c ON c.id = cl.campaign_id
-		WHERE l.org_id = ? AND (
-			cl.campaign_id IN (SELECT campaign_id FROM campaign_user_assignments WHERE user_id = ?)
-			%s
-		)
-		%s
+ JOIN (%s) related ON related.id=l.id
+ LEFT JOIN campaigns c ON c.id=related.campaign_id AND c.org_id=l.org_id
 		ORDER BY l.created_at DESC, l.id DESC
-		LIMIT ? OFFSET ?`, execFilter, campaignFilter), args...)
+		LIMIT ? OFFSET ?`, query), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -666,7 +666,7 @@ type UserRecording struct {
 // date range, paginated.
 func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, offset int64) ([]UserRecording, int64, error) {
 	dateFilter := ""
-	args := []any{orgID, userID}
+	args := []any{orgID, userID, userID}
 	if !from.IsZero() && !to.IsZero() {
 		dateFilter = "AND aa.created_at >= ? AND aa.created_at <= ?"
 		args = append(args, from, to.Add(24*time.Hour-time.Second))
@@ -687,7 +687,7 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 		FROM agent_activities aa
 		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
 			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
-		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
+		WHERE aa.org_id = ? AND (aa.user_id = ? OR EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=aa.org_id AND owner.role='Admin')) AND aa.activity_type = 'call'
 			AND (
 				(cl.recording_url IS NOT NULL AND cl.recording_url != '')
 				OR EXISTS (
@@ -740,7 +740,7 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
 		LEFT JOIN leads l ON l.id = COALESCE(cl.lead_id, aa.lead_id)
 		LEFT JOIN campaigns c ON c.id = COALESCE(cl.campaign_id, aa.campaign_id)
-		WHERE aa.org_id = ? AND aa.user_id = ? AND aa.activity_type = 'call'
+		WHERE aa.org_id = ? AND (aa.user_id = ? OR EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=aa.org_id AND owner.role='Admin')) AND aa.activity_type = 'call'
 			AND (
 				(cl.recording_url IS NOT NULL AND cl.recording_url != '')
 				OR EXISTS (
@@ -791,7 +791,7 @@ type UserActivityStats struct {
 func (d *DB) GetUserActivityStats(orgID, userID int64, from, to time.Time) (UserActivityStats, error) {
 	var s UserActivityStats
 	dateFilter := ""
-	args := []any{orgID, userID}
+	args := []any{orgID, userID, userID}
 	if !from.IsZero() && !to.IsZero() {
 		dateFilter = "AND aa.created_at >= ? AND aa.created_at <= ?"
 		args = append(args, from, to.Add(24*time.Hour-time.Second))
@@ -824,7 +824,7 @@ func (d *DB) GetUserActivityStats(orgID, userID int64, from, to time.Time) (User
 		FROM agent_activities aa
 		LEFT JOIN call_logs cl ON cl.org_id = aa.org_id
 			AND cl.call_sid = JSON_UNQUOTE(JSON_EXTRACT(aa.metadata, '$.call_sid')) COLLATE utf8mb4_0900_ai_ci
-		WHERE aa.org_id = ? AND aa.user_id = ?
+		WHERE aa.org_id = ? AND (aa.user_id = ? OR EXISTS (SELECT 1 FROM users owner WHERE owner.id=? AND owner.org_id=aa.org_id AND owner.role='Admin'))
 			AND aa.activity_type IN ('call', 'status_update', 'note')
 			%s`, dateFilter), args...).Scan(&s.TotalCalls, &s.Recordings, &s.Appointments, &s.Notes)
 	return s, err

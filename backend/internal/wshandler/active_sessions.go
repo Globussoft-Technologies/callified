@@ -3,6 +3,7 @@ package wshandler
 import (
 	"context"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"time"
 )
 
@@ -95,4 +96,23 @@ func (h *Handler) CloseCall(callSid string) bool {
 		h.finalizeCall(context.Background(), sess)
 	}()
 	return true
+}
+
+// CloseExotelBridge ends a connected bidirectional Voicebot session through
+// its carrier socket. This does not require Exotel's optional Active Legs API.
+// Ringing calls have no media socket and must use provider call control.
+func (h *Handler) CloseExotelBridge(callSID string) bool {
+	raw, ok := h.sessionsByCallSid.Load(callSID)
+	if !ok {
+		return false
+	}
+	sess, ok := raw.(*CallSession)
+	if !ok || sess == nil || !sess.IsExotel || !sess.IsBridge || sess.IsWebSim || sess.WS == nil {
+		return false
+	}
+	sess.RequestHangup()
+	err := sess.WS.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "agent hangup"), time.Now().Add(time.Second))
+	_ = sess.WS.Close()
+	// The media read loop finalizes the call after the carrier socket closes.
+	return err == nil
 }

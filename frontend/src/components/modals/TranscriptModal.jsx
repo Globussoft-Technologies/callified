@@ -49,7 +49,7 @@ function extractAgentName(turns) {
 
 // ConclusionCard — fetches AI conclusion lazily per transcript.
 // POST /api/transcripts/{id}/conclusion (cached; ?force=1 to regenerate).
-function ConclusionCard({ transcriptId, turns }) {
+function ConclusionCard({ transcriptId, turns, recordingUrl }) {
   const { apiFetch } = useAuth();
   const [state, setState] = useState({ status: 'idle', review: null, error: '' });
   const [disposition, setDisposition] = useState(null);
@@ -61,7 +61,7 @@ function ConclusionCard({ transcriptId, turns }) {
   const [saving, setSaving] = useState(false);
 
   const turnCount = Array.isArray(turns) ? turns.length : 0;
-  const interactionHappened = turnCount >= 1;
+  const interactionHappened = turnCount >= 1 || Boolean(recordingUrl);
 
   const fetchDisposition = useCallback(() => {
     if (!transcriptId) return Promise.resolve();
@@ -401,10 +401,20 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     );
                   })()}
 
+                  {/* Follow-up summary for this call */}
+                  {t.id && (
+                    <ConclusionCard
+                      transcriptId={t.id}
+                      turns={(Array.isArray(t.transcript) ? t.transcript : []).filter(turn => turn.role !== 'system')}
+                      recordingUrl={t.recording_url}
+                    />
+                  )}
+
+
                   {/* Turn-by-turn transcript */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {(Array.isArray(t.transcript) ? t.transcript : []).filter(turn => turn.role !== 'system').map((turn, i) => {
-                      const isAI = turn.role === 'AI';
+                      const isAI = turn.role === 'AI' || turn.role === 'agent';
                       return (
                         <div key={i} style={{ display: 'flex', flexDirection: isAI ? 'row' : 'row-reverse', gap: 8, alignItems: 'flex-start' }}>
                           <div style={{
@@ -424,7 +434,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                             color: T.text, fontSize: '0.88rem', lineHeight: 1.55,
                           }}>
                             <div style={{ fontSize: '0.7rem', fontWeight: 700, marginBottom: 4, color: isAI ? T.accent : T.green }}>
-                              {isAI ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
+                              {turn.role === 'agent' ? 'Agent' : isAI ? `${agentName} (AI)` : transcriptLead.first_name || 'User'}
                             </div>
                             {turn.text}
                             {!isAI && turn.suggested_text && (
@@ -439,13 +449,7 @@ export default function TranscriptModal({ transcriptLead, setTranscriptLead, tra
                     })}
                   </div>
 
-                  {/* AI Conclusion */}
-                  {t.id && (
-                    <ConclusionCard
-                      transcriptId={t.id}
-                      turns={Array.isArray(t.transcript) ? t.transcript : []}
-                    />
-                  )}
+
                 </div>
               );
             })

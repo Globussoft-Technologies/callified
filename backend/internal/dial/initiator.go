@@ -120,17 +120,16 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		return "", fmt.Errorf("%w: %s", ErrCallHours, status.Reason)
 	}
 
-	// 2.5 Credit balance gate. Real telephony calls cost money — we won't
-	// dial the provider for an org that can't pay for it. Web-sim is free
-	// (it doesn't go through this Initiator at all), so the gate only
-	// affects outbound Exotel/Twilio dials.
-	//
-	// OrgID==0 happens in a few legacy/test code paths; let those through
-	// so we don't break dev environments with no billing setup.
-	//
-	// Every real dial path uses the same minute balance gate, so calls stop
-	// once available minutes are exhausted.
-	if data.OrgID > 0 {
+	// Active manual subscriptions have unlimited browser-to-phone calls.
+	skipCredits := false
+	if data.IsBridge && data.OrgID > 0 {
+		var err error
+		skipCredits, err = i.db.HasUnlimitedManualCalls(ctx, data.OrgID)
+		if err != nil {
+			return "", fmt.Errorf("check manual calling entitlement: %w", err)
+		}
+	}
+	if data.OrgID > 0 && !skipCredits {
 		oc, ocErr := i.db.GetOrgCredit(data.OrgID)
 		if ocErr != nil {
 			return "", fmt.Errorf("check calling credits: %w", ocErr)
@@ -155,6 +154,7 @@ func (i *Initiator) Initiate(ctx context.Context, data CallData) (string, error)
 		TTSLanguage:            data.TTSLanguage,
 		MaxCallDurationSeconds: data.MaxCallDurationSeconds,
 		IsBridge:               data.IsBridge,
+		SkipCredits:            skipCredits,
 		UserEmail:              data.UserEmail,
 		UserID:                 data.UserID,
 	}
@@ -413,9 +413,14 @@ func (i *Initiator) Hangup(ctx context.Context, callSid string, campaignID int64
 	var creds db.ExotelCreds
 	// 1. Per-call override from the Redis pending entry.
 	if pending, ok := i.store.GetPendingCall(ctx, callSid); ok && pending.ExotelAccountID > 0 {
-		if c, cerr := i.db.GetOrgOrUserExotelAccountCreds(pending.ExotelAccountID, pending.OrgID, 0); cerr == nil && c.IsSet() {
-			creds = c
+		c, err := i.db.GetOrgOrUserExotelAccountCreds(pending.ExotelAccountID, pending.OrgID, pending.UserID)
+		if err != nil {
+			return fmt.Errorf("lookup call provider account: %w", err)
 		}
+		if !c.IsSet() {
+			return fmt.Errorf("call provider account is unavailable")
+		}
+		creds = c
 	}
 	// 2. Campaign default.
 	if !creds.IsSet() && campaignID > 0 {

@@ -97,6 +97,10 @@ html[data-theme='dark'] .top-nav-link.is-active, html[data-theme='dark'] .top-na
   .focused-top-header { padding-inline: 14px !important; }
   .focused-top-nav { overflow-x: auto; scrollbar-width: none; }
   .focused-top-nav::-webkit-scrollbar { display: none; }
+  .focused-top-nav > .top-nav-link { flex-shrink: 0; }
+  .top-nav-more { position: sticky; right: 0; z-index: 2; flex-shrink: 0; padding-left: 4px; background: var(--surface-raised); }
+  /* Fixed positioning lets the dropdown escape the scrolling nav's clip. */
+  .top-nav-mega-menu { position: fixed; top: 63px; right: 14px; left: auto; max-height: calc(100dvh - 80px); overflow-y: auto; }
   .top-nav-link { padding-inline: 8px; }
   .top-user-copy { display: none; }
   .top-user-trigger { padding-right: 4px; }
@@ -105,7 +109,7 @@ html[data-theme='dark'] .top-nav-link.is-active, html[data-theme='dark'] .top-na
   .focused-top-header { height: auto !important; min-height: 56px; flex-wrap: wrap !important; padding-block: 7px !important; }
   .focused-top-nav { order: 3; width: 100%; height: 40px; flex-basis: 100%; }
   .focused-top-tools { margin-left: auto; }
-  .top-nav-mega-menu { position: fixed; top: 102px; left: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); width: calc(100vw - 24px); max-height: calc(100vh - 116px); overflow-y: auto; }
+  .top-nav-mega-menu { position: fixed; top: 102px; left: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); width: calc(100vw - 24px); max-height: calc(100dvh - 116px); overflow-y: auto; }
 }
 
 /* Campaign list actions use semantic tones that remain legible in both themes. */

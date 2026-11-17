@@ -39,6 +39,10 @@ func TestCallCreditsConcurrentMySQL(t *testing.T) {
 	require.NoError(t, err)
 	_, err = pool.Exec(`INSERT INTO org_credits (org_id,balance_paise) VALUES (7,100),(8,100)`)
 	require.NoError(t, err)
+	_, err = pool.Exec(`CREATE TABLE users (email VARCHAR(255), org_id BIGINT, role VARCHAR(50), is_active BOOLEAN)`)
+	require.NoError(t, err)
+	_, err = pool.Exec(`CREATE TABLE admin_subscriptions (admin_email VARCHAR(255), plan VARCHAR(50), is_active BOOLEAN, expires_at DATETIME)`)
+	require.NoError(t, err)
 	d := &DB{pool: pool}
 	const workers = 24
 	errs := make(chan error, workers)

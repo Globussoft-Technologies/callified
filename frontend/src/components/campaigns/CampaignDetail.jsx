@@ -657,6 +657,19 @@ export default function CampaignDetail({
     loadCampaignLeads();
   }, [loadCampaignLeads]);
 
+  useEffect(() => {
+    window.addEventListener('callified:call-ended', loadCampaignLeads);
+    return () => window.removeEventListener('callified:call-ended', loadCampaignLeads);
+  }, [loadCampaignLeads]);
+
+  // Keep temporary call statuses fresh while post-call analysis finishes.
+  const hasCallingLeads = campaignLeads.some(lead => (lead.status || '').toLowerCase() === 'calling');
+  useEffect(() => {
+    if (!hasCallingLeads) return;
+    const timer = setInterval(loadCampaignLeads, 5000);
+    return () => clearInterval(timer);
+  }, [hasCallingLeads, loadCampaignLeads]);
+
   // Reset to page 1 whenever filters/search change so the user doesn't land on
   // an empty page after narrowing the list.
   useEffect(() => {

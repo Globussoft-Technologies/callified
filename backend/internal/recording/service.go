@@ -36,6 +36,7 @@ type SaveRequest struct {
 	DurationS   float32
 	StereoWav   []byte // nil → no server-side recording
 	GeminiLive  bool   // verify Live customer transcripts against recorded audio
+	IsManual    bool   // human agent and customer audio, without live AI turns
 	// SkipCredits=true: do not deduct this call from the org's prepaid balance.
 	SkipCredits bool
 	// UserEmail is the agent/admin who initiated the call; recordings are saved
@@ -104,10 +105,28 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if len(req.StereoWav) > 0 {
 		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, campaignName, req.StereoWav)
 	}
-	// 2. Build transcript turns ([{role,text}, ...]) from chat history.
-	//    Mirrors recording_service.py: role mapping model→AI / user→User,
-	//    empty-text turns dropped.
-	transcriptJSON, turnCount := historyToTranscript(req.ChatHistory)
+	// Transcribe recorded audio for display. Keep live AI history for automated
+	// decisions; manual calls need the recording as their conversation source.
+	displayHistory := req.ChatHistory
+	audioTranscribed := false
+	if len(req.StereoWav) > 0 {
+		if history, err := s.transcribeCallAudio(ctx, req.StereoWav, req.IsManual); err != nil {
+			s.log.Warn("recording: audio transcription failed; retaining live transcript", zap.Error(err))
+		} else {
+			displayHistory = history
+			audioTranscribed = true
+			if req.IsManual || len(req.ChatHistory) == 0 {
+				req.ChatHistory = history
+			}
+		}
+	}
+	transcriptJSON, turnCount := historyToTranscript(displayHistory)
+	if req.IsManual {
+		transcriptJSON = strings.ReplaceAll(transcriptJSON, `"role":"AI"`, `"role":"agent"`)
+		if transcriptJSON == "[]" {
+			transcriptJSON = `[{"role":"system","text":"Human call"}]`
+		}
+	}
 
 	// 3. Skip only when there are no turns AND no recording — i.e. truly empty
 	//    sessions (immediate disconnect with no audio). When a recording exists
@@ -187,7 +206,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// Persist the live transcript first so the dashboard is not held up by a
 	// second model request. Store audio corrections as review suggestions only;
 	// automated lead extraction, dispositions and confirmations use live text.
-	if req.GeminiLive {
+	if req.GeminiLive && !audioTranscribed {
 		_, suggestions, err := s.verifyCustomerTranscript(ctx, req.ChatHistory, req.StereoWav)
 		if err != nil {
 			s.log.Warn("recording: customer audio verification failed; keeping live transcript", zap.Error(err))
@@ -263,7 +282,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			disposition = a
 			analyzed = true
 		}
-	} else if userTurns == 0 {
+	} else if userTurns == 0 && !req.IsManual {
 		disposition = &analysis{
 			DispositionCode: "no_answer",
 			Summary:         "The customer did not respond during the call.",
@@ -297,6 +316,12 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 			NextAction: disposition.NextAction,
 		}); err != nil {
 			s.log.Error("recording: SaveAICallDisposition failed", zap.Error(err))
+		}
+	}
+
+	if disposition == nil && req.IsManual {
+		if err := s.database.CompleteCallingLead(req.OrgID, req.LeadID, callSid, "Contacted"); err != nil {
+			s.log.Warn("recording: complete manual lead status failed", zap.Error(err))
 		}
 	}
 
@@ -524,7 +549,7 @@ FIELDS:
 - "disposition_code": exactly one code from the allowed list supplied with the transcript
 - "confidence": number from 0 to 1 representing confidence in the disposition
 - "objections": concise objections raised by the customer, or "None"
-- "next_action": one concise recommended next action
+- "next_action": state the agreed follow-up action and exact date/time only if explicitly spoken. Preserve relative dates as spoken; do not guess a calendar date or timezone. If no follow-up was agreed, start with "No follow-up agreed." and clearly distinguish any recommended next action from an agreement.
 
 The transcript may be in any language (Telugu, Hindi, English, etc.); ALWAYS write your analysis fields in English regardless of the transcript language. Reference specific things from THIS transcript — never write generic filler.
 

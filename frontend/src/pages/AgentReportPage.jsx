@@ -146,6 +146,7 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
   const [modalUserId, setModalUserId] = useState(null);
 
   const maxDate = todayStr();
+  const pickerRange = useMemo(() => [dayjs(from), dayjs(to)], [from, to]);
 
   const displayRows = useMemo(() => {
     let filtered = rows;
@@ -266,12 +267,12 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
             </label>
           )}
           {period === 'custom' && (
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280, flex: '2 1 300px' }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Date range</span>
+            <div role="group" aria-labelledby="agent-report-date-range-label" style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 280, flex: '2 1 300px' }}>
+              <span id="agent-report-date-range-label" style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Date range</span>
               <RangePicker
                 className="agent-report-range-picker"
                 popupClassName="agent-report-range-popup"
-                value={[dayjs(from), dayjs(to)]}
+                value={pickerRange}
                 format="DD/MM/YYYY"
                 allowClear={false}
                 separator="to"
@@ -282,14 +283,14 @@ export default function AgentReportPage({ apiFetch, API_URL, campaigns = [] }) {
                   setTo(dates[1].format('YYYY-MM-DD'));
                 }}
               />
-            </label>
+            </div>
           )}
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 130, flex: '1 1 120px' }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Role</span>
             <AppSelect
               value={roleFilter}
               onChange={setRoleFilter}
-              options={['All', 'Agent', 'Executive'].map(role => ({ value: role, label: role }))}
+              options={['All', 'Admin', 'Agent', 'Executive', 'TeamLeader'].map(role => ({ value: role, label: role }))}
             />
           </label>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 180, flex: '2 1 200px' }}>

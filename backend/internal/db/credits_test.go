@@ -11,6 +11,7 @@ import (
 )
 
 func expectCallCreditLock(mock sqlmock.Sqlmock, balance int64, rate int) {
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(false))
 	mock.ExpectBegin()
 	mock.ExpectExec("INSERT IGNORE INTO org_credits").WithArgs(int64(7), DefaultRatePerMinPaise).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectQuery("SELECT balance_paise,.*FOR UPDATE").WithArgs(DefaultRatePerMinPaise, int64(7)).
@@ -125,4 +126,19 @@ func TestDeductCallCreditsRejectsNonFiniteDuration(t *testing.T) {
 		_, _, err := d.DeductCallCredits(7, "call-1", duration)
 		require.Error(t, err)
 	}
+}
+
+func TestManualPlanDoesNotDeductCredits(t *testing.T) {
+	pool, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer pool.Close()
+	d := &DB{pool: pool}
+	mock.ExpectQuery("SELECT EXISTS").WithArgs(int64(7)).WillReturnRows(sqlmock.NewRows([]string{"enabled"}).AddRow(true))
+	mock.ExpectQuery("SELECT org_id, balance_paise,").WithArgs(DefaultRatePerMinPaise, int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"org", "balance", "rate", "updated"}).AddRow(7, -100, 500, "2026-11-16 12:00:00"))
+	charge, balance, err := d.DeductCallCredits(7, "manual-call", 3600)
+	require.NoError(t, err)
+	require.Zero(t, charge)
+	require.EqualValues(t, -100, balance)
+	require.NoError(t, mock.ExpectationsWereMet())
 }

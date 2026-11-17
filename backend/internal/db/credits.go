@@ -193,6 +193,18 @@ func (d *DB) DeductCallCredits(orgID int64, callSid string, durationS float64) (
 		return 0, 0, nil
 	}
 
+	unlimited, err := d.HasUnlimitedManualCalls(context.Background(), orgID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("check manual calling entitlement: %w", err)
+	}
+	if unlimited {
+		credit, err := d.GetOrgCredit(orgID)
+		if err != nil {
+			return 0, 0, err
+		}
+		return 0, credit.BalancePaise, nil
+	}
+
 	tx, err := d.pool.Begin()
 	if err != nil {
 		return 0, 0, err

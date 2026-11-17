@@ -103,7 +103,8 @@ func (s *Server) plivoInbound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	credit, err := s.db.GetOrgCredit(account.OrgID)
-	if err != nil || !credit.CanStartCall() {
+	unlimited, entitlementErr := s.db.HasUnlimitedManualCalls(r.Context(), account.OrgID)
+	if entitlementErr != nil || (err != nil || !credit.CanStartCall()) && !unlimited {
 		http.Error(w, "Incoming service unavailable", http.StatusServiceUnavailable)
 		return
 	}

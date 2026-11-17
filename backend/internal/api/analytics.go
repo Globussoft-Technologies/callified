@@ -309,6 +309,11 @@ func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermission(w, r, "reports.view") {
 		return
 	}
+	download := r.URL.Query().Get("download") == "1"
+	if download && !s.requirePermission(w, r, "reports.download") {
+		return
+	}
+
 	ac := getAuth(r)
 	userID, err := parseID(r, "id")
 	if err != nil {
@@ -332,6 +337,11 @@ func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	if profile == nil {
 		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	if profile.Role == db.RoleAdmin && ac.Role != db.RoleAdmin && !s.isSuperAdmin(ac.Email) {
+		writeError(w, http.StatusForbidden, "organization-wide admin details require admin access")
 		return
 	}
 
@@ -427,6 +437,14 @@ func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
 	resp.RecordingPagination.Page = recordingsPage
 	resp.RecordingPagination.Limit = recordingsLimit
 	resp.RecordingPagination.Total = recTotal
+
+	if download {
+		if err := writeUserDetailExport(w, r, resp, from, to, campaignID, s.db, s.cfg.PublicServerURL); err != nil {
+			s.logger.Sugar().Errorw("userDetailExport", "err", err)
+			writeError(w, http.StatusInternalServerError, "could not generate user download")
+		}
+		return
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -205,6 +205,13 @@ func (s *Server) hangupBrowserCall(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "browser call not found")
 		return
 	}
+	// Connected Exotel Voicebot calls end when we close the carrier stream.
+	// Do this before optional REST call-control access can block the hangup.
+	if s.wsHandler != nil && s.wsHandler.CloseExotelBridge(callSID) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ended"})
+		return
+	}
+
 	if s.initiator == nil {
 		writeError(w, http.StatusServiceUnavailable, "dial service unavailable")
 		return

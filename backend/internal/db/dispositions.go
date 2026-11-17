@@ -77,6 +77,11 @@ type AICallDisposition struct {
 
 func (d *DB) EnsureDispositionTables() error {
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS manual_call_notes (
+ org_id BIGINT NOT NULL, transcript_id BIGINT NOT NULL, notes TEXT NOT NULL,
+ updated_by BIGINT NOT NULL, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ PRIMARY KEY (org_id, transcript_id)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS campaign_disposition_options (
 			id BIGINT AUTO_INCREMENT PRIMARY KEY, org_id BIGINT NOT NULL, campaign_id BIGINT NOT NULL,
 			code VARCHAR(64) NOT NULL, label VARCHAR(100) NOT NULL, color VARCHAR(20) NOT NULL DEFAULT '#64748b',
@@ -237,7 +242,10 @@ func (d *DB) SaveAICallDisposition(value AICallDisposition) error {
 		value.OrgID, nullInt64(value.CampaignID), nullInt64(value.LeadID), nullInt64(value.CallLogID),
 		nullInt64(value.TranscriptID), nullString(value.CallSid), nullInt64(value.AgentUserID), value.Code,
 		nullString(value.Summary), nullString(value.Sentiment), value.Confidence, nullString(value.Objections), nullString(value.NextAction))
-	return err
+	if err != nil {
+		return err
+	}
+	return d.CompleteCallingLead(value.OrgID, value.LeadID, value.CallSid, leadStatusForCallDisposition(value.Code))
 }
 
 func scanCallDisposition(row interface{ Scan(...any) error }) (*CallDisposition, error) {
