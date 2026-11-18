@@ -15,7 +15,7 @@ import (
 type userDetailExportStore interface {
 	GetUserExportCalls(orgID, userID int64, from, to time.Time, campaignID, limit, offset int64) ([]db.UserExportCall, error)
 	GetUserAssignedLeads(orgID, userID, limit, offset, campaignID int64) ([]db.UserAssignedLead, error)
-	GetUserRecordings(orgID, userID int64, from, to time.Time, limit, offset int64) ([]db.UserRecording, int64, error)
+	GetUserRecordings(orgID, userID int64, from, to time.Time, campaignID, limit, offset int64) ([]db.UserRecording, int64, error)
 }
 
 func writeUserDetailExport(w http.ResponseWriter, r *http.Request, data db.UserDetailResponse, from, to time.Time, campaignID int64, store userDetailExportStore, publicURL string) error {
@@ -95,7 +95,7 @@ func writeUserDetailExport(w http.ResponseWriter, r *http.Request, data db.UserD
 		if err := r.Context().Err(); err != nil {
 			return err
 		}
-		recordings, _, err := store.GetUserRecordings(data.Profile.OrgID, data.Profile.ID, from, to, 1000, offset)
+		recordings, _, err := store.GetUserRecordings(data.Profile.OrgID, data.Profile.ID, from, to, campaignID, 1000, offset)
 		if err != nil {
 			return err
 		}

@@ -92,6 +92,31 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	// Use a background context so cleanup isn't cancelled when the WS connection closes.
 	ctx = context.Background()
 
+	// Deduct call duration from the org's prepaid credit balance.
+	// Skipped automatically for web-sim calls (CallSid == "") so only real
+	// telephony calls are billed. Also skipped when SkipCredits is set
+	// (unlimited manual calls for AI-hidden users). Idempotent on the call_sid
+	// — if the recording pipeline runs twice for the same call (race between
+	// Exotel's "completed" callback and the WS-side finalize), the second call
+	// is a no-op.
+	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 && !req.SkipCredits {
+		if charge, balance, err := s.database.DeductCallCredits(req.OrgID, req.CallSid, float64(req.DurationS)); err != nil {
+			s.log.Warn("recording: DeductCallCredits failed",
+				zap.String("call_sid", req.CallSid), zap.Error(err))
+		} else if charge > 0 {
+			s.log.Info("recording: credits deducted",
+				zap.String("call_sid", req.CallSid),
+				zap.Int64("charge_paise", charge),
+				zap.Int64("balance_after_paise", balance),
+				zap.Float32("duration_s", req.DurationS))
+		}
+	} else if req.SkipCredits {
+		s.log.Info("recording: skipping credit deduction for unlimited manual call",
+			zap.String("call_sid", req.CallSid),
+			zap.Int64("org_id", req.OrgID),
+			zap.Float32("duration_s", req.DurationS))
+	}
+
 	// Resolve campaign name for the recording subfolder.
 	campaignName := ""
 	if req.CampaignID > 0 && s.database != nil {
@@ -105,22 +130,7 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 	if len(req.StereoWav) > 0 {
 		recordingURL = s.saveWAV(req.StreamSid, req.UserEmail, campaignName, req.StereoWav)
 	}
-	// Transcribe recorded audio for display. Keep live AI history for automated
-	// decisions; manual calls need the recording as their conversation source.
-	displayHistory := req.ChatHistory
-	audioTranscribed := false
-	if len(req.StereoWav) > 0 {
-		if history, err := s.transcribeCallAudio(ctx, req.StereoWav, req.IsManual); err != nil {
-			s.log.Warn("recording: audio transcription failed; retaining live transcript", zap.Error(err))
-		} else {
-			displayHistory = history
-			audioTranscribed = true
-			if req.IsManual || len(req.ChatHistory) == 0 {
-				req.ChatHistory = history
-			}
-		}
-	}
-	transcriptJSON, turnCount := historyToTranscript(displayHistory)
+	transcriptJSON, turnCount := historyToTranscript(req.ChatHistory)
 	if req.IsManual {
 		transcriptJSON = strings.ReplaceAll(transcriptJSON, `"role":"AI"`, `"role":"agent"`)
 		if transcriptJSON == "[]" {
@@ -203,6 +213,26 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		}
 	}
 
+	audioTranscribed := false
+	if len(req.StereoWav) > 0 {
+		history, err := s.transcribeCallAudio(ctx, req.StereoWav, req.IsManual)
+		if err != nil {
+			s.log.Warn("recording: audio transcription failed; retaining live transcript", zap.Error(err))
+		} else {
+			corrected, _ := historyToTranscript(history)
+			if req.IsManual {
+				corrected = strings.ReplaceAll(corrected, `"role":"AI"`, `"role":"agent"`)
+			}
+			if err := s.database.UpdateCallTranscriptText(transcriptID, corrected); err != nil {
+				s.log.Warn("recording: save audio transcription failed", zap.Error(err))
+			} else {
+				audioTranscribed = true
+			}
+			if req.IsManual || len(req.ChatHistory) == 0 {
+				req.ChatHistory = history
+			}
+		}
+	}
 	// Persist the live transcript first so the dashboard is not held up by a
 	// second model request. Store audio corrections as review suggestions only;
 	// automated lead extraction, dispositions and confirmations use live text.
@@ -323,31 +353,6 @@ func (s *Service) SaveAndAnalyze(ctx context.Context, req SaveRequest) {
 		if err := s.database.CompleteCallingLead(req.OrgID, req.LeadID, callSid, "Contacted"); err != nil {
 			s.log.Warn("recording: complete manual lead status failed", zap.Error(err))
 		}
-	}
-
-	// 5b. Deduct call duration from the org's prepaid credit balance.
-	// Skipped automatically for web-sim calls (CallSid == "") so only real
-	// telephony calls are billed. Also skipped when SkipCredits is set
-	// (unlimited manual calls for AI-hidden users). Idempotent on the call_sid
-	// — if the recording pipeline runs twice for the same call (race between
-	// Exotel's "completed" callback and the WS-side finalize), the second call
-	// is a no-op.
-	if req.CallSid != "" && req.DurationS > 0 && req.OrgID > 0 && !req.SkipCredits {
-		if charge, balance, err := s.database.DeductCallCredits(req.OrgID, req.CallSid, float64(req.DurationS)); err != nil {
-			s.log.Warn("recording: DeductCallCredits failed",
-				zap.String("call_sid", req.CallSid), zap.Error(err))
-		} else if charge > 0 {
-			s.log.Info("recording: credits deducted",
-				zap.String("call_sid", req.CallSid),
-				zap.Int64("charge_paise", charge),
-				zap.Int64("balance_after_paise", balance),
-				zap.Float32("duration_s", req.DurationS))
-		}
-	} else if req.SkipCredits {
-		s.log.Info("recording: skipping credit deduction for unlimited manual call",
-			zap.String("call_sid", req.CallSid),
-			zap.Int64("org_id", req.OrgID),
-			zap.Float32("duration_s", req.DurationS))
 	}
 
 	// 6. Auto-DND if clearly negative + "do not call" intent.

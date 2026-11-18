@@ -417,7 +417,7 @@ func (s *Server) userDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recordings, recTotal, err := s.db.GetUserRecordings(ac.OrgID, userID, from, to, recordingsLimit, recordingsOffset)
+	recordings, recTotal, err := s.db.GetUserRecordings(ac.OrgID, userID, from, to, 0, recordingsLimit, recordingsOffset)
 	if err != nil {
 		s.logger.Sugar().Errorw("userDetail", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -33,7 +33,8 @@ func (f *userExportFixture) GetUserAssignedLeads(orgID, userID, limit, offset, c
 	}
 	return rows, nil
 }
-func (f *userExportFixture) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, offset int64) ([]db.UserRecording, int64, error) {
+func (f *userExportFixture) GetUserRecordings(orgID, userID int64, from, to time.Time, campaignID, limit, offset int64) ([]db.UserRecording, int64, error) {
+	require.EqualValues(f.t, 3, campaignID)
 	require.EqualValues(f.t, 7, orgID)
 	require.EqualValues(f.t, 9, userID)
 	return []db.UserRecording{{LeadName: "Recorded lead", DurationS: 12.5}}, 1, nil

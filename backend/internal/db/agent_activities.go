@@ -664,7 +664,7 @@ type UserRecording struct {
 
 // GetUserRecordings returns the user's calls (with recordings) for an optional
 // date range, paginated.
-func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, offset int64) ([]UserRecording, int64, error) {
+func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, campaignID, limit, offset int64) ([]UserRecording, int64, error) {
 	dateFilter := ""
 	args := []any{orgID, userID, userID}
 	if !from.IsZero() && !to.IsZero() {
@@ -676,6 +676,10 @@ func (d *DB) GetUserRecordings(orgID, userID int64, from, to time.Time, limit, o
 	} else if !to.IsZero() {
 		dateFilter = "AND aa.created_at <= ?"
 		args = append(args, to.Add(24*time.Hour-time.Second))
+	}
+	if campaignID > 0 {
+		dateFilter += " AND COALESCE(cl.campaign_id, aa.campaign_id, 0) = ?"
+		args = append(args, campaignID)
 	}
 	countArgs := append([]any(nil), args...)
 	listArgs := append([]any(nil), args...)
