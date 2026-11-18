@@ -2195,7 +2195,7 @@ func (h *Handler) inboundProductKnowledge(orgID int64) string {
 		if s := strings.TrimSpace(p.ScrapedInfo); s != "" {
 			fmt.Fprintf(&b, "Details: %s\n", s)
 		}
-		if s := strings.TrimSpace(p.ManualNotes); s != "" {
+		if s := strings.TrimSpace(p.EnabledManualNotes()); s != "" {
 			fmt.Fprintf(&b, "Notes: %s\n", s)
 		}
 		if s := strings.TrimSpace(p.AgentPersona); s != "" {

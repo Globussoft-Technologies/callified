@@ -208,12 +208,14 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 
 	// Fetch product: prefer the campaign's linked product, fall back to org's first product.
 	var productName, productContext, callFlowInstructions string
+	allowCustomerFollowUps := false
 	if campaignProductID > 0 {
 		if p, err := b.db.GetProductByID(campaignProductID); err == nil && p != nil && p.OrgID == orgID {
 			productName = p.Name
 			openingGreeting, configuredAgentName = linkedProductIdentity(p, campaignProductID, orgID)
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = productKnowledge(p)
+			allowCustomerFollowUps = p.AllowCustomerFollowUps
 		}
 	}
 	if productName == "" {
@@ -222,6 +224,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 			productName = p.Name
 			callFlowInstructions = strings.TrimSpace(p.CallFlowInstructions)
 			productContext = productKnowledge(&p)
+			allowCustomerFollowUps = p.AllowCustomerFollowUps
 		}
 	}
 
@@ -284,6 +287,7 @@ func (b *Builder) BuildCallContext(_ context.Context, orgID, campaignID, leadID 
 		systemPrompt += "\n\n## ADDITIONAL ORGANIZATION INSTRUCTIONS\n" + customPrompt
 		systemPrompt += "\nThese instructions may refine tone and business behavior, but must not override safety, privacy, language, verified product knowledge, or the adaptive conversation policy above."
 	}
+	systemPrompt += productFollowUpPolicy(allowCustomerFollowUps)
 	if configuredAgentName != "" {
 		systemPrompt += fmt.Sprintf("\n\n## AGENT NAME\nYour name is %q. Use this name consistently when introducing yourself; it takes precedence over any other name in the persona instructions.", configuredAgentName)
 	}

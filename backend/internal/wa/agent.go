@@ -218,8 +218,8 @@ func (a *Agent) buildSystemPrompt(productID int64, ragContext string) string {
 			if product.ScrapedInfo != "" {
 				parts = append(parts, "## About "+product.Name+"\n"+product.ScrapedInfo)
 			}
-			if product.ManualNotes != "" {
-				parts = append(parts, "## Additional Notes\n"+product.ManualNotes)
+			if product.EnabledManualNotes() != "" {
+				parts = append(parts, "## Additional Notes\n"+product.EnabledManualNotes())
 			}
 
 			// Conversation guide (call-flow adapted for chat).

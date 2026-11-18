@@ -396,8 +396,8 @@ func (s *Server) buildProductKnowledgeContext(orgID int64) string {
 		if p.ScrapedInfo != "" {
 			info += " — " + p.ScrapedInfo
 		}
-		if p.ManualNotes != "" {
-			info += " | Admin notes: " + p.ManualNotes
+		if p.EnabledManualNotes() != "" {
+			info += " | Admin notes: " + p.EnabledManualNotes()
 		}
 		parts = append(parts, info)
 	}
@@ -613,11 +613,13 @@ func (s *Server) getProductPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"opening_greeting":       product.OpeningGreeting,
-		"agent_name":             product.AgentName,
-		"agent_persona":          persona,
-		"call_flow_instructions": callFlow,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"allow_customer_follow_ups": product.AllowCustomerFollowUps,
+		"use_manual_notes":          product.ManualNotesEnabled(),
+		"opening_greeting":          product.OpeningGreeting,
+		"agent_name":                product.AgentName,
+		"agent_persona":             persona,
+		"call_flow_instructions":    callFlow,
 	})
 }
 
@@ -650,10 +652,12 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		OpeningGreeting      *string `json:"opening_greeting"`
-		AgentName            *string `json:"agent_name"`
-		AgentPersona         string  `json:"agent_persona"`
-		CallFlowInstructions string  `json:"call_flow_instructions"`
+		AllowCustomerFollowUps *bool   `json:"allow_customer_follow_ups"`
+		UseManualNotes         *bool   `json:"use_manual_notes"`
+		OpeningGreeting        *string `json:"opening_greeting"`
+		AgentName              *string `json:"agent_name"`
+		AgentPersona           string  `json:"agent_persona"`
+		CallFlowInstructions   string  `json:"call_flow_instructions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -663,7 +667,7 @@ func (s *Server) updateProductPrompt(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent name must be a single line of at most 100 characters")
 		return
 	}
-	if err := s.db.UpdateProductPrompt(id, body.AgentPersona, body.CallFlowInstructions, body.OpeningGreeting, body.AgentName); err != nil {
+	if err := s.db.UpdateProductPromptSettings(id, body.AgentPersona, body.CallFlowInstructions, body.AllowCustomerFollowUps, body.UseManualNotes, body.OpeningGreeting, body.AgentName); err != nil {
 		s.logger.Sugar().Errorw("updateProductPrompt", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -1105,7 +1109,7 @@ func (s *Server) generateProductPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	context := strings.TrimSpace(product.ScrapedInfo + "\n" + product.ManualNotes)
+	context := strings.TrimSpace(product.ScrapedInfo + "\n" + product.EnabledManualNotes())
 	if context == "" {
 		context = product.Name
 	}
@@ -1163,7 +1167,7 @@ func (s *Server) generateProductPersona(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	context := strings.TrimSpace(product.ScrapedInfo + "\n" + product.ManualNotes)
+	context := strings.TrimSpace(product.ScrapedInfo + "\n" + product.EnabledManualNotes())
 	if context == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"status":  "error",
@@ -1239,8 +1243,8 @@ func (s *Server) generateOrgPrompt(w http.ResponseWriter, r *http.Request) {
 	sb.WriteString("Company: " + org.Name + "\n")
 	for _, p := range products {
 		sb.WriteString("Product: " + p.Name)
-		if p.ManualNotes != "" {
-			sb.WriteString(" — " + p.ManualNotes)
+		if p.EnabledManualNotes() != "" {
+			sb.WriteString(" — " + p.EnabledManualNotes())
 		}
 		sb.WriteString("\n")
 	}

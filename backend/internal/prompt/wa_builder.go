@@ -29,13 +29,13 @@ func (b *WABuilder) BuildWAContext(_ context.Context, orgID, productID int64, ch
 	if productID > 0 {
 		if p, err := b.db.GetProductByID(productID); err == nil && p != nil {
 			productName = p.Name
-			productInfo = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.ManualNotes)
+			productInfo = strings.TrimSpace(p.AgentPersona + "\n" + p.CallFlowInstructions + "\n" + p.EnabledManualNotes())
 		}
 	} else {
 		// Use first product for org
 		if products, err := b.db.GetProductsByOrg(orgID); err == nil && len(products) > 0 {
 			productName = products[0].Name
-			productInfo = strings.TrimSpace(products[0].AgentPersona + "\n" + products[0].ManualNotes)
+			productInfo = strings.TrimSpace(products[0].AgentPersona + "\n" + products[0].EnabledManualNotes())
 		}
 	}
 

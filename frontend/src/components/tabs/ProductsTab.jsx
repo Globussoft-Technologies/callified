@@ -140,6 +140,10 @@ export default function ProductsTab({
               call_flow_instructions: data.call_flow_instructions || '',
               savedPersona: data.agent_persona || '',
               savedFlow: data.call_flow_instructions || '',
+              allow_customer_follow_ups: data.allow_customer_follow_ups === true,
+              savedFollowUps: data.allow_customer_follow_ups === true,
+              use_manual_notes: data.use_manual_notes !== false,
+              savedUseManualNotes: data.use_manual_notes !== false,
               promptLoaded: true,
               promptLoading: false,
               promptError: '',
@@ -169,7 +173,7 @@ export default function ProductsTab({
   }, [orgProducts, tourExample]);
 
   const updateProductPrompt = (productId, field, value) => {
-    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value, ...(['agent_persona', 'call_flow_instructions', 'opening_greeting', 'agent_name', 'manualNotes'].includes(field) ? { dirty: true } : {}) } }));
+    setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], [field]: value, ...(['agent_persona', 'call_flow_instructions', 'opening_greeting', 'agent_name', 'manualNotes', 'use_manual_notes', 'allow_customer_follow_ups'].includes(field) ? { dirty: true } : {}) } }));
   };
 
   const handleGenerateProductPrompt = async (productId) => {
@@ -220,7 +224,7 @@ export default function ProductsTab({
       const pp = productPrompts[productId];
       const res = await apiFetch(`${API_URL}/products/${productId}/prompt`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '', opening_greeting: pp?.opening_greeting || '', agent_name: pp?.agent_name || '' })
+        body: JSON.stringify({ agent_persona: pp?.agent_persona || '', call_flow_instructions: pp?.call_flow_instructions || '', opening_greeting: pp?.opening_greeting || '', agent_name: pp?.agent_name || '', allow_customer_follow_ups: pp?.allow_customer_follow_ups === true, use_manual_notes: pp?.use_manual_notes !== false })
       });
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
       const product = orgProducts.find(p => p.id === productId);
@@ -229,7 +233,7 @@ export default function ProductsTab({
         body: JSON.stringify({ manual_notes: pp.manualNotes ?? product?.manual_notes ?? '', website_url: pp.websiteUrl ?? product?.website_url ?? '' }),
       });
       if (!details.ok) throw new Error('Persona saved, but product notes or website could not be saved. Please retry.');
-      setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], dirty: false, savedGreeting: pp.opening_greeting, savedAgentName: pp.agent_name, savedPersona: pp.agent_persona, savedFlow: pp.call_flow_instructions } }));
+      setProductPrompts(prev => ({ ...prev, [productId]: { ...prev[productId], dirty: false, savedGreeting: pp.opening_greeting, savedAgentName: pp.agent_name, savedPersona: pp.agent_persona, savedFlow: pp.call_flow_instructions, savedFollowUps: pp.allow_customer_follow_ups, savedUseManualNotes: pp.use_manual_notes !== false } }));
       onProductsRefresh?.();
       toast('Product details saved!');
     } catch(e) { toast('Failed to save: ' + (e.message || e)); }
@@ -554,6 +558,13 @@ export default function ProductsTab({
 
                           <div hidden={(pp.tab || 'details') !== 'details'} style={{ marginBottom: 16 }}>
                             <label style={labelStyle}><AppIcon name="note" /> Manual Notes</label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                              <input type="checkbox" disabled={!pp.promptLoaded || pp.saving}
+                                checked={pp.use_manual_notes !== false}
+                                onChange={e => updateProductPrompt(p.id, 'use_manual_notes', e.target.checked)} />
+                              Use manual notes
+                            </label>
+                            <p style={{ fontSize: 12, color: T.sub }}>When unchecked, these notes stay saved but are excluded from AI knowledge. Save product details to apply.</p>
                             <textarea aria-label={`Manual notes for ${p.name}`} placeholder="Pricing, USPs, objection handling..."
                               value={pp.manualNotes ?? p.manual_notes ?? ''}
                               onChange={e => updateProductPrompt(p.id, 'manualNotes', e.target.value)}
@@ -594,6 +605,13 @@ export default function ProductsTab({
                                 onChange={e => updateProductPrompt(p.id, 'call_flow_instructions', e.target.value)}
                                 placeholder="e.g. Step 1: Greet. Step 2: Qualify..."
                                 style={{ ...inputStyle, resize: 'vertical', minHeight: 100, lineHeight: 1.6 }} />
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+                                <input type="checkbox" disabled={!pp.promptLoaded || pp.saving}
+                                  checked={pp.allow_customer_follow_ups === true}
+                                  onChange={e => updateProductPrompt(p.id, 'allow_customer_follow_ups', e.target.checked)} />
+                                Allow follow-ups based on customer answers
+                              </label>
+                              <p style={{ fontSize: 12, color: T.sub, lineHeight: 1.5 }}>When enabled, the AI can ask relevant new questions using your notes and the customer's answers. When disabled, it asks only your call-flow questions. Explicit question restrictions still apply.</p>
                             </div>
 
                             <div style={{ marginBottom: 16, gridColumn: '1 / -1' }}>
@@ -621,7 +639,7 @@ export default function ProductsTab({
                       )}
                     </div>}
 
-                    {!hideAiFeatures && <footer className="product-editor-footer"><span>{pp.dirty ? 'Unsaved changes' : 'No pending changes'}</span><div><button disabled={pp.saving || !pp.dirty} onClick={() => setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], manualNotes: p.manual_notes || '', websiteUrl: p.website_url || '', opening_greeting: pp.savedGreeting || '', agent_name: pp.savedAgentName || '', agent_persona: pp.savedPersona || '', call_flow_instructions: pp.savedFlow || '', dirty: false } }))}>Discard changes</button><button data-product-tour="save" className="product-save-button" disabled={pp.saving || !pp.promptLoaded} onClick={() => handleSaveProductPrompt(p.id)}><AppIcon name={pp.saving ? 'loading' : 'save'} spin={pp.saving} /> {pp.saving ? 'Saving...' : 'Save product details'}</button></div></footer>}
+                    {!hideAiFeatures && <footer className="product-editor-footer"><span>{pp.dirty ? 'Unsaved changes' : 'No pending changes'}</span><div><button disabled={pp.saving || !pp.dirty} onClick={() => setProductPrompts(prev => ({ ...prev, [p.id]: { ...prev[p.id], manualNotes: p.manual_notes || '', websiteUrl: p.website_url || '', opening_greeting: pp.savedGreeting || '', agent_name: pp.savedAgentName || '', agent_persona: pp.savedPersona || '', call_flow_instructions: pp.savedFlow || '', allow_customer_follow_ups: pp.savedFollowUps === true, use_manual_notes: pp.savedUseManualNotes !== false, dirty: false } }))}>Discard changes</button><button data-product-tour="save" className="product-save-button" disabled={pp.saving || !pp.promptLoaded} onClick={() => handleSaveProductPrompt(p.id)}><AppIcon name={pp.saving ? 'loading' : 'save'} spin={pp.saving} /> {pp.saving ? 'Saving...' : 'Save product details'}</button></div></footer>}
                     </div>
                   </div>
                 );

@@ -9,6 +9,18 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestDisabledManualNotesAreExcludedFromCallKnowledge(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		p := &db.Product{ManualNotes: "MANUAL_ONLY_FACT", ScrapedInfo: "WEBSITE_FACT", AgentPersona: "PERSONA", UseManualNotes: &enabled}
+		knowledge := productKnowledge(p)
+		got := buildDefaultPrompt(promptContext{Language: "en", ProductContext: knowledge})
+		assert.Equal(t, enabled, strings.Contains(got, "MANUAL_ONLY_FACT"))
+		assert.Contains(t, got, "WEBSITE_FACT")
+		assert.Contains(t, got, "PERSONA")
+		assert.Equal(t, "MANUAL_ONLY_FACT", p.ManualNotes)
+	}
+}
+
 func TestInterviewReferenceAndFlowSurviveWithAndWithoutMemory(t *testing.T) {
 	var pages strings.Builder
 	for page := 1; page <= 15; page++ {
@@ -47,4 +59,39 @@ func TestLanguageExamplesDoNotTreatPermissionToExplainAsBookingConsent(t *testin
 			assert.Contains(t, got, "not agreement to buy, eligibility, or consent to an appointment")
 		})
 	}
+}
+
+func TestManualNoteFollowUpsPreserveFlowRestrictions(t *testing.T) {
+	for _, flow := range []string{
+		"Understand the customer's window requirements. Relevant follow-ups are allowed.",
+		"Ask only these questions: quantity and location. No additional questions. Do not ask about budget.",
+	} {
+		t.Run(flow, func(t *testing.T) {
+			product := &db.Product{ManualNotes: "Aluminium windows are available with sound-insulating glass. Example question: what is your budget?"}
+			got := buildDefaultPrompt(promptContext{
+				Language: "en", ProductName: "Windows", CallFlowInstructions: flow,
+				ProductContext: productKnowledge(product),
+			})
+			assert.Contains(t, got, flow)
+			assert.Contains(t, got, product.ManualNotes)
+			assert.Contains(t, got, "MANUAL-NOTE FOLLOW-UPS")
+			assert.Contains(t, got, "QUESTION RESTRICTIONS")
+			assert.Contains(t, got, "take precedence over permission to generate follow-ups")
+			assert.Contains(t, got, "example questions inside reference material do not expand the permitted question set")
+			assert.Contains(t, got, "skip facts already answered anywhere in the conversation")
+			assert.Contains(t, got, "do not add the noise-preference question")
+		})
+	}
+}
+
+func TestProductFollowUpPolicyKeepsNaturalHandlingInBothModes(t *testing.T) {
+	enabled := productFollowUpPolicy(true)
+	assert.Contains(t, enabled, "ON: Allow follow-ups based on customer answers")
+	assert.Contains(t, enabled, "explicit call-flow question restrictions")
+	disabled := productFollowUpPolicy(false)
+	assert.Contains(t, disabled, "OFF: Ask only questions specified in the configured call flow")
+	assert.Contains(t, disabled, "Continue answering customer questions")
+	assert.Contains(t, disabled, "handling interruptions naturally")
+	assert.Contains(t, disabled, "skipping already answered questions")
+	assert.Contains(t, ConversationGuidance, "When that setting is OFF, its restriction overrides")
 }

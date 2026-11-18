@@ -310,6 +310,8 @@ func (d *DB) EnsureProductsTable() error {
 			manual_notes LONGTEXT,
 			agent_persona LONGTEXT,
 			call_flow_instructions LONGTEXT,
+			allow_customer_follow_ups BOOLEAN NOT NULL DEFAULT TRUE,
+			use_manual_notes BOOLEAN NOT NULL DEFAULT TRUE,
 			opening_greeting TEXT NULL,
 			agent_name VARCHAR(100) NULL,
 			image_urls LONGTEXT,
@@ -328,6 +330,8 @@ func (d *DB) EnsureProductsTable() error {
 	columns := []struct{ name, def string }{
 		{"agent_persona", "LONGTEXT"},
 		{"call_flow_instructions", "LONGTEXT"},
+		{"allow_customer_follow_ups", "BOOLEAN NOT NULL DEFAULT TRUE"},
+		{"use_manual_notes", "BOOLEAN NOT NULL DEFAULT TRUE"},
 		{"opening_greeting", "TEXT NULL"},
 		{"agent_name", "VARCHAR(100) NULL"},
 		{"image_urls", "LONGTEXT"},
@@ -350,26 +354,28 @@ type ProductImage struct {
 
 // Product mirrors the products table.
 type Product struct {
-	ID                   int64          `json:"id"`
-	OrgID                int64          `json:"org_id"`
-	Name                 string         `json:"name"`
-	WebsiteURL           string         `json:"website_url"`
-	ScrapedInfo          string         `json:"scraped_info"`
-	ManualNotes          string         `json:"manual_notes"`
-	AgentPersona         string         `json:"agent_persona"`
-	OpeningGreeting      string         `json:"opening_greeting"`
-	AgentName            string         `json:"agent_name"`
-	CallFlowInstructions string         `json:"call_flow_instructions"`
-	CreatedAt            string         `json:"created_at"`
-	ImageURLs            []string       `json:"image_urls"`    // scraped from website
-	ManualImages         []ProductImage `json:"manual_images"` // manually uploaded via UI
+	UseManualNotes         *bool          `json:"use_manual_notes"`
+	AllowCustomerFollowUps bool           `json:"allow_customer_follow_ups"`
+	ID                     int64          `json:"id"`
+	OrgID                  int64          `json:"org_id"`
+	Name                   string         `json:"name"`
+	WebsiteURL             string         `json:"website_url"`
+	ScrapedInfo            string         `json:"scraped_info"`
+	ManualNotes            string         `json:"manual_notes"`
+	AgentPersona           string         `json:"agent_persona"`
+	OpeningGreeting        string         `json:"opening_greeting"`
+	AgentName              string         `json:"agent_name"`
+	CallFlowInstructions   string         `json:"call_flow_instructions"`
+	CreatedAt              string         `json:"created_at"`
+	ImageURLs              []string       `json:"image_urls"`    // scraped from website
+	ManualImages           []ProductImage `json:"manual_images"` // manually uploaded via UI
 }
 
 const productCols = `id, org_id, name,
 	COALESCE(website_url,''), COALESCE(scraped_info,''), COALESCE(manual_notes,''),
 	COALESCE(agent_persona,''), COALESCE(call_flow_instructions,''), COALESCE(opening_greeting,''), COALESCE(agent_name,''),
 	DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s'),
-	COALESCE(image_urls,'[]'), COALESCE(manual_images,'[]')`
+	COALESCE(image_urls,'[]'), COALESCE(manual_images,'[]'), allow_customer_follow_ups, use_manual_notes`
 
 func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	p := &Product{}
@@ -377,7 +383,7 @@ func scanProduct(row interface{ Scan(...any) error }) (*Product, error) {
 	err := row.Scan(&p.ID, &p.OrgID, &p.Name,
 		&p.WebsiteURL, &p.ScrapedInfo, &p.ManualNotes,
 		&p.AgentPersona, &p.CallFlowInstructions, &p.OpeningGreeting, &p.AgentName, &p.CreatedAt,
-		&imageURLsJSON, &manualImagesJSON)
+		&imageURLsJSON, &manualImagesJSON, &p.AllowCustomerFollowUps, &p.UseManualNotes)
 	if err != nil {
 		return p, err
 	}
@@ -460,7 +466,7 @@ func (d *DB) GetProductByOrgAndName(orgID int64, name string) (*Product, error) 
 // CreateProduct inserts a new product. Returns the new ID.
 func (d *DB) CreateProduct(orgID int64, name, websiteURL, manualNotes string) (int64, error) {
 	res, err := d.pool.Exec(
-		`INSERT INTO products (org_id, name, website_url, manual_notes) VALUES (?,?,?,?)`,
+		`INSERT INTO products (org_id, name, website_url, manual_notes, allow_customer_follow_ups) VALUES (?,?,?,?,FALSE)`,
 		orgID, name, nullString(websiteURL), nullString(manualNotes))
 	if err != nil {
 		return 0, err
@@ -547,6 +553,19 @@ func (d *DB) GetProductPrompt(id int64) (agentPersona, callFlow string, err erro
 
 // UpdateProductPrompt saves agent_persona and call_flow_instructions.
 func (d *DB) UpdateProductPrompt(id int64, agentPersona, callFlow string, optional ...*string) error {
+	return d.updateProductPrompt(id, agentPersona, callFlow, nil, nil, optional...)
+}
+
+// UpdateProductPromptWithFollowUps preserves the setting when omitted by older clients.
+func (d *DB) UpdateProductPromptWithFollowUps(id int64, agentPersona, callFlow string, followUps *bool, optional ...*string) error {
+	return d.updateProductPrompt(id, agentPersona, callFlow, followUps, nil, optional...)
+}
+
+func (d *DB) UpdateProductPromptSettings(id int64, agentPersona, callFlow string, followUps, manualNotes *bool, optional ...*string) error {
+	return d.updateProductPrompt(id, agentPersona, callFlow, followUps, manualNotes, optional...)
+}
+
+func (d *DB) updateProductPrompt(id int64, agentPersona, callFlow string, followUps, manualNotes *bool, optional ...*string) error {
 	query := `UPDATE products SET agent_persona=?, call_flow_instructions=?`
 	args := []any{nullString(agentPersona), nullString(callFlow)}
 	if len(optional) > 0 && optional[0] != nil {
@@ -556,6 +575,14 @@ func (d *DB) UpdateProductPrompt(id int64, agentPersona, callFlow string, option
 	if len(optional) > 1 && optional[1] != nil {
 		query += `, agent_name=?`
 		args = append(args, nullString(strings.TrimSpace(*optional[1])))
+	}
+	if followUps != nil {
+		query += `, allow_customer_follow_ups=?`
+		args = append(args, *followUps)
+	}
+	if manualNotes != nil {
+		query += `, use_manual_notes=?`
+		args = append(args, *manualNotes)
 	}
 	query += ` WHERE id=?`
 	args = append(args, id)
@@ -782,3 +809,13 @@ func (d *DB) GetReports(orgID int64) (Report, error) {
 	).Scan(&r.PendingInternalTasks)
 	return r, err
 }
+
+// EnabledManualNotes keeps saved text intact while excluding disabled notes from AI context.
+// Nil preserves the legacy enabled behavior for products constructed without settings.
+func (p Product) EnabledManualNotes() string {
+	if p.UseManualNotes != nil && !*p.UseManualNotes {
+		return ""
+	}
+	return p.ManualNotes
+}
+func (p Product) ManualNotesEnabled() bool { return p.UseManualNotes == nil || *p.UseManualNotes }

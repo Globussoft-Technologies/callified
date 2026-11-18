@@ -216,7 +216,7 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 	return nil, "", errors.New("Website retries exhausted")
 }
 
-const maxWebsitePageBytes = 5 * 1024 * 1024
+const maxWebsitePageBytes = 8 * 1024 * 1024
 
 func domWebsiteText(raw string) string {
 	root, err := html.Parse(strings.NewReader(raw))

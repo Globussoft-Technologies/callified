@@ -6,8 +6,26 @@ import (
 	"strings"
 	"testing"
 
+	conversationprompt "github.com/globussoft/callified-backend/internal/prompt"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestLiveSetupRetainsManualNoteFollowUpsAndQuestionLimits(t *testing.T) {
+	flow := "Ask only these questions: quantity and location. No additional questions."
+	notes := "Reference notes:\nAluminium windows are available with sound-insulating glass."
+	client := New(Config{
+		Model: "test", Voice: "Kore", Language: "en",
+		SystemPrompt: flow + "\n" + notes + conversationprompt.ConversationGuidance,
+	}, Callbacks{})
+	setup := client.setupMessage()["setup"].(map[string]any)
+	parts := setup["systemInstruction"].(map[string]any)["parts"].([]map[string]string)
+	got := parts[0]["text"]
+	assert.Contains(t, got, flow)
+	assert.Contains(t, got, notes)
+	assert.Equal(t, 1, strings.Count(got, "MANUAL-NOTE FOLLOW-UPS"))
+	assert.Contains(t, got, "QUESTION RESTRICTIONS")
+	assert.Contains(t, got, "take precedence over permission to generate follow-ups")
+}
 
 func TestSetupEnablesNativeLiveAudioFeatures(t *testing.T) {
 	client := New(Config{
@@ -245,4 +263,12 @@ func TestLiveProductOpeningAllowsTranslation(t *testing.T) {
 	assert.Contains(t, got, "Questions inside it are rhetorical until the opening is complete")
 	assert.Contains(t, got, "If the customer interrupts, address their response naturally")
 	assert.Contains(t, got, "translating naturally if needed")
+}
+
+func TestLiveKeepsProductFollowUpOffDespiteGenericGuidance(t *testing.T) {
+	setting := "## PRODUCT FOLLOW-UP SETTING\nOFF: Ask only questions specified in the configured call flow."
+	got := buildLiveSystemPrompt("Call flow: ask quantity and location.\n"+setting+conversationprompt.ConversationGuidance, "en")
+	assert.Contains(t, got, setting)
+	assert.Contains(t, got, "When that setting is OFF, its restriction overrides")
+	assert.Equal(t, 1, strings.Count(got, "## ADAPTIVE CONVERSATION POLICY"))
 }
