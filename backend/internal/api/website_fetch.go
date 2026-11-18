@@ -21,6 +21,11 @@ import (
 	"golang.org/x/net/html"
 )
 
+// Modern storefronts can embed several MB of styles and application data.
+// Bound the decompressed HTML separately from the much smaller extracted-text
+// and model-input budgets below.
+const maxWebsitePageBytes = 8 * 1024 * 1024
+
 var blockedWebsiteNetworks = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"),
 	netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"),
@@ -190,7 +195,7 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 			response.Body.Close()
 			return nil, "", errors.New("The URL did not return an HTML page; use a website page or add the information manually")
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, 1_000_001))
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxWebsitePageBytes+1))
 		response.Body.Close()
 		if err != nil {
 			if attempt < 2 && retryableWebsiteError(err) && ctx.Err() == nil {
@@ -201,8 +206,8 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 			}
 			return nil, "", errors.New("Website response was interrupted")
 		}
-		if len(body) > 1_000_000 {
-			return nil, "", errors.New("Website page exceeds the supported size")
+		if len(body) > maxWebsitePageBytes {
+			return nil, "", errors.New("Website page exceeds the 8 MB research limit; use a smaller page from this site or add manual notes")
 		}
 		if kind == "" && !strings.Contains(http.DetectContentType(body), "text/html") {
 			return nil, "", errors.New("Website response is not HTML")
@@ -217,6 +222,10 @@ func fetchWebsitePage(ctx context.Context, client *http.Client, raw string) ([]b
 }
 
 func domWebsiteText(raw string) string {
+	return domWebsiteTextContent(raw, true)
+}
+
+func domWebsiteTextContent(raw string, includeCatalogue bool) string {
 	root, err := html.Parse(strings.NewReader(raw))
 	if err != nil {
 		return ""
@@ -229,6 +238,18 @@ func domWebsiteText(raw string) string {
 			case "nav", "footer", "aside", "style", "noscript", "svg", "iframe", "canvas", "form":
 				return
 			case "script":
+				var scriptType, scriptID string
+				for _, a := range n.Attr {
+					if a.Key == "type" {
+						scriptType = a.Val
+					}
+					if a.Key == "id" {
+						scriptID = a.Val
+					}
+				}
+				if includeCatalogue && scriptType == "application/json" && scriptID == "amalgam-json" && n.FirstChild != nil {
+					out.WriteString("\n" + catalogueWebsiteText(n.FirstChild.Data) + "\n")
+				}
 				for _, a := range n.Attr {
 					if a.Key == "type" && a.Val == "application/ld+json" && n.FirstChild != nil && len(n.FirstChild.Data) < 64000 {
 						var structured any

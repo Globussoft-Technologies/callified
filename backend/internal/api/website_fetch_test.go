@@ -66,7 +66,7 @@ func TestWebsiteHTTPValidation(t *testing.T) {
 		{"access denied", 403, "text/html", "<p>Not authorized</p>"},
 		{"non html", 200, "application/json", "{}"},
 		{"challenge", 200, "text/html", "<title>Just a moment...</title><script src='/cdn-cgi/challenge-platform/x'></script>"},
-		{"oversize", 200, "text/html", strings.Repeat("x", 1_000_001)},
+		{"oversize", 200, "text/html", strings.Repeat("x", maxWebsitePageBytes+1)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,6 +80,43 @@ func TestWebsiteHTTPValidation(t *testing.T) {
 				t.Fatalf("expected non-retryable failure, got %v calls %d", err, calls)
 			}
 		})
+	}
+}
+
+func TestWebsiteResearchAcceptsLargeStorefrontAndKeepsTextBudgets(t *testing.T) {
+	// Product content follows the large script block: reading only the old 1 MB
+	// limit would lose it, and passing script data to the model would add noise.
+	raw := "<html><head><script>" + strings.Repeat("application_data;", 150000) +
+		"</script></head><body><h1>Sanitary products</h1><p>" + strings.Repeat("Basins and bathroom fittings. ", 1000) + "</p></body></html>"
+	client := &http.Client{Transport: websiteRoundTrip(func(r *http.Request) (*http.Response, error) {
+		return mockWebsiteResponse(r, 200, "text/html", raw), nil
+	})}
+	body, final, err := fetchWebsitePage(context.Background(), client, "https://example.com")
+	if err != nil || len(body) != len(raw) {
+		t.Fatalf("large storefront rejected or truncated: bytes=%d err=%v", len(body), err)
+	}
+	text := domWebsiteText(string(body))
+	if !strings.Contains(text, "Sanitary products") || strings.Contains(text, "application_data") {
+		t.Fatal("product content lost or scripts included in research text")
+	}
+	page := websitePage{URL: final, Text: limitWebsiteText(text, 12000)}
+	if len(page.Text) > 12000 || len(websitePromptText([]websitePage{page})) > 20000 {
+		t.Fatal("large HTML bypassed research text budgets")
+	}
+}
+
+func TestWebsiteHTMLSizeLimitIncludesBoundary(t *testing.T) {
+	for _, size := range []int{maxWebsitePageBytes, maxWebsitePageBytes + 1} {
+		client := &http.Client{Transport: websiteRoundTrip(func(r *http.Request) (*http.Response, error) {
+			return mockWebsiteResponse(r, 200, "text/html", strings.Repeat(" ", size)), nil
+		})}
+		body, _, err := fetchWebsitePage(context.Background(), client, "https://example.com")
+		if size == maxWebsitePageBytes && (err != nil || len(body) != size) {
+			t.Fatalf("size limit boundary must be accepted: %v", err)
+		}
+		if size > maxWebsitePageBytes && (err == nil || body != nil || !strings.Contains(err.Error(), "8 MB")) {
+			t.Fatalf("oversized HTML must be rejected with an actionable error: %v", err)
+		}
 	}
 }
 
