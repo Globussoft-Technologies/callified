@@ -116,7 +116,8 @@ func (s *Server) resolveTataStreamURL(ctx context.Context, w http.ResponseWriter
 	}
 	if inbound {
 		credit, err := s.db.GetOrgCreditContext(ctx, account.OrgID)
-		if err != nil || !credit.CanStartCall() {
+		unlimited, entitlementErr := s.db.HasUnlimitedManualCalls(ctx, account.OrgID)
+		if entitlementErr != nil || (err != nil || !credit.CanStartCall()) && !unlimited {
 			writeError(w, 503, "incoming calling credits unavailable")
 			return
 		}

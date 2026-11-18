@@ -65,13 +65,13 @@ export default function SubscriptionsPage({ apiFetch }) {
           admin_email: email,
           expires_at: new Date(expiresAt).toISOString(),
           plan,
-          minutes: Number(minutes) || 0,
+          ...(plan !== 'manual' ? { minutes: Number(minutes) || 0 } : {}),
           is_active: isActive,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save subscription');
-      showMessage(`Subscription ${data.status} for ${data.admin_email} until ${new Date(data.expires_at).toLocaleDateString()} with ${data.minutes_available || 0} minutes`);
+      showMessage(`Subscription ${data.status} for ${data.admin_email} until ${new Date(data.expires_at).toLocaleDateString()} ${plan !== 'manual' ? `with ${data.minutes_available || 0} minutes` : 'with unlimited manual calls'}`);
       setEmail('');
       setMinutes(100);
       fetchSubscriptions();
@@ -246,10 +246,12 @@ export default function SubscriptionsPage({ apiFetch }) {
                 <span style={{ fontSize: 12, color: '#6b7280' }}>Expires At</span>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{new Date(subscription.expires_at).toLocaleString()}</div>
               </div>
-              <div>
-                <span style={{ fontSize: 12, color: '#6b7280' }}>Minutes</span>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{subscription.minutes_available || 0}</div>
-              </div>
+              {subscription.plan !== 'manual' && (
+                <div>
+                  <span style={{ fontSize: 12, color: '#6b7280' }}>Minutes</span>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{subscription.minutes_available || 0}</div>
+                </div>
+              )}
               <div>
                 <span style={{ fontSize: 12, color: '#6b7280' }}>Last Login</span>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{formatLastLogin(subscription.last_login_at)}</div>
@@ -295,18 +297,21 @@ export default function SubscriptionsPage({ apiFetch }) {
                 { value: 'manual', label: 'Manual calls only (AI features hidden)' },
               ]} onChange={setPlan} />
             </div>
-            <div>
-              <label style={labelStyle}>Minutes</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={minutes}
-                onChange={e => setMinutes(e.target.value)}
-                placeholder="100"
-                style={inputStyle}
-              />
-            </div>
+            {plan === 'manual' && <div><label style={labelStyle}>Balance</label><div>Unlimited manual calls</div></div>}
+            {plan !== 'manual' && (
+              <div>
+                <label style={labelStyle}>Minutes</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={minutes}
+                  onChange={e => setMinutes(e.target.value)}
+                  placeholder="100"
+                  style={inputStyle}
+                />
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: 16 }}>
@@ -389,7 +394,7 @@ export default function SubscriptionsPage({ apiFetch }) {
                           {s.status}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 8px' }}>{s.minutes_available || 0}</td>
+                      <td style={{ padding: '10px 8px' }}>{s.plan === 'manual' ? 'Unlimited' : (s.minutes_available || 0)}</td>
                       <td style={{ padding: '10px 8px', whiteSpace: 'nowrap' }}>{formatLastLogin(s.last_login_at)}</td>
                       <td style={{ padding: '10px 8px' }}>{new Date(s.expires_at).toLocaleString()}</td>
                       <td style={{ padding: '10px 8px' }}>

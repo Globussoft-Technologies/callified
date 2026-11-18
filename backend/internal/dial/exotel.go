@@ -2,6 +2,8 @@ package dial
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,8 +29,9 @@ type ExotelClient struct {
 // appType should be "exoml" for legacy ExoML XML flows or "voicebot" for
 // modern AgentStream Voicebot flows that expect a JSON dynamic URL response.
 // region and subdomain control which Exotel cluster is hit. Examples:
-//   region="in"      -> api.in.exotel.com
-//   subdomain="foo"  -> foo.exotel.com
+//
+//	region="in"      -> api.in.exotel.com
+//	subdomain="foo"  -> foo.exotel.com
 func NewExotelClient(apiKey, apiToken, accountSID, callerID, appID, appType, region, subdomain string) *ExotelClient {
 	if appType == "" {
 		appType = "exoml"
@@ -72,9 +75,10 @@ func (e *ExotelClient) exotelMyHost() string {
 // The dashboard app/flow referenced by appID must route the answered call to
 // our WebSocket endpoint:
 //   - exoml   (legacy): Passthru applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
-//                       and expects XML <Connect><Stream url="..."/>.</Connect>
+//     and expects XML <Connect><Stream url="..."/>.</Connect>
 //   - voicebot (modern): Voicebot applet fetches {PUBLIC_SERVER_URL}/webhook/exotel
-//                        and expects JSON {"url":"wss://..."}.
+//     and expects JSON {"url":"wss://..."}.
+//
 // Per-call context (lead_id, name, phone) is hydrated by wshandler from Redis
 // instead of being passed through this URL.
 // callbackURL receives status events (answered, completed, etc.).
@@ -186,36 +190,113 @@ func (e *ExotelClient) InitiateHumanCall(ctx context.Context, agentPhone, custom
 	return sid, nil
 }
 
-// Hangup ends an in-progress Exotel call by setting its status to completed.
-// This is the carrier-side hang-up used by the browser-to-phone bridge when
-// the agent clicks Hang Up in the browser UI.
+// Hangup ends the active legs using Exotel's leg action API.
 func (e *ExotelClient) Hangup(ctx context.Context, callSid string) error {
-	endpoint := fmt.Sprintf(
-		"https://api.exotel.com/v1/Accounts/%s/Calls/%s",
-		e.accountSID, callSid)
-
-	form := url.Values{}
-	form.Set("Status", "completed")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint,
-		strings.NewReader(form.Encode()))
-	if err != nil {
-		return fmt.Errorf("exotel: build hangup request: %w", err)
+	if strings.TrimSpace(callSid) == "" {
+		return fmt.Errorf("exotel: missing call sid")
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(e.apiKey, e.apiToken)
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	base := fmt.Sprintf("https://%s/v1/Accounts/%s/Calls/%s", e.exotelAPIHost(), url.PathEscape(e.accountSID), url.PathEscape(callSid))
+	body, status, err := e.callControlRequest(ctx, http.MethodGet, base+"/ActiveLegs.json", nil)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		if status == http.StatusNotFound && e.callHasEnded(ctx, base) {
+			return nil
+		}
+		return fmt.Errorf("exotel: active legs status %d (verify call-control API access for this account)", status)
+	}
+	var response struct {
+		Legs []struct {
+			SID        string `json:"Sid"`
+			CallSID    string `json:"CallSid"`
+			AccountSID string `json:"AccountSid"`
+		} `json:"Legs"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("exotel: decode active legs: %w", err)
+	}
+	if len(response.Legs) == 0 {
+		if e.callHasEnded(ctx, base) {
+			return nil
+		}
+		return fmt.Errorf("exotel: no active legs returned; call termination is unconfirmed")
+	}
+	// Validate all legs before sending any action. Do not trust returned URIs.
+	for _, leg := range response.Legs {
+		if leg.SID == "" || (leg.CallSID != "" && leg.CallSID != callSid) || (leg.AccountSID != "" && leg.AccountSID != e.accountSID) {
+			return fmt.Errorf("exotel: invalid active leg identity")
+		}
+	}
+	var failures []error
+	seen := make(map[string]bool)
+	for _, leg := range response.Legs {
+		if seen[leg.SID] {
+			continue
+		}
+		seen[leg.SID] = true
+		_, status, err := e.callControlRequest(ctx, http.MethodPut, base+"/Legs/"+url.PathEscape(leg.SID), url.Values{"Action": {"hangup"}})
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if status < 200 || status >= 300 {
+			failures = append(failures, fmt.Errorf("exotel: leg hangup status %d", status))
+		}
+	}
+	// A leg can disappear when another leg's hangup ends the whole call.
+	if len(failures) > 0 && e.callHasEnded(ctx, base) {
+		return nil
+	}
+	return errors.Join(failures...)
+}
 
+func (e *ExotelClient) callControlRequest(ctx context.Context, method, endpoint string, form url.Values) ([]byte, int, error) {
+	var reader io.Reader
+	if form != nil {
+		reader = strings.NewReader(form.Encode())
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return nil, 0, fmt.Errorf("exotel: build call control request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	if form != nil {
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	req.SetBasicAuth(e.apiKey, e.apiToken)
 	resp, err := e.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("exotel: hangup request: %w", err)
+		return nil, 0, fmt.Errorf("exotel: call control request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("exotel: hangup status %d: %s", resp.StatusCode, string(body))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("exotel: read call control response: %w", err)
 	}
-	return nil
+	return body, resp.StatusCode, nil
+}
+
+func (e *ExotelClient) callHasEnded(ctx context.Context, base string) bool {
+	body, status, err := e.callControlRequest(ctx, http.MethodGet, base+".json", nil)
+	if err != nil || status != http.StatusOK {
+		return false
+	}
+	var response struct {
+		Call struct {
+			Status string `json:"Status"`
+		} `json:"Call"`
+	}
+	if json.Unmarshal(body, &response) != nil {
+		return false
+	}
+	switch strings.ToLower(response.Call.Status) {
+	case "completed", "failed", "busy", "no-answer", "canceled", "cancelled":
+		return true
+	}
+	return false
 }
 
 // FetchRecordingURL fetches call details from Exotel and returns RecordingUrl

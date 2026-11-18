@@ -37,6 +37,16 @@ func stripPhoneDigits(p string) string {
 //
 // If the input is not a valid Indian phone number, it returns "".
 func normalizePhone(p string) string {
+	p = strings.TrimSpace(p)
+	if strings.HasPrefix(p, "+") && !strings.HasPrefix(p, "+91") {
+		return ""
+	}
+	for i, r := range p {
+		if (r >= '0' && r <= '9') || r == ' ' || r == '-' || r == '(' || r == ')' || (r == '+' && i == 0) {
+			continue
+		}
+		return ""
+	}
 	digits := stripPhoneDigits(p)
 
 	// Domestic format with trunk prefix, e.g. 01112345678 or 09876543210.
@@ -480,7 +490,7 @@ func (s *Server) updateLead(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if s.requireLeadAccess(w, r, id) == nil {
+	if s.requireLeadAccessWithDeniedStatus(w, r, id, http.StatusForbidden) == nil {
 		return
 	}
 	var req leadUpdateRequest
@@ -1627,6 +1637,8 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 					TranscriptID: id, CallSid: t.CallSid, AgentUserID: agentUserID, Code: code, Summary: existing.Summary,
 					Sentiment: existing.Sentiment, Confidence: 0.5,
 				})
+			} else if err := s.db.SyncCallDispositionLeadStatus(disposition); err != nil {
+				s.logger.Sugar().Warnw("sync cached disposition lead status", "err", err, "transcript_id", id)
 			}
 			writeJSON(w, http.StatusOK, existing)
 			return
@@ -1655,18 +1667,41 @@ func (s *Server) postTranscriptConclusion(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	if len(turns) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
 	history := make([]llm.ChatMessage, 0, len(turns))
 	for _, tn := range turns {
+		if strings.EqualFold(tn.Role, "system") || strings.TrimSpace(tn.Text) == "" {
+			continue
+		}
 		role := "user"
 		if strings.EqualFold(tn.Role, "AI") || strings.EqualFold(tn.Role, "model") || strings.EqualFold(tn.Role, "agent") {
 			role = "model"
 		}
 		history = append(history, llm.ChatMessage{Role: role, Text: tn.Text})
+	}
+	if len(history) == 0 && t.RecordingURL != "" {
+		history, err = s.recordingSvc.TranscribeLocalRecording(r.Context(), t.RecordingURL)
+		if err != nil {
+			s.logger.Sugar().Warnw("manual recording transcription failed", "id", id, "err", err)
+			writeError(w, http.StatusBadGateway, "Could not transcribe this recording. Please retry or contact your administrator.")
+			return
+		}
+		stored := make([]map[string]string, 0, len(history))
+		for _, turn := range history {
+			role := "User"
+			if turn.Role == "model" {
+				role = "agent"
+			}
+			stored = append(stored, map[string]string{"role": role, "text": turn.Text})
+		}
+		text, _ := json.Marshal(stored)
+		if err := s.db.UpdateCallTranscriptText(id, string(text)); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not save call transcription")
+			return
+		}
+	}
+	if len(history) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 
 	a, err := s.recordingSvc.AnalyzeCallForCampaign(r.Context(), t.OrgID, t.CampaignID, history)

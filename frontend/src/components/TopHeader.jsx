@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import navLogo from '../assets/tg_image_3608761279.png';
 import { useHideAiFeatures } from '../hooks/useHideAiFeatures';
@@ -121,8 +121,33 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
   const [helpOpen, setHelpOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const moreRef = useRef(null);
+  const [morePosition, setMorePosition] = useState({ left: 12, top: 64 });
   const notifRef = useRef(null);
   const userRef = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!moreOpen && !tourMoreOpen) return;
+    const positionMenu = () => {
+      const trigger = moreRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(650, window.innerWidth - 24);
+      const top = Math.min((trigger.closest('header')?.getBoundingClientRect().bottom ?? rect.bottom) + 8, window.innerHeight - 80);
+      setMorePosition({
+        left: Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)),
+        top,
+        width,
+        maxHeight: Math.max(68, window.innerHeight - top - 12),
+      });
+    };
+    positionMenu();
+    window.addEventListener('resize', positionMenu);
+    window.addEventListener('scroll', positionMenu, true);
+    return () => {
+      window.removeEventListener('resize', positionMenu);
+      window.removeEventListener('scroll', positionMenu, true);
+    };
+  }, [moreOpen, tourMoreOpen]);
 
   const { dueScheduledCalls, dismissScheduledCall, triggerBrowserCall, browserCallDialing, refreshScheduledCalls, manualPresenceStatus, setManualPresenceStatus } = useCall();
   const notifCount = dueScheduledCalls.length;
@@ -256,6 +281,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
               ? visibleMoreTabs.filter(t => TEAM_LEADER_MORE_TAB_IDS.has(t.id)).filter(allowedTab)
               : visibleMoreTabs.filter(allowedTab);
             const allMoreTabs = [...roleFilteredMoreTabs, ...superAdminTabs];
+            const groups = MORE_GROUPS.map(group => ({ ...group, tabs: roleFilteredMoreTabs.filter(t => group.tabIds.includes(t.id)) }));
+            groups.push({ id: 'platform', label: 'Platform', tabs: superAdminTabs });
+            const columns = [['operations', 'ai-tools', 'system'], ['reports', 'platform'], ['admin']]
+              .map(ids => ids.map(id => groups.find(group => group.id === id)).filter(group => group?.tabs.length))
+              .filter(column => column.length);
             if (allMoreTabs.length === 1) {
               const t = allMoreTabs[0];
               return tabBtn(t.id, t.label, t.path, t.testid);
@@ -273,13 +303,11 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
                   More <AppIcon name="down" />
                 </button>
                 {(moreOpen || tourMoreOpen) && (
-                  <div role="menu" className="top-nav-mega-menu">
-                    {MORE_GROUPS.map(group => {
-                      const tabs = roleFilteredMoreTabs.filter(t => group.tabIds.includes(t.id));
-                      if (!tabs.length) return null;
-                      return <section key={group.id} className="top-nav-menu-group">
+                  <div role="menu" className="top-nav-mega-menu" style={{ ...morePosition, '--menu-columns': columns.length }}>
+                    {columns.map(column => <div className="top-nav-menu-column" key={column[0].id}>
+                      {column.map(group => <section key={group.id} className="top-nav-menu-group">
                         <h3>{group.label}</h3>
-                        {tabs.map(t => (
+                        {group.tabs.map(t => (
                           <button key={t.id} data-testid={t.testid} data-tour={t.id === 'exotel-accounts' ? 'provider-account-link' : undefined} role="menuitem"
                             className={activeTab === t.id ? 'is-active' : ''}
                             onClick={() => goTo(t.path)}>
@@ -287,19 +315,8 @@ export default function TopHeader({ userRole, currentUser, handleLogout, apiFetc
                             <span>{t.label}</span>
                           </button>
                         ))}
-                      </section>;
-                    })}
-                    {superAdminTabs.length > 0 && <section className="top-nav-menu-group">
-                      <h3>Platform</h3>
-                      {superAdminTabs.map(t => (
-                        <button key={t.id} data-testid={t.testid} role="menuitem"
-                          className={activeTab === t.id ? 'is-active' : ''}
-                          onClick={() => goTo(t.path)}>
-                          <AppIcon name={NAV_ICONS[t.id]} />
-                          <span>{t.label}</span>
-                        </button>
-                      ))}
-                    </section>}
+                      </section>)}
+                    </div>)}
                   </div>
                 )}
               </div>

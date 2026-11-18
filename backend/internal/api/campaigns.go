@@ -433,6 +433,8 @@ type PaginatedCampaignLeadsResponse struct {
 // @Param       executive_ids   query  string false  "Comma-separated executive IDs"
 // @Param       scheduled_from  query  string false  "Scheduled from (ISO datetime)"
 // @Param       scheduled_to    query  string false  "Scheduled to (ISO datetime)"
+// @Param       from            query  string false  "Call date/time from"
+// @Param       to              query  string false  "Call date/time to"
 // @Success     200  {object}  PaginatedCampaignLeadsResponse
 // @Failure     400  {object}  ErrorResponse
 // @Failure     401  {object}  ErrorResponse
@@ -446,11 +448,18 @@ func (s *Server) listCampaignLeads(w http.ResponseWriter, r *http.Request) {
 	}
 	ac := getAuth(r)
 	q := r.URL.Query()
+	activity, err := campaignActivityFilterFromRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	filter := db.CampaignLeadsFilter{
 		CampaignID:    campaign.ID,
 		Search:        q.Get("search"),
 		ScheduledFrom: q.Get("scheduled_from"),
 		ScheduledTo:   q.Get("scheduled_to"),
+		CalledFrom:    activity.From,
+		CalledTo:      activity.To,
 	}
 	// Enforce per-lead isolation for Agents and Team Leaders; allow Admins to
 	// filter by specific agents via ?executive_ids=.
@@ -588,6 +597,8 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 		Search        string  `json:"search"`
 		ScheduledFrom string  `json:"scheduled_from"`
 		ScheduledTo   string  `json:"scheduled_to"`
+		From          string  `json:"from"`
+		To            string  `json:"to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")
@@ -595,6 +606,11 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 	}
 	leadIDs := body.LeadIDs
 	if body.All {
+		activity, err := campaignActivityFilterFromValues(body.Search, body.From, body.To)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		execIDs, _, err := s.resolveCampaignExecutiveIDs(r, ac, campaign.ID)
 		if err != nil {
 			s.logger.Sugar().Errorw("bulkUpdateCampaignLeadExecutives: resolve exec ids", "err", err)
@@ -606,6 +622,8 @@ func (s *Server) bulkUpdateCampaignLeadExecutives(w http.ResponseWriter, r *http
 			Search:        body.Search,
 			ScheduledFrom: body.ScheduledFrom,
 			ScheduledTo:   body.ScheduledTo,
+			CalledFrom:    activity.From,
+			CalledTo:      activity.To,
 			ExecIDs:       execIDs,
 		}
 		allLeads, err := s.db.GetCampaignLeadsPaginated(filter, 0, 0)
@@ -772,12 +790,16 @@ func (s *Server) getCampaignCallOutcomeStats(w http.ResponseWriter, r *http.Requ
 
 func campaignActivityFilterFromRequest(r *http.Request) (db.CampaignActivityFilter, error) {
 	q := r.URL.Query()
-	filter := db.CampaignActivityFilter{Search: strings.TrimSpace(q.Get("search"))}
+	return campaignActivityFilterFromValues(q.Get("search"), q.Get("from"), q.Get("to"))
+}
+
+func campaignActivityFilterFromValues(search, from, to string) (db.CampaignActivityFilter, error) {
+	filter := db.CampaignActivityFilter{Search: strings.TrimSpace(search)}
 	var err error
-	if filter.From, err = normalizeActivityDate(q.Get("from")); err != nil {
+	if filter.From, err = normalizeActivityDate(from); err != nil {
 		return filter, fmt.Errorf("invalid from date: %w", err)
 	}
-	if filter.To, err = normalizeActivityDate(q.Get("to")); err != nil {
+	if filter.To, err = normalizeActivityDate(to); err != nil {
 		return filter, fmt.Errorf("invalid to date: %w", err)
 	}
 	if filter.From != "" && filter.To != "" && filter.From > filter.To {
@@ -1925,6 +1947,10 @@ func (s *Server) singleAssignedCampaignExecutiveID(orgID, campaignID int64) (int
 
 // executive_id). It returns the lead on success, or writes a 404 and returns nil.
 func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadID int64) *db.Lead {
+	return s.requireLeadAccessWithDeniedStatus(w, r, leadID, http.StatusNotFound)
+}
+
+func (s *Server) requireLeadAccessWithDeniedStatus(w http.ResponseWriter, r *http.Request, leadID int64, deniedStatus int) *db.Lead {
 	ac := getAuth(r)
 	lead, err := s.db.GetLeadByID(leadID)
 	if err != nil {
@@ -1951,7 +1977,11 @@ func (s *Server) requireLeadAccess(w http.ResponseWriter, r *http.Request, leadI
 			}
 		}
 		if !found {
-			writeError(w, http.StatusNotFound, "lead not found")
+			message := "lead not found"
+			if deniedStatus == http.StatusForbidden {
+				message = "You do not have permission to edit this lead. Please ask your admin."
+			}
+			writeError(w, deniedStatus, message)
 			return nil
 		}
 	}

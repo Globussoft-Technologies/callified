@@ -219,3 +219,16 @@ func TestLiveProductOpeningAllowsTranslation(t *testing.T) {
 	assert.Contains(t, got, "If the customer interrupts, address their response naturally")
 	assert.Contains(t, got, "translating naturally if needed")
 }
+
+func TestEnglishCustomGreetingUsesHindiCampaignLanguage(t *testing.T) {
+	const greeting = "Hello, this is Priya from Callified. May I take 15 minutes?"
+	client := New(Config{Language: "hi", Greeting: greeting}, Callbacks{})
+	instruction := client.greetingInstruction()
+	assert.Contains(t, instruction, greeting, "keep the customer's configured content")
+	assert.Contains(t, instruction, "CURRENT_REPLY_LANGUAGE=hi")
+	assert.Contains(t, instruction, "Translate naturally if needed")
+	assert.Contains(t, instruction, "preserve its meaning, names, company names, product names, numbers, and facts")
+	assert.NotContains(t, instruction, "exact greeting")
+	assert.NotContains(t, instruction, "verbatim")
+	assert.Contains(t, buildLiveSystemPrompt("", "hi"), "opening greeting must also use CURRENT_REPLY_LANGUAGE")
+}

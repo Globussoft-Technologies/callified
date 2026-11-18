@@ -363,18 +363,27 @@ func (d *DB) CreateLead(firstName, lastName, phone, source, interest, company st
 	return res.LastInsertId()
 }
 
-// UpdateLead updates mutable lead fields. Returns true if a row was changed.
+// UpdateLead updates mutable fields and reports whether the scoped lead exists.
 func (d *DB) UpdateLead(id int64, firstName, lastName, phone, source, interest, company string, executiveID, orgID int64) (bool, error) {
 	res, err := d.pool.Exec(
 		`UPDATE leads SET first_name=?, last_name=?, phone=?, source=?, interest=?, company=?, executive_id=?
-		 WHERE id=? AND (org_id=? OR org_id IS NULL)`,
+		 WHERE id=? AND org_id=?`,
 		firstName, lastName, phone, source, nullString(interest), company, nullInt64(executiveID), id, orgID,
 	)
 	if err != nil {
 		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return true, nil
+	}
+	// MySQL reports zero changed rows when all submitted values are unchanged.
+	var exists bool
+	err = d.pool.QueryRow(`SELECT EXISTS (SELECT 1 FROM leads WHERE id=? AND org_id=?)`, id, orgID).Scan(&exists)
+	return exists, err
 }
 
 // DeleteLead deletes a lead scoped to the given org and removes it from all

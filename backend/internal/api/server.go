@@ -57,6 +57,7 @@ type Server struct {
 // doesn't have to import the recording package (which would re-import
 // internal/llm and create a cycle).
 type callAnalyzer interface {
+	TranscribeLocalRecording(ctx context.Context, recordingURL string) ([]llm.ChatMessage, error)
 	AnalyzeCall(ctx context.Context, history []llm.ChatMessage) (*recording.Analysis, error)
 	AnalyzeCallForCampaign(ctx context.Context, orgID, campaignID int64, history []llm.ChatMessage) (*recording.Analysis, error)
 }
@@ -348,6 +349,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/transcripts/{id}/review", auth(s.getTranscriptReview))
 	mux.HandleFunc("POST /api/transcripts/{id}/conclusion", auth(s.postTranscriptConclusion))
 	mux.HandleFunc("GET /api/transcripts/{id}/disposition", auth(s.getTranscriptDisposition))
+	mux.HandleFunc("GET /api/transcripts/{id}/notes", auth(s.manualCallNotes))
+	mux.HandleFunc("PATCH /api/transcripts/{id}/notes", auth(s.manualCallNotes))
 	mux.HandleFunc("PATCH /api/transcripts/{id}/disposition", auth(s.patchTranscriptDisposition))
 
 	// ── DND ───────────────────────────────────────────────────────────────────

@@ -2107,6 +2107,7 @@ func (h *Handler) finalizeCall(ctx context.Context, sess *CallSession) {
 		DurationS:   float32(time.Since(sess.CallStart).Seconds()),
 		StereoWav:   wavBytes,
 		GeminiLive:  sess.GeminiLive,
+		IsManual:    sess.IsBridge,
 		SkipCredits: sess.SkipCredits,
 		UserEmail:   sess.UserEmail,
 		IsInbound:   sess.IsInbound,

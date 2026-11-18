@@ -1,8 +1,11 @@
+import { Dropdown } from 'antd';
 import React, { useEffect, useMemo, useState } from 'react';
+import { reportFilename } from '../../utils/reportFilename';
 import { formatDateTime } from '../../utils/dateFormat';
 import AuthAudio from '../AuthAudio';
 import AppIcon from '../common/AppIcon';
 import AppSelect from '../common/AppSelect';
+import { useAuth } from '../../contexts/AuthContext';
 
 const T = {
   bg: '#f4f5f9',
@@ -101,6 +104,9 @@ function formatDuration(s) {
 }
 
 export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, range }) {
+  const { hasPermission } = useAuth();
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -152,6 +158,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
   const recordings = useMemo(() => Array.isArray(data?.recordings) ? data.recordings : [], [data]);
   const stats = data?.stats || {};
   const profile = data?.profile || {};
+  const organizationScope = profile.role === 'Admin';
   const leadPagination = data?.lead_pagination || { page: 1, limit: 20, total: 0 };
   const recordingPagination = data?.recording_pagination || { page: 1, limit: 20, total: 0 };
 
@@ -159,6 +166,24 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
     setLeadsCampaignId(String(cid));
     setLeadsPage(1);
     setActiveTab('leads');
+  };
+
+  const downloadDetails = async (format = 'xlsx') => {
+    setDownloading(true); setDownloadError('');
+    try {
+      const params = new URLSearchParams({ download: '1', format });
+      if (range?.from) params.set('from', range.from);
+      if (range?.to) params.set('to', range.to);
+      if (leadsCampaignId) params.set('campaign_id', leadsCampaignId);
+      const res = await apiFetch(`${API_URL}/analytics/user-detail/${userId}?${params}`);
+      if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `HTTP ${res.status}`); }
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = url; link.download = reportFilename({ name: profile.full_name || profile.email || `User_${userId}`, role: profile.role, from: range?.from, to: range?.to, campaign: leadsCampaignId ? `Campaign_${leadsCampaignId}` : '', format });
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { setDownloadError(err.message || 'Download failed'); }
+    finally { setDownloading(false); }
   };
 
   const tabs = [
@@ -172,8 +197,8 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
         {[
-          { label: 'Assigned Leads', value: stats.assigned_leads || 0 },
-          { label: 'Assigned Campaigns', value: stats.assigned_campaigns || 0 },
+          { label: organizationScope ? 'Organization Leads' : 'Assigned Leads', value: stats.assigned_leads || 0 },
+          { label: organizationScope ? 'Organization Campaigns' : 'Assigned Campaigns', value: stats.assigned_campaigns || 0 },
           { label: 'Total Calls', value: stats.total_calls || 0 },
           { label: 'Recordings', value: stats.recordings || 0 },
           { label: 'Appointments', value: stats.appointments || 0 },
@@ -187,9 +212,9 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
       </div>
 
       <div>
-        <div style={{ fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 10 }}>Assigned campaigns</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 10 }}>{organizationScope ? 'Organization campaigns' : 'Assigned campaigns'}</div>
         {campaigns.length === 0 ? (
-          <div style={{ color: T.muted, fontSize: 13, padding: '16px 0' }}>No campaigns assigned.</div>
+          <div style={{ color: T.muted, fontSize: 13, padding: '16px 0' }}>{organizationScope ? 'No organization campaigns.' : 'No campaigns assigned.'}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {campaigns.map((c) => (
@@ -274,7 +299,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
             );
           })}
           {campaigns.length === 0 && (
-            <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', padding: 24 }}>No assigned campaigns.</td></tr>
+            <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', padding: 24 }}>{organizationScope ? 'No organization campaigns.' : 'No assigned campaigns.'}</td></tr>
           )}
         </tbody>
       </table>
@@ -288,7 +313,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
           <span style={{ fontSize: 11, fontWeight: 800, color: T.sub, textTransform: 'uppercase' }}>Filter by campaign</span>
           <AppSelect searchable value={leadsCampaignId} popupWidth={260}
             options={[
-              { value: '', label: 'All assigned campaigns' },
+              { value: '', label: organizationScope ? 'All organization campaigns' : 'All assigned campaigns' },
               ...campaigns.map(campaign => ({ value: String(campaign.campaign_id), label: campaign.name })),
             ]}
             onChange={value => { setLeadsCampaignId(value); setLeadsPage(1); }} />
@@ -459,9 +484,14 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
           <div>
             <div style={{ fontSize: 18, fontWeight: 800, color: T.text }}>{profile.full_name || profile.email || 'User detail'}</div>
             <div style={{ fontSize: 13, color: T.muted, marginTop: 4 }}>{profile.email}</div>
-            <div style={{ marginTop: 8 }}><Badge>{profile.role || '-'}</Badge></div>
+            <div style={{ marginTop: 8 }}><Badge>{profile.role || '-'}</Badge>{organizationScope && <span style={{ marginLeft: 8, fontSize: 12, color: T.muted }}>Organization-wide records</span>}</div>
           </div>
-          <button onClick={onClose} aria-label="Close" title="Close" style={{ ...btnGhost, padding: '6px 10px' }}><AppIcon name="close" /></button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {hasPermission('reports.download') && <Dropdown trigger={['click']} menu={{ items: [{ key: 'xlsx', label: 'Excel' }, { key: 'pdf', label: 'PDF' }], onClick: ({ key }) => downloadDetails(key) }} disabled={loading || !data || downloading}><button type="button" disabled={loading || !data || downloading} style={btnGhost}>
+              {downloading ? 'Downloading…' : 'Download ▾'}
+            </button></Dropdown>}
+            <button onClick={onClose} aria-label="Close" title="Close" style={{ ...btnGhost, padding: '6px 10px' }}><AppIcon name="close" /></button>
+          </div>
         </div>
 
         <div style={{ display: 'flex', borderBottom: `1px solid ${T.border}`, padding: '0 22px' }}>
@@ -476,6 +506,7 @@ export default function UserDetailModal({ userId, onClose, apiFetch, API_URL, ra
           {loading && !data && (
             <div style={{ color: T.muted, fontSize: 13, padding: 24 }}>Loading user detail…</div>
           )}
+          {downloadError && <div role="alert" style={{ color: T.red, padding: 12 }}>Download failed: {downloadError}</div>}
           {error && (
             <div style={{ color: T.red, fontSize: 13, padding: 16, background: '#fef2f2', borderRadius: 8 }}>{error}</div>
           )}

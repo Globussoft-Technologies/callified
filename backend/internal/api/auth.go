@@ -169,11 +169,16 @@ func (s *Server) signup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSessionCookie(w, r, token)
 
+	if err := s.db.RecordUserLogin(userID); err != nil {
+		s.logger.Sugar().Warnw("signup: failed to record first login", "err", err, "user_id", userID)
+	}
+
 	// Match Python auth.py:202 — return a nested `user` object with
 	// org_name, so AuthContext.signup's `setCurrentUser(data.user)` gets
 	// the full profile and the TopHeader renders "Name (Org)".
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"access_token": token,
+		"first_login":  true,
 		"token_type":   "bearer",
 		"user": map[string]any{
 			"id":        userID,
@@ -281,6 +286,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": token,
 		"token_type":   "bearer",
+		"first_login":  user.LastLoginAt == "",
 		"user":         userResponse(s, user),
 	})
 }
@@ -319,9 +325,14 @@ func (s *Server) sessionFromToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "account disabled")
 		return
 	}
+	firstLogin := user.LastLoginAt == ""
+	if err := s.db.RecordUserLogin(user.ID); err != nil {
+		s.logger.Sugar().Warnw("sessionFromToken: failed to record login", "err", err, "user_id", user.ID)
+	}
 	s.setSessionCookie(w, r, strings.TrimSpace(body.Token))
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user": userResponse(s, user),
+		"first_login": firstLogin,
+		"user":        userResponse(s, user),
 	})
 }
 

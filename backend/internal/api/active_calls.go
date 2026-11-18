@@ -14,6 +14,7 @@ import (
 type activeCallLister interface {
 	ActiveSessions() []wshandler.ActiveSession
 	CloseCall(callSid string) bool
+	CloseExotelBridge(callSid string) bool
 }
 
 // SetWSHandler wires the WebSocket handler so /api/active-calls can list

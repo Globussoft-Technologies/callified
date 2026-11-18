@@ -41,6 +41,9 @@ services:
     ports:
       - "5173:5173"                     # replaces prod 80:80
     command: sh -c "npm install --legacy-peer-deps && npm run dev"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/"]
+      start_period: 60s
     depends_on:
       - go-audio
     restart: "no"

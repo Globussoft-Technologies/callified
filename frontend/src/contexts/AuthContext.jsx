@@ -1,19 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { API_URL } from '../constants/api';
-import { TOUR_KEY_PREFIX } from '../utils/dashboardTour';
+import { clearSessionStorageData } from '../utils/browserStorage';
 
 const AuthContext = createContext(null);
 
 // Clear credentials and cached data on logout. Keep only the non-sensitive,
-// versioned tour completion flags so the same user is not nagged at next login.
+// theme preference and tour completion flags.
 function clearBrowserData() {
-  try {
-    const tourFlags = Object.keys(localStorage)
-      .filter(key => key.startsWith(TOUR_KEY_PREFIX) && localStorage.getItem(key) === 'done');
-    localStorage.clear();
-    tourFlags.forEach(key => localStorage.setItem(key, 'done'));
-  } catch { /* ignore */ }
-  try { sessionStorage.clear(); } catch { /* ignore */ }
+  let local, session;
+  try { local = localStorage; } catch { /* ignore */ }
+  try { session = sessionStorage; } catch { /* ignore */ }
+  clearSessionStorageData(local, session);
   try {
     if (typeof document !== 'undefined' && document.cookie) {
       const hostname = window.location.hostname;
@@ -37,6 +34,8 @@ export function AuthProvider({ children }) {
   const [authToken, setAuthToken] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [permissions, setPermissions] = useState(null);
+  const [firstLoginTourUserId, setFirstLoginTourUserId] = useState(null);
+  const consumeFirstLoginTour = useCallback(() => setFirstLoginTourUserId(null), []);
   // authReady becomes true once /auth/me has run (or when there's no token).
   // apiFetch only calls clearSession on 401 after authReady=true to avoid a
   // race where a component's first fetch clears a stale-but-not-yet-validated
@@ -45,6 +44,7 @@ export function AuthProvider({ children }) {
 
   const clearSession = useCallback(() => {
     setAuthToken(null);
+    setFirstLoginTourUserId(null);
     setCurrentUser(null);
     setPermissions(null);
     setAuthReady(true);
@@ -124,6 +124,7 @@ export function AuthProvider({ children }) {
     }
     const data = await res.json();
     setAuthToken(data.access_token);
+    setFirstLoginTourUserId(data.first_login === true ? data.user?.id : null);
     setCurrentUser(data.user);
     return data;
   };
@@ -154,6 +155,7 @@ export function AuthProvider({ children }) {
     }
     const data = await res.json();
     setAuthToken(data.access_token);
+    setFirstLoginTourUserId(data.first_login === true ? data.user?.id : null);
     setCurrentUser(data.user);
     return data;
   };
@@ -186,12 +188,13 @@ export function AuthProvider({ children }) {
     }
     const data = await res.json();
     setAuthToken(token);
+    setFirstLoginTourUserId(data.first_login === true ? data.user?.id : null);
     setCurrentUser(data.user);
     return data.user;
   };
 
   return (
-    <AuthContext.Provider value={{ authToken, currentUser, setCurrentUser, authReady, loading: !authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures, permissions, hasPermission }}>
+    <AuthContext.Provider value={{ firstLoginTourUserId, consumeFirstLoginTour, authToken, currentUser, setCurrentUser, authReady, loading: !authReady, apiFetch, fetchSseTicket, login, signup, logout, loginWithToken, hideAiFeatures, permissions, hasPermission }}>
       {children}
     </AuthContext.Provider>
   );

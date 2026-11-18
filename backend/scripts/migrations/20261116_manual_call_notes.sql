@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS manual_call_notes (
+ org_id BIGINT NOT NULL,
+ transcript_id BIGINT NOT NULL,
+ notes TEXT NOT NULL,
+ updated_by BIGINT NOT NULL,
+ updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ PRIMARY KEY (org_id, transcript_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -462,6 +462,7 @@ export function CallProvider({ children }) {
   }, [fetchDueManualCalls, clearDismissedScheduledCall]);
 
   const handleBrowserCallEnded = useCallback((status, errorMsg) => {
+    window.dispatchEvent(new Event('callified:call-ended'));
     const cb = browserCallEndedCbRef.current;
     browserCallEndedCbRef.current = null;
     if (cb) {

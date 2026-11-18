@@ -89,11 +89,17 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
   const mutedRef = useRef(false);
   const connectedRef = useRef(false); // true only after server sends status:connected
   const endedNotifiedRef = useRef(false);
+  const [hangupPending, setHangupPending] = useState(false);
+  const hangupPendingRef = useRef(false);
+  const hangupFallbackRef = useRef(null);
 
   // Sync muted state to ref for use inside audio callbacks.
   useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   const stopAll = useCallback(() => {
+    hangupPendingRef.current = false;
+    setHangupPending(false);
+    if (hangupFallbackRef.current) { clearTimeout(hangupFallbackRef.current); hangupFallbackRef.current = null; }
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (audioDrainRef.current) { clearInterval(audioDrainRef.current); audioDrainRef.current = null; }
     if (processorRef.current) { try { processorRef.current.disconnect(); } catch { /* ignore */ } processorRef.current = null; }
@@ -203,6 +209,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
         let msg;
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.type === 'status') {
+          if (hangupPendingRef.current) return;
           setStatus(msg.status); // 'waiting' | 'connected'
           if (msg.status === 'connected') {
             connectedRef.current = true; // ungate mic sends
@@ -242,17 +249,39 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
     }
   }, [status, onEnded, errorMsg]);
 
-  const handleHangup = async () => {
-    // The HTTP endpoint can cancel ringing calls before the media socket opens.
-    try {
-      const response = await apiFetch(`${API_URL}/calls/${encodeURIComponent(callSid)}/browser-call`, { method: 'DELETE' });
-      if (!response.ok) throw new Error('Could not end the call. Please try again.');
-    } catch (error) {
-      setErrorMsg(error.message);
-      return;
+  const handleHangup = () => {
+    if (hangupPendingRef.current) return;
+    hangupPendingRef.current = true;
+    setHangupPending(true);
+    setErrorMsg('');
+
+    const requestHTTPHangup = async () => {
+      if (!hangupPendingRef.current) return;
+      try {
+        const response = await apiFetch(`${API_URL}/calls/${encodeURIComponent(callSid)}/browser-call`, { method: 'DELETE' });
+        if (!hangupPendingRef.current) return; // Socket already confirmed the end.
+        if (!response.ok) throw new Error('Could not end the call. Please try again.');
+        stopAll();
+        setStatus('ended');
+      } catch (error) {
+        if (!hangupPendingRef.current) return;
+        hangupPendingRef.current = false;
+        setHangupPending(false);
+        setErrorMsg(error.message);
+      }
+    };
+
+    // Use the existing connection first; avoid a network round trip through
+    // the reverse proxy before the carrier receives the hang-up command.
+    const ws = wsRef.current;
+    if (connectedRef.current && ws?.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: 'hangup' }));
+        hangupFallbackRef.current = setTimeout(requestHTTPHangup, 1500);
+        return;
+      } catch { /* Fall back to HTTP when the socket is unavailable. */ }
     }
-    stopAll();
-    setStatus('ended');
+    requestHTTPHangup();
   };
 
   const formatDuration = (s) => {
@@ -304,7 +333,7 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
           color: status === 'connected' ? '#065f46' : status === 'error' ? T.red : T.accent,
           border: `1px solid ${status === 'connected' ? 'rgba(16,185,129,0.25)' : status === 'error' ? '#fca5a5' : 'rgba(99,102,241,0.15)'}`,
         }}>
-          <AppIcon name={statusIcon} spin={status === 'connecting'} style={{ marginRight: 7 }} />{statusLabel}
+          <AppIcon name={statusIcon} spin={status === 'connecting' || hangupPending} style={{ marginRight: 7 }} />{hangupPending && status !== 'ended' && status !== 'error' ? 'Ending call…' : statusLabel}
         </div>
 
         {errorMsg && (
@@ -323,8 +352,8 @@ export default function BrowserCallModal({ lead, callSid, wsBaseUrl, onClose, on
           {(status === 'ended' || status === 'error') ? (
             <button onClick={onClose} style={btnPrimary}>Close</button>
           ) : (
-            <button onClick={handleHangup} style={btnDanger}>
-              <AppIcon name="disconnect" /> Hang Up
+            <button onClick={handleHangup} disabled={hangupPending} style={{ ...btnDanger, opacity: hangupPending ? 0.65 : 1, cursor: hangupPending ? 'wait' : 'pointer' }}>
+              <AppIcon name={hangupPending ? "loading" : "disconnect"} spin={hangupPending} /> {hangupPending ? 'Ending…' : 'Hang Up'}
             </button>
           )}
         </div>

@@ -6,9 +6,10 @@ import LeadModals from '../components/modals/LeadModals';
 import DocumentVault from '../components/modals/DocumentVault';
 import TranscriptModal from '../components/modals/TranscriptModal';
 import EmailDraftModal from '../components/modals/EmailDraftModal';
-import { normalizePhone } from '../utils/phone';
+import { normalizePhone, isValidPhone, PHONE_VALIDATION_MESSAGE } from '../utils/phone';
 import { useAuth } from '../contexts/AuthContext';
 import AppIcon from '../components/common/AppIcon';
+import useLeadStatusRefresh from '../hooks/useLeadStatusRefresh';
 
 export default function CrmPage({
   apiFetch, API_URL, selectedOrg, orgTimezone,
@@ -30,6 +31,7 @@ export default function CrmPage({
   const canViewLeads = hasPermission('crm.view');
   // Lead State
   const [leads, setLeads] = useState([]);
+  useLeadStatusRefresh(setLeads, apiFetch, API_URL);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({ first_name: '', last_name: '', phone: '', company: '', source: 'Manual Entry', executive_id: 0 });
@@ -153,6 +155,7 @@ export default function CrmPage({
 
   const handleSaveEdit = async (e) => {
     e.preventDefault();
+    if (!isValidPhone(editFormData.phone)) { toast(PHONE_VALIDATION_MESSAGE, 'error'); return; }
     setLoading(true);
     try {
       const payload = { ...editFormData, phone: normalizePhone(editFormData.phone) };
@@ -163,7 +166,7 @@ export default function CrmPage({
       });
       const data = await res.json();
       if (!res.ok || data.status === 'error') {
-        throw new Error(data.message || 'Error updating lead details');
+        throw new Error(res.status === 403 ? 'You do not have permission to edit this lead. Please ask your admin.' : data.error || data.message || Object.values(data.fields || {})[0] || 'Error updating lead details');
       }
       setEditModalOpen(false);
       setEditingLead(null);
