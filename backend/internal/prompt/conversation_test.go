@@ -95,3 +95,13 @@ func TestProductFollowUpPolicyKeepsNaturalHandlingInBothModes(t *testing.T) {
 	assert.Contains(t, disabled, "skipping already answered questions")
 	assert.Contains(t, ConversationGuidance, "When that setting is OFF, its restriction overrides")
 }
+
+func TestCustomerFacingEscalationAvoidsUnpromptedIdentityContrast(t *testing.T) {
+	got := buildDefaultPrompt(promptContext{Language: "en", ProductContext: "Confirmed product facts"})
+	assert.Contains(t, got, "CUSTOMER-FACING ESCALATION")
+	assert.Contains(t, got, `offer help from "our team", "a specialist", or "a colleague"`)
+	assert.Contains(t, got, "Use the supplied knowledge first")
+	assert.Contains(t, got, "an available action and a successful result")
+	assert.Contains(t, got, "answer honestly and briefly; do not pretend to be human")
+	assert.NotContains(t, got, "If asked, deflect naturally")
+}

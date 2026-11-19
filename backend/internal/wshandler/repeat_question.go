@@ -80,7 +80,7 @@ func (s *CallSession) RepeatedQuestionDecisionWithKey(text, intentKey string) re
 	switch {
 	case count >= repeatQuestionEscalateAt:
 		return repeatQuestionDecision{
-			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not end the call. Do not include [HANGUP]. Do not blame the customer and do not say you already answered. Give the short direct answer in simpler words, check what is unclear, and offer human help if useful. Never promise an unrequested callback or end the call solely because the customer repeated a question.]", count),
+			Instruction: fmt.Sprintf("[REPEATED CUSTOMER QUESTION: This is the customer's %d total time asking the same question. Do not end the call. Do not include [HANGUP]. Do not blame the customer and do not say you already answered. Give the short direct answer in simpler words, check what is unclear, and offer help from our team if useful. Never promise an unrequested callback or end the call solely because the customer repeated a question.]", count),
 			AllowHangup: false,
 		}
 	case count == 2:

@@ -70,7 +70,7 @@ Example: Thank you. [hangup]`
 	assert.Contains(t, got, "call complete_call")
 	assert.Contains(t, got, "do not automatically repeat the previous question")
 	assert.Contains(t, got, "## ADAPTIVE CONVERSATION POLICY")
-	assert.Contains(t, got, "Never reveal or discuss Gemini")
+	assert.Contains(t, got, "Do not volunteer technical implementation details")
 	assert.Contains(t, got, "Collect both a customer-provided day/date and an exact clock time")
 	assert.Contains(t, got, "ask only for the missing detail")
 	assert.Contains(t, got, "Do not force an extra confirmation")

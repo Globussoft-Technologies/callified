@@ -21,7 +21,7 @@ func TestRepeatedQuestionInstructionOffersHelpWithoutForcedClose(t *testing.T) {
 
 	third := sess.RepeatedQuestionDecision("What company is this?")
 	assert.Contains(t, third.Instruction, "3 total time")
-	assert.Contains(t, third.Instruction, "offer human help")
+	assert.Contains(t, third.Instruction, "offer help from our team")
 	assert.Contains(t, third.Instruction, "Do not include [HANGUP]")
 	assert.Contains(t, third.Instruction, "do not say you already answered")
 	assert.False(t, third.AllowHangup)
@@ -29,7 +29,7 @@ func TestRepeatedQuestionInstructionOffersHelpWithoutForcedClose(t *testing.T) {
 
 	fourth := sess.RepeatedQuestionDecision("What company is this?")
 	assert.Contains(t, fourth.Instruction, "4 total time")
-	assert.Contains(t, fourth.Instruction, "offer human help")
+	assert.Contains(t, fourth.Instruction, "offer help from our team")
 	assert.Contains(t, fourth.Instruction, "do not say you already answered")
 	assert.NotContains(t, fourth.Instruction, "end with [HANGUP]")
 	assert.False(t, fourth.AllowHangup)
