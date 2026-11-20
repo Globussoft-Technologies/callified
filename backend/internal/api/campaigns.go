@@ -131,11 +131,12 @@ func uniqueInt64s(ids []int64) []int64 {
 // ── POST /api/campaigns ──────────────────────────────────────────────────────
 
 type campaignCreateRequest struct {
-	Name            string `json:"name"`
-	ProductID       int64  `json:"product_id"`
-	LeadSource      string `json:"lead_source"`
-	Channel         string `json:"channel"`
-	ExotelAccountID int64  `json:"exotel_account_id"`
+	AutoRetryEnabled bool   `json:"auto_retry_enabled"`
+	Name             string `json:"name"`
+	ProductID        int64  `json:"product_id"`
+	LeadSource       string `json:"lead_source"`
+	Channel          string `json:"channel"`
+	ExotelAccountID  int64  `json:"exotel_account_id"`
 }
 
 // validateCampaignName mirrors frontend/src/utils/campaignName.js. Defense
@@ -189,7 +190,7 @@ func (s *Server) createCampaign(w http.ResponseWriter, r *http.Request) {
 			exotelAccountID = accounts[0].ID
 		}
 	}
-	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), exotelAccountID)
+	id, err := s.db.CreateCampaign(ac.OrgID, req.ProductID, strings.TrimSpace(req.Name), req.LeadSource, coalesceStr(req.Channel, "voice"), exotelAccountID, req.AutoRetryEnabled)
 	if err != nil {
 		s.logger.Sugar().Errorw("createCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -260,19 +261,20 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 	// Attach voice settings in a merged map so we stay backwards-compatible
 	// with clients that still read c.* directly.
 	resp := map[string]any{
-		"id":           c.ID,
-		"org_id":       c.OrgID,
-		"product_id":   c.ProductID,
-		"name":         c.Name,
-		"status":       c.Status,
-		"tts_provider": c.TTSProvider,
-		"tts_voice_id": c.TTSVoiceID,
-		"tts_language": c.TTSLanguage,
-		"lead_source":  c.LeadSource,
-		"channel":      c.Channel,
-		"product_name": c.ProductName,
-		"created_at":   c.CreatedAt,
-		"stats":        c.Stats,
+		"id":                 c.ID,
+		"org_id":             c.OrgID,
+		"product_id":         c.ProductID,
+		"name":               c.Name,
+		"status":             c.Status,
+		"tts_provider":       c.TTSProvider,
+		"tts_voice_id":       c.TTSVoiceID,
+		"tts_language":       c.TTSLanguage,
+		"lead_source":        c.LeadSource,
+		"channel":            c.Channel,
+		"product_name":       c.ProductName,
+		"created_at":         c.CreatedAt,
+		"stats":              c.Stats,
+		"auto_retry_enabled": c.AutoRetryEnabled,
 	}
 	if vs, err := s.db.GetCampaignVoiceSettings(id); err == nil {
 		resp["voice_settings"] = map[string]string{
@@ -290,11 +292,12 @@ func (s *Server) getCampaign(w http.ResponseWriter, r *http.Request) {
 // ── PUT /api/campaigns/{id} ──────────────────────────────────────────────────
 
 type campaignUpdateRequest struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	LeadSource string `json:"lead_source"`
-	ProductID  int64  `json:"product_id"`
-	Channel    string `json:"channel"`
+	AutoRetryEnabled *bool  `json:"auto_retry_enabled"`
+	Name             string `json:"name"`
+	Status           string `json:"status"`
+	LeadSource       string `json:"lead_source"`
+	ProductID        int64  `json:"product_id"`
+	Channel          string `json:"channel"`
 }
 
 // @Summary     Update campaign
@@ -355,7 +358,7 @@ func (s *Server) updateCampaign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID); err != nil {
+	if err := s.db.UpdateCampaign(id, req.Name, req.Status, req.LeadSource, req.Channel, req.ProductID, req.AutoRetryEnabled); err != nil {
 		s.logger.Sugar().Errorw("updateCampaign", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

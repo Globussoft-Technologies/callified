@@ -1,3 +1,4 @@
+import { Switch } from 'antd';
 import React, { useRef, useState } from 'react';
 import { CAMPAIGN_TEMPLATES, INDUSTRY_COLORS, LANGUAGE_LABELS } from '../../constants/campaignTemplates';
 import { validateCampaignName, CAMPAIGN_NAME_MAX_LEN } from '../../utils/campaignName';
@@ -127,8 +128,8 @@ export default function CampaignModals({
     <>
       {/* Create Campaign Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={handleClose} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
+        <div className="modal-overlay" onClick={handleClose} role="button" tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '680px', width: '95%', maxHeight: '85vh', overflowY: 'auto'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Create New Campaign</h3>
 
@@ -158,7 +159,7 @@ export default function CampaignModals({
                       }}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }}>
+                      onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.currentTarget.click(); } }}>
                       <div style={{fontWeight: 600, fontSize: '0.82rem', color: '#e2e8f0', marginBottom: '4px'}}>{tpl.name}</div>
                       <div style={{display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '4px'}}>
                         <span style={{background: ic.bg, color: ic.color, fontSize: '0.65rem', padding: '1px 6px', borderRadius: '8px', fontWeight: 600}}>
@@ -260,6 +261,11 @@ export default function CampaignModals({
                       onChange={value => setCreateForm({...createForm, exotel_account_id: value ? parseInt(value, 10) : ''})} />
                   </div>
                 )}
+                <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: '1.5rem'}}>
+                  <label htmlFor="create-campaign-auto-retry" style={{color: '#94a3b8', fontSize: '0.85rem'}}>Automatic Call Retries</label>
+                  <Switch id="create-campaign-auto-retry" checked={Boolean(createForm.auto_retry_enabled)}
+                    disabled={loading} onChange={checked => setCreateForm({...createForm, auto_retry_enabled: checked})} />
+                </div>
                 {createError && (
                   <div style={{marginBottom: '1rem', padding: '10px 14px', borderRadius: '8px',
                     background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
@@ -548,8 +554,8 @@ export default function CampaignModals({
 
       {/* Edit Campaign Modal */}
       {showEditCampaignModal && (
-        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
-          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
+        <div className="modal-overlay" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}>
+          <div className="glass-panel" onClick={e => e.stopPropagation()} role="button" tabIndex={0} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); e.currentTarget.click(); } }}
             style={{maxWidth: '450px', width: '90%'}}>
             <h3 style={{marginTop: 0, color: '#e2e8f0'}}>Edit Campaign</h3>
             <form onSubmit={e => {
@@ -616,6 +622,13 @@ export default function CampaignModals({
                   { value: 'voice', label: `Voice Call${!hideAiFeatures ? ' (AI Phone)' : ''}` },
                   ...(!hideAiFeatures ? [{ value: 'whatsapp', label: 'WhatsApp (AI Chat)' }] : []),
                 ]} onChange={value => setEditCampaignForm({...editCampaignForm, channel: value})} />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '12px 0' }}>
+                <div>
+                  <label htmlFor="campaign-auto-retry" style={{ display: 'block', color: 'var(--text-primary)', fontWeight: 600 }}>Automatic Call Retries</label>
+                  <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 12 }}>Retry busy, unanswered, or failed calls only when enabled. Turning this off pauses queued retries.</p>
+                </div>
+                <Switch id="campaign-auto-retry" checked={Boolean(editCampaignForm.auto_retry_enabled)} onChange={checked => setEditCampaignForm({ ...editCampaignForm, auto_retry_enabled: checked })} />
               </div>
               <div style={{display: 'flex', gap: '10px', justifyContent: 'flex-end'}}>
                 <button type="button" onClick={() => { setEditNameTouched(false); setShowEditCampaignModal(false); if (setEditCampaignError) setEditCampaignError(''); }}

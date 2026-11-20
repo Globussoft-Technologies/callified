@@ -300,6 +300,14 @@ func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status st
 	if leadID == 0 {
 		return
 	}
+	enabled, err := s.db.CampaignAutoRetriesEnabled(orgID, campaignID)
+	if err != nil {
+		s.logger.Warn("enqueueRetryIfFailed: retry setting lookup failed", zap.Error(err))
+		return
+	}
+	if !enabled {
+		return
+	}
 	already, err := s.db.HasPendingOrExhaustedRetry(leadID, campaignID)
 	if err != nil {
 		s.logger.Warn("enqueueRetryIfFailed: HasPendingOrExhaustedRetry",
@@ -310,11 +318,15 @@ func (s *Server) enqueueRetryIfFailed(leadID, campaignID, orgID int64, status st
 		return
 	}
 	nextAttempt := time.Now().Add(30 * time.Minute)
-	if _, err := s.db.CreateRetry(leadID, campaignID, orgID, 3, nextAttempt); err != nil {
+	retryID, err := s.db.CreateRetry(leadID, campaignID, orgID, 3, nextAttempt)
+	if err != nil {
 		s.logger.Warn("enqueueRetryIfFailed: CreateRetry",
 			zap.Int64("lead_id", leadID), zap.String("status", status), zap.Error(err))
 		return
 	}
+	if retryID == 0 {
+		return
+	} // Disabled between the check and insert.
 	s.logger.Info("enqueueRetryIfFailed: queued",
 		zap.Int64("lead_id", leadID), zap.Int64("campaign_id", campaignID),
 		zap.String("reason", status))

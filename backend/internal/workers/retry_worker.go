@@ -12,9 +12,21 @@ import (
 )
 
 // RetryWorker polls the call_retries table every 2 minutes and re-dials pending retries.
+type retryStore interface {
+	GetPendingRetries() ([]db.Retry, error)
+	CampaignAutoRetriesEnabled(int64, int64) (bool, error)
+	GetLeadByID(int64) (*db.Lead, error)
+	GetCampaignVoiceSettings(int64) (db.VoiceSettings, error)
+	UpdateRetryStatus(int64, string) error
+	IncrRetryAttempt(int64) (bool, error)
+}
+type retryDialer interface {
+	Initiate(context.Context, dial.CallData) (string, error)
+}
+
 type RetryWorker struct {
-	db        *db.DB
-	initiator *dial.Initiator
+	db        retryStore
+	initiator retryDialer
 	log       *zap.Logger
 }
 
@@ -48,6 +60,15 @@ func (rw *RetryWorker) tick(ctx context.Context) {
 	for _, r := range retries {
 		if ctx.Err() != nil {
 			return
+		}
+		// Recheck each row because the campaign may be disabled after polling.
+		enabled, err := rw.db.CampaignAutoRetriesEnabled(r.OrgID, r.CampaignID)
+		if err != nil {
+			rw.log.Warn("retry_worker: retry setting lookup failed", zap.Error(err))
+			continue
+		}
+		if !enabled {
+			continue
 		}
 		lead, err := rw.db.GetLeadByID(r.LeadID)
 		if err != nil || lead == nil {

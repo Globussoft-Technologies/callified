@@ -27,6 +27,7 @@ func (d *DB) EnsureCampaignsTable() error {
 			max_call_duration_seconds INT DEFAULT NULL,
 			lead_source VARCHAR(100) DEFAULT NULL,
 			channel VARCHAR(20) NOT NULL DEFAULT 'voice',
+			auto_retry_enabled TINYINT(1) NOT NULL DEFAULT 0,
 			exotel_account_id BIGINT DEFAULT NULL,
 			INDEX idx_org_id (org_id),
 			INDEX idx_product_id (product_id),
@@ -44,6 +45,7 @@ func (d *DB) EnsureCampaignsTable() error {
 		{"max_call_duration_seconds", "INT DEFAULT NULL"},
 		{"lead_source", "VARCHAR(100) DEFAULT NULL"},
 		{"channel", "VARCHAR(20) NOT NULL DEFAULT 'voice'"},
+		{"auto_retry_enabled", "TINYINT(1) NOT NULL DEFAULT 0"},
 		{"exotel_account_id", "BIGINT DEFAULT NULL"},
 	}
 	for _, col := range columns {
@@ -59,20 +61,21 @@ func (d *DB) EnsureCampaignsTable() error {
 // Stats is populated by list endpoints (LEFT JOIN on campaign_leads) and left
 // nil by single-campaign fetches that don't need it.
 type Campaign struct {
-	ID              int64          `json:"id"`
-	OrgID           int64          `json:"org_id"`
-	ProductID       int64          `json:"product_id"`
-	Name            string         `json:"name"`
-	Status          string         `json:"status"`
-	TTSProvider     string         `json:"tts_provider"`
-	TTSVoiceID      string         `json:"tts_voice_id"`
-	TTSLanguage     string         `json:"tts_language"`
-	LeadSource      string         `json:"lead_source"`
-	Channel         string         `json:"channel"`
-	ExotelAccountID int64          `json:"exotel_account_id"`
-	ProductName     string         `json:"product_name"`
-	CreatedAt       string         `json:"created_at"`
-	Stats           *CampaignStats `json:"stats,omitempty"`
+	AutoRetryEnabled bool           `json:"auto_retry_enabled"`
+	ID               int64          `json:"id"`
+	OrgID            int64          `json:"org_id"`
+	ProductID        int64          `json:"product_id"`
+	Name             string         `json:"name"`
+	Status           string         `json:"status"`
+	TTSProvider      string         `json:"tts_provider"`
+	TTSVoiceID       string         `json:"tts_voice_id"`
+	TTSLanguage      string         `json:"tts_language"`
+	LeadSource       string         `json:"lead_source"`
+	Channel          string         `json:"channel"`
+	ExotelAccountID  int64          `json:"exotel_account_id"`
+	ProductName      string         `json:"product_name"`
+	CreatedAt        string         `json:"created_at"`
+	Stats            *CampaignStats `json:"stats,omitempty"`
 }
 
 // COALESCE on product_id because campaigns can legitimately have a NULL
@@ -85,7 +88,7 @@ const campaignCols = `c.id, c.org_id, COALESCE(c.product_id,0), c.name,
 	COALESCE(c.tts_language,''), COALESCE(c.lead_source,''),
 	COALESCE(c.channel,'voice'),
 	COALESCE(c.exotel_account_id,0),
-	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s')`
+	COALESCE(p.name,''), DATE_FORMAT(c.created_at,'%Y-%m-%d %H:%i:%s'), COALESCE(c.auto_retry_enabled,0)`
 
 // These values mirror frontend/src/constants/leadStatuses.js. Keep aggregate
 // metrics aligned with statuses users can actually assign in the CRM.
@@ -96,7 +99,7 @@ func scanCampaign(row interface{ Scan(...any) error }) (*Campaign, error) {
 	c := &Campaign{}
 	err := row.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 		&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-		&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt)
+		&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt, &c.AutoRetryEnabled)
 	return c, err
 }
 
@@ -139,7 +142,7 @@ func (d *DB) GetCampaignsByOrg(orgID int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt, &c.AutoRetryEnabled,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -191,7 +194,7 @@ func (d *DB) GetCampaignsByIDs(ids []int64) ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt, &c.AutoRetryEnabled,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -234,7 +237,7 @@ func (d *DB) GetAllCampaigns() ([]Campaign, error) {
 		stats := CampaignStats{}
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.ProductID, &c.Name, &c.Status,
 			&c.TTSProvider, &c.TTSVoiceID, &c.TTSLanguage, &c.LeadSource,
-			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt,
+			&c.Channel, &c.ExotelAccountID, &c.ProductName, &c.CreatedAt, &c.AutoRetryEnabled,
 			&stats.Total, &stats.Called, &stats.Qualified, &stats.Appointments,
 		); err != nil {
 			return nil, err
@@ -260,13 +263,13 @@ func (d *DB) GetCampaignByID(id int64) (*Campaign, error) {
 }
 
 // CreateCampaign inserts a new campaign. Returns the new ID.
-func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID int64) (int64, error) {
+func (d *DB) CreateCampaign(orgID, productID int64, name, leadSource, channel string, exotelAccountID int64, autoRetryEnabled bool) (int64, error) {
 	if channel == "" {
 		channel = "voice"
 	}
 	res, err := d.pool.Exec(
-		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id) VALUES (?,?,?,?,?,?)`,
-		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID))
+		`INSERT INTO campaigns (org_id, product_id, name, lead_source, channel, exotel_account_id, auto_retry_enabled) VALUES (?,?,?,?,?,?,?)`,
+		orgID, productID, name, nullString(leadSource), channel, nullInt64(exotelAccountID), autoRetryEnabled)
 	if err != nil {
 		return 0, err
 	}
@@ -282,7 +285,7 @@ func (d *DB) SetCampaignExotelAccount(campaignID, accountID int64) error {
 }
 
 // UpdateCampaign updates mutable campaign fields. Pass zero/empty to skip a field.
-func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID int64) error {
+func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, productID int64, autoRetryEnabled *bool) error {
 	if name != "" {
 		if _, err := d.pool.Exec(`UPDATE campaigns SET name=? WHERE id=?`, name, id); err != nil {
 			return err
@@ -305,6 +308,11 @@ func (d *DB) UpdateCampaign(id int64, name, status, leadSource, channel string, 
 	}
 	if channel != "" {
 		if _, err := d.pool.Exec(`UPDATE campaigns SET channel=? WHERE id=?`, channel, id); err != nil {
+			return err
+		}
+	}
+	if autoRetryEnabled != nil {
+		if _, err := d.pool.Exec(`UPDATE campaigns SET auto_retry_enabled=? WHERE id=?`, *autoRetryEnabled, id); err != nil {
 			return err
 		}
 	}

@@ -41,7 +41,7 @@ export default function CampaignsTab({
   const [editLead, setEditLead] = useState(null);
   const [editForm, setEditForm] = useState({ first_name: '', last_name: '', phone: '', company: '', source: '', executive_id: 0 });
   const [editErrors, setEditErrors] = useState({});
-  const [createForm, setCreateForm] = useState({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
+  const [createForm, setCreateForm] = useState({ auto_retry_enabled: false, name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
   const [orgExotelAccounts, setOrgExotelAccounts] = useState([]);
   const [executives, setExecutives] = useState([]);
   const [agents, setAgents] = useState([]);
@@ -56,7 +56,7 @@ export default function CampaignsTab({
   const [csvImportResult, setCsvImportResult] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [showEditCampaignModal, setShowEditCampaignModal] = useState(false);
-  const [editCampaignForm, setEditCampaignForm] = useState({ name: '', status: 'active', product_id: '', lead_source: '', executive_ids: [] });
+  const [editCampaignForm, setEditCampaignForm] = useState({ auto_retry_enabled: false, name: '', status: 'active', product_id: '', lead_source: '', executive_ids: [] });
   const [deleting, setDeleting] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [createError, setCreateError] = useState('');
@@ -369,6 +369,7 @@ export default function CampaignsTab({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: createForm.name.trim(),
+          auto_retry_enabled: Boolean(createForm.auto_retry_enabled),
           product_id: createForm.product_id ? parseInt(createForm.product_id) : null,
           lead_source: createForm.lead_source || null,
           channel: createForm.channel || 'voice',
@@ -410,7 +411,7 @@ export default function CampaignsTab({
         }
       }
 
-      setCreateForm({ name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
+      setCreateForm({ auto_retry_enabled: false, name: '', product_id: '', lead_source: '', channel: 'voice', exotel_account_id: '', executive_ids: [] });
       setSelectedTemplate(null);
       setCreateError('');
       setShowCreateModal(false);
@@ -451,6 +452,7 @@ export default function CampaignsTab({
       product_id: c.product_id || '',
       lead_source: c.lead_source || '',
       channel: c.channel || 'voice',
+      auto_retry_enabled: Boolean(c.auto_retry_enabled),
       executive_ids: (c.executive_ids || []).map(id => String(id))
     });
     setEditCampaignError('');
@@ -462,7 +464,7 @@ export default function CampaignsTab({
     if (!editCampaignForm.name.trim()) { setEditCampaignError('Campaign name is required.'); return; }
     setLoading(true);
     try {
-      await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
+      const response = await apiFetch(`${API_URL}/campaigns/${editCampaignForm.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -470,9 +472,11 @@ export default function CampaignsTab({
           status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : null,
           lead_source: editCampaignForm.lead_source || null,
-          channel: editCampaignForm.channel || 'voice'
+          channel: editCampaignForm.channel || 'voice',
+          auto_retry_enabled: Boolean(editCampaignForm.auto_retry_enabled)
         })
       });
+      if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.error || 'Failed to update campaign'); }
       setShowEditCampaignModal(false);
       fetchCampaigns();
       if (selectedCampaign?.id === editCampaignForm.id) {
@@ -482,7 +486,8 @@ export default function CampaignsTab({
           status: editCampaignForm.status || 'active',
           product_id: editCampaignForm.product_id ? parseInt(editCampaignForm.product_id) : prev.product_id,
           lead_source: editCampaignForm.lead_source || null,
-          channel: editCampaignForm.channel || 'voice'
+          channel: editCampaignForm.channel || 'voice',
+          auto_retry_enabled: Boolean(editCampaignForm.auto_retry_enabled)
         }));
       }
       toast('Campaign updated');

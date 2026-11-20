@@ -14,7 +14,7 @@ import CampaignDetailTabs from './CampaignDetailTabs';
 import DispositionSettingsModal from './DispositionSettingsModal';
 import CampaignSummary from './CampaignSummary';
 import CallDateRangeFilter from './CallDateRangeFilter';
-import { Checkbox } from 'antd';
+import { Checkbox, Switch } from 'antd';
 import {
   BarChartOutlined,
   CalendarOutlined,
@@ -489,6 +489,29 @@ export default function CampaignDetail({
   const canExportLeads = hasPermission('crm.export');
   const canAssignLeads = hasPermission('crm.assign');
   const canEditCampaign = hasPermission('campaigns.edit');
+  const [savingAutoRetry, setSavingAutoRetry] = useState(false);
+  const handleAutoRetryChange = async enabled => {
+    if (!canEditCampaign || savingAutoRetry) return;
+    const campaignId = selectedCampaign.id;
+    setSavingAutoRetry(true);
+    try {
+      const response = await apiFetch(`${API_URL}/campaigns/${campaignId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auto_retry_enabled: enabled }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not update automatic retries');
+      }
+      setSelectedCampaign(current => current?.id === campaignId
+        ? { ...current, auto_retry_enabled: enabled } : current);
+      toast(`Automatic retries ${enabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      toast(error.message || 'Could not update automatic retries');
+    } finally {
+      setSavingAutoRetry(false);
+    }
+  };
   const canDial = !hideAiFeatures && hasPermission('calls.dial');
   const canDialAll = !hideAiFeatures && hasPermission('calls.dial_all');
   const canBrowserCall = hasPermission('calls.browser_call');
@@ -1590,6 +1613,14 @@ export default function CampaignDetail({
               { value: 'cold', label: 'Cold Outreach' },
               { value: 'other', label: 'Others' },
             ]} />
+        )}
+        {canEditCampaign && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <label htmlFor="campaign-header-auto-retry" style={{ fontSize: 12, fontWeight: 600, color: T.sub }}>Auto retry</label>
+            <Switch id="campaign-header-auto-retry" size="small"
+              checked={Boolean(selectedCampaign.auto_retry_enabled)}
+              loading={savingAutoRetry} onChange={handleAutoRetryChange} />
+          </div>
         )}
       </div>
 

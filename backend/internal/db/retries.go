@@ -15,12 +15,19 @@ type Retry struct {
 	CreatedAt     string `json:"created_at"`
 }
 
+// CampaignAutoRetriesEnabled fails closed for missing campaigns and wrong orgs.
+func (d *DB) CampaignAutoRetriesEnabled(orgID, campaignID int64) (bool, error) {
+	var enabled bool
+	err := d.pool.QueryRow(`SELECT EXISTS(SELECT 1 FROM campaigns WHERE id=? AND org_id=? AND auto_retry_enabled=1)`, campaignID, orgID).Scan(&enabled)
+	return enabled, err
+}
+
 // CreateRetry inserts a new retry record. nextAttempt is when to retry.
 func (d *DB) CreateRetry(leadID, campaignID, orgID int64, maxAttempts int, nextAttempt time.Time) (int64, error) {
 	res, err := d.pool.Exec(`
 		INSERT INTO call_retries (lead_id, campaign_id, org_id, attempts, max_attempts, status, next_attempt_at)
-		VALUES (?,?,?,0,?,'pending',?)`,
-		leadID, nullInt64(campaignID), orgID, maxAttempts, nextAttempt)
+		SELECT ?,?,?,0,?,'pending',? FROM campaigns WHERE id=? AND org_id=? AND auto_retry_enabled=1`,
+		leadID, nullInt64(campaignID), orgID, maxAttempts, nextAttempt, campaignID, orgID)
 	if err != nil {
 		return 0, err
 	}
@@ -37,6 +44,7 @@ func (d *DB) GetPendingRetries() ([]Retry, error) {
 		DATE_FORMAT(created_at,'%Y-%m-%d %H:%i:%s')
 		FROM call_retries
 		WHERE status='pending' AND next_attempt_at <= NOW()
+		AND EXISTS (SELECT 1 FROM campaigns c WHERE c.id=call_retries.campaign_id AND c.org_id=call_retries.org_id AND c.auto_retry_enabled=1)
 		ORDER BY next_attempt_at ASC`)
 	if err != nil {
 		return nil, err
