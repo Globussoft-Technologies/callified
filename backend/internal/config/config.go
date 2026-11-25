@@ -75,7 +75,7 @@ type Config struct {
 	OCISecretAccessKey string `env:"OCI_SECRET_ACCESS_KEY"`
 
 	// NAS recording storage for development deployments. When the hostname in
-	// PUBLIC_SERVER_URL starts with "test", recordings are written here over
+	// PUBLIC_SERVER_URL has a subdomain containing "test", recordings are written here over
 	// SFTP instead of being uploaded to OCI.
 	NASHost          string `env:"NAS_HOST"`
 	NASPort          int    `env:"NAS_PORT" envDefault:"22"`
@@ -159,9 +159,9 @@ type Config struct {
 	FrontendURL     string `env:"FRONTEND_URL"  envDefault:"http://localhost:5173"`
 }
 
-// IsTestDeployment reports whether PUBLIC_SERVER_URL's hostname starts with
-// "test" (for example, testgo2.callified.ai). URL paths never affect the
-// decision.
+// IsTestDeployment checks for "test" in a subdomain of PUBLIC_SERVER_URL's
+// hostname (for example, testgo2.callified.ai or qa-test.callified.ai).
+// Paths, query strings, user information and the base domain do not select NAS.
 func (c *Config) IsTestDeployment() bool {
 	raw := strings.TrimSpace(c.PublicServerURL)
 	if raw == "" {
@@ -175,7 +175,11 @@ func (c *Config) IsTestDeployment() bool {
 			return false
 		}
 	}
-	return strings.HasPrefix(strings.ToLower(parsed.Hostname()), "test")
+	labels := strings.Split(strings.TrimSuffix(strings.ToLower(parsed.Hostname()), "."), ".")
+	if len(labels) < 3 {
+		return false
+	}
+	return strings.Contains(strings.Join(labels[:len(labels)-2], "."), "test")
 }
 
 // DSN returns a MySQL DSN string for database/sql.
