@@ -1,14 +1,40 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGeminiGenerateTextUsesCompatibleThinkingConfig(t *testing.T) {
+	for _, model := range []string{"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.5-flash-lite"} {
+		t.Run(model, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				config := body["generationConfig"].(map[string]any)
+				if model == "gemini-2.5-flash" || model == "gemini-2.5-flash-lite" {
+					assert.Equal(t, map[string]any{"thinkingBudget": float64(0)}, config["thinkingConfig"])
+				} else {
+					assert.NotContains(t, config, "thinkingConfig")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"Summary"}]}}]}`))
+			}))
+			defer server.Close()
+			client := NewGeminiClient("test-key", model, server.URL)
+			result, err := client.GenerateText(context.Background(), "Summarize", "Website text", 3000)
+			require.NoError(t, err)
+			assert.Equal(t, "Summary", result)
+		})
+	}
+}
 
 func TestGeminiStreamEventMarksThoughtParts(t *testing.T) {
 	var event geminiStreamEvent

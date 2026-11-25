@@ -122,7 +122,7 @@ type geminiTextResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// GenerateText calls Gemini using the non-streaming REST endpoint with thinking disabled.
+// GenerateText calls Gemini using the non-streaming REST endpoint, disabling thinking where supported.
 // Use this for batch/extract tasks (scraping, prompt generation) where streaming is not needed.
 func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessage string, maxOutputTokens int) (string, error) {
 	if g.apiKey == "" {
@@ -135,7 +135,7 @@ func (g *GeminiClient) GenerateText(ctx context.Context, systemPrompt, userMessa
 		},
 		GenerationConfig: geminiTextGenConfig{
 			MaxOutputTokens: maxOutputTokens,
-			ThinkingConfig:  &geminiThinkingConfig{ThinkingBudget: 0}, // disable thinking — not needed for extraction
+			ThinkingConfig:  voiceThinkingConfig(g.model),
 		},
 	}
 	if systemPrompt != "" {
