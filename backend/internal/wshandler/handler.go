@@ -333,7 +333,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Store the instance on the session so runTTSWorker (which reads it every
 	// sentence) and the greeting dispatch can both use it. Previously this was
 	// a closure variable, but the worker now lives outside this function.
-	if !sess.GeminiLive {
+	if !sess.GeminiLive && !sess.IsBridge {
 		ttsProvider, err := tts.New(sess.TTSProvider, h.ttsKeys)
 		if err != nil {
 			h.log.Warn("TTS provider unavailable", zap.Error(err), zap.String("provider", sess.TTSProvider))
@@ -439,6 +439,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the URL params already gave us enough.
 	var sttStarted atomic.Bool
 	startSTT := func() {
+		if sess.IsBridge {
+			return
+		}
 		// Idempotent: web-sim invokes this directly at startup; handleStartEvent
 		// invokes it again after Redis hydration if it wasn't fired yet.
 		// Without the atomic gate a stray Exotel "start" event mid-call would
@@ -1019,29 +1022,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.StartSTT = startSTT
 
-	// g4: Pipeline orchestrator
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		runPipeline(ctx, sess, h.provider, h.store)
-	}()
+	// Known browser bridges need no AI orchestration or synthesis workers.
+	if !sess.IsBridge {
+		// g4: Pipeline orchestrator
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runPipeline(ctx, sess, h.provider, h.store)
+		}()
 
-	// g5: TTS worker. Reads the provider from sess.TTSInstance() on each
-	// sentence; the worker no-ops with a warning if no provider is loaded.
-	// Launched unconditionally so that if the provider becomes available
-	// mid-call (e.g. after Redis hydration of a campaign with a different
-	// provider), synthesis resumes without needing to relaunch the worker.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		runTTSWorker(ctx, sess, h.initiator)
-	}()
+		// g5: TTS worker. Reads the provider from sess.TTSInstance() on each
+		// sentence; the worker no-ops with a warning if no provider is loaded.
+		// Launched unconditionally so that if the provider becomes available
+		// mid-call (e.g. after Redis hydration of a campaign with a different
+		// provider), synthesis resumes without needing to relaunch the worker.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runTTSWorker(ctx, sess, h.initiator)
+		}()
+	}
 
 	// Greeting closure — dispatched here for web-sim (we already have the
 	// language from URL params), or from handleStartEvent for Exotel after
 	// Redis hydration finalises the language. Reads sess.TTSInstance() so
 	// it picks up whatever provider was actually configured.
 	sendGreeting := func() {
+		if sess.IsBridge {
+			return
+		}
 		if sess.GeminiLive {
 			sess.TrySetGreeting()
 			return
@@ -1632,6 +1641,11 @@ func firstNonEmpty(vals ...string) string {
 // provider. Gemini Live is a complete audio-to-audio pipeline, so it must not
 // retain or invoke a legacy TTS client.
 func (h *Handler) configureVoicePipeline(sess *CallSession) {
+	if sess.IsBridge {
+		sess.GeminiLive = false
+		sess.SetTTSInstance(nil)
+		return
+	}
 	sess.GeminiLive = strings.EqualFold(strings.TrimSpace(sess.TTSProvider), "gemini_live")
 	if !sess.GeminiLive {
 		return

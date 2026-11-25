@@ -30,6 +30,7 @@ func applyVerifiedTataContext(sess *CallSession, info *rstore.TataStreamContext)
 	sess.Language = p.TTSLanguage
 	sess.MaxCallDurationSeconds = p.MaxCallDurationSeconds
 	sess.IsInbound = info.Inbound
+	sess.IsBridge = p.IsBridge
 }
 func validateTataStart(info *rstore.TataStreamContext, event map[string]interface{}) error {
 	start, _ := event["start"].(map[string]interface{})
@@ -88,6 +89,16 @@ func (h *Handler) handleVerifiedTataStart(ctx context.Context, sess *CallSession
 	sess.TataStartVerified = true
 	_ = sess.WS.SetReadDeadline(time.Time{})
 	h.sessionsByCallSid.Store(sess.CallSid, sess)
+	if sess.IsBridge {
+		// Publish readiness only after carrier identity and codec validation.
+		// Browser calls relay audio directly and never need AI credentials.
+		sess.StartSTT = nil
+		sess.SendGreeting = nil
+		sess.MarkLiveContextReady()
+		sess.bridgeReadyOnce.Do(func() { close(sess.bridgeReady) })
+		h.log.Sugar().Infow("bridge mode: AI pipeline skipped", "call_sid", sess.CallSid)
+		return
+	}
 	if h.promptBuilder != nil {
 		if err := h.initializeCall(ctx, sess); err != nil {
 			sess.WS.Close()
